@@ -16,3 +16,10 @@ its configuration is frozen before held-out evaluation and continues from its ow
 post-tuning snapshot. `BestFixed-Offline-Oracle` remains a diagnostic bound and is never a
 selector input. Online cross-strategy switching remains out of scope until migration or
 parallel-maintenance costs are modeled.
+
+`ReservedSlack-CSSC` uses frozen contract A: a row reserves
+`ceil(beta * max(1, nnz))` lanes, with total physical capacity clamped to the matrix
+column count. `beta = 0` reserves no lanes. For `beta > 0`, even an empty logical row
+deliberately owns a physical reserved lane and incurs its complete publication and query
+cost. This intentionally overrides implicit-zero reconstruction for that row; the lane is
+real reserved capacity, not a fabricated logical contributor.

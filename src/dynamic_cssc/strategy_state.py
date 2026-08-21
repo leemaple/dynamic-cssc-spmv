@@ -67,14 +67,12 @@ class PackedCOOEntry:
 
 @dataclass(frozen=True, slots=True)
 class PackedCOOSegment:
-    """Fixed input lanes plus the explicit segmented-aggregation output layout."""
+    """Fixed encrypted entry lanes returned unchanged for client reconstruction."""
 
     segment_id: str
     version_id: str
     capacity: int
     entries: tuple[PackedCOOEntry | None, ...]
-    output_row_map: tuple[int, ...]
-    entry_lane_to_output_slot: tuple[int | None, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,9 +105,14 @@ class TransitionFacts:
     absorbed_natural_padding: int = 0
     absorbed_reserved: int = 0
     overflow: int = 0
+    overflow_rows: tuple[int, ...] = ()
     patched_chunk_ids: tuple[tuple[str, str], ...] = ()
     rebuilt_output_block_ids: tuple[str, ...] = ()
     active_component_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if len(self.overflow_rows) != self.overflow:
+            raise ValueError("overflow must equal len(overflow_rows)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,12 +224,17 @@ def _reserved_capacities(
 ) -> tuple[int, ...]:
     row_counts: Counter[int] = Counter(row for row, _ in logical)
     capacities = tuple(
-        row_counts[row]
-        + ceil(config.reserved_slack_beta * max(1, row_counts[row]))
+        min(
+            config.cols,
+            row_counts[row]
+            + (
+                ceil(config.reserved_slack_beta * max(1, row_counts[row]))
+                if config.reserved_slack_beta > 0
+                else 0
+            ),
+        )
         for row in range(config.rows)
     )
-    if any(capacity > config.cols for capacity in capacities):
-        raise ValueError("reserved slack capacity exceeds the matrix column count")
     return capacities
 
 
@@ -658,12 +666,6 @@ def assert_strategy_invariants(state: StrategyState) -> None:
                 or abs(entry.value) > state.config.matrix_value_bound
             ):
                 raise AssertionError("COO value violates the matrix value bound")
-        output_row_map, lane_map = _coo_output_layout(segment.entries)
-        if (
-            segment.output_row_map != output_row_map
-            or segment.entry_lane_to_output_slot != lane_map
-        ):
-            raise AssertionError("COO output layout must match its physical entry lanes")
     if state.delta_logical != (
         _decode_component(state.delta) if state.delta is not None else {
             entry.coordinate: entry.value
@@ -787,6 +789,8 @@ def _validated_candidate(
             for value in (update.row, update.col, update.before, update.after)
         ):
             raise ValueError("update fields must be strict integers")
+        if update.is_noop:
+            raise ValueError("window updates must not contain no-op NetUpdate values")
         coordinate = (update.row, update.col)
         if coordinate in seen:
             raise ValueError("window updates must have unique coordinates")
@@ -889,6 +893,7 @@ def advance_publication(
             absorbed_natural_padding=absorbed["natural-padding"],
             absorbed_reserved=absorbed["reserved"],
             overflow=len(overflow),
+            overflow_rows=tuple(row for row, _ in overflow),
             patched_chunk_ids=tuple(sorted(patched_chunks)),
             rebuilt_output_block_ids=rebuilt_output_block_ids,
             active_component_ids=(base.component_id,),
@@ -1087,6 +1092,7 @@ def _advance_cssc_delta(
         absorbed_tombstone=absorbed["tombstone"],
         absorbed_natural_padding=absorbed["natural-padding"],
         overflow=len(overflow),
+        overflow_rows=tuple(row for row, _ in overflow),
         patched_chunk_ids=tuple(sorted(patched_chunks)),
         active_component_ids=tuple(component.component_id for component in components),
     )
@@ -1102,7 +1108,9 @@ def _advance_local_repack(
     version_id: str,
 ) -> Transition:
     dirty_blocks = {
-        update.row // state.config.partition_rows for update in window.updates
+        update.row // state.config.partition_rows
+        for update in window.updates
+        if not update.is_noop
     }
     base, rebuilt, ci_sync, block_ids = _rebuild_base_blocks(
         state,
@@ -1118,7 +1126,7 @@ def _advance_local_repack(
         logical=dict(candidate),
         base=base,
         free_lanes=_free_lanes(base),
-        repack_count=state.repack_count + 1,
+        repack_count=state.repack_count + bool(dirty_blocks),
     )
     assert_strategy_invariants(new_state)
     return Transition(
@@ -1143,14 +1151,6 @@ def _fold_periodic(
     version_ordinal: int,
     version_id: str,
 ) -> Transition:
-    base_updates, _delta_updates = _split_base_and_delta_updates(
-        state, window.updates
-    )
-    _patched, _chunks, _ci, absorbed, overflow = _point_patch_base(
-        state,
-        base_updates,
-        allow_reserved=False,
-    )
     base = publish_component(
         candidate,
         rows=state.config.rows,
@@ -1182,9 +1182,6 @@ def _fold_periodic(
                 len(chunk.column_indices) for chunk in base.chunks
             ),
             rebuilt_ciphertexts=len(base.chunks),
-            absorbed_tombstone=absorbed["tombstone"],
-            absorbed_natural_padding=absorbed["natural-padding"],
-            overflow=len(overflow),
             rebuilt_output_block_ids=tuple(
                 block.output_block_id for block in base.blocks
             ),
@@ -1198,13 +1195,18 @@ def _packed_coo_output_plan(state: StrategyState) -> OutputPlan:
     base_plan = _checked_output_plan((state.base,))
     shares = list(base_plan.shares)
     for segment in state.coo_segments:
-        if not segment.output_row_map:
+        active_lanes = tuple(
+            (slot, entry.coordinate[0])
+            for slot, entry in enumerate(segment.entries)
+            if entry is not None and entry.value != 0
+        )
+        if not active_lanes:
             continue
         shares.append(
             OutputShare(
                 component_id="packed-coo-delta",
                 output_block_id=segment.segment_id,
-                slot_to_logical=tuple(enumerate(segment.output_row_map)),
+                slot_to_logical=active_lanes,
             )
         )
     plan = OutputPlan(
@@ -1216,26 +1218,6 @@ def _packed_coo_output_plan(state: StrategyState) -> OutputPlan:
     return plan
 
 
-def _coo_output_layout(
-    entries: tuple[PackedCOOEntry | None, ...],
-) -> tuple[tuple[int, ...], tuple[int | None, ...]]:
-    """Map entry lanes to first-occurrence row groups emitted by segment reduction."""
-
-    output_rows: list[int] = []
-    output_slot_by_row: dict[int, int] = {}
-    lane_map: list[int | None] = []
-    for entry in entries:
-        if entry is None or entry.value == 0:
-            lane_map.append(None)
-            continue
-        row = entry.coordinate[0]
-        if row not in output_slot_by_row:
-            output_slot_by_row[row] = len(output_rows)
-            output_rows.append(row)
-        lane_map.append(output_slot_by_row[row])
-    return tuple(output_rows), tuple(lane_map)
-
-
 def _make_coo_segment(
     *,
     segment_id: str,
@@ -1243,14 +1225,11 @@ def _make_coo_segment(
     capacity: int,
     entries: tuple[PackedCOOEntry | None, ...],
 ) -> PackedCOOSegment:
-    output_row_map, lane_map = _coo_output_layout(entries)
     return PackedCOOSegment(
         segment_id=segment_id,
         version_id=version_id,
         capacity=capacity,
         entries=entries,
-        output_row_map=output_row_map,
-        entry_lane_to_output_slot=lane_map,
     )
 
 
@@ -1375,7 +1354,8 @@ def _advance_packed_coo(
         delta_rebuilt_ciphertexts=len(changed_segments),
         absorbed_tombstone=absorbed["tombstone"],
         absorbed_natural_padding=absorbed["natural-padding"],
-        overflow=len(overflow),
+        overflow=len(remaining),
+        overflow_rows=tuple(row for row, _ in remaining),
         patched_chunk_ids=tuple(sorted(patched_chunks)),
         active_component_ids=_active_component_ids(new_state),
     )

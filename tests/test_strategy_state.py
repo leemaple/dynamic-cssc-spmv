@@ -6,8 +6,10 @@ from dataclasses import replace
 import pytest
 
 from dynamic_cssc.events import NetUpdate, PublicationWindow
+from dynamic_cssc.output_plan import analyze_output_plan
 from dynamic_cssc.strategy_state import (
     STRATEGIES,
+    TransitionFacts,
     advance_publication,
     assert_strategy_invariants,
     decode_state,
@@ -214,6 +216,8 @@ def test_padding_lane_is_consumed_before_overflow_rebuild() -> None:
 
     assert transition.facts.absorbed_natural_padding == 1
     assert transition.facts.overflow == 1
+    assert transition.facts.overflow_rows == (1,)
+    assert len(transition.facts.overflow_rows) == transition.facts.overflow
     assert transition.facts.rebuilt_ciphertexts > 0
     assert transition.facts.rebuilt_output_block_ids == ("base-h000000",)
     assert decode_state(transition.state) == {
@@ -276,6 +280,69 @@ def test_reserved_slack_is_a_distinct_real_lane_and_follows_natural_padding() ->
     assert decode_state(second.state) == {**logical, (1, 2): 6, (1, 3): 7}
 
 
+def test_positive_reserved_slack_materializes_and_charges_an_empty_row_lane() -> None:
+    state = initialize_strategy(
+        "ReservedSlack-CSSC",
+        {(0, 0): 1},
+        rows=2,
+        cols=3,
+        effective_slots=2,
+        partition_rows=2,
+        reserved_slack_beta=1.0,
+    )
+
+    transition = advance_publication(state, _window(queries=1))
+
+    assert state.base.blocks[0].physical_row_capacities == (2, 1)
+    empty_row_lanes = [
+        lane for lane in state.free_lanes if lane.row == 1 and lane.kind == "reserved"
+    ]
+    assert len(empty_row_lanes) == 1
+    assert transition.output_plan.shares[0].slot_to_logical == ((0, 0), (1, 1))
+    assert analyze_output_plan(transition.output_plan).implicit_zero_coordinates == 0
+
+
+def test_zero_reserved_slack_keeps_empty_row_capacity_at_zero() -> None:
+    state = initialize_strategy(
+        "ReservedSlack-CSSC",
+        {(0, 0): 1},
+        rows=2,
+        cols=3,
+        effective_slots=2,
+        partition_rows=2,
+        reserved_slack_beta=0.0,
+    )
+
+    transition = advance_publication(state, _window(queries=1))
+
+    assert state.base.blocks[0].physical_row_capacities == (1, 0)
+    assert all(lane.kind != "reserved" for lane in state.free_lanes)
+    assert analyze_output_plan(transition.output_plan).implicit_zero_coordinates == 1
+
+
+def test_reserved_slack_clamps_rebuilt_capacity_when_a_row_becomes_dense() -> None:
+    state = initialize_strategy(
+        "ReservedSlack-CSSC",
+        {(0, 0): 1},
+        rows=1,
+        cols=3,
+        effective_slots=4,
+        partition_rows=1,
+        max_row_nnz=3,
+        reserved_slack_beta=0.5,
+    )
+    absorbed = advance_publication(state, _window(NetUpdate(0, 1, 0, 2)))
+
+    dense = advance_publication(
+        absorbed.state,
+        _window(NetUpdate(0, 2, 0, 3), index=1),
+    )
+
+    assert dense.state.base.blocks[0].physical_row_capacities == (3,)
+    assert dense.facts.rebuilt_ciphertexts == 1
+    assert decode_state(dense.state) == {(0, 0): 1, (0, 1): 2, (0, 2): 3}
+
+
 def test_mini_cssc_delta_persists_and_tracks_its_actual_coordinate_owner() -> None:
     state = initialize_strategy(
         "Mini-CSSC-Delta",
@@ -290,6 +357,7 @@ def test_mini_cssc_delta_persists_and_tracks_its_actual_coordinate_owner() -> No
     inserted = advance_publication(state, _window(NetUpdate(0, 4, 0, 5)))
 
     assert inserted.facts.overflow == 1
+    assert inserted.facts.overflow_rows == (0,)
     assert inserted.facts.delta_ciphertexts == 1
     assert inserted.state.delta is not None
     assert inserted.state.delta.coord_to_slot.keys() == {(0, 4)}
@@ -410,6 +478,34 @@ def test_periodic_delta_persists_until_the_nonempty_window_period_expires() -> N
     assert_strategy_invariants(folded.state)
 
 
+def test_periodic_full_fold_does_not_also_count_discarded_point_patch_actions() -> None:
+    state = initialize_strategy(
+        "PeriodicRepack",
+        {(0, 0): 1, (0, 1): 2, (1, 0): 3},
+        rows=2,
+        cols=4,
+        effective_slots=4,
+        partition_rows=2,
+        max_row_nnz=4,
+        periodic_repack_windows=2,
+    )
+    first = advance_publication(state, _window(NetUpdate(0, 0, 1, 4)))
+
+    folded = advance_publication(
+        first.state,
+        _window(NetUpdate(1, 1, 0, 5), index=1),
+    )
+
+    assert folded.facts.rebuilt_ciphertexts == len(folded.state.base.chunks)
+    assert folded.facts.ci_full_sync_entries > 0
+    assert (
+        folded.facts.absorbed_tombstone,
+        folded.facts.absorbed_natural_padding,
+        folded.facts.absorbed_reserved,
+        folded.facts.overflow,
+    ) == (0, 0, 0, 0)
+
+
 def test_packed_coo_batches_overflow_and_reuses_fixed_segment_holes() -> None:
     state = initialize_strategy(
         "Packed-COO-HYB-Delta",
@@ -459,6 +555,8 @@ def test_packed_coo_batches_overflow_and_reuses_fixed_segment_holes() -> None:
 
     assert tuple(segment.segment_id for segment in reused.state.coo_segments) == segment_ids
     assert len(reused.state.coo_segments) == 2
+    assert reused.facts.overflow == 0
+    assert reused.facts.overflow_rows == ()
     assert reused.facts.delta_ciphertexts == 2
     assert reused.facts.ci_patch_entries == 1
     assert reused.state.delta_logical == {(0, 5): 7, (1, 4): 6, (1, 5): -7}
@@ -510,32 +608,42 @@ def test_packed_coo_delete_retains_old_ci_until_one_time_lane_reuse() -> None:
     assert reused.state.delta_logical == {(0, 5): 7, (1, 4): 6}
 
 
-def test_packed_coo_output_plan_is_bound_to_explicit_segment_aggregation_slots() -> None:
+def test_packed_coo_returns_each_active_entry_lane_for_client_reconstruction() -> None:
     state = initialize_strategy(
         "Packed-COO-HYB-Delta",
         {(0, 0): 1, (1, 0): 2},
         rows=2,
         cols=8,
-        effective_slots=2,
+        effective_slots=3,
         partition_rows=2,
         max_row_nnz=8,
-        packed_coo_segment_capacity=2,
+        packed_coo_segment_capacity=3,
     )
 
     transition = advance_publication(
         state,
-        _window(NetUpdate(1, 4, 0, 6), NetUpdate(0, 4, 0, 5)),
+        _window(
+            NetUpdate(0, 4, 0, 5),
+            NetUpdate(1, 4, 0, 6),
+            NetUpdate(0, 5, 0, 7),
+        ),
     )
 
-    segment = transition.state.coo_segments[0]
-    assert segment.output_row_map == (1, 0)
-    assert segment.entry_lane_to_output_slot == (0, 1)
     coo_share = next(
         share
         for share in transition.output_plan.shares
         if share.component_id == "packed-coo-delta"
     )
-    assert coo_share.slot_to_logical == ((0, 1), (1, 0))
+    assert coo_share.slot_to_logical == ((0, 0), (1, 1), (2, 0))
+    analysis = analyze_output_plan(transition.output_plan)
+    assert (
+        analysis.result_ciphertexts,
+        analysis.masked_result_ciphertexts,
+        analysis.client_reorder_elements,
+        analysis.client_modular_additions,
+        analysis.mask_random_elements,
+        analysis.mask_mapped_elements,
+    ) == (2, 2, 5, 3, 3, 5)
 
 
 def test_all_active_components_advance_to_one_version() -> None:
@@ -665,3 +773,24 @@ def test_repack_can_publish_an_implicit_zero_logical_row(strategy: str) -> None:
         for _, logical in share.slot_to_logical
     } == {1}
     assert_strategy_invariants(transition.state)
+
+
+@pytest.mark.parametrize("strategy", STRATEGIES)
+def test_public_transition_rejects_a_noncanonical_noop_update(strategy: str) -> None:
+    state = initialize_strategy(
+        strategy,
+        {(0, 0): 1},
+        rows=1,
+        cols=2,
+        effective_slots=2,
+        partition_rows=1,
+        packed_coo_segment_capacity=2,
+    )
+
+    with pytest.raises(ValueError, match="no-op"):
+        advance_publication(state, _window(NetUpdate(0, 0, 1, 1)))
+
+
+def test_transition_facts_reject_mismatched_overflow_rows() -> None:
+    with pytest.raises(ValueError, match="overflow_rows"):
+        TransitionFacts(updates=1, query_count=0, overflow=1)

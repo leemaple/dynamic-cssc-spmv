@@ -7,9 +7,11 @@ from pathlib import Path
 import pytest
 
 from dynamic_cssc.events import Event, EventKind
+from dynamic_cssc.metrics import StrategyMetrics
 from dynamic_cssc.preflight import Day1PreflightError, PreflightReport
+from dynamic_cssc.simulator import SimulationResult
 from scripts import run_day1_suite
-from scripts.run_day1_suite import insert_queries_by_ratio
+from scripts.run_day1_suite import CausalCellResult, insert_queries_by_ratio
 
 
 @pytest.mark.parametrize(
@@ -45,8 +47,20 @@ def test_runner_executes_each_ratio_from_experiment_plan(
     plan_path.write_text(
         json.dumps(
             {
-                "split": {"warmup": 0.0, "tuning": 0.0, "held_out": 1.0},
-                "synthetic": {"queries_per_update_grid": [0.5, 2.0]},
+                "plan_version": "0.1.0",
+                "split": {"warmup": 0.1, "tuning": 0.3, "held_out": 0.6},
+                "synthetic": {
+                    "rows": 1,
+                    "cols": 4,
+                    "initial_nnz_per_row": 1,
+                    "events": 4,
+                    "queries_per_update_grid": [0.5, 2.0],
+                    "workloads": ["zipf"],
+                },
+                "reserved_slack_betas": [0, 0.05, 0.1, 0.2, 0.4],
+                "periodic_repack_windows": [1, 4, 16, 64],
+                "freshness_seconds": [1.0],
+                "bandwidth_profiles_mbps": [100],
             }
         ),
         encoding="utf-8",
@@ -56,8 +70,6 @@ def test_runner_executes_each_ratio_from_experiment_plan(
     value_bounds: list[int] = []
     call_order: list[str] = []
     records: list[tuple[Path, dict[str, object]]] = []
-
-    monkeypatch.setattr(run_day1_suite, "WORKLOADS", ("zipf",))
 
     def fake_preflight(_manifest: object) -> PreflightReport:
         call_order.append("preflight")
@@ -101,14 +113,48 @@ def test_runner_executes_each_ratio_from_experiment_plan(
         return [Event.set(float(index), 0, index, 1) for index in range(4)]
 
     monkeypatch.setattr(run_day1_suite, "generate_event_stream", fake_generate_event_stream)
-    monkeypatch.setattr(run_day1_suite, "simulate", lambda *_args, **_kwargs: [])
+
+    def fake_cell(**kwargs: object) -> CausalCellResult:
+        candidates = kwargs["candidates"]
+        fixed = {
+            candidate.candidate_id: SimulationResult(
+                StrategyMetrics(
+                    candidate.strategy,
+                    "reference",
+                    source="persistent-state-predicted",
+                ),
+                {},
+            )
+            for candidate in candidates
+        }
+        selected_id = candidates[0].candidate_id
+        return CausalCellResult(
+            warmup_end=0,
+            tuning_end=1,
+            tuning_results=fixed,
+            fixed_results=fixed,
+            selected_candidate_id=selected_id,
+            tuned_policy=StrategyMetrics(
+                "TunedFixedPolicy",
+                "tuned-fixed-policy",
+                source="tuning-prefix-frozen",
+            ),
+            oracle_candidate_id=selected_id,
+            offline_oracle=StrategyMetrics(
+                "BestFixed-Offline-Oracle",
+                "diagnostic-oracle",
+                source="held-out-hindsight-diagnostic",
+            ),
+        )
+
+    monkeypatch.setattr(run_day1_suite, "evaluate_causal_cell", fake_cell)
     monkeypatch.setattr(
         run_day1_suite,
-        "write_records",
+        "write_causal_records",
         lambda path, _metrics, _costs, metadata: records.append((path, metadata)),
     )
-    monkeypatch.setattr(run_day1_suite, "write_summary", lambda *_args: None)
-    monkeypatch.setattr(run_day1_suite, "write_plots", lambda *_args: None)
+    monkeypatch.setattr(run_day1_suite, "write_causal_summary", lambda *_args: None)
+    monkeypatch.setattr(run_day1_suite, "write_causal_plots", lambda *_args: None)
     monkeypatch.setattr(run_day1_suite, "write_checksums", lambda *_args: None)
     monkeypatch.setattr(
         "sys.argv",
@@ -141,8 +187,8 @@ def test_runner_executes_each_ratio_from_experiment_plan(
     ]
     assert [metadata["queries_total"] for _, metadata in records] == [2, 8]
     assert [path.relative_to(output_dir).as_posix() for path, _ in records] == [
-        "zipf/rho-0p5",
-        "zipf/rho-2",
+        "zipf/freshness-1s/rho-0p5",
+        "zipf/freshness-1s/rho-2",
     ]
 
 

@@ -7,10 +7,6 @@ on:
         description: Deterministic random seed
         required: true
         default: '20260821'
-      updates:
-        description: Updates per synthetic workload
-        required: true
-        default: '2048'
 
 permissions:
   contents: read
@@ -35,13 +31,16 @@ jobs:
           python scripts/run_day1_suite.py
           --output-dir results/day1
           --seed '${{ inputs.seed }}'
-          --updates '${{ inputs.updates }}'
       - name: Guard against false gate claims
         run: |
           python - <<'PY'
           import json
           p=json.load(open('results/day1/SUITE_STATUS.json'))
-          assert p['status'] == 'synthetic-predicted-proxy-not-a-48h-gate-verdict'
+          assert p['schema'] == 'day1-causal-predicted-v1'
+          assert p['state_model'] == 'persistent-strategy-snapshots'
+          assert p['measurement_kind'] == 'predicted-proxy'
+          assert p['gate_eligible'] is False
+          assert p['complete_cost_claim_allowed'] is False
           print('Synthetic suite completed; no paper gate verdict issued.')
           PY
       - name: Create R2 audit bundle

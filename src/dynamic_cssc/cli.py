@@ -8,12 +8,25 @@ from .events import publication_windows
 from .manifest import load_manifest
 from .metrics import UnitCosts
 from .report import write_checksums, write_plots, write_records, write_summary
-from .simulator import SimulationConfig, simulate
+from .simulator import SimulationConfig, SimulationTarget, simulate_targets
 from .span80 import span80_curve
+from .strategy_state import STRATEGIES
 from .workloads import generate_event_stream, generate_initial_matrix
+
+SUPPORTED_WORKLOADS = (
+    "zipf",
+    "migrating-hotspot",
+    "single-row-hotspot",
+    "multi-row-hotspot",
+    "bursty",
+    "mixed-insert-delete-modify",
+    "repeated-coordinate",
+)
 
 
 def _smoke(args: argparse.Namespace) -> int:
+    if args.workload not in SUPPORTED_WORKLOADS:
+        raise ValueError(f"unknown workload: {args.workload}")
     manifest = load_manifest(args.manifest)
     rows = args.rows
     cols = args.cols
@@ -49,30 +62,51 @@ def _smoke(args: argparse.Namespace) -> int:
     )
     config = SimulationConfig(
         rows=rows,
+        cols=cols,
         effective_slots=min(
             int(manifest["packing"]["effective_slots"]),
             args.effective_slots,
         ),
         partition_rows=args.partition_rows,
+        matrix_value_bound=matrix_entry_abs_bound,
+        max_row_nnz=int(manifest["matrix"]["max_nnz_per_row"]),
         reserved_slack_beta=args.slack_beta,
-        periodic_repack_period=args.periodic_repack_period,
+        periodic_repack_windows=args.periodic_repack_period,
         packed_coo_segment_capacity=args.coo_segment_capacity,
     )
     costs = UnitCosts()
-    metrics = simulate(windows, initial, config, costs=costs)
+    results = simulate_targets(
+        windows,
+        initial,
+        [
+            SimulationTarget(
+                run_id=strategy,
+                strategy=strategy,
+                config=config,
+            )
+            for strategy in STRATEGIES
+        ],
+        measure_from=0,
+    )
+    metrics = sorted(
+        (result.metrics for result in results.values()),
+        key=lambda item: item.strategy,
+    )
 
     aggregate_overflow = [0] * rows
-    # A lightweight diagnostic based on net insert-like updates against the initial support.
+    # PublicationWindow already carries the causal before/after state for each net update.
     for window in windows:
         for update in window.updates:
-            if initial.get((update.row, update.col), 0) == 0 and update.after != 0:
+            if update.before == 0 and update.after != 0:
                 aggregate_overflow[update.row] += 1
 
     output_dir = Path(args.output_dir)
     metadata = {
-        "status": "predicted-proxy-not-measured",
+        "schema": "day1-smoke-predicted-v1",
+        "measurement_kind": "predicted-proxy",
         "gate_eligible": False,
-        "state_model": "static-initial-layout-proxy",
+        "complete_cost_claim_allowed": False,
+        "state_model": "persistent-strategy-snapshots",
         "seed": args.seed,
         "workload": args.workload,
         "windows": len(windows),
@@ -84,7 +118,7 @@ def _smoke(args: argparse.Namespace) -> int:
     write_summary(output_dir, metrics, costs, metadata)
     write_plots(output_dir, metrics, costs)
     (output_dir / "metadata.json").write_text(
-        json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8"
+        json.dumps(metadata, indent=2, sort_keys=True, allow_nan=False), encoding="utf-8"
     )
     write_checksums(output_dir)
     print(output_dir / "SUMMARY.md")
@@ -98,7 +132,7 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--manifest", default="config/params_manifest.json")
     smoke.add_argument("--output-dir", required=True)
     smoke.add_argument("--seed", type=int, required=True)
-    smoke.add_argument("--workload", default="zipf")
+    smoke.add_argument("--workload", choices=SUPPORTED_WORKLOADS, default="zipf")
     smoke.add_argument("--rows", type=int, default=128)
     smoke.add_argument("--cols", type=int, default=128)
     smoke.add_argument("--nnz-per-row", type=int, default=8)
