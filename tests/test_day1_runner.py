@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from fractions import Fraction
 from pathlib import Path
 
@@ -40,6 +42,41 @@ def test_fraction_scheduler_inserts_exact_grid_query_totals(ratio: Fraction) -> 
     )
 
 
+def test_fraction_path_ids_are_exact_injection_safe_and_collision_free() -> None:
+    first = Fraction(10_000_000_000_001, 10_000_000_000_000)
+    second = Fraction(10_000_000_000_002, 10_000_000_000_000)
+
+    assert format(float(first), ".12g") == format(float(second), ".12g")
+    assert run_day1_suite.rho_path_id(Fraction(1, 10)) == "rho-n1d10"
+    assert run_day1_suite.freshness_path_id(Fraction(1, 10)) == "freshness-n1d10s"
+    assert run_day1_suite.rho_path_id(first) != run_day1_suite.rho_path_id(second)
+    assert re.fullmatch(r"rho-n[0-9]+d[1-9][0-9]*", run_day1_suite.rho_path_id(first))
+
+
+@pytest.mark.parametrize(
+    "raw_seed",
+    [
+        "07",
+        "+7",
+        "-1",
+        " 7",
+        "7 ",
+        "7\n",
+        "7; touch injected",
+        "9" * 1000,
+        True,
+    ],
+)
+def test_seed_parser_rejects_noncanonical_or_injectable_values(raw_seed: object) -> None:
+    with pytest.raises(ValueError, match="canonical nonnegative integer"):
+        run_day1_suite.parse_canonical_seed(raw_seed)
+
+
+def test_seed_parser_returns_the_normalized_decimal_integer() -> None:
+    assert run_day1_suite.parse_canonical_seed("0") == 0
+    assert run_day1_suite.parse_canonical_seed("20260821") == 20_260_821
+
+
 def test_runner_executes_each_ratio_from_experiment_plan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -47,13 +84,16 @@ def test_runner_executes_each_ratio_from_experiment_plan(
     plan_path.write_text(
         json.dumps(
             {
-                "plan_version": "0.1.0",
+                "plan_version": "0.2.0",
                 "split": {"warmup": 0.1, "tuning": 0.3, "held_out": 0.6},
                 "synthetic": {
                     "rows": 1,
                     "cols": 4,
                     "initial_nnz_per_row": 1,
                     "events": 4,
+                    "effective_slots": 2048,
+                    "partition_rows": 128,
+                    "layout_measurement_kind": "synthetic-proxy",
                     "queries_per_update_grid": [0.5, 2.0],
                     "workloads": ["zipf"],
                 },
@@ -65,6 +105,8 @@ def test_runner_executes_each_ratio_from_experiment_plan(
         ),
         encoding="utf-8",
     )
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text('{"fixture": true}\n', encoding="utf-8")
     output_dir = tmp_path / "out"
     query_every_values: list[int] = []
     value_bounds: list[int] = []
@@ -92,7 +134,11 @@ def test_runner_executes_each_ratio_from_experiment_plan(
         run_day1_suite,
         "load_manifest",
         lambda _path: {
-            "freshness": {"max_seconds": 10.0, "microbatch_max_updates": 100},
+            "freshness": {
+                "max_seconds": 10.0,
+                "microbatch_max_updates": 100,
+                "query_requires_latest": True,
+            },
             "packing": {"effective_slots": 8},
             "integer_correctness": {"matrix_entry_abs_bound": 7},
         },
@@ -151,23 +197,34 @@ def test_runner_executes_each_ratio_from_experiment_plan(
     monkeypatch.setattr(
         run_day1_suite,
         "write_causal_records",
-        lambda path, _metrics, _costs, metadata: records.append((path, metadata)),
+        lambda path, _metrics, _costs, metadata, **_audit: records.append((path, metadata)),
     )
-    monkeypatch.setattr(run_day1_suite, "write_causal_summary", lambda *_args: None)
-    monkeypatch.setattr(run_day1_suite, "write_causal_plots", lambda *_args: None)
-    monkeypatch.setattr(run_day1_suite, "write_checksums", lambda *_args: None)
+    monkeypatch.setattr(
+        run_day1_suite,
+        "write_causal_summary",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        run_day1_suite,
+        "write_causal_plots",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(
         "sys.argv",
         [
             "run_day1_suite.py",
             "--manifest",
-            "unused.json",
+            str(manifest_path),
             "--experiment-plan",
             str(plan_path),
             "--output-dir",
             str(output_dir),
             "--seed",
             "7",
+            "--workload",
+            "zipf",
+            "--freshness-seconds",
+            "1",
             "--rows",
             "1",
             "--cols",
@@ -187,9 +244,89 @@ def test_runner_executes_each_ratio_from_experiment_plan(
     ]
     assert [metadata["queries_total"] for _, metadata in records] == [2, 8]
     assert [path.relative_to(output_dir).as_posix() for path, _ in records] == [
-        "zipf/freshness-1s/rho-0p5",
-        "zipf/freshness-1s/rho-2",
+        "zipf/freshness-n1d1s/rho-n1d2",
+        "zipf/freshness-n1d1s/rho-n2d1",
     ]
+    assert not (output_dir / "SUITE_STATUS.json").exists()
+    shard_status = json.loads((output_dir / "SHARD_STATUS.json").read_text(encoding="utf-8"))
+    assert shard_status == {
+        **shard_status,
+        "schema": "day1-causal-predicted-v1",
+        "state_model": "persistent-strategy-snapshots",
+        "measurement_kind": "predicted-proxy",
+        "gate_eligible": False,
+        "complete_cost_claim_allowed": False,
+        "complete_reference_set": False,
+        "suite_complete": False,
+        "seed": 7,
+        "workload": "zipf",
+        "freshness_seconds_fraction": "1",
+        "rho_ids": ["rho-n1d2", "rho-n2d1"],
+        "cells_expected": 2,
+        "cells_completed": 2,
+        "experiment_plan_sha256": hashlib.sha256(plan_path.read_bytes()).hexdigest(),
+        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+    }
+    assert "strong-packed-coo" in shard_status["deferred_reference_baselines"]
+
+    first_path, first_metadata = records[0]
+    trace_path = first_path / "event-window-trace.jsonl"
+    trace_bytes = trace_path.read_bytes()
+    trace_records = [json.loads(line) for line in trace_bytes.splitlines()]
+    assert trace_bytes == b"".join(
+        (json.dumps(item, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode(
+            "utf-8"
+        )
+        for item in trace_records
+    )
+    assert trace_records[0]["record_type"] == "header"
+    assert trace_records[0]["cell"] == {
+        "freshness_seconds_fraction": "1",
+        "rho_fraction": "1/2",
+        "rho_id": "rho-n1d2",
+        "workload": "zipf",
+    }
+    assert trace_records[0]["experiment_plan_sha256"] == shard_status["experiment_plan_sha256"]
+    assert trace_records[0]["manifest_sha256"] == shard_status["manifest_sha256"]
+    assert trace_records[0]["seed"] == 7
+    assert trace_records[0]["matrix"] == {
+        "cols": 4,
+        "initial_nnz_per_row": 1,
+        "rows": 1,
+    }
+    assert trace_records[0]["schema"] == "day1-event-window-trace-v2"
+    assert trace_records[0]["effective_slots"] == 2048
+    assert trace_records[0]["partition_rows"] == 128
+    assert trace_records[0]["layout_measurement_kind"] == "synthetic-proxy"
+    assert trace_records[0]["query_requires_latest"] is True
+    assert trace_records[0]["microbatch_max_updates"] == 100
+    assert trace_records[0]["split"] == {
+        "held_out": "3/5",
+        "tuning": "3/10",
+        "warmup": "1/10",
+    }
+    assert trace_records[0]["window_count"] == len(trace_records) - 1
+    assert [item["position"] for item in trace_records[1:]] == list(range(len(trace_records) - 1))
+    assert all(
+        set(item)
+        == {
+            "end",
+            "index",
+            "position",
+            "query_count",
+            "reason",
+            "record_type",
+            "start",
+            "updates",
+        }
+        for item in trace_records[1:]
+    )
+    assert all(
+        set(update) == {"after", "before", "col", "row"}
+        for item in trace_records[1:]
+        for update in item["updates"]
+    )
+    assert first_metadata["event_window_trace_sha256"] == hashlib.sha256(trace_bytes).hexdigest()
 
 
 def test_runner_fails_before_workload_generation_when_preflight_fails(
@@ -229,6 +366,10 @@ def test_runner_fails_before_workload_generation_when_preflight_fails(
             str(tmp_path / "out"),
             "--seed",
             "7",
+            "--workload",
+            "zipf",
+            "--freshness-seconds",
+            "1",
         ],
     )
 

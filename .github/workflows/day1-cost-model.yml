@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       seed:
-        description: Deterministic random seed
+        description: Canonical nonnegative decimal seed
         required: true
         default: '20260821'
 
@@ -12,7 +12,143 @@ permissions:
   contents: read
 
 jobs:
-  day1:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.build-matrix.outputs.matrix }}
+      normalized_seed: ${{ steps.normalize-seed.outputs.normalized_seed }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore or save the single tested Python environment
+        id: python-env-cache
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: day1-python-${{ runner.os }}-py312-${{ hashFiles('pyproject.toml', 'uv.lock') }}-${{ github.sha }}
+      - name: Install the shared Python environment once
+        if: steps.python-env-cache.outputs.cache-hit != 'true'
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e '.[dev]'
+      - name: Run the only short test and Ruff gate
+        run: |
+          .venv/bin/python scripts/validate_manifest.py config/params_manifest.json
+          PYTHONPATH=src:. .venv/bin/python -m pytest -q
+          .venv/bin/python -m ruff check .
+      - name: Normalize the untrusted dispatch seed exactly once
+        id: normalize-seed
+        env:
+          RAW_SEED: ${{ inputs.seed }}
+        run: |
+          PYTHONPATH=src:. .venv/bin/python - <<'PY'
+          import os
+
+          from scripts.run_day1_suite import parse_canonical_seed
+
+          seed = parse_canonical_seed(os.environ['RAW_SEED'])
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'normalized_seed={seed}\n')
+          PY
+      - name: Build the exact 7 workload by 3 freshness matrix
+        id: build-matrix
+        shell: bash
+        run: |
+          .venv/bin/python - <<'PY'
+          import json
+          import os
+          from fractions import Fraction
+
+          from scripts.run_day1_suite import freshness_path_id, rho_path_id
+          from scripts.run_day1_suite import load_experiment_plan
+
+          plan = load_experiment_plan('config/experiment_plan.json')
+          workloads = plan.workloads
+          freshness_values = plan.freshness_seconds
+          rho_values = plan.ratio_grid
+          assert len(workloads) == len(set(workloads)) == 7
+          assert len({Fraction(str(value)) for value in freshness_values}) == 3
+          assert len({Fraction(str(value)) for value in rho_values}) == 9
+          rho_ids = [rho_path_id(Fraction(str(value))) for value in rho_values]
+          assert len(rho_ids) == len(set(rho_ids)) == 9
+
+          include = []
+          for workload in workloads:
+              for raw_freshness in freshness_values:
+                  freshness = Fraction(str(raw_freshness))
+                  include.append({
+                      'workload': workload,
+                      'freshness_seconds': str(freshness),
+                      'freshness_id': freshness_path_id(freshness),
+                  })
+          assert len(include) == 21
+          matrix = json.dumps({'include': include}, separators=(',', ':'))
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'matrix={matrix}\n')
+          PY
+
+  shard:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    name: Day 1 shard (${{ matrix.workload }}, ${{ matrix.freshness_seconds }}s)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Restore the tested Python environment
+        uses: actions/cache/restore@v4
+        with:
+          path: .venv
+          key: day1-python-${{ runner.os }}-py312-${{ hashFiles('pyproject.toml', 'uv.lock') }}-${{ github.sha }}
+          fail-on-cache-miss: true
+      - name: Run one workload-freshness shard with all nine rho cells
+        run: >-
+          .venv/bin/python scripts/run_day1_suite.py
+          --output-dir results/day1-shard
+          --seed '${{ needs.plan.outputs.normalized_seed }}'
+          --workload '${{ matrix.workload }}'
+          --freshness-seconds '${{ matrix.freshness_seconds }}'
+      - name: Guard shard evidence and false claim flags
+        run: |
+          .venv/bin/python - <<'PY'
+          import json
+
+          p = json.load(open('results/day1-shard/SHARD_STATUS.json'))
+          assert p['schema'] == 'day1-causal-predicted-v1'
+          assert p['state_model'] == 'persistent-strategy-snapshots'
+          assert p['measurement_kind'] == 'predicted-proxy'
+          assert p['gate_eligible'] is False
+          assert p['complete_cost_claim_allowed'] is False
+          assert p['complete_reference_set'] is False
+          assert p['suite_complete'] is False
+          assert p['experiment_plan_version'] == '0.2.0'
+          assert p['effective_slots'] == 2048
+          assert p['partition_rows'] == 128
+          assert p['layout_measurement_kind'] == 'synthetic-proxy'
+          assert p['planned_bandwidth_profiles_mbps'] == [100.0, 1000.0, 10000.0]
+          assert p['deferred_unpriced_plan_dimensions'] == ['bandwidth_profiles_mbps']
+          assert p['preflight']['status'] == 'pass'
+          assert p['cells_expected'] == p['cells_completed'] == 9
+          assert len(p['rho_ids']) == len(set(p['rho_ids'])) == 9
+          PY
+      - name: Upload uniquely named shard evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: r2-day1-shard-${{ github.sha }}-${{ needs.plan.outputs.normalized_seed }}-${{ matrix.workload }}-${{ matrix.freshness_id }}
+          include-hidden-files: true
+          path: results/day1-shard/
+          if-no-files-found: error
+          retention-days: 30
+
+  aggregate:
+    needs: [plan, shard]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -20,39 +156,58 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: pip
-      - name: Install and validate
-        run: |
-          python -m pip install -e '.[dev]'
-          python scripts/validate_manifest.py config/params_manifest.json
-          pytest -q
-      - name: Run held-out synthetic suite
+      - name: Restore the tested Python environment
+        uses: actions/cache/restore@v4
+        with:
+          path: .venv
+          key: day1-python-${{ runner.os }}-py312-${{ hashFiles('pyproject.toml', 'uv.lock') }}-${{ github.sha }}
+          fail-on-cache-miss: true
+      - name: Download 21 shards into downloaded-shards/<artifact-name>/SHARD_STATUS.json
+        uses: actions/download-artifact@v4
+        with:
+          pattern: r2-day1-shard-${{ github.sha }}-${{ needs.plan.outputs.normalized_seed }}-*
+          path: downloaded-shards
+          merge-multiple: false
+      - name: Fail-closed validation and aggregation of all 189 cells
         run: >-
-          python scripts/run_day1_suite.py
+          .venv/bin/python scripts/aggregate_day1_shards.py
+          --shards-dir downloaded-shards
           --output-dir results/day1
-          --seed '${{ inputs.seed }}'
-      - name: Guard against false gate claims
+          --seed '${{ needs.plan.outputs.normalized_seed }}'
+      - name: Guard the only complete-suite status
         run: |
-          python - <<'PY'
+          .venv/bin/python - <<'PY'
           import json
-          p=json.load(open('results/day1/SUITE_STATUS.json'))
+
+          p = json.load(open('results/day1/SUITE_STATUS.json'))
           assert p['schema'] == 'day1-causal-predicted-v1'
           assert p['state_model'] == 'persistent-strategy-snapshots'
           assert p['measurement_kind'] == 'predicted-proxy'
           assert p['gate_eligible'] is False
           assert p['complete_cost_claim_allowed'] is False
-          print('Synthetic suite completed; no paper gate verdict issued.')
+          assert p['complete_reference_set'] is False
+          assert p['suite_complete'] is True
+          assert p['experiment_plan_version'] == '0.2.0'
+          assert p['effective_slots'] == 2048
+          assert p['partition_rows'] == 128
+          assert p['layout_measurement_kind'] == 'synthetic-proxy'
+          assert p['planned_bandwidth_profiles_mbps'] == [100.0, 1000.0, 10000.0]
+          assert p['deferred_unpriced_plan_dimensions'] == ['bandwidth_profiles_mbps']
+          assert p['preflight']['status'] == 'pass'
+          assert p['shards_expected'] == p['shards_completed'] == 21
+          assert p['cells_expected'] == p['cells_completed'] == 189
+          print('All synthetic shards completed; no paper gate verdict issued.')
           PY
       - name: Create R2 audit bundle
         run: >-
-          python scripts/package_review_bundle.py
+          .venv/bin/python scripts/package_review_bundle.py
           --stage R2-Day1-synthetic
           --output-dir artifacts
           --include results/day1
-      - name: Upload Day 1 evidence
+      - name: Upload aggregated Day 1 evidence and R2 bundle
         uses: actions/upload-artifact@v4
         with:
-          name: r2-day1-${{ github.sha }}-${{ inputs.seed }}
+          name: r2-day1-${{ github.sha }}-${{ needs.plan.outputs.normalized_seed }}
           include-hidden-files: true
           path: |
             results/day1/

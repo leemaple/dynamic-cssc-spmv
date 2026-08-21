@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
@@ -10,6 +10,7 @@ import pytest
 from dynamic_cssc.metrics import StrategyMetrics, UnitCosts
 from dynamic_cssc.report import (
     CausalMetricRecord,
+    validate_causal_payload,
     write_causal_plots,
     write_causal_records,
     write_causal_summary,
@@ -68,6 +69,117 @@ def _oracle_record(
             source="held-out-hindsight-diagnostic",
         ),
     )
+
+
+def _auditable_report_fixture() -> tuple[
+    list[CausalMetricRecord],
+    dict[str, StrategyMetrics],
+    UnitCosts,
+    dict[str, object],
+    str,
+    str,
+]:
+    fixed_records: list[CausalMetricRecord] = []
+    tuning_results: dict[str, StrategyMetrics] = {}
+    for index in range(13):
+        candidate_id = f"candidate/{index:02d}"
+        held_out_encryptions = 2 if index == 7 else 200 + index
+        tuning_encryptions = 1 if index == 3 else 100 + index
+        fixed_records.append(
+            CausalMetricRecord(
+                "fixed-candidate",
+                candidate_id,
+                candidate_id,
+                "PaddingReuse-CSSC",
+                "fixed-candidate",
+                StrategyMetrics(
+                    "PaddingReuse-CSSC",
+                    "reference",
+                    windows=4,
+                    queries=8,
+                    updates=16,
+                    update_encryptions=held_out_encryptions,
+                    source="persistent-state-predicted",
+                ),
+            )
+        )
+        tuning_results[candidate_id] = StrategyMetrics(
+            "PaddingReuse-CSSC",
+            "reference",
+            windows=3,
+            queries=6,
+            updates=12,
+            update_encryptions=tuning_encryptions,
+            source="persistent-state-predicted",
+        )
+
+    selected_candidate_id = "candidate/03"
+    oracle_candidate_id = "candidate/07"
+    fixed_by_id = {record.candidate_id: record for record in fixed_records}
+    tuned_basis = fixed_by_id[selected_candidate_id]
+    oracle_basis = fixed_by_id[oracle_candidate_id]
+    tuned = CausalMetricRecord(
+        "tuned-fixed-policy",
+        selected_candidate_id,
+        "TunedFixedPolicy",
+        tuned_basis.strategy_kind,
+        "tuning-prefix-only",
+        replace(
+            tuned_basis.metrics,
+            strategy="TunedFixedPolicy",
+            category="tuned-fixed-policy",
+            source="tuning-prefix-frozen",
+        ),
+    )
+    oracle = CausalMetricRecord(
+        "diagnostic-oracle",
+        oracle_candidate_id,
+        "BestFixed-Offline-Oracle",
+        oracle_basis.strategy_kind,
+        "held-out-hindsight-diagnostic-only",
+        replace(
+            oracle_basis.metrics,
+            strategy="BestFixed-Offline-Oracle",
+            category="diagnostic-oracle",
+            source="held-out-hindsight-diagnostic",
+        ),
+    )
+    metadata: dict[str, object] = {
+        "selected_candidate_id": selected_candidate_id,
+        "oracle_candidate_id": oracle_candidate_id,
+        "fixed_candidate_count": 13,
+    }
+    return (
+        [*fixed_records, tuned, oracle],
+        tuning_results,
+        UnitCosts(),
+        metadata,
+        selected_candidate_id,
+        oracle_candidate_id,
+    )
+
+
+def _placeholder_audit_kwargs() -> dict[str, object]:
+    return {
+        "tuning_results": {},
+        "selected_candidate_id": "reserved-slack/beta=0.05",
+        "oracle_candidate_id": "reserved-slack/beta=0.05",
+    }
+
+
+def _write_auditable_payload(tmp_path: Path) -> tuple[dict[str, object], list[str]]:
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    write_causal_records(
+        tmp_path,
+        records,
+        costs,
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
+    )
+    payload = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
+    return payload, [record.candidate_id for record in reversed(records[:13])]
 
 
 @pytest.mark.parametrize(
@@ -149,10 +261,17 @@ def test_causal_writer_requires_aliases_to_join_their_fixed_basis(
     records = [
         _fixed_record(),
         _tuned_record(strategy_kind="PeriodicRepack"),
+        _oracle_record(),
     ]
 
     with pytest.raises(ValueError, match="basis.*strategy_kind"):
-        write_causal_records(tmp_path, records, UnitCosts(), {})
+        write_causal_records(
+            tmp_path,
+            records,
+            UnitCosts(),
+            {},
+            **_placeholder_audit_kwargs(),
+        )
 
 
 def test_causal_writer_revalidates_mutable_metrics_before_serializing(
@@ -162,7 +281,13 @@ def test_causal_writer_revalidates_mutable_metrics_before_serializing(
     record.metrics.category = "diagnostic-oracle"
 
     with pytest.raises(ValueError, match="metrics.category"):
-        write_causal_records(tmp_path, [record], UnitCosts(), {})
+        write_causal_records(
+            tmp_path,
+            [record],
+            UnitCosts(),
+            {},
+            **_placeholder_audit_kwargs(),
+        )
 
 
 def test_causal_writer_rejects_duplicate_fixed_candidate_ids(
@@ -174,83 +299,555 @@ def test_causal_writer_rejects_duplicate_fixed_candidate_ids(
             [_fixed_record(), _fixed_record()],
             UnitCosts(),
             {},
+            **_placeholder_audit_kwargs(),
         )
+
+
+def test_causal_writer_rejects_duplicate_tuned_aliases(tmp_path: Path) -> None:
+    records = [
+        _fixed_record(),
+        _tuned_record(),
+        _tuned_record(),
+        _oracle_record(),
+    ]
+
+    with pytest.raises(ValueError, match="exactly one tuned-fixed-policy"):
+        write_causal_records(
+            tmp_path,
+            records,
+            UnitCosts(),
+            {},
+            **_placeholder_audit_kwargs(),
+        )
+
+    assert not any(tmp_path.iterdir())
+
+
+def test_causal_writer_requires_exactly_one_oracle_alias(tmp_path: Path) -> None:
+    records = [_fixed_record(), _tuned_record()]
+
+    with pytest.raises(ValueError, match="exactly one diagnostic-oracle"):
+        write_causal_records(
+            tmp_path,
+            records,
+            UnitCosts(),
+            {},
+            **_placeholder_audit_kwargs(),
+        )
+
+    assert not any(tmp_path.iterdir())
+
+
+def test_causal_writer_rejects_tuned_metrics_tampering(tmp_path: Path) -> None:
+    tuned = _tuned_record()
+    tuned.metrics.updates = 999
+
+    with pytest.raises(ValueError, match="tuned-fixed-policy metrics.*fixed basis"):
+        write_causal_records(
+            tmp_path,
+            [_fixed_record(), tuned, _oracle_record()],
+            UnitCosts(),
+            {},
+            **_placeholder_audit_kwargs(),
+        )
+
+    assert not any(tmp_path.iterdir())
+
+
+def test_causal_writer_recomputes_tuning_selection_and_rejects_wrong_id(
+    tmp_path: Path,
+) -> None:
+    records, tuning_results, costs, metadata, _selected_id, oracle_id = _auditable_report_fixture()
+    wrong_selected_id = "candidate/04"
+    metadata["selected_candidate_id"] = wrong_selected_id
+
+    with pytest.raises(ValueError, match="selected_candidate_id.*tuning aggregates"):
+        write_causal_records(
+            tmp_path,
+            records,
+            costs,
+            metadata,
+            tuning_results=tuning_results,
+            selected_candidate_id=wrong_selected_id,
+            oracle_candidate_id=oracle_id,
+        )
+
+    assert not any(tmp_path.iterdir())
+
+
+def test_causal_writer_recomputes_oracle_from_held_out_fixed_records(
+    tmp_path: Path,
+) -> None:
+    records, tuning_results, costs, metadata, selected_id, _oracle_id = _auditable_report_fixture()
+    wrong_oracle_id = "candidate/08"
+    metadata["oracle_candidate_id"] = wrong_oracle_id
+
+    with pytest.raises(ValueError, match="oracle_candidate_id.*held-out fixed"):
+        write_causal_records(
+            tmp_path,
+            records,
+            costs,
+            metadata,
+            tuning_results=tuning_results,
+            selected_candidate_id=selected_id,
+            oracle_candidate_id=wrong_oracle_id,
+        )
+
+    assert not any(tmp_path.iterdir())
+
+
+def test_causal_writer_requires_selection_ids_to_join_metadata(tmp_path: Path) -> None:
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    metadata["selected_candidate_id"] = "candidate/12"
+
+    with pytest.raises(ValueError, match="metadata.selected_candidate_id"):
+        write_causal_records(
+            tmp_path,
+            records,
+            costs,
+            metadata,
+            tuning_results=tuning_results,
+            selected_candidate_id=selected_id,
+            oracle_candidate_id=oracle_id,
+        )
+
+    assert not any(tmp_path.iterdir())
+
+
+def test_causal_writer_rejects_a_mismatched_metadata_candidate_count(
+    tmp_path: Path,
+) -> None:
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    metadata["fixed_candidate_count"] = 12
+
+    with pytest.raises(ValueError, match="metadata.fixed_candidate_count.*13"):
+        write_causal_records(
+            tmp_path,
+            records,
+            costs,
+            metadata,
+            tuning_results=tuning_results,
+            selected_candidate_id=selected_id,
+            oracle_candidate_id=oracle_id,
+        )
+
+    assert not any(tmp_path.iterdir())
+
+
+def test_causal_writer_does_not_mask_contradictory_causal_metadata(
+    tmp_path: Path,
+) -> None:
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    metadata["measurement_kind"] = "measured"
+
+    with pytest.raises(ValueError, match="metadata.measurement_kind"):
+        write_causal_records(
+            tmp_path,
+            records,
+            costs,
+            metadata,
+            tuning_results=tuning_results,
+            selected_candidate_id=selected_id,
+            oracle_candidate_id=oracle_id,
+        )
+
+    assert not any(tmp_path.iterdir())
+
+
+def test_causal_record_writer_requires_metadata_candidate_ids_to_join_fixed_records(
+    tmp_path: Path,
+) -> None:
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    metadata["span80_by_candidate"] = {"candidate/00": {}}
+
+    with pytest.raises(ValueError, match="span80_by_candidate.*fixed candidate_id"):
+        write_causal_records(
+            tmp_path,
+            records,
+            costs,
+            metadata,
+            tuning_results=tuning_results,
+            selected_candidate_id=selected_id,
+            oracle_candidate_id=oracle_id,
+        )
+
+    assert not any(tmp_path.iterdir())
+
+
+def test_causal_writer_requires_alias_ids_to_join_selection_ids(tmp_path: Path) -> None:
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    wrong_basis = records[4]
+    records[13] = CausalMetricRecord(
+        "tuned-fixed-policy",
+        wrong_basis.candidate_id,
+        "TunedFixedPolicy",
+        wrong_basis.strategy_kind,
+        "tuning-prefix-only",
+        replace(
+            wrong_basis.metrics,
+            strategy="TunedFixedPolicy",
+            category="tuned-fixed-policy",
+            source="tuning-prefix-frozen",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="tuned-fixed-policy candidate_id.*selection"):
+        write_causal_records(
+            tmp_path,
+            records,
+            costs,
+            metadata,
+            tuning_results=tuning_results,
+            selected_candidate_id=selected_id,
+            oracle_candidate_id=oracle_id,
+        )
+
+    assert not any(tmp_path.iterdir())
+
+
+def test_causal_writer_requires_all_thirteen_tuning_aggregates(tmp_path: Path) -> None:
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    del tuning_results["candidate/12"]
+
+    with pytest.raises(ValueError, match="tuning_results.*missing.*candidate/12"):
+        write_causal_records(
+            tmp_path,
+            records,
+            costs,
+            metadata,
+            tuning_results=tuning_results,
+            selected_candidate_id=selected_id,
+            oracle_candidate_id=oracle_id,
+        )
+
+    assert not any(tmp_path.iterdir())
+
+
+def test_causal_writer_requires_tuning_aggregates_to_join_fixed_identity(
+    tmp_path: Path,
+) -> None:
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    tuning_results["candidate/12"].strategy = "PeriodicRepack"
+
+    with pytest.raises(ValueError, match="tuning_results.*candidate/12.*fixed basis"):
+        write_causal_records(
+            tmp_path,
+            records,
+            costs,
+            metadata,
+            tuning_results=tuning_results,
+            selected_candidate_id=selected_id,
+            oracle_candidate_id=oracle_id,
+        )
+
+    assert not any(tmp_path.iterdir())
+
+
+def test_causal_writer_serializes_replayable_costs_and_all_tuning_aggregates(
+    tmp_path: Path,
+) -> None:
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+
+    write_causal_records(
+        tmp_path,
+        records,
+        costs,
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
+    )
+
+    payload = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
+    assert payload["unit_costs"] == asdict(costs)
+    assert [item["candidate_id"] for item in payload["tuning_aggregates"]] == sorted(tuning_results)
+    assert len(payload["tuning_aggregates"]) == 13
+    for aggregate in payload["tuning_aggregates"]:
+        candidate_id = aggregate["candidate_id"]
+        assert set(aggregate) == {"candidate_id", "metrics", "score"}
+        assert aggregate["metrics"] == asdict(tuning_results[candidate_id])
+        assert aggregate["score"] == tuning_results[candidate_id].predicted_time(costs)
+
+    with (tmp_path / "metrics.csv").open(newline="", encoding="utf-8") as handle:
+        held_out_rows = list(csv.DictReader(handle))
+    for field_name, value in asdict(costs).items():
+        assert {row[f"unit_cost_{field_name}"] for row in held_out_rows} == {str(value)}
+
+    with (tmp_path / "tuning_aggregates.csv").open(newline="", encoding="utf-8") as handle:
+        tuning_rows = list(csv.DictReader(handle))
+    assert [row["candidate_id"] for row in tuning_rows] == sorted(tuning_results)
+    assert len(tuning_rows) == 13
+    assert "updates" in tuning_rows[0]
+    assert "score" in tuning_rows[0]
+
+
+def test_causal_writer_payload_roundtrips_through_public_validator(tmp_path: Path) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    assert (
+        validate_causal_payload(
+            payload,
+            expected_candidate_ids=expected_candidate_ids,
+        )
+        is None
+    )
+
+
+def test_causal_writer_canonicalizes_fixed_record_order_before_validation(
+    tmp_path: Path,
+) -> None:
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    unsorted_records = [*reversed(records[:13]), *records[13:]]
+
+    write_causal_records(
+        tmp_path,
+        unsorted_records,
+        costs,
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
+    )
+
+    payload = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
+    assert [record["candidate_id"] for record in payload["records"][:13]] == sorted(tuning_results)
+
+
+def test_causal_payload_validator_rejects_extra_top_level_keys(tmp_path: Path) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload["unreviewed"] = True
+
+    with pytest.raises(ValueError, match="payload keys.*extra.*unreviewed"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def test_causal_payload_validator_rejects_duplicate_expected_candidate_ids(
+    tmp_path: Path,
+) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    expected_candidate_ids.append(expected_candidate_ids[0])
+
+    with pytest.raises(ValueError, match="expected_candidate_ids.*unique.*13"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def test_causal_payload_validator_requires_complete_unit_costs(tmp_path: Path) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    del payload["unit_costs"]["encrypt"]
+
+    with pytest.raises(ValueError, match="unit_costs keys.*missing.*encrypt"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def test_causal_payload_validator_rejects_extra_tuning_metric_fields(
+    tmp_path: Path,
+) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload["tuning_aggregates"][0]["metrics"]["unpriced_work"] = 1
+
+    with pytest.raises(ValueError, match=r"tuning_aggregates\[0\].metrics keys.*extra"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def test_causal_payload_validator_rejects_missing_tuning_metric_fields(
+    tmp_path: Path,
+) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    del payload["tuning_aggregates"][0]["metrics"]["updates"]
+
+    with pytest.raises(ValueError, match=r"tuning_aggregates\[0\].metrics keys.*missing"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def test_causal_payload_validator_rejects_missing_tuning_aggregate_fields(
+    tmp_path: Path,
+) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    del payload["tuning_aggregates"][0]["score"]
+
+    with pytest.raises(ValueError, match=r"tuning_aggregates\[0\] keys.*missing.*score"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def test_causal_payload_validator_rejects_extra_record_fields(tmp_path: Path) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload["records"][0]["unreviewed"] = 1
+
+    with pytest.raises(ValueError, match=r"records\[0\] keys.*extra.*unreviewed"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def test_causal_payload_validator_recomputes_derived_record_fields(tmp_path: Path) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload["records"][0]["predicted_normalized_time"] += 1
+
+    with pytest.raises(ValueError, match=r"records\[0\].predicted_normalized_time"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def test_causal_payload_validator_recomputes_selected_candidate(tmp_path: Path) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload["metadata"]["selected_candidate_id"] = "candidate/04"
+
+    with pytest.raises(ValueError, match="selected_candidate_id.*tuning_aggregates"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def test_causal_payload_validator_recomputes_held_out_oracle(tmp_path: Path) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload["metadata"]["oracle_candidate_id"] = "candidate/08"
+
+    with pytest.raises(ValueError, match="oracle_candidate_id.*held-out fixed"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def test_causal_payload_validator_rejects_tuning_score_tampering(tmp_path: Path) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload["tuning_aggregates"][0]["score"] += 1
+
+    with pytest.raises(ValueError, match=r"tuning_aggregates\[0\].score"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def test_causal_payload_validator_rejects_alias_numeric_tampering(tmp_path: Path) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload["records"][13]["updates"] = 999
+
+    with pytest.raises(ValueError, match="tuned-fixed-policy metrics.*fixed basis"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+@pytest.mark.parametrize("tampered_value", ["8.0", float("nan")])
+def test_causal_payload_validator_rejects_invalid_unit_cost_types_and_values(
+    tmp_path: Path,
+    tampered_value: object,
+) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload["unit_costs"]["encrypt"] = tampered_value
+
+    with pytest.raises((TypeError, ValueError), match="unit[_ ]costs.*finite"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def test_causal_payload_validator_rejects_nonfinite_context_metadata(tmp_path: Path) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload["metadata"]["context_score"] = float("inf")
+
+    with pytest.raises(ValueError, match="metadata.context_score.*finite"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def test_causal_writer_rejects_nonfinite_unused_unit_cost_before_writing(
+    tmp_path: Path,
+) -> None:
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    costs = replace(costs, ciphertext_equivalent_bytes=float("nan"))
+
+    with pytest.raises(ValueError, match="unit costs.*finite"):
+        write_causal_records(
+            tmp_path,
+            records,
+            costs,
+            metadata,
+            tuning_results=tuning_results,
+            selected_candidate_id=selected_id,
+            oracle_candidate_id=oracle_id,
+        )
+
+    assert not any(tmp_path.iterdir())
+
+
+def test_causal_summary_rejects_nonfinite_unscored_metric_before_writing(
+    tmp_path: Path,
+) -> None:
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    records[0].metrics.metadata_units = float("nan")  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match="metrics.metadata_units.*finite"):
+        write_causal_summary(
+            tmp_path,
+            records,
+            costs,
+            metadata,
+            tuning_results=tuning_results,
+            selected_candidate_id=selected_id,
+            oracle_candidate_id=oracle_id,
+        )
+
+    assert not any(tmp_path.iterdir())
+
+
+def test_causal_writer_detects_cost_vector_tampering_by_replaying_selection(
+    tmp_path: Path,
+) -> None:
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    tampered_costs = replace(costs, encrypt=0.0)
+
+    with pytest.raises(ValueError, match="selected_candidate_id.*tuning aggregates"):
+        write_causal_records(
+            tmp_path,
+            records,
+            tampered_costs,
+            metadata,
+            tuning_results=tuning_results,
+            selected_candidate_id=selected_id,
+            oracle_candidate_id=oracle_id,
+        )
+
+    assert not any(tmp_path.iterdir())
+
+
+def test_causal_summary_exposes_costs_and_tuning_replay_evidence(tmp_path: Path) -> None:
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+
+    write_causal_summary(
+        tmp_path,
+        records,
+        costs,
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
+    )
+
+    summary = (tmp_path / "SUMMARY.md").read_text(encoding="utf-8")
+    assert "## Unit-cost vector" in summary
+    assert all(field_name in summary for field_name in asdict(costs))
+    assert "## Tuning-prefix aggregates" in summary
+    assert all(candidate_id in summary for candidate_id in tuning_results)
+    assert selected_id in summary
+    assert oracle_id in summary
+
+
+def test_causal_plot_writer_rejects_a_nonreproducible_selection(tmp_path: Path) -> None:
+    records, tuning_results, costs, _metadata, _selected_id, oracle_id = _auditable_report_fixture()
+
+    with pytest.raises(ValueError, match="selected_candidate_id.*tuning aggregates"):
+        write_causal_plots(
+            tmp_path,
+            records,
+            costs,
+            tuning_results=tuning_results,
+            selected_candidate_id="candidate/04",
+            oracle_candidate_id=oracle_id,
+        )
+
+    assert not any(tmp_path.iterdir())
 
 
 def test_causal_records_use_the_predicted_schema_and_three_explicit_kinds(
     tmp_path: Path,
 ) -> None:
-    selected = StrategyMetrics(
-        "ReservedSlack-CSSC",
-        "reference",
-        windows=6,
-        updates=12,
-        update_encryptions=3,
-        source="persistent-state-predicted",
-    )
-    periodic = StrategyMetrics(
-        "PeriodicRepack",
-        "reference",
-        windows=6,
-        updates=12,
-        update_encryptions=4,
-        source="persistent-state-predicted",
-    )
-    tuned = StrategyMetrics(
-        "TunedFixedPolicy",
-        "tuned-fixed-policy",
-        windows=6,
-        updates=12,
-        update_encryptions=3,
-        source="tuning-prefix-frozen",
-    )
-    oracle = StrategyMetrics(
-        "BestFixed-Offline-Oracle",
-        "diagnostic-oracle",
-        windows=6,
-        updates=12,
-        update_encryptions=2,
-        source="held-out-hindsight-diagnostic",
-    )
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    metadata.update({"workload": "zipf", "gate_eligible": False})
 
     write_causal_records(
         tmp_path,
-        [
-            CausalMetricRecord(
-                "fixed-candidate",
-                "reserved-slack/beta=0.05",
-                "reserved-slack/beta=0.05",
-                "ReservedSlack-CSSC",
-                "fixed-candidate",
-                selected,
-            ),
-            CausalMetricRecord(
-                "fixed-candidate",
-                "periodic-repack/windows=1",
-                "periodic-repack/windows=1",
-                "PeriodicRepack",
-                "fixed-candidate",
-                periodic,
-            ),
-            CausalMetricRecord(
-                "tuned-fixed-policy",
-                "reserved-slack/beta=0.05",
-                "TunedFixedPolicy",
-                "ReservedSlack-CSSC",
-                "tuning-prefix-only",
-                tuned,
-            ),
-            CausalMetricRecord(
-                "diagnostic-oracle",
-                "periodic-repack/windows=1",
-                "BestFixed-Offline-Oracle",
-                "PeriodicRepack",
-                "held-out-hindsight-diagnostic-only",
-                oracle,
-            ),
-        ],
-        UnitCosts(),
-        {"workload": "zipf", "gate_eligible": True},
+        records,
+        costs,
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
     )
 
     payload = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
@@ -263,28 +860,20 @@ def test_causal_records_use_the_predicted_schema_and_three_explicit_kinds(
     assert payload["complete_cost_claim_allowed"] is False
     assert payload["metadata"]["gate_eligible"] is False
     assert [record["record_kind"] for record in payload["records"]] == [
-        "fixed-candidate",
-        "fixed-candidate",
+        *(["fixed-candidate"] * 13),
         "tuned-fixed-policy",
         "diagnostic-oracle",
     ]
+    fixed_ids = [f"candidate/{index:02d}" for index in range(13)]
     assert [record["candidate_id"] for record in payload["records"]] == [
-        "reserved-slack/beta=0.05",
-        "periodic-repack/windows=1",
-        "reserved-slack/beta=0.05",
-        "periodic-repack/windows=1",
+        *fixed_ids,
+        selected_id,
+        oracle_id,
     ]
     assert [record["label"] for record in payload["records"]] == [
-        "reserved-slack/beta=0.05",
-        "periodic-repack/windows=1",
+        *fixed_ids,
         "TunedFixedPolicy",
         "BestFixed-Offline-Oracle",
-    ]
-    assert [record["strategy_kind"] for record in payload["records"]] == [
-        "ReservedSlack-CSSC",
-        "PeriodicRepack",
-        "ReservedSlack-CSSC",
-        "PeriodicRepack",
     ]
     join_fields = ("record_kind", "candidate_id", "label", "strategy_kind")
     assert [tuple(record[field] for field in join_fields) for record in csv_records] == [
@@ -292,8 +881,7 @@ def test_causal_records_use_the_predicted_schema_and_three_explicit_kinds(
     ]
     assert all(record["phase"] == "held-out" for record in payload["records"])
     assert [record["selection_source"] for record in payload["records"]] == [
-        "fixed-candidate",
-        "fixed-candidate",
+        *(["fixed-candidate"] * 13),
         "tuning-prefix-only",
         "held-out-hindsight-diagnostic-only",
     ]
@@ -302,13 +890,17 @@ def test_causal_records_use_the_predicted_schema_and_three_explicit_kinds(
     assert all(record["measurement_kind"] == "predicted-proxy" for record in payload["records"])
     assert all(record["gate_eligible"] is False for record in payload["records"])
     assert all(record["complete_cost_claim_allowed"] is False for record in payload["records"])
-    assert "normalized-proxy-not-measured" not in json.dumps(payload)
+    assert costs.label in json.dumps(payload)
 
 
 def test_parameterized_fixed_candidate_ids_survive_the_json_csv_join(
     tmp_path: Path,
 ) -> None:
     candidate_ids = [
+        "padding-reuse",
+        "mini-cssc-delta",
+        "packed-coo-client-lane-delta/capacity=128",
+        "strict-local-repack",
         "reserved-slack/beta=0",
         "reserved-slack/beta=0.05",
         "reserved-slack/beta=0.1",
@@ -325,22 +917,64 @@ def test_parameterized_fixed_candidate_ids_survive_the_json_csv_join(
             (
                 "ReservedSlack-CSSC"
                 if candidate_id.startswith("reserved-slack")
-                else "PeriodicRepack"
+                else (
+                    "PeriodicRepack"
+                    if candidate_id.startswith("periodic-repack")
+                    else "PaddingReuse-CSSC"
+                )
             ),
         )
         for candidate_id in candidate_ids
     ]
+    selected_id = min(candidate_ids)
+    basis = next(record for record in records if record.candidate_id == selected_id)
+    records.extend(
+        [
+            replace(
+                _tuned_record(selected_id, basis.strategy_kind),
+                metrics=replace(
+                    basis.metrics,
+                    strategy="TunedFixedPolicy",
+                    category="tuned-fixed-policy",
+                    source="tuning-prefix-frozen",
+                ),
+            ),
+            replace(
+                _oracle_record(selected_id, basis.strategy_kind),
+                metrics=replace(
+                    basis.metrics,
+                    strategy="BestFixed-Offline-Oracle",
+                    category="diagnostic-oracle",
+                    source="held-out-hindsight-diagnostic",
+                ),
+            ),
+        ]
+    )
+    tuning_results = {record.candidate_id: record.metrics for record in records[:13]}
+    metadata = {
+        "selected_candidate_id": selected_id,
+        "oracle_candidate_id": selected_id,
+        "fixed_candidate_count": 13,
+    }
 
-    write_causal_records(tmp_path, records, UnitCosts(), {})
+    write_causal_records(
+        tmp_path,
+        records,
+        UnitCosts(),
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=selected_id,
+    )
 
     payload = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
     with (tmp_path / "metrics.csv").open(newline="", encoding="utf-8") as handle:
         csv_records = list(csv.DictReader(handle))
-    json_candidate_ids = [record["candidate_id"] for record in payload["records"]]
-    csv_candidate_ids = [record["candidate_id"] for record in csv_records]
-    assert json_candidate_ids == candidate_ids
-    assert csv_candidate_ids == candidate_ids
-    assert len(set(json_candidate_ids)) == 9
+    json_candidate_ids = [record["candidate_id"] for record in payload["records"][:13]]
+    csv_candidate_ids = [record["candidate_id"] for record in csv_records[:13]]
+    assert json_candidate_ids == sorted(candidate_ids)
+    assert csv_candidate_ids == sorted(candidate_ids)
+    assert len(set(json_candidate_ids)) == 13
 
 
 def test_causal_plots_label_fixed_points_and_aliases_with_basis_candidate_ids(
@@ -349,49 +983,8 @@ def test_causal_plots_label_fixed_points_and_aliases_with_basis_candidate_ids(
 ) -> None:
     from matplotlib.axes import Axes
 
-    candidate_ids = [
-        "reserved-slack/beta=0",
-        "reserved-slack/beta=0.05",
-        "reserved-slack/beta=0.1",
-        "reserved-slack/beta=0.2",
-        "reserved-slack/beta=0.4",
-        "periodic-repack/windows=1",
-        "periodic-repack/windows=4",
-        "periodic-repack/windows=16",
-        "periodic-repack/windows=64",
-    ]
-    fixed_records = []
-    for index, candidate_id in enumerate(candidate_ids, start=1):
-        strategy_kind = (
-            "ReservedSlack-CSSC" if candidate_id.startswith("reserved-slack") else "PeriodicRepack"
-        )
-        base = _fixed_record(candidate_id, strategy_kind)
-        fixed_records.append(
-            replace(
-                base,
-                metrics=replace(
-                    base.metrics,
-                    queries=2,
-                    updates=2,
-                    update_ciphertexts=index,
-                    cc_multiplications=index,
-                    rotations=index,
-                ),
-            )
-        )
-    tuned = _tuned_record("reserved-slack/beta=0.05")
-    tuned = replace(
-        tuned,
-        metrics=replace(tuned.metrics, queries=2, updates=2),
-    )
-    oracle = _oracle_record(
-        "periodic-repack/windows=4",
-        "PeriodicRepack",
-    )
-    oracle = replace(
-        oracle,
-        metrics=replace(oracle.metrics, queries=2, updates=2),
-    )
+    records, tuning_results, costs, _metadata, selected_id, oracle_id = _auditable_report_fixture()
+    candidate_ids = [record.candidate_id for record in records[:13]]
     annotations: list[str] = []
     original_annotate = Axes.annotate
 
@@ -401,11 +994,18 @@ def test_causal_plots_label_fixed_points_and_aliases_with_basis_candidate_ids(
 
     monkeypatch.setattr(Axes, "annotate", record_annotation)
 
-    write_causal_plots(tmp_path, [*fixed_records, tuned, oracle], UnitCosts())
+    write_causal_plots(
+        tmp_path,
+        records,
+        costs,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
+    )
 
     assert set(candidate_ids).issubset(annotations)
-    assert "TunedFixedPolicy [basis: reserved-slack/beta=0.05]" in annotations
-    assert "BestFixed-Offline-Oracle [basis: periodic-repack/windows=4]" in annotations
+    assert f"TunedFixedPolicy [basis: {selected_id}]" in annotations
+    assert f"BestFixed-Offline-Oracle [basis: {oracle_id}]" in annotations
     assert (tmp_path / "ua_vs_qa_proxy.png").is_file()
     assert (tmp_path / "t_rho_proxy.png").is_file()
 
@@ -413,45 +1013,26 @@ def test_causal_plots_label_fixed_points_and_aliases_with_basis_candidate_ids(
 def test_causal_summary_names_the_frozen_policy_and_diagnostic_oracle(
     tmp_path: Path,
 ) -> None:
-    items = [
-        _fixed_record("padding-reuse", "PaddingReuse-CSSC"),
-        CausalMetricRecord(
-            "tuned-fixed-policy",
-            "padding-reuse",
-            "TunedFixedPolicy",
-            "PaddingReuse-CSSC",
-            "tuning-prefix-only",
-            StrategyMetrics(
-                "TunedFixedPolicy",
-                "tuned-fixed-policy",
-                updates=1,
-                source="tuning-prefix-frozen",
-            ),
-        ),
-        CausalMetricRecord(
-            "diagnostic-oracle",
-            "padding-reuse",
-            "BestFixed-Offline-Oracle",
-            "PaddingReuse-CSSC",
-            "held-out-hindsight-diagnostic-only",
-            StrategyMetrics(
-                "BestFixed-Offline-Oracle",
-                "diagnostic-oracle",
-                updates=1,
-                source="held-out-hindsight-diagnostic",
-            ),
-        ),
-    ]
+    items, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    metadata.update(
+        {
+            "workload": "zipf",
+            "windows_total": 10,
+            "span80_by_candidate": {
+                item.candidate_id: ({1: 0.25, 2: 0.125} if index == 0 else {})
+                for index, item in enumerate(items[:13])
+            },
+        }
+    )
 
     write_causal_summary(
         tmp_path,
         items,
-        UnitCosts(),
-        {
-            "workload": "zipf",
-            "windows_total": 10,
-            "span80_by_candidate": {"padding-reuse": {1: 0.25, 2: 0.125}},
-        },
+        costs,
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
     )
 
     summary = (tmp_path / "SUMMARY.md").read_text(encoding="utf-8")
@@ -463,7 +1044,7 @@ def test_causal_summary_names_the_frozen_policy_and_diagnostic_oracle(
     assert '"1": 0.25' in summary
     assert '"2": 0.125' in summary
     assert "gate_eligible=false" in summary
-    assert "measured" not in summary.lower()
+    assert "not-measured" in summary.lower()
     assert "online" not in summary.lower()
     assert "gate passed" not in summary.lower()
     assert "Hybrid" not in summary

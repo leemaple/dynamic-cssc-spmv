@@ -29,13 +29,16 @@ from scripts.run_day1_suite import CausalCellResult, evaluate_causal_cell, run_s
 
 def _small_experiment_plan() -> dict[str, object]:
     return {
-        "plan_version": "0.1.0",
+        "plan_version": "0.2.0",
         "split": {"warmup": 0.1, "tuning": 0.3, "held_out": 0.6},
         "synthetic": {
             "rows": 2,
             "cols": 2,
             "initial_nnz_per_row": 1,
             "events": 10,
+            "effective_slots": 2048,
+            "partition_rows": 128,
+            "layout_measurement_kind": "synthetic-proxy",
             "queries_per_update_grid": [1],
             "workloads": ["zipf"],
         },
@@ -44,6 +47,39 @@ def _small_experiment_plan() -> dict[str, object]:
         "freshness_seconds": [1.0],
         "bandwidth_profiles_mbps": [100],
     }
+
+
+def test_plan_0_2_freezes_the_synthetic_layout_proxy() -> None:
+    plan = run_day1_suite.parse_experiment_plan(_small_experiment_plan())
+
+    assert plan.plan_version == "0.2.0"
+    assert plan.effective_slots == 2048
+    assert plan.partition_rows == 128
+    assert plan.layout_measurement_kind == "synthetic-proxy"
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement", "message"),
+    [
+        ("plan_version", "0.1.0", "plan_version.*0.2.0"),
+        ("effective_slots", 1024, "effective_slots.*2048"),
+        ("partition_rows", 64, "partition_rows.*128"),
+        ("layout_measurement_kind", "measured", "layout_measurement_kind.*synthetic-proxy"),
+    ],
+)
+def test_plan_rejects_any_substitution_of_the_frozen_layout_proxy(
+    field: str, replacement: object, message: str
+) -> None:
+    payload = _small_experiment_plan()
+    if field == "plan_version":
+        payload[field] = replacement
+    else:
+        synthetic = payload["synthetic"]
+        assert isinstance(synthetic, dict)
+        synthetic[field] = replacement
+
+    with pytest.raises(ValueError, match=message):
+        run_day1_suite.parse_experiment_plan(payload)
 
 
 @pytest.mark.parametrize("mutation", ["missing", "misspelled", "extra"])
@@ -64,8 +100,20 @@ def test_plan_boundary_rejects_noncanonical_synthetic_keys(tmp_path: Path, mutat
         run_day1_suite.load_experiment_plan(plan_path)
 
 
+@pytest.mark.parametrize(
+    ("argument_name", "override", "plan_field"),
+    [
+        ("rows", 3, "synthetic.rows"),
+        ("nnz_per_row", True, "synthetic.initial_nnz_per_row"),
+        ("effective_slots", 1024, "synthetic.effective_slots"),
+        ("partition_rows", 64, "synthetic.partition_rows"),
+    ],
+)
 def test_suite_rejects_cli_dimensions_that_disagree_with_the_plan(
     monkeypatch: pytest.MonkeyPatch,
+    argument_name: str,
+    override: int,
+    plan_field: str,
 ) -> None:
     monkeypatch.setattr(run_day1_suite, "load_manifest", lambda _path: {})
     monkeypatch.setattr(
@@ -100,13 +148,77 @@ def test_suite_rejects_cli_dimensions_that_disagree_with_the_plan(
         experiment_plan="plan.json",
         output_dir=Path("unused"),
         seed=7,
-        rows=3,
+        workload="zipf",
+        freshness_seconds="1",
+        rows=None,
+        cols=None,
+        nnz_per_row=None,
+        updates=None,
+        effective_slots=None,
+        partition_rows=None,
+    )
+    setattr(args, argument_name, override)
+
+    cli_flag = argument_name.replace("_", "-")
+    with pytest.raises(ValueError, match=rf"--{cli_flag}.*{plan_field}"):
+        run_suite(args)
+
+
+@pytest.mark.parametrize(
+    ("workload", "freshness_seconds", "message"),
+    [
+        ("not-in-plan", "1", "--workload.*must belong"),
+        ("zipf", "2", "--freshness-seconds.*must belong"),
+    ],
+)
+def test_shard_filters_must_belong_to_the_frozen_plan(
+    monkeypatch: pytest.MonkeyPatch,
+    workload: str,
+    freshness_seconds: str,
+    message: str,
+) -> None:
+    monkeypatch.setattr(run_day1_suite, "load_manifest", lambda _path: {})
+    monkeypatch.setattr(
+        run_day1_suite,
+        "run_day1_preflight",
+        lambda _manifest: PreflightReport(
+            status="pass",
+            rows=257,
+            cols=521,
+            effective_slots=256,
+            output_shares=2,
+            observed_global_column_index=520,
+            modulo_alias_column_index=8,
+            global_gather_value=1,
+            modulo_alias_value=0,
+            reconstructed_matches_direct=True,
+            reconstructed_high_row_value=1,
+        ),
+    )
+    monkeypatch.setattr(
+        run_day1_suite,
+        "load_experiment_plan",
+        lambda _path: run_day1_suite.parse_experiment_plan(_small_experiment_plan()),
+    )
+    monkeypatch.setattr(
+        run_day1_suite,
+        "generate_initial_matrix",
+        lambda *_args, **_kwargs: pytest.fail("generation must not start"),
+    )
+    args = argparse.Namespace(
+        manifest="manifest.json",
+        experiment_plan="plan.json",
+        output_dir=Path("unused"),
+        seed=7,
+        workload=workload,
+        freshness_seconds=freshness_seconds,
+        rows=None,
         cols=None,
         nnz_per_row=None,
         updates=None,
     )
 
-    with pytest.raises(ValueError, match="--rows.*synthetic.rows"):
+    with pytest.raises(ValueError, match=message):
         run_suite(args)
 
 
@@ -148,7 +260,7 @@ def test_candidate_grid_has_exactly_the_thirteen_fixed_policies() -> None:
     assert [candidate.candidate_id for candidate in candidates] == [
         "padding-reuse",
         "mini-cssc-delta",
-        "packed-coo-hyb-delta/capacity=128",
+        "packed-coo-client-lane-delta/capacity=128",
         "strict-local-repack",
         "reserved-slack/beta=0",
         "reserved-slack/beta=0.05",
@@ -368,7 +480,9 @@ def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
     initial_parameters: list[tuple[tuple[object, ...], dict[str, object]]] = []
     event_parameters: list[dict[str, object]] = []
     freshness_values: list[float] = []
+    cell_configs: list[SimulationConfig] = []
     written: list[tuple[Path, list[object], dict[str, object]]] = []
+    audit_calls: list[dict[str, object]] = []
 
     def fake_manifest(_path: object) -> dict[str, object]:
         calls.append("manifest")
@@ -423,6 +537,7 @@ def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
             yield PublicationWindow(index, index, index + 1, updates, 1, "fixture")
 
     def fake_cell(**kwargs: object) -> CausalCellResult:
+        cell_configs.append(kwargs["base_config"])  # type: ignore[arg-type]
         candidates = kwargs["candidates"]
         fixed = {}
         for index, candidate in enumerate(candidates):
@@ -466,25 +581,47 @@ def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
     monkeypatch.setattr(run_day1_suite, "generate_event_stream", fake_events)
     monkeypatch.setattr(run_day1_suite, "publication_windows", fake_windows)
     monkeypatch.setattr(run_day1_suite, "evaluate_causal_cell", fake_cell)
+
+    def fake_records(
+        path: Path,
+        items: list[object],
+        _costs: object,
+        metadata: dict[str, object],
+        **audit: object,
+    ) -> None:
+        written.append((path, items, metadata))
+        audit_calls.append(audit)
+
+    def fake_report_output(*_args: object, **audit: object) -> None:
+        audit_calls.append(audit)
+
+    monkeypatch.setattr(run_day1_suite, "write_causal_records", fake_records, raising=False)
     monkeypatch.setattr(
         run_day1_suite,
-        "write_causal_records",
-        lambda path, items, _costs, metadata: written.append((path, items, metadata)),
+        "write_causal_summary",
+        fake_report_output,
         raising=False,
     )
-    monkeypatch.setattr(run_day1_suite, "write_causal_summary", lambda *_args: None, raising=False)
-    monkeypatch.setattr(run_day1_suite, "write_causal_plots", lambda *_args: None)
-    monkeypatch.setattr(run_day1_suite, "write_checksums", lambda *_args: None)
+    monkeypatch.setattr(run_day1_suite, "write_causal_plots", fake_report_output)
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text('{"fixture": true}\n', encoding="utf-8")
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(_small_experiment_plan()), encoding="utf-8")
 
     args = argparse.Namespace(
-        manifest="manifest.json",
-        experiment_plan="plan.json",
+        manifest=str(manifest_path),
+        experiment_plan=str(plan_path),
         output_dir=tmp_path / "out",
         seed=7,
+        workload="zipf",
+        freshness_seconds="1",
         rows=None,
         cols=None,
         nnz_per_row=None,
         updates=None,
+        effective_slots=None,
+        partition_rows=None,
     )
 
     assert run_suite(args) == 0
@@ -503,23 +640,53 @@ def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
         }
     ]
     assert freshness_values == [1.0]
+    assert len(cell_configs) == 1
+    assert cell_configs[0].effective_slots == 2048
+    assert cell_configs[0].partition_rows == 128
     assert len(written) == 1
     path, items, metadata = written[0]
-    assert path.relative_to(args.output_dir).as_posix() == "zipf/freshness-1s/rho-1"
-    assert [item.record_kind for item in items].count("fixed-candidate") == 13
+    assert path.relative_to(args.output_dir).as_posix() == "zipf/freshness-n1d1s/rho-n1d1"
+    expected_candidates = run_day1_suite.parse_experiment_plan(_small_experiment_plan()).candidates
+    assert [item.record_kind for item in items].count("fixed-candidate") == len(expected_candidates)
     assert [item.record_kind for item in items].count("tuned-fixed-policy") == 1
     assert [item.record_kind for item in items].count("diagnostic-oracle") == 1
+    assert len(audit_calls) == 3
+    assert all(
+        call["selected_candidate_id"] == expected_candidates[0].candidate_id for call in audit_calls
+    )
+    assert all(
+        call["oracle_candidate_id"] == expected_candidates[0].candidate_id for call in audit_calls
+    )
+    assert all(
+        set(call["tuning_results"]) == {candidate.candidate_id for candidate in expected_candidates}
+        for call in audit_calls
+    )  # type: ignore[arg-type]
     span80_by_candidate = metadata["span80_by_candidate"]
     assert isinstance(span80_by_candidate, dict)
-    assert set(span80_by_candidate) == {
-        candidate.candidate_id
-        for candidate in run_day1_suite.parse_experiment_plan(_small_experiment_plan()).candidates
-    }
+    assert set(span80_by_candidate) == {candidate.candidate_id for candidate in expected_candidates}
     assert span80_by_candidate["padding-reuse"][1] == 0.5
     assert span80_by_candidate["mini-cssc-delta"][1] == 1.0
-    suite_status = json.loads((args.output_dir / "SUITE_STATUS.json").read_text(encoding="utf-8"))
-    assert suite_status["deferred_unpriced_plan_dimensions"] == ["bandwidth_profiles_mbps"]
-    assert suite_status["planned_bandwidth_profiles_mbps"] == [100.0]
+    assert metadata["effective_slots"] == 2048
+    assert metadata["partition_rows"] == 128
+    assert metadata["layout_measurement_kind"] == "synthetic-proxy"
+    trace_header = json.loads((path / "event-window-trace.jsonl").read_text().splitlines()[0])
+    assert trace_header["schema"] == "day1-event-window-trace-v2"
+    assert trace_header["effective_slots"] == 2048
+    assert trace_header["partition_rows"] == 128
+    assert trace_header["layout_measurement_kind"] == "synthetic-proxy"
+    assert trace_header["query_requires_latest"] is True
+    assert not (args.output_dir / "SUITE_STATUS.json").exists()
+    shard_status = json.loads((args.output_dir / "SHARD_STATUS.json").read_text(encoding="utf-8"))
+    assert shard_status["suite_complete"] is False
+    assert shard_status["complete_reference_set"] is False
+    assert shard_status["deferred_unpriced_plan_dimensions"] == ["bandwidth_profiles_mbps"]
+    assert shard_status["planned_bandwidth_profiles_mbps"] == [100.0]
+    assert shard_status["effective_slots"] == 2048
+    assert shard_status["partition_rows"] == 128
+    assert shard_status["layout_measurement_kind"] == "synthetic-proxy"
+    assert shard_status["candidate_ids"] == sorted(
+        candidate.candidate_id for candidate in expected_candidates
+    )
 
 
 def test_suite_rejects_missing_plan_fields_before_generation(
@@ -569,6 +736,8 @@ def test_suite_rejects_missing_plan_fields_before_generation(
         experiment_plan="plan.json",
         output_dir=Path("unused"),
         seed=7,
+        workload="zipf",
+        freshness_seconds="1",
         rows=None,
         cols=None,
         nnz_per_row=None,

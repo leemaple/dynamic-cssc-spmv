@@ -1,11 +1,14 @@
 {
-  "plan_version": "0.1.0",
+  "plan_version": "0.2.0",
   "split": {"warmup": 0.10, "tuning": 0.30, "held_out": 0.60},
   "synthetic": {
     "rows": 512,
     "cols": 512,
     "initial_nnz_per_row": 8,
     "events": 6000,
+    "effective_slots": 2048,
+    "partition_rows": 128,
+    "layout_measurement_kind": "synthetic-proxy",
     "queries_per_update_grid": [0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0],
     "workloads": [
       "zipf",
