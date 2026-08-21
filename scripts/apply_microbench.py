@@ -21,8 +21,8 @@ def main() -> int:
     records = []
     with args.model_csv.open(newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
-            def integer(name: str) -> int:
-                return int(float(row[name]))
+            def integer(name: str, record: dict[str, str] = row) -> int:
+                return int(float(record[name]))
 
             measured_time = (
                 (integer("update_encryptions") + integer("blinding_encryptions"))

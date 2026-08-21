@@ -7,7 +7,7 @@ import json
 import os
 import shutil
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -64,7 +64,7 @@ def main() -> int:
 
     provenance = {
         "stage": args.stage,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "git_commit": commit,
         "git_status": run(["git", "status", "--short"], root),
         "github_run_id": os.environ.get("GITHUB_RUN_ID"),

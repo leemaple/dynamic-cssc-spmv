@@ -43,27 +43,32 @@ def write_summary(
         f"- Workload: `{metadata.get('workload')}`",
         f"- Publication windows: `{metadata.get('windows')}`",
         "",
-        "| Strategy | Category | Update ct-equiv/update | Query ciphertexts | CC mults | Rotations | Predicted normalized cost |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        (
+            "| Strategy | Category | Update ct-equiv/update | Queries | Tq/query | "
+            "Query ciphertexts | CC mults | Rotations | Predicted normalized cost |"
+        ),
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for item in sorted(metrics, key=lambda candidate: candidate.predicted_time(costs)):
         lines.append(
-            "| {strategy} | {category} | {ua:.4f} | {query} | {mult} | {rot} | {cost:.2f} |".format(
-                strategy=item.strategy,
-                category=item.category,
-                ua=item.update_ct_equivalents(),
-                query=item.query_ciphertexts,
-                mult=item.cc_multiplications,
-                rot=item.rotations,
-                cost=item.predicted_time(costs),
-            )
+            f"| {item.strategy} | {item.category} | "
+            f"{item.update_ct_equivalents():.4f} | {item.queries} | "
+            f"{item.predicted_query_time_per_query(costs):.2f} | "
+            f"{item.query_ciphertexts} | {item.cc_multiplications} | "
+            f"{item.rotations} | {item.predicted_time(costs):.2f} |"
         )
     lines.extend(
         [
             "",
             "## Plain-language interpretation",
             "",
-            "This report only checks that the accounting pipeline works and that all split-output F1-M strategies pay their mask, download, decryption, and client-merge costs. It is not evidence that any strategy is faster. The research gate is decided only after P0b/Day-2 supplies measured OpenFHE constants and the verdict is evaluated on a held-out real skewed stream.",
+            (
+                "This report only checks that the accounting pipeline works and that all "
+                "split-output F1-M strategies pay their mask, download, decryption, and "
+                "client-merge costs. It is not evidence that any strategy is faster. The "
+                "research gate is decided only after P0b/Day-2 supplies measured OpenFHE "
+                "constants and the verdict is evaluated on a held-out real skewed stream."
+            ),
             "",
         ]
     )
@@ -75,39 +80,39 @@ def write_plots(output_dir: Path, metrics: list[StrategyMetrics], costs: UnitCos
 
     names = [item.strategy for item in metrics]
     update_values = [item.update_ct_equivalents() for item in metrics]
-    query_values = [item.cc_multiplications + item.rotations for item in metrics]
+    query_values = [
+        (item.cc_multiplications + item.rotations) / item.queries
+        if item.queries
+        else 0.0
+        for item in metrics
+    ]
 
     figure, axis = plt.subplots(figsize=(10, 6))
     axis.scatter(query_values, update_values)
     for name, x_value, y_value in zip(names, query_values, update_values, strict=True):
         axis.annotate(name, (x_value, y_value), fontsize=7)
-    axis.set_xlabel("Query operation proxy (CC multiplications + rotations)")
+    axis.set_xlabel("Query operation proxy per query (CC multiplications + rotations)")
     axis.set_ylabel("Update ciphertext-equivalents per update")
     axis.set_title("Predicted proxy: update amplification vs query cost")
     figure.tight_layout()
     figure.savefig(output_dir / "ua_vs_qa_proxy.png", dpi=160)
     plt.close(figure)
 
-    rhos = [0.01, 0.03, 0.1, 0.3, 1, 3, 10, 30, 100]
     figure, axis = plt.subplots(figsize=(10, 6))
     for item in metrics:
-        update_cost = (
-            item.update_encryptions + item.compaction_ciphertexts + item.blinding_encryptions
-        ) * costs.encrypt
-        per_query = (
-            item.cc_multiplications * costs.eval_mult
-            + item.rotations * costs.eval_rotate
-            + (item.additions + item.blinding_additions) * costs.eval_add
-            + item.decryptions * costs.decrypt
-            + item.client_merges * costs.client_merge
-        ) / max(1, item.windows)
-        values = [update_cost + rho * per_query for rho in rhos]
-        axis.plot(rhos, values, marker="o", label=item.strategy)
-    axis.set_xscale("log")
+        if item.updates == 0:
+            continue
+        rho = item.queries / item.updates
+        per_update = item.predicted_update_time(costs) / item.updates
+        value = per_update + rho * item.predicted_query_time_per_query(costs)
+        axis.scatter([rho], [value], label=item.strategy)
+        axis.annotate(item.strategy, (rho, value), fontsize=7)
+    if metrics and all(item.queries > 0 and item.updates > 0 for item in metrics):
+        axis.set_xscale("log")
     axis.set_yscale("log")
-    axis.set_xlabel("Query/update ratio ρ")
-    axis.set_ylabel("Predicted normalized T(ρ)")
-    axis.set_title("Predicted proxy only; replace with Day-2 measured constants")
+    axis.set_xlabel("Actual query/update ratio ρ from the event schedule")
+    axis.set_ylabel("Predicted normalized cost per update at actual ρ")
+    axis.set_title("Predicted proxy at the executed query/update ratio")
     axis.legend(fontsize=7)
     figure.tight_layout()
     figure.savefig(output_dir / "t_rho_proxy.png", dpi=160)

@@ -1,6 +1,36 @@
 from __future__ import annotations
 
+import pytest
+
 from dynamic_cssc.events import Event, publication_windows
+
+
+def test_query_only_burst_is_preserved_as_one_window() -> None:
+    windows = list(
+        publication_windows(
+            [Event.query(1.0), Event.query(1.0), Event.query(1.0)],
+            max_seconds=10.0,
+            microbatch_max_updates=100,
+        )
+    )
+
+    assert len(windows) == 1
+    assert windows[0].updates == ()
+    assert windows[0].query_count == 3
+    assert windows[0].reason == "query"
+
+
+def test_out_of_order_events_are_rejected_instead_of_sorted() -> None:
+    events = [Event.set(2.0, 0, 0, 1), Event.query(1.0)]
+
+    with pytest.raises(ValueError, match="nondecreasing"):
+        list(
+            publication_windows(
+                events,
+                max_seconds=10.0,
+                microbatch_max_updates=100,
+            )
+        )
 
 
 def test_net_merge_stays_inside_query_boundary() -> None:
@@ -22,6 +52,7 @@ def test_net_merge_stays_inside_query_boundary() -> None:
         )
     )
     assert len(windows) == 2
+    assert [window.query_count for window in windows] == [1, 1]
     assert windows[0].updates[0].before == 1
     assert windows[0].updates[0].after == 3
     assert windows[1].updates[0].before == 3
@@ -40,4 +71,5 @@ def test_noop_disappears_within_one_window() -> None:
         )
     )
     assert len(windows) == 1
+    assert windows[0].query_count == 1
     assert windows[0].updates == ()

@@ -17,3 +17,11 @@ def test_cssc_proxy_rejects_too_tall_column() -> None:
         assert "exceeds effective slot capacity" in str(exc)
     else:
         raise AssertionError("expected capacity failure")
+
+
+def test_non_power_of_two_width_counts_all_rotation_terms() -> None:
+    layout = build_cssc_layout([7], effective_slots=7)
+
+    assert len(layout.chunks) == 1
+    assert layout.chunks[0].width == 7
+    assert layout.chunks[0].aggregation_rotations_proxy == 4
