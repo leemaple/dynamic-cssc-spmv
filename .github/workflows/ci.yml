@@ -44,6 +44,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: r0-freeze-${{ github.sha }}
+          include-hidden-files: true
           path: |
             artifacts/
             results/ci-smoke/

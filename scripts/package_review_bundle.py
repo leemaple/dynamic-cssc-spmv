@@ -32,7 +32,20 @@ def main() -> int:
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
 
-    core_paths = ["README.md", "config", "docs", "src", "tests", "cpp", ".github", "scripts", "pyproject.toml", "Makefile"]
+    core_paths = [
+        "README.md",
+        "config",
+        "docs",
+        "src",
+        "tests",
+        "cpp",
+        ".github",
+        "scripts",
+        "pyproject.toml",
+        "requirements-ci.txt",
+        ".gitignore",
+        "Makefile",
+    ]
     for relative in core_paths + args.include:
         source = root / relative
         if not source.exists():
@@ -40,7 +53,12 @@ def main() -> int:
         destination = staging / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         if source.is_dir():
-            shutil.copytree(source, destination, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            shutil.copytree(
+                source,
+                destination,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.egg-info"),
+            )
         else:
             shutil.copy2(source, destination)
 

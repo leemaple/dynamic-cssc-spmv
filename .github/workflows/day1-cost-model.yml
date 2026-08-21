@@ -54,6 +54,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: r2-day1-${{ github.sha }}-${{ inputs.seed }}
+          include-hidden-files: true
           path: |
             results/day1/
             artifacts/
