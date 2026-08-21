@@ -35,7 +35,8 @@ minimal OpenFHE prototype
   the Cloud receives only its canonical digest. Client B uses the complete plan to reorder
   and combine decrypted Output Shares.
 - Output reconstruction uses `dynamic-cssc-output-plan-v1`. Only logical-coordinate
-  overlap is zero-sum masked; disjoint Output Blocks are concatenated unmasked.
+  overlap is zero-sum masked; disjoint Output Blocks are concatenated unmasked. Logical
+  coordinates with no physical contributor reconstruct as implicit zeros.
 - Client A atomically reserves each five-field mask binding in a persistent ledger before
   drawing masks from the operating-system CSPRNG with unbiased rejection sampling.
 - Every published matrix version enforces at most 4,096 nonzeros per row, so the centered

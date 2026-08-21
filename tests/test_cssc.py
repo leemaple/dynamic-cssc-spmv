@@ -193,7 +193,7 @@ def test_reserved_capacity_has_real_column_major_slots_with_sentinels() -> None:
     assert tuple(location[2] for location in published.natural_padding_slots_by_row[2]) == (5,)
 
 
-def test_output_plan_fails_closed_when_materialized_blocks_do_not_cover_all_rows() -> None:
+def test_output_plan_represents_unmaterialized_rows_as_implicit_zero() -> None:
     partial = publish_component(
         {(0, 0): 1},
         rows=3,
@@ -204,12 +204,10 @@ def test_output_plan_fails_closed_when_materialized_blocks_do_not_cover_all_rows
         component_prefix="partial",
     )
 
-    try:
-        output_plan_for((partial,))
-    except ValueError as exc:
-        assert "cover every logical output row" in str(exc)
-    else:
-        raise AssertionError("expected incomplete output-plan coverage to fail")
+    analysis = analyze_output_plan(output_plan_for((partial,)))
+
+    assert analysis.result_ciphertexts == 1
+    assert analysis.implicit_zero_coordinates == 2
 
 
 def test_real_cssc_publication_is_deterministic_and_keeps_signed_values() -> None:

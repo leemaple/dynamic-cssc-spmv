@@ -308,7 +308,7 @@ def publish_component(
 
 
 def output_plan_for(components: Sequence[PublishedComponent]) -> OutputPlan:
-    """Build the version-matched reconstruction plan from published component RowMaps."""
+    """Build a version-matched plan; rows without contributors reconstruct as zero."""
 
     if not isinstance(components, Sequence) or isinstance(components, (str, bytes)):
         raise ValueError("components must be a sequence of PublishedComponent values")
@@ -359,15 +359,6 @@ def output_plan_for(components: Sequence[PublishedComponent]) -> OutputPlan:
                     slot_to_logical=tuple(enumerate(active_row_map)),
                 )
             )
-    if not shares:
-        raise ValueError("at least one component block must contain a CSSC chunk")
-    covered_rows = {
-        logical_row
-        for share in shares
-        for _, logical_row in share.slot_to_logical
-    }
-    if covered_rows != set(range(reference.layout_spec.rows)):
-        raise ValueError("materialized component blocks must cover every logical output row")
     return OutputPlan(
         logical_output_size=reference.layout_spec.rows,
         slot_count=reference.layout_spec.effective_slots,
