@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -105,8 +106,14 @@ int main(int argc, char** argv) {
             multiplicativeDepth,
             evalAddCount,
             keySwitchCount);
-        const auto contextEvalAddCount = context->GetCryptoParameters()->GetEvalAddCount();
-        const auto contextKeySwitchCount = context->GetCryptoParameters()->GetKeySwitchCount();
+        const auto cryptoParameters = std::dynamic_pointer_cast<CryptoParametersBFVRNS>(
+            context->GetCryptoParameters());
+        if (!cryptoParameters) {
+            std::cerr << "generated context does not expose BFVRNS parameters\n";
+            return 7;
+        }
+        const auto contextEvalAddCount = cryptoParameters->GetEvalAddCount();
+        const auto contextKeySwitchCount = cryptoParameters->GetKeySwitchCount();
         if (contextEvalAddCount != evalAddCount || contextKeySwitchCount != keySwitchCount) {
             std::cerr << "generated context does not preserve the frozen noise-budget counts\n";
             return 7;

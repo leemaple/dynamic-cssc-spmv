@@ -29,4 +29,13 @@ def test_p0a_build_pipelines_fail_closed() -> None:
 
 def test_openfhe_user_include_contract_is_complete() -> None:
     cmake = (ROOT / "cpp/CMakeLists.txt").read_text()
+    include_block = cmake.split("include_directories(", 1)[1].split(")", 1)[0]
+    assert include_block.lstrip().startswith("SYSTEM")
     assert "${OpenFHE_INCLUDE}/binfhe" in cmake
+
+
+def test_rotation_probe_reads_counts_from_bfvrns_parameters() -> None:
+    probe = (ROOT / "cpp/rotation_probe.cpp").read_text()
+    assert "dynamic_pointer_cast<CryptoParametersBFVRNS>" in probe
+    assert "cryptoParameters->GetEvalAddCount()" in probe
+    assert "cryptoParameters->GetKeySwitchCount()" in probe

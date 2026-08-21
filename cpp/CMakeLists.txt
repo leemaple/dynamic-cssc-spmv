@@ -12,7 +12,7 @@ message(STATUS "OpenFHE include: ${OpenFHE_INCLUDE}")
 message(STATUS "OpenFHE libraries: ${OpenFHE_LIBDIR}")
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenFHE_CXX_FLAGS}")
-include_directories(
+include_directories(SYSTEM
   ${OPENMP_INCLUDES}
   ${OpenFHE_INCLUDE}
   ${OpenFHE_INCLUDE}/third-party/include
