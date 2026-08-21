@@ -51,7 +51,7 @@ def main() -> int:
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
-    return 0
+    return 0 if layout_exists else 1
 
 
 if __name__ == "__main__":
