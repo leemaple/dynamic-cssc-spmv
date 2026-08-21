@@ -1,0 +1,21 @@
+{
+  "source": "placeholder-not-measured",
+  "status": "predicted-placeholder",
+  "milliseconds": {
+    "encode": 0.0,
+    "encrypt": 0.0,
+    "serialize_ciphertext": 0.0,
+    "deserialize_ciphertext": 0.0,
+    "eval_mult_with_relinearization": 0.0,
+    "eval_rotate": 0.0,
+    "eval_add_ciphertext": 0.0,
+    "eval_add_plaintext": 0.0,
+    "eval_mult_plaintext_mask": 0.0,
+    "decrypt": 0.0,
+    "client_reorder_merge": 0.0
+  },
+  "bytes": {
+    "ciphertext": 0,
+    "rotation_keys_total": 0
+  }
+}

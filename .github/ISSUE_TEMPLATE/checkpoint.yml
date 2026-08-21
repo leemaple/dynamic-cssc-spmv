@@ -1,0 +1,22 @@
+name: Research checkpoint
+about: Track one auditable project gate
+body:
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Stage
+      options: [P-1, P0a, Day 1, P0b/Day 2, Minimal prototype, Paper freeze]
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and artifact IDs
+    validations:
+      required: true
+  - type: textarea
+    id: verdict
+    attributes:
+      label: PASS / FAIL / UNPROVEN / KILLED and rationale
+    validations:
+      required: true

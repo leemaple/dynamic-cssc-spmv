@@ -1,0 +1,63 @@
+{
+  "manifest_version": "0.1.0",
+  "project": "dynamic-cssc-spmv",
+  "frozen_at": "2026-08-21T00:00:00Z",
+  "functional_mode": "F1-M-hidden-rowmap",
+  "roles": {
+    "matrix_owner": "Client A",
+    "query_owner_and_secret_key_holder": "Client B",
+    "result_recipient": "Client B",
+    "cloud": "semi-honest non-colluding evaluator",
+    "mask_generator": "Client A"
+  },
+  "blinding": {
+    "enabled": true,
+    "mode": "encrypted-one-time-zero-sum",
+    "rowmap_visibility_to_cloud": false,
+    "mask_reuse_allowed": false,
+    "mask_binding": ["query_id", "version_id", "component_id", "output_block_id"]
+  },
+  "matrix": {
+    "rows": 4096,
+    "cols": 4096,
+    "dimension_mode": "fixed",
+    "vertex_universe_rule": "predeclare-full-range"
+  },
+  "packing": {
+    "mode": "single-batching-row",
+    "total_slots": 8192,
+    "row_slots": 4096,
+    "effective_slots": 4096
+  },
+  "openfhe": {
+    "repository": "https://github.com/openfheorg/openfhe-development.git",
+    "version": "1.5.1",
+    "commit": "1306d14f8c26bb6150d3e6ad54f28dfe1007689e",
+    "scheme": "BFVRNS",
+    "ring_dimension": 8192,
+    "plaintext_modulus": 65537,
+    "batch_size": 8192,
+    "security_level": "HEStd_128_classic",
+    "multiplicative_depth": 2,
+    "key_switch_technique": "HYBRID",
+    "bfv_multiplication_technique": "HPSPOVERQLEVELED",
+    "eval_add_count": 128,
+    "key_switch_count": 16
+  },
+  "runtime": {
+    "omp_threads": 2,
+    "cpu_affinity": "0-1",
+    "warmup_repetitions": 3,
+    "measurement_repetitions": 11
+  },
+  "freshness": {
+    "max_seconds": 1.0,
+    "microbatch_max_updates": 64,
+    "query_requires_latest": true
+  },
+  "provenance": {
+    "predicted_and_measured_must_be_separate": true,
+    "held_out_required": true,
+    "seed": 20260821
+  }
+}

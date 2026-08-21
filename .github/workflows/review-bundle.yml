@@ -1,0 +1,48 @@
+name: Assemble external expert review bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: Review stage label, e.g. R1-P0a or R3-Day2
+        required: true
+        default: 'manual'
+      source_run_id:
+        description: Optional workflow run ID whose artifacts should be included
+        required: false
+        default: ''
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download source-run artifacts when supplied
+        if: ${{ inputs.source_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          mkdir -p imported-artifacts
+          gh run download "$RUN_ID" --dir imported-artifacts
+      - name: Build review package
+        run: >-
+          python scripts/package_review_bundle.py
+          --stage '${{ inputs.stage }}'
+          --output-dir artifacts
+          --include imported-artifacts
+      - name: Upload expert-review package
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-pack-${{ inputs.stage }}-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 60

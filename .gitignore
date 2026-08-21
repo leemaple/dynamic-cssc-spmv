@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+build/
+cmake-build-*/
+_openfhe/
+results/*
+!results/README.md
+artifacts/
+*.log
+.DS_Store

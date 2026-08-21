@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Dynamic CSSC parameter manifest",
+  "type": "object",
+  "required": ["manifest_version", "functional_mode", "roles", "blinding", "matrix", "packing", "openfhe", "runtime", "freshness", "provenance"],
+  "properties": {
+    "functional_mode": {"enum": ["F1-M-hidden-rowmap", "F1-M-public-rowmap", "F1-L", "F2"]},
+    "matrix": {
+      "type": "object",
+      "required": ["rows", "cols", "dimension_mode"],
+      "properties": {
+        "rows": {"type": "integer", "minimum": 1},
+        "cols": {"type": "integer", "minimum": 1},
+        "dimension_mode": {"const": "fixed"}
+      }
+    },
+    "openfhe": {
+      "type": "object",
+      "required": ["version", "commit", "scheme", "ring_dimension", "plaintext_modulus", "batch_size", "security_level", "multiplicative_depth"],
+      "properties": {
+        "scheme": {"const": "BFVRNS"},
+        "ring_dimension": {"type": "integer", "minimum": 1024},
+        "plaintext_modulus": {"type": "integer", "minimum": 3},
+        "batch_size": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

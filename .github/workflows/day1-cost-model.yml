@@ -1,0 +1,61 @@
+name: Day 1 skewed-layout cost model
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: Deterministic random seed
+        required: true
+        default: '20260821'
+      updates:
+        description: Updates per synthetic workload
+        required: true
+        default: '2048'
+
+permissions:
+  contents: read
+
+jobs:
+  day1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install and validate
+        run: |
+          python -m pip install -e '.[dev]'
+          python scripts/validate_manifest.py config/params_manifest.json
+          pytest -q
+      - name: Run held-out synthetic suite
+        run: >-
+          python scripts/run_day1_suite.py
+          --output-dir results/day1
+          --seed '${{ inputs.seed }}'
+          --updates '${{ inputs.updates }}'
+      - name: Guard against false gate claims
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('results/day1/SUITE_STATUS.json'))
+          assert p['status'] == 'synthetic-predicted-proxy-not-a-48h-gate-verdict'
+          print('Synthetic suite completed; no paper gate verdict issued.')
+          PY
+      - name: Create R2 audit bundle
+        run: >-
+          python scripts/package_review_bundle.py
+          --stage R2-Day1-synthetic
+          --output-dir artifacts
+          --include results/day1
+      - name: Upload Day 1 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: r2-day1-${{ github.sha }}-${{ inputs.seed }}
+          path: |
+            results/day1/
+            artifacts/
+          if-no-files-found: error
+          retention-days: 30

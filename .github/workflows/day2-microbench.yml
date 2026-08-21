@@ -1,0 +1,100 @@
+name: P0b and Day 2 OpenFHE microbench
+
+on:
+  workflow_dispatch:
+    inputs:
+      rotation_indices:
+        description: Required indices produced by Day 1/P0a, comma-separated
+        required: true
+        default: '1,-1,2,-2,4,-4,8,-8'
+      seed:
+        description: Seed used to regenerate the matching model-count smoke set
+        required: true
+        default: '20260821'
+
+permissions:
+  contents: read
+
+jobs:
+  day2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      BUILD_JOBS: '2'
+      OMP_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libomp-dev
+      - name: Install and validate
+        run: |
+          python -m pip install -e '.[dev]'
+          python scripts/validate_manifest.py config/params_manifest.json
+      - name: Cache pinned OpenFHE build
+        uses: actions/cache@v4
+        with:
+          path: _openfhe
+          key: openfhe-${{ runner.os }}-1306d14f8c26bb6150d3e6ad54f28dfe1007689e-gcc
+      - name: Build OpenFHE and probes
+        run: |
+          scripts/bootstrap_openfhe.sh 2>&1 | tee results/day2-openfhe-build.log
+          scripts/build_cpp.sh 2>&1 | tee results/day2-probe-build.log
+      - name: Run measured microbenchmarks
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p results/day2 results/day2-model
+          RING_DIM=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['ring_dimension'])")
+          PTM=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['plaintext_modulus'])")
+          BATCH=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['batch_size'])")
+          DEPTH=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['multiplicative_depth'])")
+          WARMUPS=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['runtime']['warmup_repetitions'])")
+          REPS=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['runtime']['measurement_repetitions'])")
+          build/cpp/openfhe_microbench \
+            --output results/day2/openfhe_microbench.json \
+            --ring-dim "$RING_DIM" \
+            --plaintext-modulus "$PTM" \
+            --batch-size "$BATCH" \
+            --multiplicative-depth "$DEPTH" \
+            --warmups "$WARMUPS" \
+            --repetitions "$REPS" \
+            --indices '${{ inputs.rotation_indices }}' \
+            2>&1 | tee results/day2/microbench.log
+          printf '%s\n' '${{ inputs.rotation_indices }}' > results/day2/required_rotation_indices.txt
+      - name: Regenerate model counts and apply measured unit costs
+        run: |
+          python -m dynamic_cssc.cli smoke \
+            --output-dir results/day2-model \
+            --seed '${{ inputs.seed }}' \
+            --workload zipf
+          python scripts/apply_microbench.py \
+            --model-csv results/day2-model/metrics.csv \
+            --microbench results/day2/openfhe_microbench.json \
+            --output results/day2/model_counts_x_measured_unit_costs.json
+      - name: Create R3 audit bundle
+        if: always()
+        run: >-
+          python scripts/package_review_bundle.py
+          --stage R3-Day2
+          --output-dir artifacts
+          --include results/day2
+          --include results/day2-model
+          --include results/day2-openfhe-build.log
+          --include results/day2-probe-build.log
+      - name: Upload Day 2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r3-day2-${{ github.sha }}
+          path: |
+            results/day2/
+            results/day2-model/
+            results/day2-openfhe-build.log
+            results/day2-probe-build.log
+            artifacts/
+          if-no-files-found: warn
+          retention-days: 30

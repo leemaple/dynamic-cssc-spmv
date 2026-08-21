@@ -1,0 +1,82 @@
+name: P0a BFV packed-layout probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      indices:
+        description: Comma-separated direct rotation indices to probe
+        required: false
+        default: '1,-1,2,-2,4,-4,8,-8,16,-16,32,-32,64,-64,128,-128,256,-256,512,-512,1024,-1024,2048,-2048,4095,-4095,4096'
+
+permissions:
+  contents: read
+
+jobs:
+  p0a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      BUILD_JOBS: '2'
+      OMP_NUM_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libomp-dev
+      - name: Install Python tooling and validate P-1
+        run: |
+          python -m pip install -e '.[dev]'
+          python scripts/validate_manifest.py config/params_manifest.json
+      - name: Cache pinned OpenFHE build
+        uses: actions/cache@v4
+        with:
+          path: _openfhe
+          key: openfhe-${{ runner.os }}-1306d14f8c26bb6150d3e6ad54f28dfe1007689e-gcc
+      - name: Build pinned OpenFHE
+        run: scripts/bootstrap_openfhe.sh 2>&1 | tee results/p0a-openfhe-build.log
+      - name: Build probes
+        run: scripts/build_cpp.sh 2>&1 | tee results/p0a-probe-build.log
+      - name: Run P0a
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p results/p0a
+          RING_DIM=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['ring_dimension'])")
+          PTM=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['plaintext_modulus'])")
+          BATCH=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['batch_size'])")
+          DEPTH=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['multiplicative_depth'])")
+          build/cpp/rotation_probe \
+            --output results/p0a/rotation_layout.json \
+            --ring-dim "$RING_DIM" \
+            --plaintext-modulus "$PTM" \
+            --batch-size "$BATCH" \
+            --multiplicative-depth "$DEPTH" \
+            --indices '${{ inputs.indices }}' \
+            2>&1 | tee results/p0a/rotation-probe.log
+          python scripts/make_logical_rotation_plan.py \
+            results/p0a/rotation_layout.json \
+            results/p0a/logical_rotation_plan.json
+      - name: Create R1 audit bundle
+        if: always()
+        run: >-
+          python scripts/package_review_bundle.py
+          --stage R1-P0a
+          --output-dir artifacts
+          --include results/p0a
+          --include results/p0a-openfhe-build.log
+          --include results/p0a-probe-build.log
+      - name: Upload P0a evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r1-p0a-${{ github.sha }}
+          path: |
+            results/p0a/
+            results/p0a-openfhe-build.log
+            results/p0a-probe-build.log
+            artifacts/
+          if-no-files-found: warn
+          retention-days: 30
