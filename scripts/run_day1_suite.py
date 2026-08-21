@@ -4,12 +4,14 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Iterable
+from dataclasses import asdict
 from fractions import Fraction
 from pathlib import Path
 
 from dynamic_cssc.events import Event, EventKind, publication_windows
 from dynamic_cssc.manifest import load_manifest
 from dynamic_cssc.metrics import UnitCosts
+from dynamic_cssc.preflight import run_day1_preflight
 from dynamic_cssc.report import write_checksums, write_plots, write_records, write_summary
 from dynamic_cssc.simulator import SimulationConfig, simulate
 from dynamic_cssc.span80 import span80_curve
@@ -72,6 +74,7 @@ def main() -> int:
     args = parser.parse_args()
 
     manifest = load_manifest(args.manifest)
+    preflight_report = run_day1_preflight(manifest)
     experiment_plan = json.loads(Path(args.experiment_plan).read_text(encoding="utf-8"))
     split = experiment_plan["split"]
     warmup_fraction = float(split["warmup"])
@@ -101,6 +104,7 @@ def main() -> int:
         "status": "synthetic-predicted-proxy-not-a-48h-gate-verdict",
         "seed": args.seed,
         "experiment_plan": str(args.experiment_plan),
+        "preflight": asdict(preflight_report),
         "workloads": [],
     }
 
