@@ -46,9 +46,19 @@ minimal OpenFHE prototype
 
 ## Strategy classes
 
-Reference strategies: Static-CSSC, PaddingReuse, ReservedSlack, Mini-CSSC-Delta, Packed-COO/HYB, Strict LocalRepack, and PeriodicRepack.
+The implemented fixed-candidate set includes PaddingReuse, ReservedSlack,
+Mini-CSSC-Delta, `Packed-COO-Client-Lane-Delta`, Strict LocalRepack, and PeriodicRepack.
+The packed-COO client-lane candidate returns evaluated segment lanes for OutputPlan-guided
+client reconstruction; it is not the strong cloud-segmented Packed-COO baseline.
+
+The strong cloud-segmented Packed-COO baseline has no defined executable schedule under
+the v2.1b F1-M Hidden-RowMap contract and is deferred. The current set is therefore a
+partial reference set: repository status and generated Day 1 artifacts use
+`complete_reference_set=false`, name `strong-packed-coo` as the missing baseline, and keep
+the Day 1 full-baseline verdict on HOLD. No current result may be described as an
+all-fixed-reference or six-reference comparison.
 
 Candidate contributions: causal maintenance selection, new overflow layout,
-cloud/client merge selection, version/freshness protocol, and complete Hidden-RowMap
-F1-M accounting. An offline held-out oracle is a comparison bound, not a candidate
-algorithm.
+cloud/client merge selection, version/freshness protocol, and explicit Hidden-RowMap
+F1-M result/decrypt/reorder/merge/mask accounting, with bandwidth deferred. An offline
+held-out oracle is a comparison bound, not a candidate algorithm.

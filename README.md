@@ -7,9 +7,11 @@ Research repository for an update-aware maintenance layer around ciphertext–ci
 - Project direction: **GO**
 - Original whole-block RM-aligned ELLPACK delta: **KILLED**
 - Completed gates: **R0 + P0a PASS** at `eb15adf5da22f600a31d4b62897ed35c1ecde2e2`
-- Current gate: **real CSSC publication state → causal Day 1 preflight**
-- Day 1 status: **HOLD** until persistent strategy state and real global ColumnIndex /
-  RowMap execution are merged; Day 2 remains downstream of the resulting operation plan
+- Current gate: **partial-reference causal Day 1 evidence → full-baseline completion**
+- Day 1 full-baseline status: **HOLD**. Artifacts must report
+  `complete_reference_set=false` and identify `strong-packed-coo` as a deferred/missing
+  baseline; the implemented packed-COO candidate is client-lane reconstruction, not the
+  strong cloud-segmented baseline. Day 2 remains downstream of the resulting operation plan
 - Main functional mode: **F1-M**, with output-component leakage prevented by one-time zero-sum blinding
 - OpenFHE baseline: **v1.5.1**, pinned by commit in `config/params_manifest.json`
 
@@ -25,7 +27,7 @@ the private GitHub release
 |---|---|---|
 | P-1 | Freeze roles, leakage mode, dimensions, packing, and OpenFHE parameters | `ci.yml` |
 | P0a | Probe actual BFV packed-slot rotation semantics | `p0a-rotation-probe.yml` |
-| Day 1 | Run causal layout/cost simulation after its explicit HOLD conditions close | `day1-cost-model.yml` |
+| Day 1 | Produce partial-reference causal artifacts; full-baseline verdict remains on HOLD | `day1-cost-model.yml` |
 | P0b / Day 2 | Generate only required rotation keys and run OpenFHE microbenchmarks | `day2-microbench.yml` |
 | Review pack | Produce a SHA-256-addressed audit bundle for an external expert | `review-bundle.yml` |
 

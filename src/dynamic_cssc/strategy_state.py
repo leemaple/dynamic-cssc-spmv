@@ -20,7 +20,7 @@ StrategyKind: TypeAlias = Literal[
     "PaddingReuse-CSSC",
     "ReservedSlack-CSSC",
     "Mini-CSSC-Delta",
-    "Packed-COO-HYB-Delta",
+    "Packed-COO-Client-Lane-Delta",
     "Strict-LocalRepack",
     "PeriodicRepack",
 ]
@@ -32,7 +32,7 @@ STRATEGIES: tuple[StrategyKind, ...] = (
     "PaddingReuse-CSSC",
     "ReservedSlack-CSSC",
     "Mini-CSSC-Delta",
-    "Packed-COO-HYB-Delta",
+    "Packed-COO-Client-Lane-Delta",
     "Strict-LocalRepack",
     "PeriodicRepack",
 )
@@ -163,7 +163,7 @@ def _validate_config(
     packed_coo_segment_capacity = _positive_int(
         packed_coo_segment_capacity, "packed_coo_segment_capacity"
     )
-    if strategy == "Packed-COO-HYB-Delta" and (
+    if strategy == "Packed-COO-Client-Lane-Delta" and (
         packed_coo_segment_capacity > effective_slots
     ):
         raise ValueError(
@@ -639,7 +639,7 @@ def assert_strategy_invariants(state: StrategyState) -> None:
         _assert_component_invariants(component, state.config)
     if state.strategy not in {"Mini-CSSC-Delta", "PeriodicRepack"} and state.delta:
         raise AssertionError("only CSSC-delta strategies may own a delta component")
-    if state.strategy != "Packed-COO-HYB-Delta" and state.coo_segments:
+    if state.strategy != "Packed-COO-Client-Lane-Delta" and state.coo_segments:
         raise AssertionError("only Packed-COO may own fixed COO segments")
     segment_ids: set[str] = set()
     coo_coordinates: set[Coordinate] = set()
@@ -927,7 +927,7 @@ def advance_publication(
             version_ordinal=version_ordinal,
             version_id=version_id,
         )
-    if state.strategy == "Packed-COO-HYB-Delta":
+    if state.strategy == "Packed-COO-Client-Lane-Delta":
         return _advance_packed_coo(
             state,
             window,
@@ -968,7 +968,7 @@ def _active_component_ids(state: StrategyState) -> tuple[str, ...]:
 
 
 def _output_plan_for_state(state: StrategyState) -> OutputPlan:
-    if state.strategy == "Packed-COO-HYB-Delta":
+    if state.strategy == "Packed-COO-Client-Lane-Delta":
         return _packed_coo_output_plan(state)
     components = (state.base,) if state.delta is None else (state.base, state.delta)
     return _checked_output_plan(components)

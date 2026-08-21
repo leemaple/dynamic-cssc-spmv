@@ -184,7 +184,7 @@ def test_packed_coo_target_excludes_overflow_absorbed_by_a_reused_segment_lane()
     result = simulate_targets(
         windows,
         {(0, 0): 1, (0, 1): 2, (1, 0): 3, (1, 1): 4},
-        [SimulationTarget("coo", "Packed-COO-HYB-Delta", config)],
+        [SimulationTarget("coo", "Packed-COO-Client-Lane-Delta", config)],
         measure_from=1,
     )["coo"]
 
@@ -295,7 +295,7 @@ def test_packed_coo_query_accounting_uses_client_lane_outputs() -> None:
             {(0, 0): 1, (1, 0): 2},
             _config(effective_slots=3, packed_coo_segment_capacity=3),
         )
-    }["Packed-COO-HYB-Delta"]
+    }["Packed-COO-Client-Lane-Delta"]
 
     assert (
         metrics.query_ciphertexts,
@@ -391,7 +391,7 @@ def test_packed_coo_cloud_operations_ignore_logical_rowmap_labels() -> None:
             {(0, 0): 1, (0, 1): 1, (1, 0): 1},
             config,
         )
-    }["Packed-COO-HYB-Delta"]
+    }["Packed-COO-Client-Lane-Delta"]
     right = {
         item.strategy: item
         for item in simulate(
@@ -399,7 +399,7 @@ def test_packed_coo_cloud_operations_ignore_logical_rowmap_labels() -> None:
             {(0, 0): 1, (1, 0): 1, (1, 1): 1},
             config,
         )
-    }["Packed-COO-HYB-Delta"]
+    }["Packed-COO-Client-Lane-Delta"]
 
     cloud_fields = (
         "query_ciphertexts",

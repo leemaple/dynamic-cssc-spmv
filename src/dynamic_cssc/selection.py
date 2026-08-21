@@ -14,7 +14,7 @@ CandidateStrategy: TypeAlias = Literal[
     "PaddingReuse-CSSC",
     "ReservedSlack-CSSC",
     "Mini-CSSC-Delta",
-    "Packed-COO-HYB-Delta",
+    "Packed-COO-Client-Lane-Delta",
     "Strict-LocalRepack",
     "PeriodicRepack",
 ]
@@ -128,8 +128,8 @@ def build_fixed_candidates(
         FixedCandidate("padding-reuse", "PaddingReuse-CSSC"),
         FixedCandidate("mini-cssc-delta", "Mini-CSSC-Delta"),
         FixedCandidate(
-            "packed-coo-hyb-delta/capacity=128",
-            "Packed-COO-HYB-Delta",
+            "packed-coo-client-lane-delta/capacity=128",
+            "Packed-COO-Client-Lane-Delta",
             packed_coo_segment_capacity=128,
         ),
         FixedCandidate("strict-local-repack", "Strict-LocalRepack"),

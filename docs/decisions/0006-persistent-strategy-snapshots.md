@@ -23,3 +23,27 @@ column count. `beta = 0` reserves no lanes. For `beta > 0`, even an empty logica
 deliberately owns a physical reserved lane and incurs its complete publication and query
 cost. This intentionally overrides implicit-zero reconstruction for that row; the lane is
 real reserved capacity, not a fabricated logical contributor.
+
+## Packed-COO identity and baseline boundary
+
+The implemented packed-COO candidate is `Packed-COO-Client-Lane-Delta`, with canonical
+candidate ID `packed-coo-client-lane-delta/capacity=<actual capacity>`. Fixed COO segment
+lanes are evaluated at the Cloud and returned without cloud-side row aggregation; the
+clients use the version-bound OutputPlan to reorder and merge them into logical outputs.
+The internal representation and update accounting remain packed COO.
+
+This is not the original `Packed-COO-HYB-Delta` strong baseline. That baseline requires
+the Cloud to perform segmented aggregation by logical row. Under the v2.1b F1-M
+Hidden-RowMap contract, the Cloud does not receive the RowMap, and neither the original
+task nor the protocol patch defines an executable schedule that lets it derive those
+segments without the hidden row labels. The strong cloud-segmented baseline is therefore
+deferred and unimplemented; the client-lane candidate must not be relabeled as HYB to
+make the reference set appear complete.
+
+The client-lane cost path fully charges returned result ciphertexts, decryptions, client
+reorder elements, client modular additions, and the F1-M one-time mask ciphertexts,
+encryptions, additions, random elements, and mapped elements. Bandwidth cost remains
+deferred. Consequently Day 1 artifacts must report `complete_reference_set=false`, list
+`strong-packed-coo` as a missing/deferred baseline, and remain in full-baseline HOLD.
+They do not support claims that all fixed references, a six-reference comparison, or a
+complete baseline suite has been implemented.

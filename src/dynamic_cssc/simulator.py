@@ -112,7 +112,7 @@ def _metrics_for(transition: Transition) -> StrategyMetrics:
                 for chunk in block.chunks
             )
 
-    if state.strategy == "Packed-COO-HYB-Delta":
+    if state.strategy == "Packed-COO-Client-Lane-Delta":
         active_segments = sum(
             any(entry is not None and entry.value != 0 for entry in segment.entries)
             for segment in state.coo_segments

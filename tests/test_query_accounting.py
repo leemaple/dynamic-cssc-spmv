@@ -244,7 +244,7 @@ def test_simulator_returns_only_fixed_metrics_and_leaves_oracle_to_runner() -> N
         "PaddingReuse-CSSC",
         "ReservedSlack-CSSC",
         "Mini-CSSC-Delta",
-        "Packed-COO-HYB-Delta",
+        "Packed-COO-Client-Lane-Delta",
         "Strict-LocalRepack",
         "PeriodicRepack",
     }

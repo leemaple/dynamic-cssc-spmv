@@ -91,7 +91,7 @@ def test_invalid_window_is_rejected_without_mutating_state(
 
 def test_window_row_bound_is_checked_after_all_updates_atomically() -> None:
     state = initialize_strategy(
-        "Packed-COO-HYB-Delta",
+        "Packed-COO-Client-Lane-Delta",
         {(0, 0): 1},
         rows=2,
         cols=4,
@@ -508,7 +508,7 @@ def test_periodic_full_fold_does_not_also_count_discarded_point_patch_actions() 
 
 def test_packed_coo_batches_overflow_and_reuses_fixed_segment_holes() -> None:
     state = initialize_strategy(
-        "Packed-COO-HYB-Delta",
+        "Packed-COO-Client-Lane-Delta",
         {(0, 0): 1, (0, 1): 2, (1, 0): 3, (1, 1): 4},
         rows=2,
         cols=8,
@@ -571,7 +571,7 @@ def test_packed_coo_batches_overflow_and_reuses_fixed_segment_holes() -> None:
 
 def test_packed_coo_delete_retains_old_ci_until_one_time_lane_reuse() -> None:
     state = initialize_strategy(
-        "Packed-COO-HYB-Delta",
+        "Packed-COO-Client-Lane-Delta",
         {(0, 0): 1, (1, 0): 2},
         rows=2,
         cols=8,
@@ -610,7 +610,7 @@ def test_packed_coo_delete_retains_old_ci_until_one_time_lane_reuse() -> None:
 
 def test_packed_coo_returns_each_active_entry_lane_for_client_reconstruction() -> None:
     state = initialize_strategy(
-        "Packed-COO-HYB-Delta",
+        "Packed-COO-Client-Lane-Delta",
         {(0, 0): 1, (1, 0): 2},
         rows=2,
         cols=8,
@@ -648,7 +648,7 @@ def test_packed_coo_returns_each_active_entry_lane_for_client_reconstruction() -
 
 def test_all_active_components_advance_to_one_version() -> None:
     state = initialize_strategy(
-        "Packed-COO-HYB-Delta",
+        "Packed-COO-Client-Lane-Delta",
         {(0, 0): 1, (1, 0): 2},
         rows=2,
         cols=6,
