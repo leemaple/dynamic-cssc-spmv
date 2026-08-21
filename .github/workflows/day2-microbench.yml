@@ -61,6 +61,7 @@ jobs:
             --plaintext-modulus "$PTM" \
             --batch-size "$BATCH" \
             --multiplicative-depth "$DEPTH" \
+            --noise-budget-profile day2_mult_only \
             --warmups "$WARMUPS" \
             --repetitions "$REPS" \
             --indices '${{ inputs.rotation_indices }}' \

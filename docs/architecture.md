@@ -32,7 +32,8 @@ minimal OpenFHE prototype
   chunk. Client B generates an aligned reorganization-vector ciphertext per chunk;
   ColumnIndex values and component RowMaps remain hidden from the Cloud.
 - Client A and Client B both receive the complete versioned, RowMap-sensitive OutputPlan;
-  the Cloud does not. Client B uses it to reorder and combine decrypted Output Shares.
+  the Cloud receives only its canonical digest. Client B uses the complete plan to reorder
+  and combine decrypted Output Shares.
 - Output reconstruction uses `dynamic-cssc-output-plan-v1`. Only logical-coordinate
   overlap is zero-sum masked; disjoint Output Blocks are concatenated unmasked.
 - Client A atomically reserves each five-field mask binding in a persistent ledger before

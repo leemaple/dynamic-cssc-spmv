@@ -28,6 +28,10 @@ _Avoid_: Result ciphertext when coverage matters
 The complete per-version reconstruction map from Output Shares to the authorized logical output. Its full contents include RowMap-sensitive information.
 _Avoid_: Merge plan, layout metadata
 
+**OutputPlan Digest**:
+The public canonical hash that binds an evaluation to one OutputPlan without disclosing the RowMap-sensitive plan itself.
+_Avoid_: OutputPlan, RowMap
+
 **Contributor Multiplicity**:
 The number of Output Share lanes that reconstruct one Logical Coordinate. Multiplicity one means concatenate/reorder; larger multiplicity means modular summation and zero-sum blinding.
 

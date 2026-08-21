@@ -14,7 +14,8 @@ reconstruction, and receives the final logical result.
 
 The Hidden-RowMap ACL permits the Cloud to observe public parameters, ciphertext shapes
 and counts, opaque component/output-block identifiers, the operation schedule, and
-query/version identifiers. It forbids the Cloud from observing matrix/update values,
+query/version identifiers, including the canonical OutputPlan digest needed to bind
+encrypted masks. It forbids the Cloud from observing matrix/update values,
 the query vector, the secret key, component RowMaps or full OutputPlan, component
 ColumnIndex metadata, mask plaintexts, or unblinded component outputs. Client A and
 Client B may both read the complete component RowMaps and OutputPlan; this permission
@@ -52,6 +53,10 @@ the exact tuple
 ```text
 (query_id, version_id, output_plan_digest, component_id, output_block_id)
 ```
+
+All three parties may observe this digest so the Cloud can associate each encrypted mask
+with the evaluation it serves. The digest is a commitment identifier, not permission to
+receive the RowMap-sensitive OutputPlan preimage.
 
 Client A maintains a persistent per-query binding ledger. It atomically checks and
 reserves a binding before mask generation, rejects duplicates, and treats a reserved

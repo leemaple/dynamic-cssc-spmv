@@ -90,6 +90,74 @@ def test_query_side_counts_scale_with_queries_and_accumulate() -> None:
             assert getattr(four, field) == 4 * getattr(one, field)
 
 
+def test_cssc_query_counts_reduction_adds_masks_and_cross_chunk_merge() -> None:
+    initial = {
+        (row, col): 1
+        for row, width in enumerate((4, 2, 1))
+        for col in range(width)
+    }
+    config = SimulationConfig(rows=3, effective_slots=8, partition_rows=3)
+
+    metrics = {
+        item.strategy: item
+        for item in simulate([_query_window(0, 2)], initial, config)
+    }
+    padding = metrics["PaddingReuse-CSSC"]
+
+    # The two CSSC chunks have widths 2 and 2: two rotate-and-add steps,
+    # two non-identity lane masks, then one addition to merge the chunks.
+    assert padding.rotations == 4
+    assert padding.additions == 6
+    assert padding.plaintext_masks == 4
+
+
+def test_cssc_query_omits_identity_lane_mask() -> None:
+    initial = {(row, 0): 1 for row in range(4)}
+    config = SimulationConfig(rows=4, effective_slots=4, partition_rows=4)
+
+    metrics = {
+        item.strategy: item
+        for item in simulate([_query_window(0, 1)], initial, config)
+    }
+    padding = metrics["PaddingReuse-CSSC"]
+
+    assert padding.rotations == 0
+    assert padding.additions == 0
+    assert padding.plaintext_masks == 0
+
+
+def test_mini_cssc_accumulates_base_and_delta_query_operations() -> None:
+    initial = {
+        (row, col): 1
+        for row, width in enumerate((4, 2, 1))
+        for col in range(width)
+    }
+    window = PublicationWindow(
+        index=0,
+        start_time=0.0,
+        end_time=0.0,
+        updates=(NetUpdate(row=0, col=4, before=0, after=1),),
+        query_count=3,
+        reason="query",
+    )
+    config = SimulationConfig(
+        rows=3,
+        effective_slots=8,
+        partition_rows=3,
+        reserved_slack_beta=0.0,
+    )
+
+    metrics = {item.strategy: item for item in simulate([window], initial, config)}
+    mini = metrics["Mini-CSSC-Delta"]
+
+    # Base contributes (2 rotations, 3 adds, 2 masks); the one-row delta
+    # contributes (0 rotations, 0 adds, 1 non-identity mask), all per query.
+    assert mini.query_ciphertexts == 9
+    assert mini.rotations == 6
+    assert mini.additions == 9
+    assert mini.plaintext_masks == 9
+
+
 def test_report_costs_use_query_denominator_and_charge_masks_to_query() -> None:
     metrics = StrategyMetrics(
         "example",

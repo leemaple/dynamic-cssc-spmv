@@ -7,6 +7,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from dynamic_cssc.mask_ledger import MaskBinding, MaskBindingLedger
+
 OUTPUT_PLAN_FORMAT = "dynamic-cssc-output-plan-v1"
 OUTPUT_PLAN_DIGEST_ALGORITHM = "sha256-canonical-json-v1"
 
@@ -187,6 +189,7 @@ def prepare_f1m_masks(
     version_id: str,
     modulus: int,
     randbelow: Callable[[int], int],
+    ledger: MaskBindingLedger,
 ) -> tuple[PreparedMask, ...]:
     """Prepare physical encrypted-mask plaintexts for overlapping logical coordinates."""
 
@@ -204,6 +207,26 @@ def prepare_f1m_masks(
             contributors.setdefault(logical_coordinate, []).append(
                 (share.component_id, share.output_block_id, physical_slot)
             )
+
+    masked_share_ids = sorted(
+        {
+            (component_id, output_block_id)
+            for lanes in contributors.values()
+            if len(lanes) > 1
+            for component_id, output_block_id, _ in lanes
+        }
+    )
+    bindings: tuple[MaskBinding, ...] = tuple(
+        (
+            query_id,
+            version_id,
+            analysis.output_plan_digest,
+            component_id,
+            output_block_id,
+        )
+        for component_id, output_block_id in masked_share_ids
+    )
+    ledger.reserve_all(bindings)
 
     values_by_share: dict[tuple[str, str], list[int]] = {}
     for logical_coordinate in sorted(contributors):

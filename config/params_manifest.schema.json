@@ -77,11 +77,12 @@
             "cssc-metadata",
             "component-rowmaps-and-output-plan",
             "public-parameters",
-            "query-version-and-output-plan-identifiers"
+            "query-version-and-output-plan-identifiers",
+            "output-plan-digest"
           ],
           "items": {"type": "string"},
-          "minItems": 5,
-          "maxItems": 5,
+          "minItems": 6,
+          "maxItems": 6,
           "uniqueItems": true
         },
         "allowed_to_client_b": {
@@ -92,11 +93,12 @@
             "component-column-index-metadata",
             "component-rowmaps-and-output-plan",
             "blinded-component-outputs",
-            "final-logical-result"
+            "final-logical-result",
+            "output-plan-digest"
           ],
           "items": {"type": "string"},
-          "minItems": 6,
-          "maxItems": 6,
+          "minItems": 7,
+          "maxItems": 7,
           "uniqueItems": true
         },
         "allowed_to_cloud": {
@@ -106,11 +108,12 @@
             "ciphertext-shapes-and-counts",
             "component-and-output-block-identifiers",
             "operation-schedule",
-            "query-and-version-identifiers"
+            "query-and-version-identifiers",
+            "output-plan-digest"
           ],
           "items": {"type": "string"},
-          "minItems": 5,
-          "maxItems": 5,
+          "minItems": 6,
+          "maxItems": 6,
           "uniqueItems": true
         },
         "forbidden_to_cloud": {

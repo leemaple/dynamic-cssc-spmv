@@ -307,6 +307,28 @@ def test_full_output_plan_is_available_to_clients_but_forbidden_to_cloud(
     assert not _schema_accepts(broken, schema)
 
 
+def test_output_plan_digest_is_public_but_full_plan_remains_hidden_from_cloud() -> None:
+    data = json.loads((ROOT / "config" / "params_manifest.json").read_text())
+    schema = json.loads((ROOT / "config" / "params_manifest.schema.json").read_text())
+    leakage = data["leakage"]
+
+    for party_acl in (
+        "allowed_to_client_a",
+        "allowed_to_client_b",
+        "allowed_to_cloud",
+    ):
+        assert "output-plan-digest" in leakage[party_acl]
+
+        broken = copy.deepcopy(data)
+        broken["leakage"][party_acl].remove("output-plan-digest")
+        with pytest.raises(ManifestError, match="leakage"):
+            validate_manifest(broken)
+        assert not _schema_accepts(broken, schema)
+
+    assert "component-rowmaps-and-output-plan" not in leakage["allowed_to_cloud"]
+    assert "component-rowmaps-and-output-plan" in leakage["forbidden_to_cloud"]
+
+
 def test_frozen_at_schema_pattern_is_anchored() -> None:
     data = json.loads((ROOT / "config" / "params_manifest.json").read_text())
     schema = json.loads((ROOT / "config" / "params_manifest.schema.json").read_text())

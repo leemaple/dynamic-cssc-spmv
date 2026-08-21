@@ -20,6 +20,7 @@ LEAKAGE_ACL = {
         "component-rowmaps-and-output-plan",
         "public-parameters",
         "query-version-and-output-plan-identifiers",
+        "output-plan-digest",
     ],
     "allowed_to_client_b": [
         "query-vector-and-secret-key",
@@ -28,6 +29,7 @@ LEAKAGE_ACL = {
         "component-rowmaps-and-output-plan",
         "blinded-component-outputs",
         "final-logical-result",
+        "output-plan-digest",
     ],
     "allowed_to_cloud": [
         "public-parameters",
@@ -35,6 +37,7 @@ LEAKAGE_ACL = {
         "component-and-output-block-identifiers",
         "operation-schedule",
         "query-and-version-identifiers",
+        "output-plan-digest",
     ],
     "forbidden_to_cloud": [
         "matrix-and-update-values",

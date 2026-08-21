@@ -52,6 +52,7 @@ def test_runner_executes_each_ratio_from_experiment_plan(
     )
     output_dir = tmp_path / "out"
     query_every_values: list[int] = []
+    value_bounds: list[int] = []
     records: list[tuple[Path, dict[str, object]]] = []
 
     monkeypatch.setattr(run_day1_suite, "WORKLOADS", ("zipf",))
@@ -61,16 +62,21 @@ def test_runner_executes_each_ratio_from_experiment_plan(
         lambda _path: {
             "freshness": {"max_seconds": 10.0, "microbatch_max_updates": 100},
             "packing": {"effective_slots": 8},
+            "integer_correctness": {"matrix_entry_abs_bound": 7},
         },
     )
-    monkeypatch.setattr(
-        run_day1_suite,
-        "generate_initial_matrix",
-        lambda *_args, **_kwargs: {(0, 0): 1},
-    )
+
+    def fake_generate_initial_matrix(
+        *_args: object, **kwargs: object
+    ) -> dict[tuple[int, int], int]:
+        value_bounds.append(int(kwargs["matrix_entry_abs_bound"]))
+        return {(0, 0): 1}
+
+    monkeypatch.setattr(run_day1_suite, "generate_initial_matrix", fake_generate_initial_matrix)
 
     def fake_generate_event_stream(*_args: object, **kwargs: object) -> list[Event]:
         query_every_values.append(int(kwargs["query_every"]))
+        value_bounds.append(int(kwargs["matrix_entry_abs_bound"]))
         return [Event.set(float(index), 0, index, 1) for index in range(4)]
 
     monkeypatch.setattr(run_day1_suite, "generate_event_stream", fake_generate_event_stream)
@@ -106,6 +112,7 @@ def test_runner_executes_each_ratio_from_experiment_plan(
 
     assert run_day1_suite.main() == 0
     assert query_every_values == [0, 0]
+    assert value_bounds == [7, 7, 7]
     assert [metadata["queries_per_update_target"] for _, metadata in records] == [
         0.5,
         2.0,

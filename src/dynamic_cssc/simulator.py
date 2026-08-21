@@ -209,11 +209,21 @@ def _apply_output_plan_accounting(
     metrics.client_reorder_elements = queries * analysis.client_reorder_elements
 
 
-def _base_query_metrics(layout: CSSCLayout) -> tuple[int, int, int]:
+def _cssc_query_metrics(layout: CSSCLayout) -> tuple[int, int, int, int, int]:
+    rotations = layout.rotation_count_proxy
+    chunk_count = len(layout.chunks)
+    # Algorithm 4 masks every chunk before merging. The executable operation plan
+    # omits only an identity mask: a chunk whose height fills all effective slots
+    # has no invalid output lanes after its row-wise reduction.
+    plaintext_masks = sum(
+        chunk.height < layout.effective_slots for chunk in layout.chunks
+    )
     return (
         layout.query_ciphertext_count,
         layout.ciphertext_count,
-        layout.rotation_count_proxy,
+        rotations,
+        rotations + max(0, chunk_count - 1),
+        plaintext_masks,
     )
 
 
@@ -226,7 +236,9 @@ def evaluate_window(
 ) -> dict[str, StrategyMetrics]:
     updates = len(window.updates)
     queries = window.query_count
-    base_query_ct, base_mults, base_rots = _base_query_metrics(layout)
+    base_query_ct, base_mults, base_rots, base_adds, base_masks = (
+        _cssc_query_metrics(layout)
+    )
     dirty_partitions = {
         _partition(row, config.partition_rows) for row in shape.dirty_rows
     }
@@ -263,6 +275,8 @@ def evaluate_window(
     padding.query_ciphertexts = queries * base_query_ct
     padding.cc_multiplications = queries * base_mults
     padding.rotations = queries * base_rots
+    padding.additions = queries * base_adds
+    padding.plaintext_masks = queries * base_masks
     _apply_output_plan_accounting(padding, base_output_plan, queries)
     results[padding.strategy] = padding
 
@@ -276,10 +290,15 @@ def evaluate_window(
     reserved.query_ciphertexts = queries * base_query_ct
     reserved.cc_multiplications = queries * base_mults
     reserved.rotations = queries * base_rots
+    reserved.additions = queries * base_adds
+    reserved.plaintext_masks = queries * base_masks
     _apply_output_plan_accounting(reserved, base_output_plan, queries)
     results[reserved.strategy] = reserved
 
     delta_layout = build_cssc_layout(list(shape.overflow_by_row), config.effective_slots)
+    delta_query_ct, delta_mults, delta_rots, delta_adds, delta_masks = (
+        _cssc_query_metrics(delta_layout)
+    )
     mini = StrategyMetrics(
         "Mini-CSSC-Delta", "reference", windows=1, queries=queries, updates=updates
     )
@@ -287,11 +306,11 @@ def evaluate_window(
     mini.overflow_updates = overflow_total
     mini.update_encryptions = touched_chunks + delta_layout.ciphertext_count
     mini.update_ciphertexts = touched_chunks + delta_layout.ciphertext_count
-    mini.query_ciphertexts = queries * (
-        base_query_ct + delta_layout.query_ciphertext_count
-    )
-    mini.cc_multiplications = queries * (base_mults + delta_layout.ciphertext_count)
-    mini.rotations = queries * (base_rots + delta_layout.rotation_count_proxy)
+    mini.query_ciphertexts = queries * (base_query_ct + delta_query_ct)
+    mini.cc_multiplications = queries * (base_mults + delta_mults)
+    mini.rotations = queries * (base_rots + delta_rots)
+    mini.additions = queries * (base_adds + delta_adds)
+    mini.plaintext_masks = queries * (base_masks + delta_masks)
     _apply_output_plan_accounting(mini, _mini_output_plan(shape, config), queries)
     results[mini.strategy] = mini
 
@@ -309,10 +328,12 @@ def evaluate_window(
     coo.update_ciphertexts = touched_chunks + coo_ct
     coo.query_ciphertexts = queries * (base_query_ct + coo_ct)
     coo.cc_multiplications = queries * (base_mults + coo_ct)
-    coo.rotations = queries * (
-        base_rots + coo_ct * ceil(log2(max(1, config.packed_coo_segment_capacity)))
+    coo_delta_rotations = coo_ct * ceil(
+        log2(max(1, config.packed_coo_segment_capacity))
     )
-    coo.additions = coo.rotations
+    coo.rotations = queries * (base_rots + coo_delta_rotations)
+    coo.additions = queries * (base_adds + coo_delta_rotations)
+    coo.plaintext_masks = queries * base_masks
     _apply_output_plan_accounting(coo, _coo_output_plan(shape, config), queries)
     results[coo.strategy] = coo
 
@@ -334,6 +355,8 @@ def evaluate_window(
     local.query_ciphertexts = queries * base_query_ct
     local.cc_multiplications = queries * base_mults
     local.rotations = queries * base_rots
+    local.additions = queries * base_adds
+    local.plaintext_masks = queries * base_masks
     _apply_output_plan_accounting(local, base_output_plan, queries)
     results[local.strategy] = local
 
@@ -347,6 +370,8 @@ def evaluate_window(
     periodic.query_ciphertexts = queries * base_query_ct
     periodic.cc_multiplications = queries * base_mults
     periodic.rotations = queries * base_rots
+    periodic.additions = queries * base_adds
+    periodic.plaintext_masks = queries * base_masks
     _apply_output_plan_accounting(periodic, base_output_plan, queries)
     results[periodic.strategy] = periodic
 

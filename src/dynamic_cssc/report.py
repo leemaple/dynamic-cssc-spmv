@@ -65,9 +65,10 @@ def write_summary(
             (
                 "This report only checks that the accounting pipeline works and that all "
                 "split-output F1-M strategies pay their mask, download, decryption, and "
-                "client-merge costs. It is not evidence that any strategy is faster. The "
-                "research gate is decided only after P0b/Day-2 supplies measured OpenFHE "
-                "constants and the verdict is evaluated on a held-out real skewed stream."
+                "client-merge costs. It is not evidence that any strategy is faster. "
+                "P0b/Day-2 can replace isolated unit-cost proxies, but the result remains a "
+                "model prediction until an end-to-end OpenFHE prototype validates the "
+                "held-out interval."
             ),
             "",
         ]

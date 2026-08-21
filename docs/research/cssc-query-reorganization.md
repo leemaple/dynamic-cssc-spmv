@@ -1,7 +1,8 @@
 # CSSC query reorganization：一手材料窄范围核验
 
-核验日期：2026-08-22（Asia/Shanghai）  
-核验对象：Yang Gao 等，*Efficient Privacy-Preserving Sparse Matrix-Vector Multiplication Using Homomorphic Encryption*，arXiv:2603.04742v1 / *Information Sciences* 739 (2026) 123180。  
+核验日期：2026-08-22（Asia/Shanghai）
+
+核验对象：Yang Gao 等，*Efficient Privacy-Preserving Sparse Matrix-Vector Multiplication Using Homomorphic Encryption*，arXiv:2603.04742v1 / *Information Sciences* 739 (2026) 123180。
 范围：只核验 CSSC 的 `ColumnIndex`、Client A / Client B / Cloud 分工、Algorithm 1--3 的 query reorganization、query ciphertext 数量、全局列号与 slot 域、返回结果及 `RowMap` 语义。
 
 ## 1. 来源与证据边界

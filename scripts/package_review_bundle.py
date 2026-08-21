@@ -34,6 +34,7 @@ def main() -> int:
 
     core_paths = [
         "README.md",
+        "CONTEXT.md",
         "config",
         "docs",
         "src",

@@ -85,8 +85,15 @@ def main() -> int:
     ]
     if not ratio_grid:
         raise ValueError("queries_per_update_grid must not be empty")
+    matrix_entry_abs_bound = int(
+        manifest["integer_correctness"]["matrix_entry_abs_bound"]
+    )
     initial = generate_initial_matrix(
-        args.rows, args.cols, args.nnz_per_row, seed=args.seed
+        args.rows,
+        args.cols,
+        args.nnz_per_row,
+        seed=args.seed,
+        matrix_entry_abs_bound=matrix_entry_abs_bound,
     )
     freshness = manifest["freshness"]
     costs = UnitCosts()
@@ -107,6 +114,7 @@ def main() -> int:
                 update_count=args.updates,
                 seed=args.seed + offset + 1,
                 query_every=0,
+                matrix_entry_abs_bound=matrix_entry_abs_bound,
             )
             events = insert_queries_by_ratio(base_events, ratio)
             windows = list(
