@@ -48,17 +48,27 @@ jobs:
           PTM=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['plaintext_modulus'])")
           BATCH=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['batch_size'])")
           DEPTH=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['multiplicative_depth'])")
+          EVAL_ADDS=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['eval_add_count'])")
+          KEY_SWITCHES=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['key_switch_count'])")
+          set +e
           build/cpp/rotation_probe \
             --output results/p0a/rotation_layout.json \
             --ring-dim "$RING_DIM" \
             --plaintext-modulus "$PTM" \
             --batch-size "$BATCH" \
             --multiplicative-depth "$DEPTH" \
+            --eval-add-count "$EVAL_ADDS" \
+            --key-switch-count "$KEY_SWITCHES" \
             --indices '${{ inputs.indices }}' \
             2>&1 | tee results/p0a/rotation-probe.log
+          PROBE_PIPE_STATUS=("${PIPESTATUS[@]}")
+          set -e
           python scripts/make_logical_rotation_plan.py \
             results/p0a/rotation_layout.json \
             results/p0a/logical_rotation_plan.json
+          if [[ "${PROBE_PIPE_STATUS[0]}" -ne 0 || "${PROBE_PIPE_STATUS[1]}" -ne 0 ]]; then
+            exit 1
+          fi
       - name: Create R1 audit bundle
         if: always()
         run: >-

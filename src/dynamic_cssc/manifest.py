@@ -74,6 +74,8 @@ def validate_manifest(data: dict[str, Any]) -> None:
     ring_dimension = int(_require(openfhe, "ring_dimension", "openfhe"))
     plaintext_modulus = int(_require(openfhe, "plaintext_modulus", "openfhe"))
     batch_size = int(_require(openfhe, "batch_size", "openfhe"))
+    eval_add_count = int(_require(openfhe, "eval_add_count", "openfhe"))
+    key_switch_count = int(_require(openfhe, "key_switch_count", "openfhe"))
     if total_slots != batch_size:
         raise ManifestError("packing.total_slots and openfhe.batch_size must agree")
     if batch_size > ring_dimension:
@@ -81,9 +83,11 @@ def validate_manifest(data: dict[str, Any]) -> None:
     if plaintext_modulus <= total_slots:
         raise ManifestError("plaintext_modulus must exceed total_slots for the P0a labels")
     if (plaintext_modulus - 1) % (2 * ring_dimension) != 0:
-        raise ManifestError(
-            "plaintext_modulus must be 1 mod 2N for the frozen CRT batching setup"
-        )
+        raise ManifestError("plaintext_modulus must be 1 mod 2N for the frozen CRT batching setup")
+    if eval_add_count <= 0:
+        raise ManifestError("openfhe.eval_add_count must be positive")
+    if key_switch_count <= 0:
+        raise ManifestError("openfhe.key_switch_count must be positive")
 
     mode_name = data["functional_mode"]
     roles = data["roles"]
