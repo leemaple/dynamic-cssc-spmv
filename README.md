@@ -6,17 +6,18 @@ Research repository for an update-aware maintenance layer around ciphertext–ci
 
 - Project direction: **GO**
 - Original whole-block RM-aligned ELLPACK delta: **KILLED**
-- Completed gates: **R0 + P0a PASS** at `69bd6eb7d593bb33bd59b84bae409994219fa2f5`
-- Current gate: **protocol 2.1b implementation → causal Day 1 preflight**
-- Day 1 / Day 2 status: **HOLD** until persistent strategy state, real global
-  ColumnIndex reorganization, and self-describing Day 2 evidence are merged
+- Completed gates: **R0 + P0a PASS** at `eb15adf5da22f600a31d4b62897ed35c1ecde2e2`
+- Current gate: **real CSSC publication state → causal Day 1 preflight**
+- Day 1 status: **HOLD** until persistent strategy state and real global ColumnIndex /
+  RowMap execution are merged; Day 2 remains downstream of the resulting operation plan
 - Main functional mode: **F1-M**, with output-component leakage prevented by one-time zero-sum blinding
 - OpenFHE baseline: **v1.5.1**, pinned by commit in `config/params_manifest.json`
 
 The original v2.1 task specification is preserved verbatim in [`docs/task-v2.1-original.md`](docs/task-v2.1-original.md). The current machine-checkable contract is
 [`docs/protocol-patch-v2.1b.md`](docs/protocol-patch-v2.1b.md); v2.1a remains only as
 the historical correction trail. Audited R0/P0a evidence is permanently preserved in
-the private GitHub release `r1-p0a-20260822`.
+the private GitHub release
+[`r1-p0a-v21b-20260822`](https://github.com/leemaple/dynamic-cssc-spmv/releases/tag/r1-p0a-v21b-20260822).
 
 ## Repository gates
 
