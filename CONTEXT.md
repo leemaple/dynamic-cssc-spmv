@@ -16,6 +16,14 @@ _Avoid_: Slot, physical row
 One independently evaluated source of contributions to the final output, such as a base, delta, or overflow segment.
 _Avoid_: Partial answer
 
+**Published Component**:
+A version-bound physical CSSC representation of one Result Component, including its real global ColumnIndex lanes, RowMaps, and horizontal Output Blocks.
+_Avoid_: Row-length proxy, static layout
+
+**Physical Lane**:
+One ciphertext position classified as actual, tombstone, natural padding, reserved, or tail. Only a row-owned reusable lane is capacity.
+_Avoid_: Slot when ownership and reuse semantics matter
+
 **Output Block**:
 A set of logical coordinates returned together that is disjoint from other horizontal blocks unless the OutputPlan explicitly says otherwise.
 _Avoid_: Chunk
@@ -44,3 +52,15 @@ A mutually exclusive OpenFHE estimator configuration for one isolated operation 
 **Evidence Scope**:
 The strongest claim directly supported by an artifact, independent of whether the generating workflow completed successfully.
 _Avoid_: Result status
+
+**Strategy Snapshot**:
+The complete persistent state of one maintenance strategy after a Publication Window, including logical state, Published Components, reusable capacity, and repack counters.
+_Avoid_: WindowShape, shared strategy state
+
+**Tuned Fixed Policy**:
+A strategy configuration chosen only from tuning-prefix evidence and then frozen for held-out evaluation from its own post-tuning Strategy Snapshot.
+_Avoid_: Hybrid, online selector
+
+**Best Fixed Offline Oracle**:
+A held-out hindsight diagnostic lower bound that is excluded from selector inputs and gate candidates.
+_Avoid_: Hybrid, selected policy
