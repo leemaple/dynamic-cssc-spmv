@@ -40,6 +40,7 @@ jobs:
           path: _openfhe
           key: openfhe-${{ runner.os }}-1306d14f8c26bb6150d3e6ad54f28dfe1007689e-gcc
       - name: Build OpenFHE and probes
+        shell: bash
         run: |
           scripts/bootstrap_openfhe.sh 2>&1 | tee results/day2-openfhe-build.log
           scripts/build_cpp.sh 2>&1 | tee results/day2-probe-build.log

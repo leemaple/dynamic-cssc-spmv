@@ -18,6 +18,7 @@ include_directories(
   ${OpenFHE_INCLUDE}/third-party/include
   ${OpenFHE_INCLUDE}/core
   ${OpenFHE_INCLUDE}/pke
+  ${OpenFHE_INCLUDE}/binfhe
 )
 
 if(UNIX AND NOT APPLE)
