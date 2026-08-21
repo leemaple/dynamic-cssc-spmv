@@ -82,9 +82,11 @@ int main(int argc, char** argv) {
         const auto ringDim = dynamic_cssc::GetUInt(args, "ring-dim", 8192);
         const auto plaintextModulus = dynamic_cssc::GetUInt(args, "plaintext-modulus", 65537);
         const auto batchSize = dynamic_cssc::GetUInt(args, "batch-size", ringDim);
-        const auto multiplicativeDepth = dynamic_cssc::GetUInt(args, "multiplicative-depth", 2);
-        const auto evalAddCount = dynamic_cssc::GetUInt(args, "eval-add-count", 128);
+        const auto multiplicativeDepth = dynamic_cssc::GetUInt(args, "multiplicative-depth", 0);
+        const auto evalAddCount = dynamic_cssc::GetUInt(args, "eval-add-count", 0);
         const auto keySwitchCount = dynamic_cssc::GetUInt(args, "key-switch-count", 16);
+        const auto noiseBudgetProfile = dynamic_cssc::GetString(
+            args, "noise-budget-profile", "p0a_rotation");
         const auto requested = dynamic_cssc::ParseIndices(dynamic_cssc::GetString(
             args,
             "indices",
@@ -181,6 +183,8 @@ int main(int argc, char** argv) {
         output << "  \"ring_dimension\": " << ringDim << ",\n";
         output << "  \"plaintext_modulus\": " << plaintextModulus << ",\n";
         output << "  \"batch_size\": " << batchSize << ",\n";
+        output << "  \"noise_budget_profile\": \""
+               << dynamic_cssc::JsonEscape(noiseBudgetProfile) << "\",\n";
         output << "  \"multiplicative_depth\": " << multiplicativeDepth << ",\n";
         output << "  \"eval_add_count\": " << contextEvalAddCount << ",\n";
         output << "  \"key_switch_count\": " << contextKeySwitchCount << ",\n";

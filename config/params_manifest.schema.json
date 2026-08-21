@@ -4,6 +4,7 @@
   "type": "object",
   "required": ["manifest_version", "functional_mode", "roles", "blinding", "matrix", "packing", "openfhe", "runtime", "freshness", "provenance"],
   "properties": {
+    "manifest_version": {"const": "0.1.1"},
     "functional_mode": {"enum": ["F1-M-hidden-rowmap", "F1-M-public-rowmap", "F1-L", "F2"]},
     "matrix": {
       "type": "object",
@@ -16,14 +17,65 @@
     },
     "openfhe": {
       "type": "object",
-      "required": ["version", "commit", "scheme", "ring_dimension", "plaintext_modulus", "batch_size", "security_level", "multiplicative_depth", "eval_add_count", "key_switch_count"],
+      "required": ["version", "commit", "scheme", "ring_dimension", "plaintext_modulus", "batch_size", "security_level", "noise_budget_profiles", "mixed_workload_parameterization"],
       "properties": {
         "scheme": {"const": "BFVRNS"},
         "ring_dimension": {"type": "integer", "minimum": 1024},
         "plaintext_modulus": {"type": "integer", "minimum": 3},
         "batch_size": {"type": "integer", "minimum": 1},
-        "eval_add_count": {"type": "integer", "minimum": 1},
-        "key_switch_count": {"type": "integer", "minimum": 1}
+        "noise_budget_profiles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["p0a_rotation", "day2_add_only", "day2_mult_only"],
+          "properties": {
+            "p0a_rotation": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["operation_class", "evidence_scope", "multiplicative_depth", "eval_add_count", "key_switch_count"],
+              "properties": {
+                "operation_class": {"const": "key-switch-only"},
+                "evidence_scope": {"const": "p0a-layout-semantics-only"},
+                "multiplicative_depth": {"const": 0},
+                "eval_add_count": {"const": 0},
+                "key_switch_count": {"type": "integer", "minimum": 1}
+              }
+            },
+            "day2_add_only": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["operation_class", "evidence_scope", "multiplicative_depth", "eval_add_count", "key_switch_count"],
+              "properties": {
+                "operation_class": {"const": "add-only"},
+                "evidence_scope": {"const": "isolated-unit-probe-only"},
+                "multiplicative_depth": {"const": 0},
+                "eval_add_count": {"type": "integer", "minimum": 1},
+                "key_switch_count": {"const": 0}
+              }
+            },
+            "day2_mult_only": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["operation_class", "evidence_scope", "multiplicative_depth", "eval_add_count", "key_switch_count"],
+              "properties": {
+                "operation_class": {"const": "multiplication-only"},
+                "evidence_scope": {"const": "isolated-unit-probe-only"},
+                "multiplicative_depth": {"type": "integer", "minimum": 1},
+                "eval_add_count": {"const": 0},
+                "key_switch_count": {"const": 0}
+              }
+            }
+          }
+        },
+        "mixed_workload_parameterization": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "formal_parameter_claim_allowed", "required_gate"],
+          "properties": {
+            "status": {"const": "unfrozen"},
+            "formal_parameter_claim_allowed": {"const": false},
+            "required_gate": {"const": "mixed-circuit-decryption-correctness"}
+          }
+        }
       }
     }
   }

@@ -49,9 +49,9 @@ jobs:
           RING_DIM=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['ring_dimension'])")
           PTM=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['plaintext_modulus'])")
           BATCH=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['batch_size'])")
-          DEPTH=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['multiplicative_depth'])")
-          EVAL_ADDS=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['eval_add_count'])")
-          KEY_SWITCHES=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['key_switch_count'])")
+          DEPTH=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['noise_budget_profiles']['p0a_rotation']['multiplicative_depth'])")
+          EVAL_ADDS=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['noise_budget_profiles']['p0a_rotation']['eval_add_count'])")
+          KEY_SWITCHES=$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['noise_budget_profiles']['p0a_rotation']['key_switch_count'])")
           set +e
           build/cpp/rotation_probe \
             --output results/p0a/rotation_layout.json \
@@ -61,6 +61,7 @@ jobs:
             --multiplicative-depth "$DEPTH" \
             --eval-add-count "$EVAL_ADDS" \
             --key-switch-count "$KEY_SWITCHES" \
+            --noise-budget-profile p0a_rotation \
             --indices '${{ inputs.indices }}' \
             2>&1 | tee results/p0a/rotation-probe.log
           PROBE_PIPE_STATUS=("${PIPESTATUS[@]}")
