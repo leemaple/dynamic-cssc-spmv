@@ -1,5 +1,5 @@
 {
-  "manifest_version": "0.1.0",
+  "manifest_version": "0.1.1",
   "project": "dynamic-cssc-spmv",
   "frozen_at": "2026-08-21T00:00:00Z",
   "functional_mode": "F1-M-hidden-rowmap",
@@ -38,11 +38,36 @@
     "plaintext_modulus": 65537,
     "batch_size": 8192,
     "security_level": "HEStd_128_classic",
-    "multiplicative_depth": 2,
     "key_switch_technique": "HYBRID",
     "bfv_multiplication_technique": "HPSPOVERQLEVELED",
-    "eval_add_count": 128,
-    "key_switch_count": 16
+    "mixed_workload_parameterization": {
+      "status": "unfrozen",
+      "formal_parameter_claim_allowed": false,
+      "required_gate": "mixed-circuit-decryption-correctness"
+    },
+    "noise_budget_profiles": {
+      "p0a_rotation": {
+        "operation_class": "key-switch-only",
+        "evidence_scope": "p0a-layout-semantics-only",
+        "multiplicative_depth": 0,
+        "eval_add_count": 0,
+        "key_switch_count": 16
+      },
+      "day2_add_only": {
+        "operation_class": "add-only",
+        "evidence_scope": "isolated-unit-probe-only",
+        "multiplicative_depth": 0,
+        "eval_add_count": 128,
+        "key_switch_count": 0
+      },
+      "day2_mult_only": {
+        "operation_class": "multiplication-only",
+        "evidence_scope": "isolated-unit-probe-only",
+        "multiplicative_depth": 2,
+        "eval_add_count": 0,
+        "key_switch_count": 0
+      }
+    }
   },
   "runtime": {
     "omp_threads": 2,

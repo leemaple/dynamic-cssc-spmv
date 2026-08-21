@@ -11,7 +11,8 @@ def main() -> int:
     parser.add_argument("layout", type=Path)
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
-    layout = json.loads(args.layout.read_text(encoding="utf-8"))
+    layout_exists = args.layout.is_file()
+    layout = json.loads(args.layout.read_text(encoding="utf-8")) if layout_exists else {}
     plans = []
     for probe in layout.get("probes", []):
         if probe.get("evaluation_succeeded"):
@@ -22,7 +23,10 @@ def main() -> int:
                     "steps": [{"op": "EvalRotate", "index": probe["index"]}],
                     "masks": 0,
                     "adds": 0,
-                    "note": "This is a direct OpenFHE API permutation, not a synthesized cross-row logical rotation.",
+                    "note": (
+                        "This is a direct OpenFHE API permutation, not a synthesized "
+                        "cross-row logical rotation."
+                    ),
                 }
             )
         else:
@@ -35,10 +39,15 @@ def main() -> int:
                 }
             )
     payload = {
-        "status": "partial-p0a-direct-plans",
+        "status": (
+            "partial-p0a-direct-plans" if layout_exists else "p0a-probe-did-not-produce-layout"
+        ),
         "source": str(args.layout),
         "plans": plans,
-        "guardrail": "Cross-row moves must be explicitly synthesized and benchmarked; they are not inferred from a permutation alone.",
+        "guardrail": (
+            "Cross-row moves must be explicitly synthesized and benchmarked; "
+            "they are not inferred from a permutation alone."
+        ),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")

@@ -39,3 +39,15 @@ def test_rotation_probe_reads_counts_from_bfvrns_parameters() -> None:
     assert "dynamic_pointer_cast<CryptoParametersBFVRNS>" in probe
     assert "cryptoParameters->GetEvalAddCount()" in probe
     assert "cryptoParameters->GetKeySwitchCount()" in probe
+
+
+def test_p0a_workflow_selects_the_rotation_noise_profile() -> None:
+    workflow = (ROOT / ".github/workflows/p0a-rotation-probe.yml").read_text()
+    assert "noise_budget_profiles" in workflow
+    assert "p0a_rotation" in workflow
+    assert "--noise-budget-profile p0a_rotation" in workflow
+    assert "['openfhe']['multiplicative_depth']" not in workflow
+    assert "['openfhe']['eval_add_count']" not in workflow
+    assert "['openfhe']['key_switch_count']" not in workflow
+    probe = (ROOT / "cpp/rotation_probe.cpp").read_text()
+    assert "noise_budget_profile" in probe

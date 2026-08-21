@@ -44,6 +44,8 @@ def validate_manifest(data: dict[str, Any]) -> None:
     missing = sorted(required_top - data.keys())
     if missing:
         raise ManifestError(f"missing top-level fields: {', '.join(missing)}")
+    if data["manifest_version"] != "0.1.1":
+        raise ManifestError("manifest_version must be 0.1.1 for the frozen noise-profile schema")
 
     matrix = data["matrix"]
     rows = int(_require(matrix, "rows", "matrix"))
@@ -74,8 +76,6 @@ def validate_manifest(data: dict[str, Any]) -> None:
     ring_dimension = int(_require(openfhe, "ring_dimension", "openfhe"))
     plaintext_modulus = int(_require(openfhe, "plaintext_modulus", "openfhe"))
     batch_size = int(_require(openfhe, "batch_size", "openfhe"))
-    eval_add_count = int(_require(openfhe, "eval_add_count", "openfhe"))
-    key_switch_count = int(_require(openfhe, "key_switch_count", "openfhe"))
     if total_slots != batch_size:
         raise ManifestError("packing.total_slots and openfhe.batch_size must agree")
     if batch_size > ring_dimension:
@@ -84,10 +84,50 @@ def validate_manifest(data: dict[str, Any]) -> None:
         raise ManifestError("plaintext_modulus must exceed total_slots for the P0a labels")
     if (plaintext_modulus - 1) % (2 * ring_dimension) != 0:
         raise ManifestError("plaintext_modulus must be 1 mod 2N for the frozen CRT batching setup")
-    if eval_add_count <= 0:
-        raise ManifestError("openfhe.eval_add_count must be positive")
-    if key_switch_count <= 0:
-        raise ManifestError("openfhe.key_switch_count must be positive")
+    legacy_noise_fields = {"multiplicative_depth", "eval_add_count", "key_switch_count"}
+    if legacy_noise_fields & openfhe.keys():
+        raise ManifestError("legacy combined OpenFHE noise-budget fields are forbidden")
+    profiles = _require(openfhe, "noise_budget_profiles", "openfhe")
+    expected_profiles = {
+        "p0a_rotation": ("key-switch-only", "p0a-layout-semantics-only"),
+        "day2_add_only": ("add-only", "isolated-unit-probe-only"),
+        "day2_mult_only": ("multiplication-only", "isolated-unit-probe-only"),
+    }
+    if set(profiles) != set(expected_profiles):
+        raise ManifestError("openfhe.noise_budget_profiles must contain the frozen profiles")
+    estimator_fields = ("multiplicative_depth", "eval_add_count", "key_switch_count")
+    for profile_name, (operation_class, evidence_scope) in expected_profiles.items():
+        profile = profiles[profile_name]
+        counts = [
+            int(_require(profile, field, f"openfhe.{profile_name}")) for field in estimator_fields
+        ]
+        if any(count < 0 for count in counts) or sum(count > 0 for count in counts) != 1:
+            raise ManifestError(
+                f"openfhe.{profile_name} must set exactly one noise estimator to a positive value"
+            )
+        if profile.get("operation_class") != operation_class:
+            raise ManifestError(
+                f"openfhe.{profile_name} must use operation_class={operation_class}"
+            )
+        if profile.get("evidence_scope") != evidence_scope:
+            raise ManifestError(f"openfhe.{profile_name} must use evidence_scope={evidence_scope}")
+    p0a_profile = profiles["p0a_rotation"]
+    if int(p0a_profile["multiplicative_depth"]) != 0 or int(p0a_profile["eval_add_count"]) != 0:
+        raise ManifestError("openfhe.p0a_rotation must be key-switch-only")
+    add_profile = profiles["day2_add_only"]
+    if int(add_profile["multiplicative_depth"]) != 0 or int(add_profile["key_switch_count"]) != 0:
+        raise ManifestError("openfhe.day2_add_only must be add-only")
+    mult_profile = profiles["day2_mult_only"]
+    if int(mult_profile["eval_add_count"]) != 0 or int(mult_profile["key_switch_count"]) != 0:
+        raise ManifestError("openfhe.day2_mult_only must be multiplication-only")
+
+    mixed = _require(openfhe, "mixed_workload_parameterization", "openfhe")
+    if mixed.get("status") != "unfrozen" or mixed.get("formal_parameter_claim_allowed", True):
+        raise ManifestError("mixed-workload OpenFHE parameterization is not frozen")
+    if mixed.get("required_gate") != "mixed-circuit-decryption-correctness":
+        raise ManifestError(
+            "mixed-workload parameterization requires a decryption correctness gate"
+        )
 
     mode_name = data["functional_mode"]
     roles = data["roles"]
