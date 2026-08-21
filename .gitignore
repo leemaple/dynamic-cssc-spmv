@@ -11,5 +11,6 @@ _openfhe/
 results/*
 !results/README.md
 artifacts/
+tmp/worktrees/
 *.log
 .DS_Store
