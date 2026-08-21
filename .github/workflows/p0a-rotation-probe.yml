@@ -73,6 +73,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: r1-p0a-${{ github.sha }}
+          include-hidden-files: true
           path: |
             results/p0a/
             results/p0a-openfhe-build.log
