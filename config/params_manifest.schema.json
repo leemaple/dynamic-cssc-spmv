@@ -16,12 +16,14 @@
     },
     "openfhe": {
       "type": "object",
-      "required": ["version", "commit", "scheme", "ring_dimension", "plaintext_modulus", "batch_size", "security_level", "multiplicative_depth"],
+      "required": ["version", "commit", "scheme", "ring_dimension", "plaintext_modulus", "batch_size", "security_level", "multiplicative_depth", "eval_add_count", "key_switch_count"],
       "properties": {
         "scheme": {"const": "BFVRNS"},
         "ring_dimension": {"type": "integer", "minimum": 1024},
         "plaintext_modulus": {"type": "integer", "minimum": 3},
-        "batch_size": {"type": "integer", "minimum": 1}
+        "batch_size": {"type": "integer", "minimum": 1},
+        "eval_add_count": {"type": "integer", "minimum": 1},
+        "key_switch_count": {"type": "integer", "minimum": 1}
       }
     }
   }
