@@ -7,6 +7,7 @@ from math import ceil, log2
 from .cssc import CSSCLayout, build_cssc_layout
 from .events import NetUpdate, PublicationWindow
 from .metrics import StrategyMetrics, UnitCosts
+from .output_plan import OutputPlan, OutputShare, analyze_output_plan
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,17 +126,104 @@ def _touched_value_chunks(shape: WindowShape, layout: CSSCLayout) -> int:
     return len(touched)
 
 
-def _split_output_blinding(result_ciphertexts: int) -> tuple[int, int, int]:
-    if result_ciphertexts <= 1:
-        return 0, 0, 0
-    return result_ciphertexts, result_ciphertexts, result_ciphertexts
+def _shares_for_coordinates(
+    component_id: str,
+    output_block_prefix: str,
+    coordinates: list[int],
+    slot_count: int,
+) -> list[OutputShare]:
+    shares = []
+    for offset in range(0, len(coordinates), slot_count):
+        block = coordinates[offset : offset + slot_count]
+        shares.append(
+            OutputShare(
+                component_id=component_id,
+                output_block_id=f"{output_block_prefix}-{offset // slot_count}",
+                slot_to_logical=tuple(enumerate(block)),
+            )
+        )
+    return shares
 
 
-def _base_query_metrics(layout: CSSCLayout) -> tuple[int, int, int]:
+def _base_output_shares(config: SimulationConfig) -> list[OutputShare]:
+    if config.partition_rows <= 0 or config.partition_rows > config.effective_slots:
+        raise ValueError("partition_rows must be in (0, effective_slots]")
+    return _shares_for_coordinates(
+        "base",
+        "horizontal",
+        list(range(config.rows)),
+        config.partition_rows,
+    )
+
+
+def _mini_output_plan(shape: WindowShape, config: SimulationConfig) -> OutputPlan:
+    shares = _base_output_shares(config)
+    overflow_coordinates = [
+        row for row, count in enumerate(shape.overflow_by_row) if count > 0
+    ]
+    shares.extend(
+        _shares_for_coordinates(
+            "mini-delta",
+            "overflow",
+            overflow_coordinates,
+            config.effective_slots,
+        )
+    )
+    return OutputPlan(config.rows, config.effective_slots, tuple(shares))
+
+
+def _coo_output_plan(shape: WindowShape, config: SimulationConfig) -> OutputPlan:
+    shares = _base_output_shares(config)
+    entries = [
+        row
+        for row, count in enumerate(shape.overflow_by_row)
+        for _ in range(count)
+    ]
+    capacity = max(1, config.packed_coo_segment_capacity)
+    output_index = 0
+    for offset in range(0, len(entries), capacity):
+        coordinates = sorted(set(entries[offset : offset + capacity]))
+        segment_shares = _shares_for_coordinates(
+            "packed-coo-delta",
+            f"segment-{output_index}",
+            coordinates,
+            config.effective_slots,
+        )
+        shares.extend(segment_shares)
+        output_index += len(segment_shares)
+    return OutputPlan(config.rows, config.effective_slots, tuple(shares))
+
+
+def _apply_output_plan_accounting(
+    metrics: StrategyMetrics, plan: OutputPlan, queries: int
+) -> None:
+    analysis = analyze_output_plan(plan)
+    metrics.result_ciphertexts = queries * analysis.result_ciphertexts
+    metrics.blinding_mask_ciphertexts = queries * analysis.masked_result_ciphertexts
+    metrics.blinding_encryptions = queries * analysis.masked_result_ciphertexts
+    metrics.blinding_additions = queries * analysis.masked_result_ciphertexts
+    metrics.decryptions = queries * analysis.result_ciphertexts
+    metrics.client_merges = queries * analysis.client_modular_additions
+    metrics.mask_random_elements = queries * analysis.mask_random_elements
+    metrics.mask_mapped_elements = queries * analysis.mask_mapped_elements
+    metrics.client_reorder_elements = queries * analysis.client_reorder_elements
+
+
+def _cssc_query_metrics(layout: CSSCLayout) -> tuple[int, int, int, int, int]:
+    rotations = layout.rotation_count_proxy
+    chunk_count = len(layout.chunks)
+    # Algorithm 4 masks every chunk before merging. The executable operation plan
+    # omits only an identity mask: a chunk whose height fills all effective slots
+    # has no invalid output lanes after its row-wise reduction.
+    plaintext_masks = sum(
+        chunk.height < layout.effective_slots for chunk in layout.chunks
+    )
     return (
         layout.query_ciphertext_count,
         layout.ciphertext_count,
-        layout.rotation_count_proxy,
+        rotations,
+        rotations + max(0, chunk_count - 1),
+        plaintext_masks,
     )
 
 
@@ -147,19 +235,27 @@ def evaluate_window(
     config: SimulationConfig,
 ) -> dict[str, StrategyMetrics]:
     updates = len(window.updates)
-    base_query_ct, base_mults, base_rots = _base_query_metrics(layout)
+    queries = window.query_count
+    base_query_ct, base_mults, base_rots, base_adds, base_masks = (
+        _cssc_query_metrics(layout)
+    )
     dirty_partitions = {
         _partition(row, config.partition_rows) for row in shape.dirty_rows
     }
-    partition_count = max(1, ceil(config.rows / config.partition_rows))
-    base_result_ct = partition_count
+    base_output_plan = OutputPlan(
+        config.rows,
+        config.effective_slots,
+        tuple(_base_output_shares(config)),
+    )
     touched_chunks = _touched_value_chunks(shape, layout)
     overflow_total = shape.overflow_total
     absorbed_total = shape.absorbed_total
 
     results: dict[str, StrategyMetrics] = {}
 
-    padding = StrategyMetrics("PaddingReuse-CSSC", "reference", windows=1, updates=updates)
+    padding = StrategyMetrics(
+        "PaddingReuse-CSSC", "reference", windows=1, queries=queries, updates=updates
+    )
     padding.absorbed_updates = absorbed_total
     padding.overflow_updates = overflow_total
     padding.update_encryptions = touched_chunks
@@ -176,63 +272,74 @@ def evaluate_window(
         )
         padding.compaction_ciphertexts = repack_ct
         padding.update_encryptions += repack_ct
-    padding.query_ciphertexts = base_query_ct
-    padding.result_ciphertexts = base_result_ct
-    padding.cc_multiplications = base_mults
-    padding.rotations = base_rots
-    padding.decryptions = base_result_ct
+    padding.query_ciphertexts = queries * base_query_ct
+    padding.cc_multiplications = queries * base_mults
+    padding.rotations = queries * base_rots
+    padding.additions = queries * base_adds
+    padding.plaintext_masks = queries * base_masks
+    _apply_output_plan_accounting(padding, base_output_plan, queries)
     results[padding.strategy] = padding
 
-    reserved = StrategyMetrics("ReservedSlack-CSSC", "reference", windows=1, updates=updates)
+    reserved = StrategyMetrics(
+        "ReservedSlack-CSSC", "reference", windows=1, queries=queries, updates=updates
+    )
     reserved.absorbed_updates = absorbed_total
     reserved.overflow_updates = overflow_total
     reserved.update_encryptions = touched_chunks
     reserved.update_ciphertexts = touched_chunks
-    reserved.query_ciphertexts = base_query_ct
-    reserved.result_ciphertexts = base_result_ct
-    reserved.cc_multiplications = base_mults
-    reserved.rotations = base_rots
-    reserved.decryptions = base_result_ct
+    reserved.query_ciphertexts = queries * base_query_ct
+    reserved.cc_multiplications = queries * base_mults
+    reserved.rotations = queries * base_rots
+    reserved.additions = queries * base_adds
+    reserved.plaintext_masks = queries * base_masks
+    _apply_output_plan_accounting(reserved, base_output_plan, queries)
     results[reserved.strategy] = reserved
 
     delta_layout = build_cssc_layout(list(shape.overflow_by_row), config.effective_slots)
-    mini = StrategyMetrics("Mini-CSSC-Delta", "reference", windows=1, updates=updates)
+    delta_query_ct, delta_mults, delta_rots, delta_adds, delta_masks = (
+        _cssc_query_metrics(delta_layout)
+    )
+    mini = StrategyMetrics(
+        "Mini-CSSC-Delta", "reference", windows=1, queries=queries, updates=updates
+    )
     mini.absorbed_updates = absorbed_total
     mini.overflow_updates = overflow_total
     mini.update_encryptions = touched_chunks + delta_layout.ciphertext_count
     mini.update_ciphertexts = touched_chunks + delta_layout.ciphertext_count
-    mini.query_ciphertexts = base_query_ct + delta_layout.query_ciphertext_count
-    mini.result_ciphertexts = base_result_ct + (1 if overflow_total else 0)
-    mini.cc_multiplications = base_mults + delta_layout.ciphertext_count
-    mini.rotations = base_rots + delta_layout.rotation_count_proxy
-    mini.decryptions = mini.result_ciphertexts
-    mini.client_merges = 1 if overflow_total else 0
-    masks, mask_enc, mask_add = _split_output_blinding(mini.result_ciphertexts)
-    mini.blinding_mask_ciphertexts = masks
-    mini.blinding_encryptions = mask_enc
-    mini.blinding_additions = mask_add
+    mini.query_ciphertexts = queries * (base_query_ct + delta_query_ct)
+    mini.cc_multiplications = queries * (base_mults + delta_mults)
+    mini.rotations = queries * (base_rots + delta_rots)
+    mini.additions = queries * (base_adds + delta_adds)
+    mini.plaintext_masks = queries * (base_masks + delta_masks)
+    _apply_output_plan_accounting(mini, _mini_output_plan(shape, config), queries)
     results[mini.strategy] = mini
 
-    coo_ct = ceil(overflow_total / max(1, config.packed_coo_segment_capacity)) if overflow_total else 0
-    coo = StrategyMetrics("Packed-COO-HYB-Delta", "reference", windows=1, updates=updates)
+    coo_ct = (
+        ceil(overflow_total / max(1, config.packed_coo_segment_capacity))
+        if overflow_total
+        else 0
+    )
+    coo = StrategyMetrics(
+        "Packed-COO-HYB-Delta", "reference", windows=1, queries=queries, updates=updates
+    )
     coo.absorbed_updates = absorbed_total
     coo.overflow_updates = overflow_total
     coo.update_encryptions = touched_chunks + coo_ct
     coo.update_ciphertexts = touched_chunks + coo_ct
-    coo.query_ciphertexts = base_query_ct + coo_ct
-    coo.result_ciphertexts = base_result_ct + (coo_ct if coo_ct else 0)
-    coo.cc_multiplications = base_mults + coo_ct
-    coo.rotations = base_rots + coo_ct * ceil(log2(max(1, config.packed_coo_segment_capacity)))
-    coo.additions = coo.rotations
-    coo.decryptions = coo.result_ciphertexts
-    coo.client_merges = 1 if coo_ct else 0
-    masks, mask_enc, mask_add = _split_output_blinding(coo.result_ciphertexts)
-    coo.blinding_mask_ciphertexts = masks
-    coo.blinding_encryptions = mask_enc
-    coo.blinding_additions = mask_add
+    coo.query_ciphertexts = queries * (base_query_ct + coo_ct)
+    coo.cc_multiplications = queries * (base_mults + coo_ct)
+    coo_delta_rotations = coo_ct * ceil(
+        log2(max(1, config.packed_coo_segment_capacity))
+    )
+    coo.rotations = queries * (base_rots + coo_delta_rotations)
+    coo.additions = queries * (base_adds + coo_delta_rotations)
+    coo.plaintext_masks = queries * base_masks
+    _apply_output_plan_accounting(coo, _coo_output_plan(shape, config), queries)
     results[coo.strategy] = coo
 
-    local = StrategyMetrics("Strict-LocalRepack", "reference", windows=1, updates=updates)
+    local = StrategyMetrics(
+        "Strict-LocalRepack", "reference", windows=1, queries=queries, updates=updates
+    )
     repack_ct = sum(
         build_cssc_layout(
             base_row_lengths[
@@ -245,23 +352,27 @@ def evaluate_window(
     local.update_encryptions = repack_ct
     local.update_ciphertexts = repack_ct
     local.compaction_ciphertexts = repack_ct
-    local.query_ciphertexts = base_query_ct
-    local.result_ciphertexts = base_result_ct
-    local.cc_multiplications = base_mults
-    local.rotations = base_rots
-    local.decryptions = base_result_ct
+    local.query_ciphertexts = queries * base_query_ct
+    local.cc_multiplications = queries * base_mults
+    local.rotations = queries * base_rots
+    local.additions = queries * base_adds
+    local.plaintext_masks = queries * base_masks
+    _apply_output_plan_accounting(local, base_output_plan, queries)
     results[local.strategy] = local
 
-    periodic = StrategyMetrics("PeriodicRepack", "reference", windows=1, updates=updates)
+    periodic = StrategyMetrics(
+        "PeriodicRepack", "reference", windows=1, queries=queries, updates=updates
+    )
     if window.index % max(1, config.periodic_repack_period) == 0:
         periodic.update_encryptions = repack_ct
         periodic.update_ciphertexts = repack_ct
         periodic.compaction_ciphertexts = repack_ct
-    periodic.query_ciphertexts = base_query_ct
-    periodic.result_ciphertexts = base_result_ct
-    periodic.cc_multiplications = base_mults
-    periodic.rotations = base_rots
-    periodic.decryptions = base_result_ct
+    periodic.query_ciphertexts = queries * base_query_ct
+    periodic.cc_multiplications = queries * base_mults
+    periodic.rotations = queries * base_rots
+    periodic.additions = queries * base_adds
+    periodic.plaintext_masks = queries * base_masks
+    _apply_output_plan_accounting(periodic, base_output_plan, queries)
     results[periodic.strategy] = periodic
 
     return results
@@ -294,15 +405,16 @@ def simulate(
                 aggregates[name] = StrategyMetrics(name, metrics.category)
             aggregates[name].merge(metrics)
 
-    # Causal proxy selector: choose the fixed strategy with the lowest historical normalized
-    # cost at each stage. It is intentionally labeled as a proxy until a full stateful selector
-    # and switching costs are implemented.
+    # This deliberately looks across the full evaluation suffix. It is a diagnostic lower
+    # bound, not an online selector or candidate contribution.
     if aggregates:
         selected = min(aggregates.values(), key=lambda item: item.predicted_time(costs))
-        hybrid = StrategyMetrics("Hybrid-Selector-Proxy", "candidate")
-        hybrid.merge(selected)
-        hybrid.strategy = "Hybrid-Selector-Proxy"
-        hybrid.category = "candidate"
-        aggregates[hybrid.strategy] = hybrid
+        oracle = StrategyMetrics(
+            "BestFixed-Offline-Oracle",
+            "diagnostic-oracle",
+            source="held-out-hindsight-diagnostic",
+        )
+        oracle.merge(selected)
+        aggregates[oracle.strategy] = oracle
 
     return sorted(aggregates.values(), key=lambda item: item.strategy)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import ceil, log2
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,7 +19,9 @@ class CSSCChunk:
 
     @property
     def aggregation_rotations_proxy(self) -> int:
-        return ceil(log2(self.width)) if self.width > 1 else 0
+        if self.width <= 1:
+            return 0
+        return self.width.bit_length() - 1 + self.width.bit_count() - 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +62,10 @@ def build_cssc_layout(row_lengths: list[int], effective_slots: int) -> CSSCLayou
     order = tuple(sorted(range(len(row_lengths)), key=lambda row: (-row_lengths[row], row)))
     physical_lengths = tuple(row_lengths[row] for row in order)
     max_width = max(physical_lengths, default=0)
-    column_heights = [sum(length > column for length in physical_lengths) for column in range(max_width)]
+    column_heights = [
+        sum(length > column for length in physical_lengths)
+        for column in range(max_width)
+    ]
 
     padding_by_logical: list[list[int]] = [[] for _ in row_lengths]
     value_chunks_by_logical: list[list[int]] = [[] for _ in row_lengths]

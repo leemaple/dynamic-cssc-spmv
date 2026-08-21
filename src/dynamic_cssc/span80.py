@@ -3,7 +3,9 @@ from __future__ import annotations
 from math import ceil
 
 
-def minimum_span_fraction(weights: list[int], max_intervals: int, target_fraction: float = 0.8) -> float:
+def minimum_span_fraction(
+    weights: list[int], max_intervals: int, target_fraction: float = 0.8
+) -> float:
     """Minimum selected-row fraction covering the target weight with <= K intervals.
 
     Dynamic programming chooses up to ``max_intervals`` disjoint contiguous intervals and
@@ -62,5 +64,7 @@ def minimum_span_fraction(weights: list[int], max_intervals: int, target_fractio
     return 1.0
 
 
-def span80_curve(weights: list[int], interval_counts: tuple[int, ...] = (1, 2, 4, 8)) -> dict[int, float]:
+def span80_curve(
+    weights: list[int], interval_counts: tuple[int, ...] = (1, 2, 4, 8)
+) -> dict[int, float]:
     return {count: minimum_span_fraction(weights, count, 0.8) for count in interval_counts}

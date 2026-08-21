@@ -17,7 +17,16 @@ def _smoke(args: argparse.Namespace) -> int:
     manifest = load_manifest(args.manifest)
     rows = args.rows
     cols = args.cols
-    initial = generate_initial_matrix(rows, cols, args.nnz_per_row, seed=args.seed)
+    matrix_entry_abs_bound = int(
+        manifest["integer_correctness"]["matrix_entry_abs_bound"]
+    )
+    initial = generate_initial_matrix(
+        rows,
+        cols,
+        args.nnz_per_row,
+        seed=args.seed,
+        matrix_entry_abs_bound=matrix_entry_abs_bound,
+    )
     events = generate_event_stream(
         args.workload,
         initial,
@@ -26,6 +35,7 @@ def _smoke(args: argparse.Namespace) -> int:
         update_count=args.updates,
         seed=args.seed + 1,
         query_every=args.query_every,
+        matrix_entry_abs_bound=matrix_entry_abs_bound,
     )
     freshness = manifest["freshness"]
     windows = list(
@@ -61,6 +71,8 @@ def _smoke(args: argparse.Namespace) -> int:
     output_dir = Path(args.output_dir)
     metadata = {
         "status": "predicted-proxy-not-measured",
+        "gate_eligible": False,
+        "state_model": "static-initial-layout-proxy",
         "seed": args.seed,
         "workload": args.workload,
         "windows": len(windows),

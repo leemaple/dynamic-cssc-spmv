@@ -95,11 +95,18 @@ int main(int argc, char** argv) {
         const auto plaintextModulus = dynamic_cssc::GetUInt(args, "plaintext-modulus", 65537);
         const auto batchSize = dynamic_cssc::GetUInt(args, "batch-size", ringDim);
         const auto multiplicativeDepth = dynamic_cssc::GetUInt(args, "multiplicative-depth", 2);
+        const auto noiseBudgetProfile = dynamic_cssc::GetString(
+            args, "noise-budget-profile", "");
         const auto warmups = dynamic_cssc::GetUInt(args, "warmups", 3);
         const auto repetitions = dynamic_cssc::GetUInt(args, "repetitions", 11);
         const auto rotationIndices = dynamic_cssc::ParseIndices(
             dynamic_cssc::GetString(args, "indices", "1,-1,2,-2,4,-4,8,-8"));
         const int32_t measuredRotation = rotationIndices.empty() ? 1 : rotationIndices.front();
+
+        if (noiseBudgetProfile != "day2_mult_only") {
+            std::cerr << "noise-budget-profile must be day2_mult_only\n";
+            return 5;
+        }
 
         auto context = MakeContext(ringDim, plaintextModulus, batchSize, multiplicativeDepth);
         const auto keyPair = context->KeyGen();
@@ -177,6 +184,10 @@ int main(int argc, char** argv) {
         }
         output << "{\n";
         output << "  \"status\": \"measured-openfhe\",\n";
+        output << "  \"noise_budget_profile\": \""
+               << dynamic_cssc::JsonEscape(noiseBudgetProfile) << "\",\n";
+        output << "  \"evidence_scope\": \"isolated-unit-probe-only\",\n";
+        output << "  \"mixed_workload_formal_parameter_claim_allowed\": false,\n";
         output << "  \"eval_mult_includes_relinearization\": true,\n";
         output << "  \"measured_rotation_index\": " << measuredRotation << ",\n";
         output << "  \"ciphertext_bytes\": " << serialized.size() << ",\n";

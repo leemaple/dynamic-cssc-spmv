@@ -20,15 +20,15 @@ class Event:
     value: int | None = None
 
     @classmethod
-    def set(cls, timestamp: float, row: int, col: int, value: int) -> "Event":
+    def set(cls, timestamp: float, row: int, col: int, value: int) -> Event:
         return cls(timestamp, EventKind.SET, row, col, value)
 
     @classmethod
-    def query(cls, timestamp: float) -> "Event":
+    def query(cls, timestamp: float) -> Event:
         return cls(timestamp, EventKind.QUERY)
 
     @classmethod
-    def version(cls, timestamp: float) -> "Event":
+    def version(cls, timestamp: float) -> Event:
         return cls(timestamp, EventKind.VERSION)
 
 
@@ -50,6 +50,7 @@ class PublicationWindow:
     start_time: float
     end_time: float
     updates: tuple[NetUpdate, ...]
+    query_count: int
     reason: str
 
 
@@ -79,10 +80,12 @@ def publication_windows(
     last_time: float | None = None
     index = 0
     update_events = 0
+    pending_queries = 0
+    pending_query_time: float | None = None
 
     def flush(end_time: float, reason: str) -> PublicationWindow | None:
-        nonlocal index, start_time, update_events
-        if not touched:
+        nonlocal index, pending_queries, pending_query_time, start_time, update_events
+        if not touched and pending_queries == 0:
             start_time = None
             update_events = 0
             return None
@@ -97,6 +100,7 @@ def publication_windows(
             start_time=start_time if start_time is not None else end_time,
             end_time=end_time,
             updates=tuple(net),
+            query_count=pending_queries,
             reason=reason,
         )
         index += 1
@@ -104,12 +108,29 @@ def publication_windows(
         first_before.clear()
         start_time = None
         update_events = 0
+        pending_queries = 0
+        pending_query_time = None
         return window
 
-    for event in sorted(events, key=lambda item: item.timestamp):
+    for event in events:
         if last_time is not None and event.timestamp < last_time:
             raise ValueError("events must be nondecreasing in timestamp")
         last_time = event.timestamp
+
+        if (
+            query_requires_latest
+            and pending_queries
+            and (
+                event.kind != EventKind.QUERY
+                or event.timestamp != pending_query_time
+            )
+        ):
+            window = flush(
+                pending_query_time if pending_query_time is not None else event.timestamp,
+                "query",
+            )
+            if window is not None:
+                yield window
 
         if (
             start_time is not None
@@ -138,16 +159,19 @@ def publication_windows(
                 window = flush(event.timestamp, "microbatch")
                 if window is not None:
                     yield window
-        elif event.kind == EventKind.QUERY and query_requires_latest:
-            window = flush(event.timestamp, "query")
-            if window is not None:
-                yield window
+        elif event.kind == EventKind.QUERY:
+            if start_time is None:
+                start_time = event.timestamp
+            pending_queries += 1
+            pending_query_time = event.timestamp
         elif event.kind == EventKind.VERSION:
             window = flush(event.timestamp, "version")
             if window is not None:
                 yield window
 
-    if touched:
-        window = flush(last_time if last_time is not None else 0.0, "end-of-stream")
+    if touched or pending_queries:
+        final_time = last_time if last_time is not None else 0.0
+        final_reason = "query" if query_requires_latest and pending_queries else "end-of-stream"
+        window = flush(final_time, final_reason)
         if window is not None:
             yield window

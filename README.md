@@ -6,11 +6,17 @@ Research repository for an update-aware maintenance layer around ciphertext–ci
 
 - Project direction: **GO**
 - Original whole-block RM-aligned ELLPACK delta: **KILLED**
-- Current gate: **P-1 → P0a → Day 1 → P0b/Day 2**
+- Completed gates: **R0 + P0a PASS** at `69bd6eb7d593bb33bd59b84bae409994219fa2f5`
+- Current gate: **protocol 2.1b implementation → causal Day 1 preflight**
+- Day 1 / Day 2 status: **HOLD** until persistent strategy state, real global
+  ColumnIndex reorganization, and self-describing Day 2 evidence are merged
 - Main functional mode: **F1-M**, with output-component leakage prevented by one-time zero-sum blinding
 - OpenFHE baseline: **v1.5.1**, pinned by commit in `config/params_manifest.json`
 
-The original v2.1 task specification is preserved verbatim in [`docs/task-v2.1-original.md`](docs/task-v2.1-original.md). Engineering corrections are recorded separately in [`docs/protocol-patch-v2.1a.md`](docs/protocol-patch-v2.1a.md).
+The original v2.1 task specification is preserved verbatim in [`docs/task-v2.1-original.md`](docs/task-v2.1-original.md). The current machine-checkable contract is
+[`docs/protocol-patch-v2.1b.md`](docs/protocol-patch-v2.1b.md); v2.1a remains only as
+the historical correction trail. Audited R0/P0a evidence is permanently preserved in
+the private GitHub release `r1-p0a-20260822`.
 
 ## Repository gates
 
@@ -18,7 +24,7 @@ The original v2.1 task specification is preserved verbatim in [`docs/task-v2.1-o
 |---|---|---|
 | P-1 | Freeze roles, leakage mode, dimensions, packing, and OpenFHE parameters | `ci.yml` |
 | P0a | Probe actual BFV packed-slot rotation semantics | `p0a-rotation-probe.yml` |
-| Day 1 | Run causal layout/cost simulation on synthetic and temporal streams | `day1-cost-model.yml` |
+| Day 1 | Run causal layout/cost simulation after its explicit HOLD conditions close | `day1-cost-model.yml` |
 | P0b / Day 2 | Generate only required rotation keys and run OpenFHE microbenchmarks | `day2-microbench.yml` |
 | Review pack | Produce a SHA-256-addressed audit bundle for an external expert | `review-bundle.yml` |
 

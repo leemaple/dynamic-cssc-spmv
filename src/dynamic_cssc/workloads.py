@@ -12,14 +12,21 @@ def generate_initial_matrix(
     nnz_per_row: int,
     *,
     seed: int,
+    matrix_entry_abs_bound: int = 7,
 ) -> dict[tuple[int, int], int]:
     if not 0 <= nnz_per_row <= cols:
         raise ValueError("nnz_per_row must be in [0, cols]")
+    if (
+        not isinstance(matrix_entry_abs_bound, int)
+        or isinstance(matrix_entry_abs_bound, bool)
+        or matrix_entry_abs_bound < 1
+    ):
+        raise ValueError("matrix_entry_abs_bound must be a positive integer")
     rng = random.Random(seed)
     state: dict[tuple[int, int], int] = {}
     for row in range(rows):
         for col in rng.sample(range(cols), nnz_per_row):
-            state[(row, col)] = rng.randint(1, 7)
+            state[(row, col)] = rng.randint(1, matrix_entry_abs_bound)
     return state
 
 
@@ -46,6 +53,20 @@ def _new_column(
     return rng.choice(available) if available else None
 
 
+def _bounded_modified_value(
+    rng: random.Random,
+    current: int,
+    matrix_entry_abs_bound: int,
+) -> int:
+    candidates = [
+        current + delta
+        for delta in (-1, 1, 2)
+        if current + delta != 0
+        and abs(current + delta) <= matrix_entry_abs_bound
+    ]
+    return rng.choice(candidates) if candidates else current
+
+
 def generate_event_stream(
     workload: str,
     initial_state: dict[tuple[int, int], int],
@@ -55,11 +76,20 @@ def generate_event_stream(
     update_count: int,
     seed: int,
     query_every: int = 32,
+    matrix_entry_abs_bound: int = 7,
 ) -> list[Event]:
     """Generate deterministic skewed update/query streams for CI smoke tests."""
 
     if update_count <= 0:
         raise ValueError("update_count must be positive")
+    if (
+        not isinstance(matrix_entry_abs_bound, int)
+        or isinstance(matrix_entry_abs_bound, bool)
+        or matrix_entry_abs_bound < 1
+    ):
+        raise ValueError("matrix_entry_abs_bound must be a positive integer")
+    if any(abs(value) > matrix_entry_abs_bound for value in initial_state.values()):
+        raise ValueError("initial state exceeds matrix_entry_abs_bound")
     rng = random.Random(seed)
     state = dict(initial_state)
     events: list[Event] = []
@@ -82,7 +112,11 @@ def generate_event_stream(
             row = _weighted_row(rng, rows, 1.5) if in_burst else rng.randrange(rows)
         elif workload == "repeated-coordinate" and repeated_pool:
             row, col = rng.choice(repeated_pool)
-            new_value = max(1, state.get((row, col), 0) + rng.choice([-1, 1, 2]))
+            new_value = _bounded_modified_value(
+                rng,
+                state.get((row, col), 0),
+                matrix_entry_abs_bound,
+            )
             state[(row, col)] = new_value
             events.append(Event.set(timestamp, row, col, new_value))
             timestamp += 0.01
@@ -104,15 +138,23 @@ def generate_event_stream(
             col = _new_column(rng, state, row, cols)
             if col is None and existing:
                 col = rng.choice(existing)
-                value = state[(row, col)] + 1
+                value = _bounded_modified_value(
+                    rng,
+                    state[(row, col)],
+                    matrix_entry_abs_bound,
+                )
             elif col is None:
                 continue
             else:
-                value = rng.randint(1, 7)
+                value = rng.randint(1, matrix_entry_abs_bound)
             state[(row, col)] = value
         elif selector < modify_cutoff and existing:
             col = rng.choice(existing)
-            value = max(1, state[(row, col)] + rng.choice([-1, 1, 2]))
+            value = _bounded_modified_value(
+                rng,
+                state[(row, col)],
+                matrix_entry_abs_bound,
+            )
             state[(row, col)] = value
         elif existing:
             col = rng.choice(existing)
@@ -122,7 +164,7 @@ def generate_event_stream(
             col = _new_column(rng, state, row, cols)
             if col is None:
                 continue
-            value = rng.randint(1, 7)
+            value = rng.randint(1, matrix_entry_abs_bound)
             state[(row, col)] = value
 
         events.append(Event.set(timestamp, row, col, value))
