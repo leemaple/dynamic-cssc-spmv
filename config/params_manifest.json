@@ -1,8 +1,51 @@
 {
-  "manifest_version": "0.1.1",
+  "manifest_version": "0.2.0",
+  "protocol_version": "2.1b",
   "project": "dynamic-cssc-spmv",
-  "frozen_at": "2026-08-21T00:00:00Z",
+  "frozen_at": "2026-08-22T00:00:00Z",
   "functional_mode": "F1-M-hidden-rowmap",
+  "threat_model": {
+    "adversary_model": "semi-honest",
+    "parties": ["Client A", "Client B", "Cloud"],
+    "corruption_scope": "at-most-one-party",
+    "cloud_non_collusion_with_clients": true,
+    "malicious_security_claimed": false
+  },
+  "leakage": {
+    "policy_id": "F1-M-hidden-rowmap",
+    "allowed_to_client_a": [
+      "matrix-and-updates",
+      "cssc-metadata",
+      "component-rowmaps-and-output-plan",
+      "public-parameters",
+      "query-version-and-output-plan-identifiers"
+    ],
+    "allowed_to_client_b": [
+      "query-vector-and-secret-key",
+      "public-parameters",
+      "component-column-index-metadata",
+      "component-rowmaps-and-output-plan",
+      "blinded-component-outputs",
+      "final-logical-result"
+    ],
+    "allowed_to_cloud": [
+      "public-parameters",
+      "ciphertext-shapes-and-counts",
+      "component-and-output-block-identifiers",
+      "operation-schedule",
+      "query-and-version-identifiers"
+    ],
+    "forbidden_to_cloud": [
+      "matrix-and-update-values",
+      "query-vector",
+      "secret-key",
+      "component-rowmaps-and-output-plan",
+      "component-column-index-metadata",
+      "mask-plaintexts",
+      "unblinded-component-outputs"
+    ],
+    "cross_mode_result_pooling_allowed": false
+  },
   "roles": {
     "matrix_owner": "Client A",
     "query_owner_and_secret_key_holder": "Client B",
@@ -10,16 +53,58 @@
     "cloud": "semi-honest non-colluding evaluator",
     "mask_generator": "Client A"
   },
+  "randomness": {
+    "cryptographic": {
+      "source": "operating-system-csprng",
+      "modular_sampling": "unbiased-rejection-sampling",
+      "deterministic_seed_allowed": false
+    },
+    "experimental": {
+      "seed": 20260821,
+      "scope": "synthetic-workload-generation-and-policy-replay-only",
+      "cryptographic_use_allowed": false
+    }
+  },
   "blinding": {
     "enabled": true,
     "mode": "encrypted-one-time-zero-sum",
     "rowmap_visibility_to_cloud": false,
     "mask_reuse_allowed": false,
-    "mask_binding": ["query_id", "version_id", "component_id", "output_block_id"]
+    "mask_scope": "logical-coordinate-overlap-only",
+    "disjoint_output_rule": "concatenate-unmasked",
+    "output_plan_format": "dynamic-cssc-output-plan-v1",
+    "output_plan_digest_algorithm": "sha256-canonical-json-v1",
+    "mask_binding": [
+      "query_id",
+      "version_id",
+      "output_plan_digest",
+      "component_id",
+      "output_block_id"
+    ],
+    "binding_ledger": {
+      "owner": "Client A",
+      "scope": "per-query-binding",
+      "persistent": true,
+      "reservation_semantics": "atomic-check-and-reserve-before-mask-generation",
+      "duplicate_binding_action": "reject",
+      "crash_semantics": "reserved-binding-remains-consumed"
+    }
+  },
+  "integer_correctness": {
+    "domain": "signed-integers-via-centered-lift",
+    "max_terms_per_output": 4096,
+    "matrix_entry_abs_bound": 7,
+    "query_entry_abs_bound": 1,
+    "centered_result_abs_bound": 28672,
+    "twice_centered_result_abs_bound": 57344,
+    "plaintext_safety_condition": "2B<t",
+    "centered_lift_stage": "after-final-component-sum"
   },
   "matrix": {
     "rows": 4096,
-    "cols": 4096,
+    "cols": 8193,
+    "max_nnz_per_row": 4096,
+    "max_nnz_per_row_scope": "all-published-versions",
     "dimension_mode": "fixed",
     "vertex_universe_rule": "predeclare-full-range"
   },
@@ -27,7 +112,16 @@
     "mode": "single-batching-row",
     "total_slots": 8192,
     "row_slots": 4096,
-    "effective_slots": 4096
+    "effective_slots": 4096,
+    "query_reorganization": {
+      "mode": "versioned-column-index-per-cssc-chunk",
+      "addressing": "global-column-index",
+      "column_index_sender": "Client A",
+      "column_index_recipient": "Client B",
+      "column_index_visibility_to_cloud": false,
+      "version_synchronized": true,
+      "communication_accounting_required": true
+    }
   },
   "openfhe": {
     "repository": "https://github.com/openfheorg/openfhe-development.git",
@@ -80,9 +174,15 @@
     "microbatch_max_updates": 64,
     "query_requires_latest": true
   },
+  "synthetic_preflight": {
+    "required_before_day1": true,
+    "rows": 257,
+    "cols": 521,
+    "effective_slots": 256,
+    "purpose": "exercise-multi-output-and-global-column-index-beyond-slot-range"
+  },
   "provenance": {
     "predicted_and_measured_must_be_separate": true,
-    "held_out_required": true,
-    "seed": 20260821
+    "held_out_required": true
   }
 }

@@ -1,5 +1,8 @@
 # v2.1a protocol and accounting patch
 
+> Historical note: protocol 2.1b and manifest 0.2.0 supersede this patch. See
+> `docs/protocol-patch-v2.1b.md`. This file is retained to preserve the decision trail.
+
 This file does not rewrite the original v2.1 task. It fixes the F1-M blinding protocol and associated cost accounting before implementation.
 
 ## 1. Frozen roles

@@ -1,28 +1,402 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Dynamic CSSC parameter manifest",
+  "title": "Dynamic CSSC protocol 2.1b parameter manifest",
   "type": "object",
-  "required": ["manifest_version", "functional_mode", "roles", "blinding", "matrix", "packing", "openfhe", "runtime", "freshness", "provenance"],
+  "additionalProperties": false,
+  "required": [
+    "manifest_version",
+    "protocol_version",
+    "project",
+    "frozen_at",
+    "functional_mode",
+    "threat_model",
+    "leakage",
+    "roles",
+    "randomness",
+    "blinding",
+    "integer_correctness",
+    "matrix",
+    "packing",
+    "openfhe",
+    "runtime",
+    "freshness",
+    "synthetic_preflight",
+    "provenance"
+  ],
   "properties": {
-    "manifest_version": {"const": "0.1.1"},
-    "functional_mode": {"enum": ["F1-M-hidden-rowmap", "F1-M-public-rowmap", "F1-L", "F2"]},
+    "manifest_version": {"type": "string", "const": "0.2.0"},
+    "protocol_version": {"type": "string", "const": "2.1b"},
+    "project": {"type": "string", "const": "dynamic-cssc-spmv"},
+    "frozen_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "functional_mode": {"type": "string", "const": "F1-M-hidden-rowmap"},
+    "threat_model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adversary_model",
+        "parties",
+        "corruption_scope",
+        "cloud_non_collusion_with_clients",
+        "malicious_security_claimed"
+      ],
+      "properties": {
+        "adversary_model": {"type": "string", "const": "semi-honest"},
+        "parties": {
+          "type": "array",
+          "const": ["Client A", "Client B", "Cloud"],
+          "items": {"type": "string"},
+          "minItems": 3,
+          "maxItems": 3,
+          "uniqueItems": true
+        },
+        "corruption_scope": {"type": "string", "const": "at-most-one-party"},
+        "cloud_non_collusion_with_clients": {"type": "boolean", "const": true},
+        "malicious_security_claimed": {"type": "boolean", "const": false}
+      }
+    },
+    "leakage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policy_id",
+        "allowed_to_client_a",
+        "allowed_to_client_b",
+        "allowed_to_cloud",
+        "forbidden_to_cloud",
+        "cross_mode_result_pooling_allowed"
+      ],
+      "properties": {
+        "policy_id": {"type": "string", "const": "F1-M-hidden-rowmap"},
+        "allowed_to_client_a": {
+          "type": "array",
+          "const": [
+            "matrix-and-updates",
+            "cssc-metadata",
+            "component-rowmaps-and-output-plan",
+            "public-parameters",
+            "query-version-and-output-plan-identifiers"
+          ],
+          "items": {"type": "string"},
+          "minItems": 5,
+          "maxItems": 5,
+          "uniqueItems": true
+        },
+        "allowed_to_client_b": {
+          "type": "array",
+          "const": [
+            "query-vector-and-secret-key",
+            "public-parameters",
+            "component-column-index-metadata",
+            "component-rowmaps-and-output-plan",
+            "blinded-component-outputs",
+            "final-logical-result"
+          ],
+          "items": {"type": "string"},
+          "minItems": 6,
+          "maxItems": 6,
+          "uniqueItems": true
+        },
+        "allowed_to_cloud": {
+          "type": "array",
+          "const": [
+            "public-parameters",
+            "ciphertext-shapes-and-counts",
+            "component-and-output-block-identifiers",
+            "operation-schedule",
+            "query-and-version-identifiers"
+          ],
+          "items": {"type": "string"},
+          "minItems": 5,
+          "maxItems": 5,
+          "uniqueItems": true
+        },
+        "forbidden_to_cloud": {
+          "type": "array",
+          "const": [
+            "matrix-and-update-values",
+            "query-vector",
+            "secret-key",
+            "component-rowmaps-and-output-plan",
+            "component-column-index-metadata",
+            "mask-plaintexts",
+            "unblinded-component-outputs"
+          ],
+          "items": {"type": "string"},
+          "minItems": 7,
+          "maxItems": 7,
+          "uniqueItems": true
+        },
+        "cross_mode_result_pooling_allowed": {"type": "boolean", "const": false}
+      }
+    },
+    "roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "matrix_owner",
+        "query_owner_and_secret_key_holder",
+        "result_recipient",
+        "cloud",
+        "mask_generator"
+      ],
+      "properties": {
+        "matrix_owner": {"type": "string", "const": "Client A"},
+        "query_owner_and_secret_key_holder": {"type": "string", "const": "Client B"},
+        "result_recipient": {"type": "string", "const": "Client B"},
+        "cloud": {"type": "string", "const": "semi-honest non-colluding evaluator"},
+        "mask_generator": {"type": "string", "const": "Client A"}
+      }
+    },
+    "randomness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cryptographic", "experimental"],
+      "properties": {
+        "cryptographic": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "modular_sampling", "deterministic_seed_allowed"],
+          "properties": {
+            "source": {"type": "string", "const": "operating-system-csprng"},
+            "modular_sampling": {"type": "string", "const": "unbiased-rejection-sampling"},
+            "deterministic_seed_allowed": {"type": "boolean", "const": false}
+          }
+        },
+        "experimental": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["seed", "scope", "cryptographic_use_allowed"],
+          "properties": {
+            "seed": {"type": "integer", "minimum": 0},
+            "scope": {
+              "type": "string",
+              "const": "synthetic-workload-generation-and-policy-replay-only"
+            },
+            "cryptographic_use_allowed": {"type": "boolean", "const": false}
+          }
+        }
+      }
+    },
+    "blinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "mode",
+        "rowmap_visibility_to_cloud",
+        "mask_reuse_allowed",
+        "mask_scope",
+        "disjoint_output_rule",
+        "output_plan_format",
+        "output_plan_digest_algorithm",
+        "mask_binding",
+        "binding_ledger"
+      ],
+      "properties": {
+        "enabled": {"type": "boolean", "const": true},
+        "mode": {"type": "string", "const": "encrypted-one-time-zero-sum"},
+        "rowmap_visibility_to_cloud": {"type": "boolean", "const": false},
+        "mask_reuse_allowed": {"type": "boolean", "const": false},
+        "mask_scope": {
+          "type": "string",
+          "const": "logical-coordinate-overlap-only"
+        },
+        "disjoint_output_rule": {
+          "type": "string",
+          "const": "concatenate-unmasked"
+        },
+        "output_plan_format": {
+          "type": "string",
+          "const": "dynamic-cssc-output-plan-v1"
+        },
+        "output_plan_digest_algorithm": {
+          "type": "string",
+          "const": "sha256-canonical-json-v1"
+        },
+        "mask_binding": {
+          "type": "array",
+          "const": [
+            "query_id",
+            "version_id",
+            "output_plan_digest",
+            "component_id",
+            "output_block_id"
+          ],
+          "items": {"type": "string"},
+          "minItems": 5,
+          "maxItems": 5,
+          "uniqueItems": true
+        },
+        "binding_ledger": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "owner",
+            "scope",
+            "persistent",
+            "reservation_semantics",
+            "duplicate_binding_action",
+            "crash_semantics"
+          ],
+          "properties": {
+            "owner": {"type": "string", "const": "Client A"},
+            "scope": {"type": "string", "const": "per-query-binding"},
+            "persistent": {"type": "boolean", "const": true},
+            "reservation_semantics": {
+              "type": "string",
+              "const": "atomic-check-and-reserve-before-mask-generation"
+            },
+            "duplicate_binding_action": {"type": "string", "const": "reject"},
+            "crash_semantics": {
+              "type": "string",
+              "const": "reserved-binding-remains-consumed"
+            }
+          }
+        }
+      }
+    },
+    "integer_correctness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "domain",
+        "max_terms_per_output",
+        "matrix_entry_abs_bound",
+        "query_entry_abs_bound",
+        "centered_result_abs_bound",
+        "twice_centered_result_abs_bound",
+        "plaintext_safety_condition",
+        "centered_lift_stage"
+      ],
+      "properties": {
+        "domain": {"type": "string", "const": "signed-integers-via-centered-lift"},
+        "max_terms_per_output": {"type": "integer", "const": 4096},
+        "matrix_entry_abs_bound": {"type": "integer", "const": 7},
+        "query_entry_abs_bound": {"type": "integer", "const": 1},
+        "centered_result_abs_bound": {"type": "integer", "const": 28672},
+        "twice_centered_result_abs_bound": {"type": "integer", "const": 57344},
+        "plaintext_safety_condition": {"type": "string", "const": "2B<t"},
+        "centered_lift_stage": {
+          "type": "string",
+          "const": "after-final-component-sum"
+        }
+      }
+    },
     "matrix": {
       "type": "object",
-      "required": ["rows", "cols", "dimension_mode"],
+      "additionalProperties": false,
+      "required": [
+        "rows",
+        "cols",
+        "max_nnz_per_row",
+        "max_nnz_per_row_scope",
+        "dimension_mode",
+        "vertex_universe_rule"
+      ],
       "properties": {
-        "rows": {"type": "integer", "minimum": 1},
-        "cols": {"type": "integer", "minimum": 1},
-        "dimension_mode": {"const": "fixed"}
+        "rows": {"type": "integer", "const": 4096},
+        "cols": {"type": "integer", "const": 8193},
+        "max_nnz_per_row": {"type": "integer", "const": 4096},
+        "max_nnz_per_row_scope": {
+          "type": "string",
+          "const": "all-published-versions"
+        },
+        "dimension_mode": {"type": "string", "const": "fixed"},
+        "vertex_universe_rule": {"type": "string", "const": "predeclare-full-range"}
+      }
+    },
+    "packing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "total_slots",
+        "row_slots",
+        "effective_slots",
+        "query_reorganization"
+      ],
+      "properties": {
+        "mode": {"type": "string", "const": "single-batching-row"},
+        "total_slots": {"type": "integer", "const": 8192},
+        "row_slots": {"type": "integer", "const": 4096},
+        "effective_slots": {"type": "integer", "const": 4096},
+        "query_reorganization": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mode",
+            "addressing",
+            "column_index_sender",
+            "column_index_recipient",
+            "column_index_visibility_to_cloud",
+            "version_synchronized",
+            "communication_accounting_required"
+          ],
+          "properties": {
+            "mode": {
+              "type": "string",
+              "const": "versioned-column-index-per-cssc-chunk"
+            },
+            "addressing": {"type": "string", "const": "global-column-index"},
+            "column_index_sender": {"type": "string", "const": "Client A"},
+            "column_index_recipient": {"type": "string", "const": "Client B"},
+            "column_index_visibility_to_cloud": {"type": "boolean", "const": false},
+            "version_synchronized": {"type": "boolean", "const": true},
+            "communication_accounting_required": {"type": "boolean", "const": true}
+          }
+        }
       }
     },
     "openfhe": {
       "type": "object",
-      "required": ["version", "commit", "scheme", "ring_dimension", "plaintext_modulus", "batch_size", "security_level", "noise_budget_profiles", "mixed_workload_parameterization"],
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "version",
+        "commit",
+        "scheme",
+        "ring_dimension",
+        "plaintext_modulus",
+        "batch_size",
+        "security_level",
+        "key_switch_technique",
+        "bfv_multiplication_technique",
+        "mixed_workload_parameterization",
+        "noise_budget_profiles"
+      ],
       "properties": {
-        "scheme": {"const": "BFVRNS"},
-        "ring_dimension": {"type": "integer", "minimum": 1024},
-        "plaintext_modulus": {"type": "integer", "minimum": 3},
-        "batch_size": {"type": "integer", "minimum": 1},
+        "repository": {
+          "type": "string",
+          "const": "https://github.com/openfheorg/openfhe-development.git"
+        },
+        "version": {"type": "string", "const": "1.5.1"},
+        "commit": {"type": "string", "pattern": "[0-9a-f]{40}"},
+        "scheme": {"type": "string", "const": "BFVRNS"},
+        "ring_dimension": {"type": "integer", "const": 8192},
+        "plaintext_modulus": {"type": "integer", "const": 65537},
+        "batch_size": {"type": "integer", "const": 8192},
+        "security_level": {"type": "string", "const": "HEStd_128_classic"},
+        "key_switch_technique": {"type": "string", "const": "HYBRID"},
+        "bfv_multiplication_technique": {
+          "type": "string",
+          "const": "HPSPOVERQLEVELED"
+        },
+        "mixed_workload_parameterization": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "formal_parameter_claim_allowed", "required_gate"],
+          "properties": {
+            "status": {"type": "string", "const": "unfrozen"},
+            "formal_parameter_claim_allowed": {"type": "boolean", "const": false},
+            "required_gate": {
+              "type": "string",
+              "const": "mixed-circuit-decryption-correctness"
+            }
+          }
+        },
         "noise_budget_profiles": {
           "type": "object",
           "additionalProperties": false,
@@ -31,51 +405,118 @@
             "p0a_rotation": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["operation_class", "evidence_scope", "multiplicative_depth", "eval_add_count", "key_switch_count"],
+              "required": [
+                "operation_class",
+                "evidence_scope",
+                "multiplicative_depth",
+                "eval_add_count",
+                "key_switch_count"
+              ],
               "properties": {
-                "operation_class": {"const": "key-switch-only"},
-                "evidence_scope": {"const": "p0a-layout-semantics-only"},
-                "multiplicative_depth": {"const": 0},
-                "eval_add_count": {"const": 0},
+                "operation_class": {"type": "string", "const": "key-switch-only"},
+                "evidence_scope": {
+                  "type": "string",
+                  "const": "p0a-layout-semantics-only"
+                },
+                "multiplicative_depth": {"type": "integer", "const": 0},
+                "eval_add_count": {"type": "integer", "const": 0},
                 "key_switch_count": {"type": "integer", "minimum": 1}
               }
             },
             "day2_add_only": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["operation_class", "evidence_scope", "multiplicative_depth", "eval_add_count", "key_switch_count"],
+              "required": [
+                "operation_class",
+                "evidence_scope",
+                "multiplicative_depth",
+                "eval_add_count",
+                "key_switch_count"
+              ],
               "properties": {
-                "operation_class": {"const": "add-only"},
-                "evidence_scope": {"const": "isolated-unit-probe-only"},
-                "multiplicative_depth": {"const": 0},
+                "operation_class": {"type": "string", "const": "add-only"},
+                "evidence_scope": {
+                  "type": "string",
+                  "const": "isolated-unit-probe-only"
+                },
+                "multiplicative_depth": {"type": "integer", "const": 0},
                 "eval_add_count": {"type": "integer", "minimum": 1},
-                "key_switch_count": {"const": 0}
+                "key_switch_count": {"type": "integer", "const": 0}
               }
             },
             "day2_mult_only": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["operation_class", "evidence_scope", "multiplicative_depth", "eval_add_count", "key_switch_count"],
+              "required": [
+                "operation_class",
+                "evidence_scope",
+                "multiplicative_depth",
+                "eval_add_count",
+                "key_switch_count"
+              ],
               "properties": {
-                "operation_class": {"const": "multiplication-only"},
-                "evidence_scope": {"const": "isolated-unit-probe-only"},
+                "operation_class": {"type": "string", "const": "multiplication-only"},
+                "evidence_scope": {
+                  "type": "string",
+                  "const": "isolated-unit-probe-only"
+                },
                 "multiplicative_depth": {"type": "integer", "minimum": 1},
-                "eval_add_count": {"const": 0},
-                "key_switch_count": {"const": 0}
+                "eval_add_count": {"type": "integer", "const": 0},
+                "key_switch_count": {"type": "integer", "const": 0}
               }
             }
           }
-        },
-        "mixed_workload_parameterization": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["status", "formal_parameter_claim_allowed", "required_gate"],
-          "properties": {
-            "status": {"const": "unfrozen"},
-            "formal_parameter_claim_allowed": {"const": false},
-            "required_gate": {"const": "mixed-circuit-decryption-correctness"}
-          }
         }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "omp_threads",
+        "cpu_affinity",
+        "warmup_repetitions",
+        "measurement_repetitions"
+      ],
+      "properties": {
+        "omp_threads": {"type": "integer", "minimum": 1},
+        "cpu_affinity": {"type": "string", "minLength": 1},
+        "warmup_repetitions": {"type": "integer", "minimum": 0},
+        "measurement_repetitions": {"type": "integer", "minimum": 1}
+      }
+    },
+    "freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_seconds", "microbatch_max_updates", "query_requires_latest"],
+      "properties": {
+        "max_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "microbatch_max_updates": {"type": "integer", "minimum": 1},
+        "query_requires_latest": {"type": "boolean", "const": true}
+      }
+    },
+    "synthetic_preflight": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required_before_day1", "rows", "cols", "effective_slots", "purpose"],
+      "properties": {
+        "required_before_day1": {"type": "boolean", "const": true},
+        "rows": {"type": "integer", "const": 257},
+        "cols": {"type": "integer", "const": 521},
+        "effective_slots": {"type": "integer", "const": 256},
+        "purpose": {
+          "type": "string",
+          "const": "exercise-multi-output-and-global-column-index-beyond-slot-range"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["predicted_and_measured_must_be_separate", "held_out_required"],
+      "properties": {
+        "predicted_and_measured_must_be_separate": {"type": "boolean", "const": true},
+        "held_out_required": {"type": "boolean", "const": true}
       }
     }
   }

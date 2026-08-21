@@ -18,10 +18,15 @@ def main() -> int:
         return 1
     print(
         "P-1 PASS: "
+        f"manifest={data['manifest_version']} "
+        f"protocol={data['protocol_version']} "
         f"mode={data['functional_mode']} "
         f"OpenFHE={data['openfhe']['version']}@{data['openfhe']['commit'][:12]} "
         f"t={data['openfhe']['plaintext_modulus']} "
-        f"slots={data['packing']['total_slots']}/{data['packing']['effective_slots']}"
+        f"slots={data['packing']['total_slots']}/{data['packing']['effective_slots']} "
+        f"matrix={data['matrix']['rows']}x{data['matrix']['cols']} "
+        f"B={data['integer_correctness']['centered_result_abs_bound']} "
+        "mixed_params=unfrozen"
     )
     return 0
 
