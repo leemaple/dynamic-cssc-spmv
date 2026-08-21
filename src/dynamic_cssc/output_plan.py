@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import secrets
 from collections import Counter
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -188,18 +188,14 @@ def prepare_f1m_masks(
     query_id: str,
     version_id: str,
     modulus: int,
-    randbelow: Callable[[int], int],
     ledger: MaskBindingLedger,
 ) -> tuple[PreparedMask, ...]:
-    """Prepare physical encrypted-mask plaintexts for overlapping logical coordinates."""
+    """Prepare masks with the operating-system CSPRNG for overlapping coordinates."""
 
     query_id = _require_id(query_id, "query_id")
     version_id = _require_id(version_id, "version_id")
     if not _is_strict_int(modulus) or modulus < 2:
         raise OutputPlanError("modulus must be an integer of at least two")
-    if not callable(randbelow):
-        raise OutputPlanError("randbelow must be callable")
-
     analysis = analyze_output_plan(plan)
     contributors: dict[int, list[tuple[str, str, int]]] = {}
     for share in plan.shares:
@@ -235,7 +231,7 @@ def prepare_f1m_masks(
             continue
         random_values = []
         for _ in lanes[:-1]:
-            sample = randbelow(modulus)
+            sample = secrets.randbelow(modulus)
             if not _is_strict_int(sample) or not 0 <= sample < modulus:
                 raise OutputPlanError("randbelow returned a value outside Z_t")
             random_values.append(sample)

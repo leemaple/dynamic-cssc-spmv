@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import inspect
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
 
 import pytest
 
+import dynamic_cssc.output_plan as output_plan_module
 from dynamic_cssc.mask_ledger import (
     DuplicateMaskBindingError,
     SQLiteMaskBindingLedger,
@@ -30,8 +32,13 @@ def _overlap_plan() -> OutputPlan:
     )
 
 
+def test_public_mask_api_owns_its_randomness_source() -> None:
+    assert "randbelow" not in inspect.signature(prepare_f1m_masks).parameters
+
+
 def test_mask_binding_is_consumed_before_random_draw_and_survives_restart(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ledger_path = tmp_path / "mask-bindings.sqlite3"
     plan = _overlap_plan()
@@ -39,13 +46,13 @@ def test_mask_binding_is_consumed_before_random_draw_and_survives_restart(
     def crash_during_sampling(_: int) -> int:
         raise RuntimeError("simulated crash after reservation")
 
+    monkeypatch.setattr(output_plan_module.secrets, "randbelow", crash_during_sampling)
     with pytest.raises(RuntimeError, match="simulated crash"):
         prepare_f1m_masks(
             plan,
             query_id="query-crash",
             version_id="version-1",
             modulus=17,
-            randbelow=crash_during_sampling,
             ledger=SQLiteMaskBindingLedger(ledger_path),
         )
 
@@ -56,13 +63,13 @@ def test_mask_binding_is_consumed_before_random_draw_and_survives_restart(
         draws_after_restart += 1
         return 1
 
+    monkeypatch.setattr(output_plan_module.secrets, "randbelow", count_draws)
     with pytest.raises(DuplicateMaskBindingError):
         prepare_f1m_masks(
             plan,
             query_id="query-crash",
             version_id="version-1",
             modulus=17,
-            randbelow=count_draws,
             ledger=SQLiteMaskBindingLedger(ledger_path),
         )
     assert draws_after_restart == 0
@@ -145,7 +152,10 @@ def test_disjoint_output_blocks_are_concatenated_without_masks() -> None:
     assert analysis.client_modular_additions == 0
 
 
-def test_overlapping_shares_receive_physical_zero_sum_masks(tmp_path: Path) -> None:
+def test_overlapping_shares_receive_physical_zero_sum_masks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     plan = OutputPlan(
         logical_output_size=4,
         slot_count=4,
@@ -155,13 +165,13 @@ def test_overlapping_shares_receive_physical_zero_sum_masks(tmp_path: Path) -> N
         ),
     )
     samples = iter((1, 2, 3, 4))
+    monkeypatch.setattr(output_plan_module.secrets, "randbelow", lambda _: next(samples))
 
     masks = prepare_f1m_masks(
         plan,
         query_id="query-7",
         version_id="version-3",
         modulus=17,
-        randbelow=lambda _: next(samples),
         ledger=SQLiteMaskBindingLedger(tmp_path / "mask-bindings.sqlite3"),
     )
 
@@ -185,7 +195,10 @@ def test_overlapping_shares_receive_physical_zero_sum_masks(tmp_path: Path) -> N
     assert analysis.client_modular_additions == 4
 
 
-def test_partial_overlap_masks_only_the_contributing_ciphertexts(tmp_path: Path) -> None:
+def test_partial_overlap_masks_only_the_contributing_ciphertexts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     plan = OutputPlan(
         logical_output_size=4,
         slot_count=4,
@@ -195,13 +208,13 @@ def test_partial_overlap_masks_only_the_contributing_ciphertexts(tmp_path: Path)
             OutputShare("base-right", "rows-2-3", ((0, 2), (1, 3))),
         ),
     )
+    monkeypatch.setattr(output_plan_module.secrets, "randbelow", lambda _: 6)
 
     masks = prepare_f1m_masks(
         plan,
         query_id="q",
         version_id="v",
         modulus=17,
-        randbelow=lambda _: 6,
         ledger=SQLiteMaskBindingLedger(tmp_path / "mask-bindings.sqlite3"),
     )
 
@@ -218,7 +231,10 @@ def test_partial_overlap_masks_only_the_contributing_ciphertexts(tmp_path: Path)
     assert analysis.client_modular_additions == 1
 
 
-def test_three_contributors_use_two_random_values_and_one_completion(tmp_path: Path) -> None:
+def test_three_contributors_use_two_random_values_and_one_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     plan = OutputPlan(
         logical_output_size=1,
         slot_count=2,
@@ -229,13 +245,13 @@ def test_three_contributors_use_two_random_values_and_one_completion(tmp_path: P
         ),
     )
     samples = iter((5, 7))
+    monkeypatch.setattr(output_plan_module.secrets, "randbelow", lambda _: next(samples))
 
     masks = prepare_f1m_masks(
         plan,
         query_id="q",
         version_id="v",
         modulus=17,
-        randbelow=lambda _: next(samples),
         ledger=SQLiteMaskBindingLedger(tmp_path / "mask-bindings.sqlite3"),
     )
 
@@ -298,7 +314,10 @@ def test_ambiguous_output_plans_are_rejected(plan: OutputPlan) -> None:
         analyze_output_plan(plan)
 
 
-def test_random_adapter_must_return_an_element_of_z_t(tmp_path: Path) -> None:
+def test_os_randomness_result_must_be_an_element_of_z_t(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     plan = OutputPlan(
         logical_output_size=1,
         slot_count=1,
@@ -307,6 +326,7 @@ def test_random_adapter_must_return_an_element_of_z_t(tmp_path: Path) -> None:
             OutputShare("delta", "out", ((0, 0),)),
         ),
     )
+    monkeypatch.setattr(output_plan_module.secrets, "randbelow", lambda _: 17)
 
     with pytest.raises(OutputPlanError, match="outside Z_t"):
         prepare_f1m_masks(
@@ -314,6 +334,5 @@ def test_random_adapter_must_return_an_element_of_z_t(tmp_path: Path) -> None:
             query_id="q",
             version_id="v",
             modulus=17,
-            randbelow=lambda _: 17,
             ledger=SQLiteMaskBindingLedger(tmp_path / "mask-bindings.sqlite3"),
         )
