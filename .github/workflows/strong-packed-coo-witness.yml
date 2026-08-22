@@ -1,0 +1,348 @@
+name: Strong packed-COO pinned OpenFHE correctness witness
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  correctness-witness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      BUILD_JOBS: '2'
+      OMP_NUM_THREADS: '2'
+      PYTHONPATH: 'src:.'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install system and Python dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libomp-dev
+          python -m pip install --require-hashes -r requirements-ci.txt
+          python scripts/validate_manifest.py config/params_manifest.json
+      - name: Cache pinned OpenFHE build
+        uses: actions/cache@v4
+        with:
+          path: _openfhe
+          key: openfhe-${{ runner.os }}-1306d14f8c26bb6150d3e6ad54f28dfe1007689e-gcc
+      - name: Remove stale witness evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p results/strong-packed-coo-witness
+          find results/strong-packed-coo-witness -mindepth 1 -delete
+      - name: Build and verify pinned OpenFHE and witness
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          scripts/bootstrap_openfhe.sh 2>&1 | tee results/strong-packed-coo-witness/openfhe-build.log
+          OPENFHE_PIPE_STATUS=("${PIPESTATUS[@]}")
+          set -e
+          if [[ "${OPENFHE_PIPE_STATUS[0]}" -ne 0 || "${OPENFHE_PIPE_STATUS[1]}" -ne 0 ]]; then
+            exit 1
+          fi
+
+          EXPECTED_COMMIT="$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['commit'])")"
+          EXPECTED_VERSION="$(python -c "import json; print(json.load(open('config/params_manifest.json'))['openfhe']['version'])")"
+          ACTUAL_COMMIT="$(git -C _openfhe/source rev-parse HEAD)"
+          if [[ "$ACTUAL_COMMIT" != "$EXPECTED_COMMIT" ]]; then
+            echo "OpenFHE HEAD mismatch: expected $EXPECTED_COMMIT, got $ACTUAL_COMMIT" >&2
+            exit 1
+          fi
+          python - "$EXPECTED_VERSION" _openfhe/install <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          expected = sys.argv[1]
+          install = pathlib.Path(sys.argv[2])
+          paths = tuple(install.rglob("OpenFHEConfigVersion.cmake"))
+          versions = {
+              match.group(1)
+              for path in paths
+              for match in re.finditer(
+                  r'set\s*\(\s*PACKAGE_VERSION\s+"([0-9]+\.[0-9]+\.[0-9]+)"',
+                  path.read_text(encoding="utf-8"),
+              )
+          }
+          if versions != {expected}:
+              raise SystemExit(
+                  f"installed OpenFHE version mismatch: expected {expected}, got {sorted(versions)}"
+              )
+          PY
+
+          set +e
+          scripts/build_cpp.sh 2>&1 | tee results/strong-packed-coo-witness/witness-build.log
+          WITNESS_BUILD_PIPE_STATUS=("${PIPESTATUS[@]}")
+          set -e
+          if [[ "${WITNESS_BUILD_PIPE_STATUS[0]}" -ne 0 || "${WITNESS_BUILD_PIPE_STATUS[1]}" -ne 0 ]]; then
+            exit 1
+          fi
+      - name: Generate canonical execution bindings
+        id: bindings
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/make_strong_packed_coo_witness_binding.py \
+            --manifest config/params_manifest.json \
+            --output results/strong-packed-coo-witness/bindings.json \
+            2>&1 | tee results/strong-packed-coo-witness/binding-generation.log
+      - name: Run and independently validate witness
+        id: witness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - results/strong-packed-coo-witness/bindings.json \
+            > results/strong-packed-coo-witness/binding-values.txt <<'PY'
+          import json
+          import sys
+
+          binding = json.load(open(sys.argv[1], encoding="utf-8"))
+          print(binding["cloud_program_digest"])
+          print(binding["output_plan_digest"])
+          print(binding["execution_binding_digest"])
+          PY
+          readarray -t BINDING_VALUES \
+            < results/strong-packed-coo-witness/binding-values.txt
+          if [[ "${#BINDING_VALUES[@]}" -ne 3 ]]; then
+            exit 1
+          fi
+
+          SOURCE_GIT_SHA="$(git rev-parse HEAD)"
+          if [[ "$SOURCE_GIT_SHA" != "$GITHUB_SHA" ]]; then
+            echo "source checkout mismatch: expected $GITHUB_SHA, got $SOURCE_GIT_SHA" >&2
+            exit 1
+          fi
+
+          set +e
+          build/cpp/strong_packed_coo_witness \
+            --output results/strong-packed-coo-witness/witness.json \
+            --cloud-program-digest "${BINDING_VALUES[0]}" \
+            --output-plan-digest "${BINDING_VALUES[1]}" \
+            --execution-binding-digest "${BINDING_VALUES[2]}" \
+            2>&1 | tee results/strong-packed-coo-witness/witness.log
+          WITNESS_PIPE_STATUS=("${PIPESTATUS[@]}")
+          set -e
+          if [[ "${WITNESS_PIPE_STATUS[0]}" -ne 0 || \
+                "${WITNESS_PIPE_STATUS[1]}" -ne 0 ]]; then
+            exit 1
+          fi
+
+          mkdir -p results/strong-packed-coo-witness/config
+          cp config/params_manifest.json \
+            results/strong-packed-coo-witness/config/params_manifest.json
+          python - \
+            results/strong-packed-coo-witness/config/params_manifest.json \
+            results/strong-packed-coo-witness/bindings.json \
+            results/strong-packed-coo-witness/PROVENANCE.json \
+            cpp/strong_packed_coo_witness.cpp \
+            build/cpp/strong_packed_coo_witness \
+            scripts/make_strong_packed_coo_witness_binding.py \
+            scripts/validate_strong_packed_coo_witness.py \
+            "$SOURCE_GIT_SHA" "$GITHUB_REF" "$GITHUB_RUN_ID" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          manifest_path, bindings_path, output_path = map(pathlib.Path, sys.argv[1:4])
+          witness_source, witness_binary, binding_generator, validator = map(
+              pathlib.Path, sys.argv[4:8]
+          )
+          source_git_sha, source_git_ref, github_run_id = sys.argv[8:11]
+
+          def sha256(path: pathlib.Path) -> str:
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          bindings = json.loads(bindings_path.read_text(encoding="utf-8"))
+          provenance = {
+              "schema_version": "strong-packed-coo-witness-provenance-v1",
+              "source_git_sha": source_git_sha,
+              "source_git_ref": source_git_ref,
+              "github_run_id": github_run_id,
+              "openfhe_commit": manifest["openfhe"]["commit"],
+              "witness_source_sha256": sha256(witness_source),
+              "witness_binary_sha256": sha256(witness_binary),
+              "binding_generator_sha256": sha256(binding_generator),
+              "validator_sha256": sha256(validator),
+              "cloud_program_digest": bindings["cloud_program_digest"],
+              "output_plan_digest": bindings["output_plan_digest"],
+              "execution_binding_digest": bindings["execution_binding_digest"],
+          }
+          output_path.write_text(
+              json.dumps(provenance, indent=2, sort_keys=True, allow_nan=False) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          set +e
+          python scripts/validate_strong_packed_coo_witness.py \
+            results/strong-packed-coo-witness/witness.json \
+            results/strong-packed-coo-witness/config/params_manifest.json \
+            results/strong-packed-coo-witness/PROVENANCE.json \
+            --source-git-sha "$SOURCE_GIT_SHA" \
+            --source-git-ref "$GITHUB_REF" \
+            --github-run-id "$GITHUB_RUN_ID" \
+            --witness-source cpp/strong_packed_coo_witness.cpp \
+            --witness-binary build/cpp/strong_packed_coo_witness \
+            --binding-generator scripts/make_strong_packed_coo_witness_binding.py \
+            --validator-source scripts/validate_strong_packed_coo_witness.py \
+            2>&1 | tee results/strong-packed-coo-witness/validation.log
+          VALIDATOR_PIPE_STATUS=("${PIPESTATUS[@]}")
+          set -e
+          if [[ "${VALIDATOR_PIPE_STATUS[0]}" -ne 0 || \
+                "${VALIDATOR_PIPE_STATUS[1]}" -ne 0 ]]; then
+            exit 1
+          fi
+      - name: Finalize witness artifact
+        id: finalize
+        if: always()
+        shell: bash
+        env:
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          BINDINGS_OUTCOME: ${{ steps.bindings.outcome }}
+          WITNESS_OUTCOME: ${{ steps.witness.outcome }}
+        run: |
+          set -euo pipefail
+          RESULT_DIR="$GITHUB_WORKSPACE/results/strong-packed-coo-witness"
+          mkdir -p "$RESULT_DIR/config"
+          if [[ -f config/params_manifest.json ]]; then
+            cp config/params_manifest.json "$RESULT_DIR/config/params_manifest.json"
+          fi
+
+          SOURCE_GIT_SHA="$GITHUB_SHA"
+          if ACTUAL_SOURCE_GIT_SHA="$(git rev-parse HEAD 2>/dev/null)"; then
+            SOURCE_GIT_SHA="$ACTUAL_SOURCE_GIT_SHA"
+          fi
+
+          write_run_status() {
+            python - \
+              "$RESULT_DIR/RUN_STATUS.json" "$1" "$2" \
+              "$BUILD_OUTCOME" "$BINDINGS_OUTCOME" "$WITNESS_OUTCOME" \
+              "$SOURCE_GIT_SHA" "$GITHUB_REF" "$GITHUB_RUN_ID" \
+              "$RESULT_DIR/config/params_manifest.json" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          (
+              output_path,
+              status,
+              evidence_valid,
+              build_outcome,
+              bindings_outcome,
+              witness_outcome,
+              source_git_sha,
+              source_git_ref,
+              github_run_id,
+              manifest_name,
+          ) = sys.argv[1:]
+          manifest_path = pathlib.Path(manifest_name)
+          expected_openfhe_commit = None
+          if manifest_path.is_file():
+              manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+              expected_openfhe_commit = manifest["openfhe"]["commit"]
+          payload = {
+              "schema_version": "strong-packed-coo-witness-run-status-v1",
+              "status": status,
+              "evidence_valid": evidence_valid == "true",
+              "build_outcome": build_outcome,
+              "binding_generation_outcome": bindings_outcome,
+              "witness_validation_outcome": witness_outcome,
+              "source_git_sha": source_git_sha,
+              "source_git_ref": source_git_ref,
+              "github_run_id": github_run_id,
+              "expected_openfhe_commit": expected_openfhe_commit,
+          }
+          pathlib.Path(output_path).write_text(
+              json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          }
+
+          write_diagnostic_checksums() {
+            (
+              cd "$RESULT_DIR"
+              rm -f witness.json.sha256 witness.json.sha256.tmp \
+                SHA256SUMS SHA256SUMS.tmp
+              find . -type f \
+                ! -name 'DIAGNOSTIC_SHA256SUMS*' \
+                ! -name 'SHA256SUMS*' \
+                ! -name 'witness.json.sha256*' -print0 \
+                | sort -z \
+                | xargs -0 sha256sum > DIAGNOSTIC_SHA256SUMS.tmp
+              sha256sum --check --strict DIAGNOSTIC_SHA256SUMS.tmp
+              mv DIAGNOSTIC_SHA256SUMS.tmp DIAGNOSTIC_SHA256SUMS
+            )
+          }
+
+          evidence_valid=false
+          finalization_error=0
+          if [[ "$BUILD_OUTCOME" == "success" && \
+                "$BINDINGS_OUTCOME" == "success" && \
+                "$WITNESS_OUTCOME" == "success" ]]; then
+            evidence_valid=true
+            for required_file in \
+              witness.json PROVENANCE.json bindings.json validation.log \
+              config/params_manifest.json; do
+              if [[ ! -f "$RESULT_DIR/$required_file" ]]; then
+                evidence_valid=false
+                finalization_error=1
+              fi
+            done
+          fi
+
+          if [[ "$evidence_valid" == "true" ]]; then
+            write_run_status pass true
+            (
+              cd "$RESULT_DIR"
+              checksum_success=0
+              cleanup_checksums() {
+                if [[ "$checksum_success" -ne 1 ]]; then
+                  rm -f witness.json.sha256 witness.json.sha256.tmp \
+                    SHA256SUMS SHA256SUMS.tmp
+                  write_run_status failure false
+                  write_diagnostic_checksums || true
+                fi
+              }
+              trap cleanup_checksums EXIT
+              rm -f DIAGNOSTIC_SHA256SUMS DIAGNOSTIC_SHA256SUMS.tmp
+              sha256sum witness.json > witness.json.sha256.tmp
+              sha256sum --check --strict witness.json.sha256.tmp
+              mv witness.json.sha256.tmp witness.json.sha256
+              find . -type f ! -name 'SHA256SUMS*' -print0 \
+                | sort -z \
+                | xargs -0 sha256sum > SHA256SUMS.tmp
+              sha256sum --check --strict SHA256SUMS.tmp
+              mv SHA256SUMS.tmp SHA256SUMS
+              checksum_success=1
+              trap - EXIT
+            )
+          else
+            write_run_status failure false
+            write_diagnostic_checksums
+          fi
+
+          if [[ "$finalization_error" -ne 0 ]]; then
+            exit 1
+          fi
+      - name: Upload correctness witness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: strong-packed-coo-witness-${{ job.status }}-${{ github.sha }}
+          path: results/strong-packed-coo-witness/
+          if-no-files-found: warn
+          retention-days: 30

@@ -51,9 +51,12 @@ Mini-CSSC-Delta, `Packed-COO-Client-Lane-Delta`, Strict LocalRepack, and Periodi
 The packed-COO client-lane candidate returns evaluated segment lanes for OutputPlan-guided
 client reconstruction; it is not the strong cloud-segmented Packed-COO baseline.
 
-The strong cloud-segmented Packed-COO baseline has no defined executable schedule under
-the v2.1b F1-M Hidden-RowMap contract and is deferred. The current set is therefore a
-partial reference set: repository status and generated Day 1 artifacts use
+ADR 0007 defines a Phase 1 anonymous fixed-segment primitive: the Cloud reduces inside
+each public fixed-width segment, while Client B merges separate segments that happen to
+belong to the same hidden logical row. The primitive is not yet a whole-query candidate
+and remains unregistered until its CSSC-base integration, accounting, and pinned witness
+gates pass. The current set is therefore a partial reference set: repository status and
+generated Day 1 artifacts use
 `complete_reference_set=false`, name `strong-packed-coo` as the missing baseline, and keep
 the Day 1 full-baseline verdict on HOLD. No current result may be described as an
 all-fixed-reference or six-reference comparison.
