@@ -11,9 +11,10 @@ Research repository for an update-aware maintenance layer around ciphertext–ci
 - Day 1 full-baseline status: **HOLD**. Artifacts must report
   `complete_reference_set=false` and identify `strong-packed-coo` as a deferred/missing
   baseline; the implemented packed-COO candidate is client-lane reconstruction, not the
-  strong cloud-segmented baseline. ADR 0007 permits only an unregistered, anonymous
-  fixed-segment primitive while its whole-query integration and pinned witness are built.
-  Day 2 remains downstream of the resulting operation plan
+  strong cloud-segmented baseline. The ADR 0008 whole-query integration and its v2 pinned
+  workflow are implemented, not yet dispatched/admitted. No successful pinned evidence
+  exists yet, the strong candidate remains unregistered, and Day 2 remains downstream of
+  the resulting operation plan.
 - Main functional mode: **F1-M**, with output-component leakage prevented by one-time zero-sum blinding
 - OpenFHE baseline: **v1.5.1**, pinned by commit in `config/params_manifest.json`
 
@@ -29,6 +30,7 @@ the private GitHub release
 |---|---|---|
 | P-1 | Freeze roles, leakage mode, dimensions, packing, and OpenFHE parameters | `ci.yml` |
 | P0a | Probe actual BFV packed-slot rotation semantics | `p0a-rotation-probe.yml` |
+| Phase 2 correctness witness | Bind and validate the real CSSC-base-plus-strong-delta query | `strong-whole-query-witness.yml` (manual, evidence pending) |
 | Day 1 | Produce partial-reference causal artifacts; full-baseline verdict remains on HOLD | `day1-cost-model.yml` |
 | P0b / Day 2 | Generate only required rotation keys and run OpenFHE microbenchmarks | `day2-microbench.yml` |
 | Review pack | Produce a SHA-256-addressed audit bundle for an external expert | `review-bundle.yml` |

@@ -53,10 +53,11 @@ client reconstruction; it is not the strong cloud-segmented Packed-COO baseline.
 
 ADR 0007 defines a Phase 1 anonymous fixed-segment primitive: the Cloud reduces inside
 each public fixed-width segment, while Client B merges separate segments that happen to
-belong to the same hidden logical row. The primitive is not yet a whole-query candidate
-and remains unregistered until its CSSC-base integration, accounting, and pinned witness
-gates pass. The current set is therefore a partial reference set: repository status and
-generated Day 1 artifacts use
+belong to the same hidden logical row. The ADR 0008 whole-query integration and its v2
+pinned workflow are implemented, not yet dispatched/admitted; they do not constitute
+successful pinned evidence. The strong candidate remains unregistered until its
+accounting, evidence, and tuning-prefix gates pass. The current set is therefore a partial
+reference set: repository status and generated Day 1 artifacts use
 `complete_reference_set=false`, name `strong-packed-coo` as the missing baseline, and keep
 the Day 1 full-baseline verdict on HOLD. No current result may be described as an
 all-fixed-reference or six-reference comparison.

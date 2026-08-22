@@ -357,12 +357,12 @@ def _validate_dimensions(base: PublishedComponent, delta: SegmentedDeltaState) -
         raise StrongExecutionError("active base and delta coordinates must be disjoint")
 
 
-def _private_plan_digest(
+def _canonical_private_plan_payload(
     specs: tuple[PrivateOperandSpec, ...],
     routes: tuple[PrivateResultRoute, ...],
     output_plan_digest: str,
-) -> str:
-    payload = {
+) -> dict[str, object]:
+    return {
         "format": "dynamic-cssc-private-strong-plan-v1",
         "output_plan_digest": output_plan_digest,
         "operands": [
@@ -387,6 +387,28 @@ def _private_plan_digest(
             for route in routes
         ],
     }
+
+
+def canonical_private_plan_payload(bundle: StrongExecutionBundle) -> dict[str, object]:
+    """Serialize private whole-query operands and routes for audit evidence.
+
+    This payload contains global ColumnIndex data and is not Cloud-visible.
+    """
+
+    _validate_bundle(bundle)
+    return _canonical_private_plan_payload(
+        bundle.value_operand_specs,
+        bundle.result_routes,
+        bundle.output_plan_digest,
+    )
+
+
+def _private_plan_digest(
+    specs: tuple[PrivateOperandSpec, ...],
+    routes: tuple[PrivateResultRoute, ...],
+    output_plan_digest: str,
+) -> str:
+    payload = _canonical_private_plan_payload(specs, routes, output_plan_digest)
     encoded = json.dumps(
         payload,
         sort_keys=True,
