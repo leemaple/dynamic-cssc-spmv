@@ -84,7 +84,13 @@ def _require_id(value: object, field: str) -> str:
     return value
 
 
-def _canonical_payload(plan: OutputPlan) -> dict[str, object]:
+def canonical_output_plan_payload(plan: OutputPlan) -> dict[str, object]:
+    """Serialize an OutputPlan canonically for audit and evidence binding.
+
+    This includes private reconstruction routes and is not a Cloud-visible payload.
+    """
+
+    _validate(plan)
     shares = []
     for share in sorted(plan.shares, key=lambda item: (item.component_id, item.output_block_id)):
         shares.append(
@@ -106,9 +112,7 @@ def _canonical_payload(plan: OutputPlan) -> dict[str, object]:
 
 
 def _validate(plan: OutputPlan) -> Counter[int]:
-    logical_output_size = _require_positive_int(
-        plan.logical_output_size, "logical_output_size"
-    )
+    logical_output_size = _require_positive_int(plan.logical_output_size, "logical_output_size")
     slot_count = _require_positive_int(plan.slot_count, "slot_count")
     if not isinstance(plan.shares, tuple):
         raise OutputPlanError("shares must be a tuple")
@@ -157,7 +161,7 @@ def analyze_output_plan(plan: OutputPlan) -> OutputPlanAnalysis:
         for share in plan.shares
         if any(logical in overlap_coordinates for _, logical in share.slot_to_logical)
     }
-    payload = _canonical_payload(plan)
+    payload = canonical_output_plan_payload(plan)
     canonical = json.dumps(
         payload,
         sort_keys=True,

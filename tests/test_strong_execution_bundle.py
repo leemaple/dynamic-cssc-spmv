@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import inspect
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -15,9 +17,11 @@ from dynamic_cssc.mask_ledger import (
     PreparedF1MCommitmentError,
     SQLiteMaskBindingLedger,
 )
+from dynamic_cssc.output_plan import canonical_output_plan_payload
 from dynamic_cssc.strong_execution import (
     PreparedQueryOperand,
     StrongExecutionError,
+    canonical_private_plan_payload,
     compile_strong_execution,
     execute_strong_plaintext,
     prepare_strong_query,
@@ -236,6 +240,28 @@ def _three_result_bundle():
         version_id="version-1",
     ).state
     return compile_strong_execution(base, delta)
+
+
+def test_audit_serializers_are_the_unique_sources_of_existing_bundle_digests() -> None:
+    bundle = _three_result_bundle()
+
+    output_bytes = json.dumps(
+        canonical_output_plan_payload(bundle.output_plan),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    private_bytes = json.dumps(
+        canonical_private_plan_payload(bundle),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+
+    assert hashlib.sha256(output_bytes).hexdigest() == bundle.output_plan_digest
+    assert hashlib.sha256(private_bytes).hexdigest() == bundle.private_plan_digest
 
 
 def test_every_return_uses_random_or_exact_zero_dummy_f1m_and_counts_from_dag() -> None:
