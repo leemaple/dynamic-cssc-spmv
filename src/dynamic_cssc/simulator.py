@@ -5,7 +5,8 @@ from dataclasses import dataclass
 
 from .events import PublicationWindow
 from .metrics import StrategyMetrics
-from .output_plan import analyze_output_plan
+from .output_plan import canonical_output_plan_payload
+from .query_compiler import compile_query
 from .strategy_state import (
     STRATEGIES,
     StrategyKind,
@@ -90,47 +91,32 @@ def _metrics_for(transition: Transition) -> StrategyMetrics:
     if queries == 0:
         return metrics
 
-    query_ciphertexts = 0
-    cc_multiplications = 0
-    rotations = 0
-    additions = 0
-    plaintext_masks = 0
     components = (state.base,) if state.delta is None else (state.base, state.delta)
-    for component in components:
-        for block in component.blocks:
-            if not block.chunks:
-                continue
-            query_ciphertexts += len(block.chunks)
-            cc_multiplications += len(block.chunks)
-            block_rotations = sum(
-                chunk.aggregation_rotations_proxy for chunk in block.chunks
-            )
-            rotations += block_rotations
-            additions += block_rotations + len(block.chunks) - 1
-            plaintext_masks += sum(
-                chunk.height < component.layout_spec.effective_slots
-                for chunk in block.chunks
-            )
-
-    if state.strategy == "Packed-COO-Client-Lane-Delta":
-        active_segments = sum(
-            any(entry is not None and entry.value != 0 for entry in segment.entries)
-            for segment in state.coo_segments
+    compiled = compile_query(
+        components,
+        client_lane_segments=state.coo_segments,
+        f1m_policy="overlap-only",
+    )
+    if canonical_output_plan_payload(compiled.output_plan) != canonical_output_plan_payload(
+        transition.output_plan
+    ):
+        raise AssertionError(
+            "compiled OutputPlan must canonically match the transition OutputPlan"
         )
-        query_ciphertexts += active_segments
-        cc_multiplications += active_segments
 
-    analysis = analyze_output_plan(transition.output_plan)
+    counts = compiled.cloud_counts
+    analysis = compiled.output_analysis
+    query_ciphertexts = dict(counts.ciphertext_inputs_by_role).get("query", 0)
     metrics.query_ciphertexts = queries * query_ciphertexts
-    metrics.cc_multiplications = queries * cc_multiplications
-    metrics.rotations = queries * rotations
-    metrics.additions = queries * additions
-    metrics.plaintext_masks = queries * plaintext_masks
-    metrics.result_ciphertexts = queries * analysis.result_ciphertexts
-    metrics.blinding_mask_ciphertexts = queries * analysis.masked_result_ciphertexts
-    metrics.blinding_encryptions = queries * analysis.masked_result_ciphertexts
-    metrics.blinding_additions = queries * analysis.masked_result_ciphertexts
-    metrics.decryptions = queries * analysis.result_ciphertexts
+    metrics.cc_multiplications = queries * counts.multiply_ciphertexts
+    metrics.rotations = queries * counts.rotations
+    metrics.additions = queries * counts.add_ciphertexts
+    metrics.plaintext_masks = queries * counts.multiply_plaintext_masks
+    metrics.result_ciphertexts = queries * counts.returned_ciphertexts
+    metrics.blinding_mask_ciphertexts = queries * counts.add_f1m_masks
+    metrics.blinding_encryptions = queries * counts.add_f1m_masks
+    metrics.blinding_additions = queries * counts.add_f1m_masks
+    metrics.decryptions = queries * counts.returned_ciphertexts
     metrics.client_merges = queries * analysis.client_modular_additions
     metrics.mask_random_elements = queries * analysis.mask_random_elements
     metrics.mask_mapped_elements = queries * analysis.mask_mapped_elements

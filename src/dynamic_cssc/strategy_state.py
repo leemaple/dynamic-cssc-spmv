@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, replace
 from math import ceil, isfinite
-from typing import Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from dynamic_cssc.cssc import (
     LaneKind,
@@ -14,6 +14,18 @@ from dynamic_cssc.cssc import (
 )
 from dynamic_cssc.events import NetUpdate, PublicationWindow
 from dynamic_cssc.output_plan import OutputPlan, OutputShare, analyze_output_plan
+from dynamic_cssc.strong_packed_coo import (
+    STRONG_COMPONENT_ID,
+    SegmentedDeltaState,
+    StrongEntry,
+    advance_segmented_delta,
+    cloud_page_shapes,
+    decode_segmented_delta,
+    initialize_segmented_delta,
+)
+
+if TYPE_CHECKING:
+    from dynamic_cssc.strong_execution import StrongExecutionBundle
 
 Coordinate: TypeAlias = tuple[int, int]
 StrategyKind: TypeAlias = Literal[
@@ -49,6 +61,18 @@ class StrategyConfig:
     reserved_slack_beta: float
     periodic_repack_windows: int
     packed_coo_segment_capacity: int
+
+
+@dataclass(frozen=True, slots=True)
+class StrongStrategyConfig:
+    rows: int
+    cols: int
+    effective_slots: int
+    partition_rows: int
+    matrix_value_bound: int
+    max_row_nnz: int
+    reserved_slack_beta: float
+    segment_width: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +116,17 @@ class StrategyState:
 
 
 @dataclass(frozen=True, slots=True)
+class StrongStrategyState:
+    config: StrongStrategyConfig
+    version_ordinal: int
+    version_id: str
+    logical: dict[Coordinate, int]
+    base: PublishedComponent
+    delta: SegmentedDeltaState
+    free_lanes: tuple[FreeLane, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class TransitionFacts:
     updates: int
     query_count: int
@@ -114,12 +149,32 @@ class TransitionFacts:
         if len(self.overflow_rows) != self.overflow:
             raise ValueError("overflow must equal len(overflow_rows)")
 
+    @property
+    def metadata_units(self) -> int:
+        return self.ci_patch_entries + self.ci_full_sync_entries
+
 
 @dataclass(frozen=True, slots=True)
 class Transition:
     state: StrategyState
     facts: TransitionFacts
     output_plan: OutputPlan
+
+
+@dataclass(frozen=True, slots=True)
+class StrongTransition:
+    state: StrongStrategyState
+    facts: TransitionFacts
+    output_plan: OutputPlan
+    execution_bundle: StrongExecutionBundle
+
+
+def _compile_strong_bundle(
+    base: PublishedComponent, delta: SegmentedDeltaState
+) -> StrongExecutionBundle:
+    from dynamic_cssc.strong_execution import compile_strong_execution
+
+    return compile_strong_execution(base, delta)
 
 
 def _is_strict_int(value: object) -> bool:
@@ -130,6 +185,15 @@ def _positive_int(value: object, field: str) -> int:
     if not _is_strict_int(value) or value <= 0:
         raise ValueError(f"{field} must be a positive strict integer")
     return value
+
+
+def _is_finite_number(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return isfinite(float(value))
+    except OverflowError:
+        return False
 
 
 def _validate_config(
@@ -170,9 +234,7 @@ def _validate_config(
             "packed_coo_segment_capacity must not exceed effective_slots"
         )
     if (
-        isinstance(reserved_slack_beta, bool)
-        or not isinstance(reserved_slack_beta, (int, float))
-        or not isfinite(float(reserved_slack_beta))
+        not _is_finite_number(reserved_slack_beta)
         or reserved_slack_beta < 0
     ):
         raise ValueError("reserved_slack_beta must be a finite nonnegative number")
@@ -189,8 +251,55 @@ def _validate_config(
     )
 
 
+def _validate_strong_config(
+    *,
+    rows: object,
+    cols: object,
+    effective_slots: object,
+    partition_rows: object,
+    matrix_value_bound: object,
+    max_row_nnz: object,
+    reserved_slack_beta: object,
+    segment_width: object,
+) -> StrongStrategyConfig:
+    rows = _positive_int(rows, "rows")
+    cols = _positive_int(cols, "cols")
+    effective_slots = _positive_int(effective_slots, "effective_slots")
+    if partition_rows is None:
+        partition_rows = effective_slots
+    partition_rows = _positive_int(partition_rows, "partition_rows")
+    if partition_rows > effective_slots:
+        raise ValueError("partition_rows must not exceed effective_slots")
+    matrix_value_bound = _positive_int(matrix_value_bound, "matrix_value_bound")
+    max_row_nnz = _positive_int(max_row_nnz, "max_row_nnz")
+    if (
+        not _is_strict_int(segment_width)
+        or segment_width < 2
+        or segment_width > effective_slots
+        or segment_width & (segment_width - 1)
+    ):
+        raise ValueError(
+            "segment_width must be a power of two in [2, effective_slots]"
+        )
+    if (
+        not _is_finite_number(reserved_slack_beta)
+        or reserved_slack_beta < 0
+    ):
+        raise ValueError("reserved_slack_beta must be a finite nonnegative number")
+    return StrongStrategyConfig(
+        rows=rows,
+        cols=cols,
+        effective_slots=effective_slots,
+        partition_rows=partition_rows,
+        matrix_value_bound=matrix_value_bound,
+        max_row_nnz=max_row_nnz,
+        reserved_slack_beta=float(reserved_slack_beta),
+        segment_width=segment_width,
+    )
+
+
 def _validate_logical(
-    logical: object, config: StrategyConfig
+    logical: object, config: StrategyConfig | StrongStrategyConfig
 ) -> dict[Coordinate, int]:
     if not isinstance(logical, dict):
         raise ValueError("logical state must be a coordinate-to-value dict")
@@ -220,7 +329,7 @@ def _validate_logical(
 
 
 def _reserved_capacities(
-    logical: dict[Coordinate, int], config: StrategyConfig
+    logical: dict[Coordinate, int], config: StrategyConfig | StrongStrategyConfig
 ) -> tuple[int, ...]:
     row_counts: Counter[int] = Counter(row for row, _ in logical)
     capacities = tuple(
@@ -385,7 +494,7 @@ def _chunk_block_ids(component: PublishedComponent) -> dict[str, str]:
 
 
 def _point_patch_base(
-    state: StrategyState,
+    state: StrategyState | StrongStrategyState,
     updates: tuple[NetUpdate, ...],
     *,
     allow_reserved: bool,
@@ -448,14 +557,21 @@ def _point_patch_base(
     if allow_reserved:
         allowed_kinds.add("reserved")
     for update in insertions:
+        available = tuple(
+            item
+            for item in _free_lanes(base)
+            if item.row == update.row and item.kind in allowed_kinds
+        )
         lane = next(
             (
                 item
-                for item in _free_lanes(base)
-                if item.row == update.row and item.kind in allowed_kinds
+                for item in available
+                if item.kind == "tombstone"
+                and item.retained_column == update.col
             ),
             None,
         )
+        lane = lane or next(iter(available), None)
         if lane is None:
             overflow.append((update.row, update.col))
             continue
@@ -468,7 +584,8 @@ def _point_patch_base(
             kind="actual",
         )
         absorbed[lane.kind] += 1
-        ci_patch_locations.append(lane.location)
+        if lane.kind != "tombstone" or lane.retained_column != update.col:
+            ci_patch_locations.append(lane.location)
         patched_chunks.add((lane.location[0], lane.location[1]))
     return base, patched_chunks, ci_patch_locations, absorbed, overflow
 
@@ -578,6 +695,63 @@ def initialize_strategy(
     return state
 
 
+def initialize_strong_strategy(
+    initial_state: dict[Coordinate, int],
+    *,
+    rows: int,
+    cols: int,
+    effective_slots: int,
+    segment_width: int,
+    partition_rows: int | None = None,
+    matrix_value_bound: int = 7,
+    max_row_nnz: int = 4096,
+    reserved_slack_beta: float = 0.0,
+) -> StrongStrategyState:
+    """Create the unregistered strong strategy's independent persistent snapshot."""
+
+    config = _validate_strong_config(
+        rows=rows,
+        cols=cols,
+        effective_slots=effective_slots,
+        partition_rows=partition_rows,
+        matrix_value_bound=matrix_value_bound,
+        max_row_nnz=max_row_nnz,
+        reserved_slack_beta=reserved_slack_beta,
+        segment_width=segment_width,
+    )
+    logical = _validate_logical(initial_state, config)
+    version_id = "v00000000"
+    base = publish_component(
+        logical,
+        rows=config.rows,
+        cols=config.cols,
+        effective_slots=config.effective_slots,
+        partition_rows=config.partition_rows,
+        physical_capacities=_reserved_capacities(logical, config),
+        version_id=version_id,
+        component_prefix="base",
+    )
+    delta = initialize_segmented_delta(
+        rows=config.rows,
+        cols=config.cols,
+        effective_slots=config.effective_slots,
+        segment_width=config.segment_width,
+        matrix_value_bound=config.matrix_value_bound,
+        version_id=version_id,
+    )
+    state = StrongStrategyState(
+        config=config,
+        version_ordinal=0,
+        version_id=version_id,
+        logical=dict(logical),
+        base=base,
+        delta=delta,
+        free_lanes=_free_lanes(base),
+    )
+    _assert_strong_strategy_invariants(state)
+    return state
+
+
 def _decode_component(component: PublishedComponent) -> dict[Coordinate, int]:
     decoded: dict[Coordinate, int] = {}
     for chunk in component.chunks:
@@ -609,6 +783,80 @@ def decode_state(state: StrategyState) -> dict[Coordinate, int]:
                 raise AssertionError("base and COO coordinates must be disjoint")
             decoded[entry.coordinate] = entry.value
     return decoded
+
+
+def _decode_strong_layout(state: StrongStrategyState) -> dict[Coordinate, int]:
+    decoded = _decode_component(state.base)
+    for coordinate, value in decode_segmented_delta(state.delta).items():
+        if coordinate in decoded:
+            raise AssertionError("base and strong delta coordinates must be disjoint")
+        decoded[coordinate] = value
+    return decoded
+
+
+def decode_strong_state(state: StrongStrategyState) -> dict[Coordinate, int]:
+    """Decode the exact logical matrix owned by the strong base and segmented delta."""
+
+    _assert_strong_strategy_invariants(state)
+    return _decode_strong_layout(state)
+
+
+def _assert_strong_strategy_invariants(state: StrongStrategyState) -> None:
+    if not isinstance(state, StrongStrategyState):
+        raise ValueError("state must be a StrongStrategyState")
+    if not isinstance(state.config, StrongStrategyConfig):
+        raise AssertionError("strong strategy config has the wrong type")
+    if not isinstance(state.base, PublishedComponent):
+        raise AssertionError("strong base has the wrong type")
+    if not isinstance(state.delta, SegmentedDeltaState):
+        raise AssertionError("strong delta has the wrong type")
+    if not isinstance(state.logical, dict):
+        raise AssertionError("strong logical metadata must be a dict")
+    if not isinstance(state.free_lanes, tuple):
+        raise AssertionError("strong free-lane metadata must be a tuple")
+    try:
+        expected_config = _validate_strong_config(
+            rows=state.config.rows,
+            cols=state.config.cols,
+            effective_slots=state.config.effective_slots,
+            partition_rows=state.config.partition_rows,
+            matrix_value_bound=state.config.matrix_value_bound,
+            max_row_nnz=state.config.max_row_nnz,
+            reserved_slack_beta=state.config.reserved_slack_beta,
+            segment_width=state.config.segment_width,
+        )
+    except ValueError as error:
+        raise AssertionError("strong strategy config is invalid") from error
+    if state.config != expected_config:
+        raise AssertionError("strong strategy config must be canonical")
+    if not _is_strict_int(state.version_ordinal) or state.version_ordinal < 0:
+        raise AssertionError("version ordinal must be a nonnegative strict integer")
+    if state.version_id != f"v{state.version_ordinal:08d}":
+        raise AssertionError("version identifier must match its ordinal")
+    if state.base.version_id != state.version_id:
+        raise AssertionError("base component version must match the strategy version")
+    if state.delta.version_id != state.version_id:
+        raise AssertionError("strong delta version must match the strategy version")
+    if (
+        state.delta.rows,
+        state.delta.cols,
+        state.delta.effective_slots,
+        state.delta.segment_width,
+        state.delta.matrix_value_bound,
+    ) != (
+        state.config.rows,
+        state.config.cols,
+        state.config.effective_slots,
+        state.config.segment_width,
+        state.config.matrix_value_bound,
+    ):
+        raise AssertionError("strong delta dimensions must match the strategy config")
+    _assert_component_invariants(state.base, state.config)
+    if state.free_lanes != _free_lanes(state.base):
+        raise AssertionError("free-lane metadata must match the base component")
+    if _decode_strong_layout(state) != state.logical:
+        raise AssertionError("decoded base and strong delta must equal the logical matrix")
+    _validate_logical(state.logical, state.config)
 
 
 def assert_strategy_invariants(state: StrategyState) -> None:
@@ -683,7 +931,7 @@ def assert_strategy_invariants(state: StrategyState) -> None:
 
 
 def _assert_component_invariants(
-    component: PublishedComponent, config: StrategyConfig
+    component: PublishedComponent, config: StrategyConfig | StrongStrategyConfig
 ) -> None:
     spec = component.layout_spec
     if (
@@ -937,6 +1185,151 @@ def advance_publication(
         )
     raise NotImplementedError(
         f"publication transition is not implemented for {state.strategy}"
+    )
+
+
+def _validated_strong_candidate(
+    state: StrongStrategyState, window: PublicationWindow
+) -> dict[Coordinate, int]:
+    if not isinstance(window, PublicationWindow):
+        raise ValueError("window must be a PublicationWindow")
+    if not _is_strict_int(window.index) or window.index < 0:
+        raise ValueError("window.index must be a nonnegative strict integer")
+    if (
+        not _is_finite_number(window.start_time)
+        or not _is_finite_number(window.end_time)
+        or window.end_time < window.start_time
+    ):
+        raise ValueError("window times must be finite and nondecreasing")
+    if not isinstance(window.updates, tuple):
+        raise ValueError("window.updates must be a tuple")
+    if not _is_strict_int(window.query_count) or window.query_count < 0:
+        raise ValueError("window.query_count must be a nonnegative strict integer")
+    if not isinstance(window.reason, str) or not window.reason:
+        raise ValueError("window.reason must be a non-empty string")
+
+    seen: set[Coordinate] = set()
+    candidate = dict(state.logical)
+    for update in window.updates:
+        if not isinstance(update, NetUpdate):
+            raise ValueError("window updates must contain NetUpdate values")
+        if not all(
+            _is_strict_int(value)
+            for value in (update.row, update.col, update.before, update.after)
+        ):
+            raise ValueError("update fields must be strict integers")
+        if update.is_noop:
+            raise ValueError("window updates must not contain no-op NetUpdate values")
+        coordinate = (update.row, update.col)
+        if coordinate in seen:
+            raise ValueError("window updates must have unique coordinates")
+        seen.add(coordinate)
+        if not 0 <= update.row < state.config.rows or not (
+            0 <= update.col < state.config.cols
+        ):
+            raise ValueError("update coordinate is outside the matrix")
+        if state.logical.get(coordinate, 0) != update.before:
+            raise ValueError("update.before does not match the published logical state")
+        if abs(update.after) > state.config.matrix_value_bound:
+            raise ValueError("update.after violates the matrix value bound")
+        if update.after == 0:
+            candidate.pop(coordinate, None)
+        else:
+            candidate[coordinate] = update.after
+    return _validate_logical(candidate, state.config)
+
+
+def advance_strong_publication(
+    state: StrongStrategyState, window: PublicationWindow
+) -> StrongTransition:
+    """Atomically advance the unregistered strong strategy by one publication window."""
+
+    _assert_strong_strategy_invariants(state)
+    candidate = _validated_strong_candidate(state, window)
+    if not window.updates:
+        bundle = _compile_strong_bundle(state.base, state.delta)
+        return StrongTransition(
+            state=state,
+            facts=TransitionFacts(
+                updates=0,
+                query_count=window.query_count,
+                delta_ciphertexts=len(cloud_page_shapes(state.delta)),
+                active_component_ids=(
+                    (state.base.component_id, STRONG_COMPONENT_ID)
+                    if state.delta.segments
+                    else (state.base.component_id,)
+                ),
+            ),
+            output_plan=bundle.output_plan,
+            execution_bundle=bundle,
+        )
+
+    delta_logical = decode_segmented_delta(state.delta)
+    base_updates: list[NetUpdate] = []
+    delta_updates: list[NetUpdate] = []
+    for update in window.updates:
+        coordinate = (update.row, update.col)
+        if update.before != 0 and coordinate in delta_logical:
+            delta_updates.append(update)
+        else:
+            base_updates.append(update)
+
+    patched_base, patched_chunks, base_ci_locations, absorbed, overflow = (
+        _point_patch_base(
+            state,
+            tuple(base_updates),
+            allow_reserved=True,
+        )
+    )
+    version_ordinal = state.version_ordinal + 1
+    version_id = f"v{version_ordinal:08d}"
+    delta_transition = advance_segmented_delta(
+        state.delta,
+        delta_updates=tuple(delta_updates),
+        overflow_entries=tuple(
+            StrongEntry(row=row, col=col, value=candidate[(row, col)])
+            for row, col in overflow
+        ),
+        version_id=version_id,
+    )
+    base = _reindex_component(replace(patched_base, version_id=version_id))
+    new_state = StrongStrategyState(
+        config=state.config,
+        version_ordinal=version_ordinal,
+        version_id=version_id,
+        logical=dict(candidate),
+        base=base,
+        delta=delta_transition.state,
+        free_lanes=_free_lanes(base),
+    )
+    _assert_strong_strategy_invariants(new_state)
+    bundle = _compile_strong_bundle(new_state.base, new_state.delta)
+    component_ids = [new_state.base.component_id]
+    if new_state.delta.segments:
+        component_ids.append(STRONG_COMPONENT_ID)
+    return StrongTransition(
+        state=new_state,
+        facts=TransitionFacts(
+            updates=len(window.updates),
+            query_count=window.query_count,
+            value_patch_chunks=len(patched_chunks),
+            ci_patch_entries=(
+                len(base_ci_locations) + delta_transition.ci_patch_entries
+            ),
+            ci_full_sync_entries=delta_transition.ci_full_sync_entries,
+            rebuilt_ciphertexts=0,
+            delta_ciphertexts=len(cloud_page_shapes(new_state.delta)),
+            delta_rebuilt_ciphertexts=len(delta_transition.changed_page_ids),
+            absorbed_tombstone=absorbed["tombstone"],
+            absorbed_natural_padding=absorbed["natural-padding"],
+            absorbed_reserved=absorbed["reserved"],
+            overflow=len(overflow),
+            overflow_rows=tuple(row for row, _ in overflow),
+            patched_chunk_ids=tuple(sorted(patched_chunks)),
+            active_component_ids=tuple(component_ids),
+        ),
+        output_plan=bundle.output_plan,
+        execution_bundle=bundle,
     )
 
 

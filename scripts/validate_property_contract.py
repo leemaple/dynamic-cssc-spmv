@@ -12,14 +12,14 @@ import subprocess
 import sys
 import tempfile
 from collections import Counter
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
 import dynamic_cssc.output_plan as output_plan_module
 from dynamic_cssc.cloud_execution_plan import AddF1MMask, canonical_cloud_program_bytes
 from dynamic_cssc.cssc import publish_component
-from dynamic_cssc.events import NetUpdate
+from dynamic_cssc.events import NetUpdate, PublicationWindow
 from dynamic_cssc.mask_ledger import (
     ConsumedPreparedF1MCommitmentError,
     DuplicateMaskBindingError,
@@ -27,6 +27,11 @@ from dynamic_cssc.mask_ledger import (
     SQLiteMaskBindingLedger,
 )
 from dynamic_cssc.output_plan import prepare_f1m_masks
+from dynamic_cssc.strategy_state import (
+    advance_strong_publication,
+    decode_strong_state,
+    initialize_strong_strategy,
+)
 from dynamic_cssc.strong_execution import (
     PreparedQueryOperand,
     StrongExecutionError,
@@ -62,13 +67,15 @@ _REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 _SOURCE_FILES = {
     "cloud_execution_plan": "src/dynamic_cssc/cloud_execution_plan.py",
     "contract_spec": "scripts/property_contract_spec.py",
-    "compiler": "src/dynamic_cssc/strong_execution.py",
+    "compiler": "src/dynamic_cssc/query_compiler.py",
     "cssc": "src/dynamic_cssc/cssc.py",
     "events": "src/dynamic_cssc/events.py",
     "generator": "scripts/property_contract.py",
     "mask_ledger": "src/dynamic_cssc/mask_ledger.py",
     "output_plan": "src/dynamic_cssc/output_plan.py",
     "plaintext_oracle": "src/dynamic_cssc/plaintext_oracle.py",
+    "strategy_state": "src/dynamic_cssc/strategy_state.py",
+    "strong_execution": "src/dynamic_cssc/strong_execution.py",
     "strong_packed_coo": "src/dynamic_cssc/strong_packed_coo.py",
     "validator": "scripts/validate_property_contract.py",
     "test_source": "tests/test_strong_property_contract.py",
@@ -250,6 +257,64 @@ def _validate_manifest_shape(manifest: object) -> dict[str, Any]:
     if not isinstance(top["cases"], list):
         raise PropertyContractValidationError("manifest.cases must be an array")
     for case_index, case in enumerate(top["cases"]):
+        if isinstance(case, dict) and case.get("kind") == "persistent-strong-strategy":
+            case_object = _require_exact_keys(
+                case,
+                {
+                    "case_id",
+                    "kind",
+                    "dimensions",
+                    "policy",
+                    "initial",
+                    "windows",
+                    "contracts",
+                },
+                f"manifest.cases[{case_index}]",
+            )
+            _require_exact_keys(
+                case_object["dimensions"],
+                {
+                    "rows",
+                    "cols",
+                    "effective_slots",
+                    "partition_rows",
+                    "segment_width",
+                    "matrix_value_bound",
+                },
+                f"manifest.cases[{case_index}].dimensions",
+            )
+            _require_exact_keys(
+                case_object["policy"],
+                {"max_row_nnz", "reserved_slack_beta"},
+                f"manifest.cases[{case_index}].policy",
+            )
+            _require_exact_keys(
+                case_object["initial"],
+                {"entries"},
+                f"manifest.cases[{case_index}].initial",
+            )
+            if not isinstance(case_object["windows"], list):
+                raise PropertyContractValidationError(
+                    f"manifest.cases[{case_index}].windows must be an array"
+                )
+            for window_index, window in enumerate(case_object["windows"]):
+                _require_exact_keys(
+                    window,
+                    {
+                        "index",
+                        "start_time",
+                        "end_time",
+                        "updates",
+                        "query_count",
+                        "reason",
+                    },
+                    f"manifest.cases[{case_index}].windows[{window_index}]",
+                )
+            if case_object["contracts"] != ["persistent-strong-transition"]:
+                raise PropertyContractValidationError(
+                    "persistent strong case must name its one frozen contract"
+                )
+            continue
         case_object = _require_exact_keys(
             case,
             {"case_id", "dimensions", "versions", "base", "waves", "query", "contracts"},
@@ -380,6 +445,376 @@ def _concurrent_execute_worker(
 
 def _observation(name: str, value: object) -> dict[str, object]:
     return {"name": name, "value": value}
+
+
+def _frozen_strong_facts(**overrides: object) -> dict[str, object]:
+    facts: dict[str, object] = {
+        "updates": 0,
+        "query_count": 0,
+        "value_patch_chunks": 0,
+        "ci_patch_entries": 0,
+        "ci_full_sync_entries": 0,
+        "rebuilt_ciphertexts": 0,
+        "delta_ciphertexts": 0,
+        "delta_rebuilt_ciphertexts": 0,
+        "absorbed_tombstone": 0,
+        "absorbed_natural_padding": 0,
+        "absorbed_reserved": 0,
+        "overflow": 0,
+        "overflow_rows": [],
+        "patched_chunk_ids": [],
+        "rebuilt_output_block_ids": [],
+        "active_component_ids": ["base"],
+    }
+    facts.update(overrides)
+    return facts
+
+
+_EXPECTED_STRONG_FACTS = (
+    _frozen_strong_facts(
+        updates=1,
+        value_patch_chunks=1,
+        patched_chunk_ids=[["base", "base-h000000-c000000"]],
+    ),
+    _frozen_strong_facts(
+        updates=1,
+        value_patch_chunks=1,
+        absorbed_tombstone=1,
+        patched_chunk_ids=[["base", "base-h000000-c000000"]],
+    ),
+    _frozen_strong_facts(
+        updates=2,
+        value_patch_chunks=1,
+        ci_patch_entries=1,
+        absorbed_tombstone=1,
+        patched_chunk_ids=[["base", "base-h000000-c000000"]],
+    ),
+    _frozen_strong_facts(
+        updates=1,
+        ci_full_sync_entries=4,
+        delta_ciphertexts=1,
+        delta_rebuilt_ciphertexts=1,
+        overflow=1,
+        overflow_rows=[0],
+        active_component_ids=["base", "strong-packed-coo-delta"],
+    ),
+    _frozen_strong_facts(
+        updates=2,
+        ci_patch_entries=1,
+        delta_ciphertexts=1,
+        delta_rebuilt_ciphertexts=1,
+        overflow=1,
+        overflow_rows=[0],
+        active_component_ids=["base", "strong-packed-coo-delta"],
+    ),
+    _frozen_strong_facts(
+        updates=1,
+        delta_ciphertexts=1,
+        delta_rebuilt_ciphertexts=1,
+        active_component_ids=["base", "strong-packed-coo-delta"],
+    ),
+    _frozen_strong_facts(
+        updates=1,
+        delta_ciphertexts=1,
+        delta_rebuilt_ciphertexts=1,
+        overflow=1,
+        overflow_rows=[0],
+        active_component_ids=["base", "strong-packed-coo-delta"],
+    ),
+    _frozen_strong_facts(
+        updates=2,
+        ci_patch_entries=1,
+        delta_ciphertexts=1,
+        delta_rebuilt_ciphertexts=1,
+        overflow=1,
+        overflow_rows=[0],
+        active_component_ids=["base", "strong-packed-coo-delta"],
+    ),
+    _frozen_strong_facts(
+        updates=3,
+        ci_patch_entries=2,
+        ci_full_sync_entries=4,
+        delta_ciphertexts=2,
+        delta_rebuilt_ciphertexts=2,
+        overflow=3,
+        overflow_rows=[0, 0, 0],
+        active_component_ids=["base", "strong-packed-coo-delta"],
+    ),
+    _frozen_strong_facts(
+        query_count=3,
+        delta_ciphertexts=2,
+        active_component_ids=["base", "strong-packed-coo-delta"],
+    ),
+)
+
+_EXPECTED_STRONG_OUTPUTS = {
+    "base": {
+        "output_plan_digest": "bef0b30e14375de32d3d32feb35bec3640eae73ae2d8e6847900de12dcbe8db6",
+        "reconstruction_mode": "concatenate",
+        "result_ciphertexts": 1,
+        "masked_result_ciphertexts": 0,
+        "implicit_zero_coordinates": 0,
+        "overlap_coordinates": 0,
+        "mask_random_elements": 0,
+        "mask_mapped_elements": 0,
+        "client_reorder_elements": 1,
+        "client_modular_additions": 0,
+    },
+    "one-page": {
+        "output_plan_digest": "751cad47f52df6fbb02382d9336ec5fdc65f49c0b42957a4d6f607974b72d44c",
+        "reconstruction_mode": "coordinate-sum",
+        "result_ciphertexts": 2,
+        "masked_result_ciphertexts": 2,
+        "implicit_zero_coordinates": 0,
+        "overlap_coordinates": 1,
+        "mask_random_elements": 1,
+        "mask_mapped_elements": 2,
+        "client_reorder_elements": 2,
+        "client_modular_additions": 1,
+    },
+    "two-page": {
+        "output_plan_digest": "afbda9a1d5a350da90ba68ba243113ec60fb1c69d276ed6e5856f2f9b7cf57c0",
+        "reconstruction_mode": "coordinate-sum",
+        "result_ciphertexts": 3,
+        "masked_result_ciphertexts": 3,
+        "implicit_zero_coordinates": 0,
+        "overlap_coordinates": 1,
+        "mask_random_elements": 3,
+        "mask_mapped_elements": 4,
+        "client_reorder_elements": 4,
+        "client_modular_additions": 3,
+    },
+}
+
+_EXPECTED_STRONG_CLOUD_COUNTS = {
+    "base": {
+        "ciphertext_inputs": 3,
+        "ciphertext_inputs_by_role": [["f1m-mask", 1], ["query", 1], ["value", 1]],
+        "plaintext_masks": 1,
+        "multiply_ciphertexts": 1,
+        "relinearizations": 1,
+        "rotations": 1,
+        "rotations_by_exact_index": [[1, 1]],
+        "multiply_plaintext_masks": 1,
+        "add_ciphertexts": 1,
+        "add_f1m_masks": 1,
+        "returned_ciphertexts": 1,
+    },
+    "one-page": {
+        "ciphertext_inputs": 6,
+        "ciphertext_inputs_by_role": [["f1m-mask", 2], ["query", 2], ["value", 2]],
+        "plaintext_masks": 2,
+        "multiply_ciphertexts": 2,
+        "relinearizations": 2,
+        "rotations": 2,
+        "rotations_by_exact_index": [[1, 2]],
+        "multiply_plaintext_masks": 2,
+        "add_ciphertexts": 2,
+        "add_f1m_masks": 2,
+        "returned_ciphertexts": 2,
+    },
+    "two-page": {
+        "ciphertext_inputs": 9,
+        "ciphertext_inputs_by_role": [["f1m-mask", 3], ["query", 3], ["value", 3]],
+        "plaintext_masks": 3,
+        "multiply_ciphertexts": 3,
+        "relinearizations": 3,
+        "rotations": 3,
+        "rotations_by_exact_index": [[1, 3]],
+        "multiply_plaintext_masks": 3,
+        "add_ciphertexts": 3,
+        "add_f1m_masks": 3,
+        "returned_ciphertexts": 3,
+    },
+}
+
+_EXPECTED_STRONG_PHASES = (
+    "base",
+    "base",
+    "base",
+    "one-page",
+    "one-page",
+    "one-page",
+    "one-page",
+    "one-page",
+    "two-page",
+    "two-page",
+)
+_EXPECTED_STRONG_SEGMENT_COUNTS = (0, 0, 0, 1, 1, 1, 1, 1, 3, 3)
+_EXPECTED_STRONG_PAGE_COUNTS = (0, 0, 0, 1, 1, 1, 1, 1, 2, 2)
+_EXPECTED_FINAL_STRONG_COMPILE = {
+    "cloud_program_digest": "2a572b40a7e9b6a0df03cb4eed94c9dce5e5039e9ec4c3cc9d335cca3f43cf19",
+    "output_plan_digest": "afbda9a1d5a350da90ba68ba243113ec60fb1c69d276ed6e5856f2f9b7cf57c0",
+    "execution_binding_digest": "5409c5a556606804f7aa86640d90c04cb7f319483708082dc5558f7537f2867a",
+    "private_plan_digest": "830294ce12d682e97ace7007762fbb12798e63a8fa7afdb66718d77fe3c92a77",
+}
+
+
+def _json_summary(value: object) -> object:
+    return json.loads(canonical_json_bytes(value).decode("ascii"))
+
+
+def _logical_sha256(logical: dict[tuple[int, int], int]) -> str:
+    entries = [[row, column, value] for (row, column), value in sorted(logical.items())]
+    return hashlib.sha256(canonical_json_bytes(entries)).hexdigest()
+
+
+def _strong_query_compile_summary(bundle) -> dict[str, str]:
+    return {
+        "cloud_program_digest": bundle.cloud_program_digest,
+        "output_plan_digest": bundle.output_plan_digest,
+        "execution_binding_digest": bundle.execution_binding_digest,
+        "private_plan_digest": bundle.private_plan_digest,
+    }
+
+
+def _persistent_strong_record(case: dict[str, object]) -> dict[str, object]:
+    """Interpret public inputs independently, then exercise the public strong seam."""
+
+    dimensions = case["dimensions"]
+    policy = case["policy"]
+    initial = case["initial"]
+    assert isinstance(dimensions, dict)
+    assert isinstance(policy, dict)
+    assert isinstance(initial, dict)
+    expected = {(row, column): value for row, column, value in initial["entries"]}
+    if len(expected) != len(initial["entries"]):
+        raise PropertyContractValidationError("persistent strong initial entries must be unique")
+    state = initialize_strong_strategy(
+        dict(expected),
+        rows=dimensions["rows"],
+        cols=dimensions["cols"],
+        effective_slots=dimensions["effective_slots"],
+        partition_rows=dimensions["partition_rows"],
+        matrix_value_bound=dimensions["matrix_value_bound"],
+        max_row_nnz=policy["max_row_nnz"],
+        reserved_slack_beta=policy["reserved_slack_beta"],
+        segment_width=dimensions["segment_width"],
+    )
+    initial_decoded = decode_strong_state(state)
+    if initial_decoded != expected or (state.version_ordinal, state.version_id) != (
+        0,
+        "v00000000",
+    ):
+        raise PropertyContractValidationError("persistent strong initialization is not exact")
+    initial_version = {
+        "ordinal": state.version_ordinal,
+        "version_id": state.version_id,
+    }
+
+    waves = []
+    version_ordinal = 0
+    final_transition = None
+    for wave_index, window_spec in enumerate(case["windows"]):
+        window = PublicationWindow(
+            index=window_spec["index"],
+            start_time=window_spec["start_time"],
+            end_time=window_spec["end_time"],
+            updates=tuple(NetUpdate(*update) for update in window_spec["updates"]),
+            query_count=window_spec["query_count"],
+            reason=window_spec["reason"],
+        )
+        prior_state = state
+        for update in window.updates:
+            coordinate = (update.row, update.col)
+            if expected.get(coordinate, 0) != update.before:
+                raise PropertyContractValidationError(
+                    "persistent strong manifest update.before is inconsistent"
+                )
+            if update.after == 0:
+                expected.pop(coordinate, None)
+            else:
+                expected[coordinate] = update.after
+        if window.updates:
+            version_ordinal += 1
+        transition = advance_strong_publication(state, window)
+        state = transition.state
+        decoded = decode_strong_state(state)
+        if decoded != expected:
+            raise PropertyContractValidationError(
+                f"persistent strong wave {wave_index} decoded state is not exact"
+            )
+        if (state.version_ordinal, state.version_id) != (
+            version_ordinal,
+            f"v{version_ordinal:08d}",
+        ):
+            raise PropertyContractValidationError(
+                f"persistent strong wave {wave_index} version behavior changed"
+            )
+        if not window.updates and state is not prior_state:
+            raise PropertyContractValidationError(
+                "persistent strong query-only wave advanced the persistent snapshot"
+            )
+        facts = _json_summary(asdict(transition.facts))
+        if facts != _EXPECTED_STRONG_FACTS[wave_index]:
+            raise PropertyContractValidationError(
+                f"persistent strong wave {wave_index} TransitionFacts changed"
+            )
+        segment_count = len(state.delta.segments)
+        page_count = (
+            segment_count + state.delta.segments_per_page - 1
+        ) // state.delta.segments_per_page
+        if (
+            segment_count != _EXPECTED_STRONG_SEGMENT_COUNTS[wave_index]
+            or page_count != _EXPECTED_STRONG_PAGE_COUNTS[wave_index]
+            or transition.facts.delta_ciphertexts != page_count
+        ):
+            raise PropertyContractValidationError(
+                f"persistent strong wave {wave_index} segment/page count changed"
+            )
+        bundle = transition.execution_bundle
+        if transition.output_plan != bundle.output_plan:
+            raise PropertyContractValidationError(
+                f"persistent strong wave {wave_index} returned mismatched plans"
+            )
+        output_summary = _json_summary(asdict(bundle.output_analysis))
+        cloud_summary = _json_summary(asdict(bundle.cloud_counts))
+        phase = _EXPECTED_STRONG_PHASES[wave_index]
+        if output_summary != _EXPECTED_STRONG_OUTPUTS[phase]:
+            raise PropertyContractValidationError(
+                f"persistent strong wave {wave_index} OutputPlan summary changed"
+            )
+        if cloud_summary != _EXPECTED_STRONG_CLOUD_COUNTS[phase]:
+            raise PropertyContractValidationError(
+                f"persistent strong wave {wave_index} cloud count summary changed"
+            )
+        query_compile = _strong_query_compile_summary(bundle)
+        waves.append(
+            {
+                "window_index": window.index,
+                "version_ordinal": state.version_ordinal,
+                "version_id": state.version_id,
+                "decode_sha256": _logical_sha256(expected),
+                "segment_count": segment_count,
+                "page_count": page_count,
+                "facts": facts,
+                "output_plan": output_summary,
+                "cloud_counts": cloud_summary,
+                "query_compile": query_compile,
+            }
+        )
+        final_transition = transition
+
+    if final_transition is None:  # pragma: no cover - frozen manifest has windows
+        raise PropertyContractValidationError("persistent strong case has no final query compile")
+    independently_compiled = compile_strong_execution(state.base, state.delta)
+    if independently_compiled != final_transition.execution_bundle:
+        raise PropertyContractValidationError(
+            "persistent strong final query compilation is not deterministic"
+        )
+    final_compile = _strong_query_compile_summary(independently_compiled)
+    if final_compile != _EXPECTED_FINAL_STRONG_COMPILE:
+        raise PropertyContractValidationError("persistent strong final query compile changed")
+    return {
+        "case_id": case["case_id"],
+        "contract_id": "persistent-strong-transition",
+        "observations": [
+            _observation("initial_version", initial_version),
+            _observation("initial_decode_sha256", _logical_sha256(initial_decoded)),
+            _observation("waves", waves),
+            _observation("final_query_compile", final_compile),
+        ],
+    }
 
 
 def _build_actual_inputs(case: dict[str, object]):
@@ -1266,6 +1701,8 @@ def _independently_recompute_case_records(manifest: dict[str, object]) -> dict[s
             records.append(_ledger_concurrency_record(case))
         if "seeded-extension" in contracts:
             records.append(_seeded_extension_record(case, seed=manifest["seed"]))
+        if "persistent-strong-transition" in contracts:
+            records.append(_persistent_strong_record(case))
     return {
         "schema_version": RECORDS_SCHEMA_VERSION,
         "case_set_id": manifest["case_set_id"],

@@ -9,7 +9,7 @@ EVIDENCE_SCOPE = "builder-property-contract-only"
 MANIFEST_SCHEMA_VERSION = "dynamic-cssc-strong-property-contract-manifest-v1"
 RECORDS_SCHEMA_VERSION = "dynamic-cssc-strong-property-contract-records-v1"
 CASE_SET_ID = "phase2-strong-whole-query-property-cases"
-CASE_SET_VERSION = 2
+CASE_SET_VERSION = 3
 
 CLAIMS = {
     "candidate_registration_allowed": False,
@@ -226,6 +226,106 @@ def build_frozen_manifest(seed: int) -> dict[str, object]:
                 "c128-multipage",
             ],
         )
+    )
+
+    cases.append(
+        {
+            "case_id": "persistent-strong-transition",
+            "kind": "persistent-strong-strategy",
+            "dimensions": {
+                "rows": 1,
+                "cols": 10,
+                "effective_slots": 4,
+                "partition_rows": 1,
+                "segment_width": 2,
+                "matrix_value_bound": 9,
+            },
+            "policy": {"max_row_nnz": 10, "reserved_slack_beta": 0.0},
+            "initial": {"entries": [[0, 0, 1], [0, 1, 2]]},
+            "windows": [
+                {
+                    "index": 0,
+                    "start_time": 0.0,
+                    "end_time": 0.0,
+                    "updates": [[0, 0, 1, 0]],
+                    "query_count": 0,
+                    "reason": "version",
+                },
+                {
+                    "index": 1,
+                    "start_time": 1.0,
+                    "end_time": 1.0,
+                    "updates": [[0, 0, 0, 3]],
+                    "query_count": 0,
+                    "reason": "version",
+                },
+                {
+                    "index": 2,
+                    "start_time": 2.0,
+                    "end_time": 2.0,
+                    "updates": [[0, 0, 3, 0], [0, 2, 0, 4]],
+                    "query_count": 0,
+                    "reason": "version",
+                },
+                {
+                    "index": 3,
+                    "start_time": 3.0,
+                    "end_time": 3.0,
+                    "updates": [[0, 3, 0, 5]],
+                    "query_count": 0,
+                    "reason": "version",
+                },
+                {
+                    "index": 4,
+                    "start_time": 4.0,
+                    "end_time": 4.0,
+                    "updates": [[0, 3, 5, -5], [0, 4, 0, 6]],
+                    "query_count": 0,
+                    "reason": "version",
+                },
+                {
+                    "index": 5,
+                    "start_time": 5.0,
+                    "end_time": 5.0,
+                    "updates": [[0, 3, -5, 0]],
+                    "query_count": 0,
+                    "reason": "version",
+                },
+                {
+                    "index": 6,
+                    "start_time": 6.0,
+                    "end_time": 6.0,
+                    "updates": [[0, 3, 0, 7]],
+                    "query_count": 0,
+                    "reason": "version",
+                },
+                {
+                    "index": 7,
+                    "start_time": 7.0,
+                    "end_time": 7.0,
+                    "updates": [[0, 3, 7, 0], [0, 5, 0, 8]],
+                    "query_count": 0,
+                    "reason": "version",
+                },
+                {
+                    "index": 8,
+                    "start_time": 8.0,
+                    "end_time": 8.0,
+                    "updates": [[0, 6, 0, 9], [0, 7, 0, -1], [0, 8, 0, -2]],
+                    "query_count": 0,
+                    "reason": "version",
+                },
+                {
+                    "index": 9,
+                    "start_time": 9.0,
+                    "end_time": 9.0,
+                    "updates": [],
+                    "query_count": 3,
+                    "reason": "query",
+                },
+            ],
+            "contracts": ["persistent-strong-transition"],
+        }
     )
 
     seeded_vector = [

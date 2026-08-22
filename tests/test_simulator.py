@@ -231,6 +231,44 @@ def test_simulate_targets_checks_same_window_logical_equality(
         )
 
 
+def test_query_accounting_fails_closed_on_a_canonically_different_output_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_advance = simulator_module.advance_publication
+
+    def mismatched_output_plan(*args: object, **kwargs: object) -> object:
+        transition = real_advance(*args, **kwargs)  # type: ignore[arg-type]
+        first_share, *remaining_shares = transition.output_plan.shares
+        altered_share = replace(
+            first_share,
+            slot_to_logical=tuple(
+                (physical_slot, 1)
+                for physical_slot, _logical in first_share.slot_to_logical
+            ),
+        )
+        return replace(
+            transition,
+            output_plan=replace(
+                transition.output_plan,
+                shares=(altered_share, *remaining_shares),
+            ),
+        )
+
+    monkeypatch.setattr(
+        simulator_module,
+        "advance_publication",
+        mismatched_output_plan,
+    )
+
+    with pytest.raises(AssertionError, match="canonically match"):
+        simulate_targets(
+            [_window(index=0, queries=1)],
+            {(0, 0): 1},
+            [SimulationTarget("padding", "PaddingReuse-CSSC", _config())],
+            measure_from=0,
+        )
+
+
 def test_positive_reserved_empty_row_lane_is_in_full_query_accounting() -> None:
     config = _config(
         rows=2,
@@ -257,6 +295,51 @@ def test_positive_reserved_empty_row_lane_is_in_full_query_accounting() -> None:
         result.metrics.result_ciphertexts,
         result.metrics.client_reorder_elements,
     ) == (2, 2, 1, 2, 2, 1, 2)
+
+
+def test_each_ordinary_transition_compiles_all_active_sources_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    real_compile = simulator_module.compile_query
+
+    def recording_compile(
+        components: tuple[object, ...], **kwargs: object
+    ) -> object:
+        calls.append((components, kwargs))
+        return real_compile(components, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(simulator_module, "compile_query", recording_compile)
+    config = _config(
+        rows=2,
+        cols=4,
+        effective_slots=4,
+        partition_rows=2,
+        max_row_nnz=4,
+        reserved_slack_beta=0.0,
+        packed_coo_segment_capacity=2,
+    )
+
+    simulate_targets(
+        [_window(NetUpdate(0, 1, 0, 2), index=0, queries=1)],
+        {(0, 0): 1, (1, 0): 1},
+        [
+            SimulationTarget("mini", "Mini-CSSC-Delta", config),
+            SimulationTarget("coo", "Packed-COO-Client-Lane-Delta", config),
+        ],
+        measure_from=0,
+    )
+
+    assert len(calls) == 2
+    mini_call = next(call for call in calls if len(call[0]) == 2)
+    coo_call = next(call for call in calls if call[1]["client_lane_segments"])
+    assert mini_call[1] == {
+        "client_lane_segments": (),
+        "f1m_policy": "overlap-only",
+    }
+    assert len(coo_call[0]) == 1
+    assert len(coo_call[1]["client_lane_segments"]) == 1  # type: ignore[arg-type]
+    assert coo_call[1]["f1m_policy"] == "overlap-only"
 
 
 def test_simulate_advances_warmup_state_but_aggregates_only_the_measured_suffix() -> None:

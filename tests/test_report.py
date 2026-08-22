@@ -874,9 +874,12 @@ def test_causal_payload_validator_rejects_missing_tuning_metric_fields(
     tmp_path: Path,
 ) -> None:
     payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
-    del payload["tuning_aggregates"][0]["metrics"]["updates"]
+    del payload["tuning_aggregates"][0]["metrics"]["blinding_dummy_ciphertexts"]
 
-    with pytest.raises(ValueError, match=r"tuning_aggregates\[0\].metrics keys.*missing"):
+    with pytest.raises(
+        ValueError,
+        match=r"tuning_aggregates\[0\].metrics keys.*missing.*blinding_dummy_ciphertexts",
+    ):
         validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
 
 
@@ -895,6 +898,19 @@ def test_causal_payload_validator_rejects_extra_record_fields(tmp_path: Path) ->
     payload["records"][0]["unreviewed"] = 1
 
     with pytest.raises(ValueError, match=r"records\[0\] keys.*extra.*unreviewed"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def test_causal_payload_validator_rejects_missing_dummy_blinding_record_field(
+    tmp_path: Path,
+) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    del payload["records"][0]["blinding_dummy_ciphertexts"]
+
+    with pytest.raises(
+        ValueError,
+        match=r"records\[0\] keys.*missing.*blinding_dummy_ciphertexts",
+    ):
         validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
 
 

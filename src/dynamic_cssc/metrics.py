@@ -37,6 +37,7 @@ class StrategyMetrics:
     additions: int = 0
     plaintext_masks: int = 0
     blinding_mask_ciphertexts: int = 0
+    blinding_dummy_ciphertexts: int = 0
     blinding_encryptions: int = 0
     blinding_additions: int = 0
     decryptions: int = 0

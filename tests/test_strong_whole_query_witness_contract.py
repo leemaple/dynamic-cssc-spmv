@@ -32,7 +32,9 @@ PROPERTY_SOURCES = (
     ROOT / "scripts" / "property_contract.py",
     ROOT / "scripts" / "validate_property_contract.py",
     ROOT / "tests" / "test_strong_property_contract.py",
+    ROOT / "src" / "dynamic_cssc" / "query_compiler.py",
     ROOT / "src" / "dynamic_cssc" / "strong_execution.py",
+    ROOT / "src" / "dynamic_cssc" / "strategy_state.py",
     ROOT / "src" / "dynamic_cssc" / "cloud_execution_plan.py",
     ROOT / "src" / "dynamic_cssc" / "cssc.py",
     ROOT / "src" / "dynamic_cssc" / "events.py",
@@ -442,9 +444,11 @@ def test_validator_rejects_duplicate_json_and_provenance_retargeting(
     for section, field in (
         ("artifacts", "evidence.json"),
         ("sources", "scripts/property_contract.py"),
+        ("sources", "src/dynamic_cssc/query_compiler.py"),
+        ("sources", "src/dynamic_cssc/strategy_state.py"),
     ):
         retargeted_property = _validate_payload(
-            tmp_path / f"property-{section}",
+            tmp_path / f"property-{section}-{Path(field).name}",
             valid,
             property_mutation=(section, field),
         )
@@ -484,7 +488,9 @@ def test_workflow_is_manual_pinned_fail_closed_and_evidence_preserving() -> None
         "scripts/property_contract.py",
         "scripts/validate_property_contract.py",
         "tests/test_strong_property_contract.py",
+        "src/dynamic_cssc/query_compiler.py",
         "src/dynamic_cssc/strong_execution.py",
+        "src/dynamic_cssc/strategy_state.py",
         "src/dynamic_cssc/cloud_execution_plan.py",
         "src/dynamic_cssc/cssc.py",
         "src/dynamic_cssc/events.py",

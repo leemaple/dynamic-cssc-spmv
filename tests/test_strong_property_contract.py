@@ -126,7 +126,7 @@ def test_case_manifest_is_versioned_explicit_and_byte_repeatable(tmp_path: Path)
     }
     assert manifest["schema_version"] == ("dynamic-cssc-strong-property-contract-manifest-v1")
     assert manifest["case_set_id"] == "phase2-strong-whole-query-property-cases"
-    assert manifest["case_set_version"] == 2
+    assert manifest["case_set_version"] == 3
     assert manifest["seed"] == SEED
     assert [case["case_id"] for case in manifest["cases"]] == [
         "base-only-global-ci",
@@ -135,9 +135,13 @@ def test_case_manifest_is_versioned_explicit_and_byte_repeatable(tmp_path: Path)
         "c128-boundary-128",
         "c128-boundary-129",
         "c128-multipage-257",
+        "persistent-strong-transition",
         "seeded-extension",
     ]
-    for case in manifest["cases"]:
+    legacy_cases = [
+        case for case in manifest["cases"] if case["case_id"] != "persistent-strong-transition"
+    ]
+    for case in legacy_cases:
         assert set(case) == {
             "case_id",
             "dimensions",
@@ -159,7 +163,41 @@ def test_case_manifest_is_versioned_explicit_and_byte_repeatable(tmp_path: Path)
         assert set(case["base"]) == {"entries", "physical_capacities"}
         assert set(case["query"]) == {"query_id", "modulus", "vector"}
 
-    assert first["case_set"]["input_case_count"] == 7
+    strong_case = next(
+        case for case in manifest["cases"] if case["case_id"] == "persistent-strong-transition"
+    )
+    assert set(strong_case) == {
+        "case_id",
+        "kind",
+        "dimensions",
+        "policy",
+        "initial",
+        "windows",
+        "contracts",
+    }
+    assert strong_case["kind"] == "persistent-strong-strategy"
+    assert strong_case["contracts"] == ["persistent-strong-transition"]
+    assert set(strong_case["policy"]) == {"max_row_nnz", "reserved_slack_beta"}
+    assert set(strong_case["initial"]) == {"entries"}
+    assert all(
+        set(window)
+        == {
+            "index",
+            "start_time",
+            "end_time",
+            "updates",
+            "query_count",
+            "reason",
+        }
+        for window in strong_case["windows"]
+    )
+    serialized_case = json.dumps(strong_case, sort_keys=True)
+    assert "expected" not in serialized_case
+    assert "passed" not in serialized_case
+    assert "facts" not in serialized_case
+    assert "page_count" not in serialized_case
+
+    assert first["case_set"]["input_case_count"] == 8
     assert len(first["case_set"]["sha256"]) == 64
     assert len(first["case_set"]["manifest_sha256"]) == 64
 
@@ -257,6 +295,49 @@ def test_multiwave_delta_record_proves_modify_delete_and_tombstone_reuse(
         "reused_entry": [0, 13, 8],
         "final_active_entries": 4,
     }
+
+
+def test_persistent_strong_record_covers_one_exact_multiwave_transition(
+    tmp_path: Path,
+) -> None:
+    generate_property_contract_evidence(
+        tmp_path,
+        source_git_sha=SOURCE_GIT_SHA,
+        seed=SEED,
+    )
+    records = json.loads((tmp_path / "case-records.json").read_text(encoding="utf-8"))["records"]
+    record = next(item for item in records if item["contract_id"] == "persistent-strong-transition")
+    observed = {item["name"]: item["value"] for item in record["observations"]}
+
+    assert record["case_id"] == "persistent-strong-transition"
+    assert set(observed) == {
+        "initial_version",
+        "initial_decode_sha256",
+        "waves",
+        "final_query_compile",
+    }
+    assert observed["initial_version"] == {"ordinal": 0, "version_id": "v00000000"}
+    assert len(observed["initial_decode_sha256"]) == 64
+    waves = observed["waves"]
+    assert [wave["window_index"] for wave in waves] == list(range(10))
+    assert [wave["version_ordinal"] for wave in waves] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 9]
+    assert [wave["segment_count"] for wave in waves] == [0, 0, 0, 1, 1, 1, 1, 1, 3, 3]
+    assert [wave["page_count"] for wave in waves] == [0, 0, 0, 1, 1, 1, 1, 1, 2, 2]
+    assert [wave["facts"]["absorbed_tombstone"] for wave in waves[:3]] == [0, 1, 1]
+    assert waves[1]["facts"]["ci_patch_entries"] == 0
+    assert waves[2]["facts"]["ci_patch_entries"] == 1
+    assert waves[3]["facts"]["overflow"] == 1
+    assert waves[4]["facts"]["delta_rebuilt_ciphertexts"] == 1
+    assert waves[5]["facts"]["overflow"] == 0
+    assert waves[6]["facts"]["ci_patch_entries"] == 0
+    assert waves[7]["facts"]["ci_patch_entries"] == 1
+    assert waves[8]["facts"]["delta_rebuilt_ciphertexts"] == 2
+    assert waves[8]["cloud_counts"]["returned_ciphertexts"] == 3
+    assert waves[9]["facts"]["updates"] == 0
+    assert waves[9]["facts"]["query_count"] == 3
+    assert waves[9]["version_id"] == waves[8]["version_id"]
+    assert waves[9]["decode_sha256"] == waves[8]["decode_sha256"]
+    assert observed["final_query_compile"] == waves[9]["query_compile"]
 
 
 def test_global_ci_and_c128_boundary_records_are_exact(tmp_path: Path) -> None:
@@ -418,12 +499,12 @@ def test_seed_changes_only_the_frozen_extension_slot_and_all_contracts_are_recor
     assert first["case_set"]["manifest_sha256"] != second["case_set"]["manifest_sha256"]
     assert first_manifest["cases"][:-1] == second_manifest["cases"][:-1]
     assert first_manifest["cases"][-1] != second_manifest["cases"][-1]
-    assert first["case_set"]["contract_case_count"] == 34
-    assert first["summary"] == {"record_count": 34, "failed": 0}
+    assert first["case_set"]["contract_case_count"] == 35
+    assert first["summary"] == {"record_count": 35, "failed": 0}
     first_records = json.loads((first_dir / "case-records.json").read_text(encoding="utf-8"))[
         "records"
     ]
-    assert len(first_records) == 34
+    assert len(first_records) == 35
     seeded = next(record for record in first_records if record["contract_id"] == "seeded-extension")
     assert seeded["case_id"] == "seeded-extension"
 
@@ -441,14 +522,14 @@ def test_junit_is_canonical_noise_free_and_has_one_entry_per_contract(
 
     assert root.tag == "testsuite"
     assert root.attrib == {
-        "name": "phase2-strong-whole-query-property-cases-v2",
-        "tests": "34",
+        "name": "phase2-strong-whole-query-property-cases-v3",
+        "tests": "35",
         "failures": "0",
         "errors": "0",
         "skipped": "0",
     }
     testcases = list(root)
-    assert len(testcases) == 34
+    assert len(testcases) == 35
     assert all(
         testcase.tag == "testcase"
         and set(testcase.attrib) == {"classname", "name"}
@@ -483,11 +564,19 @@ def test_validator_binds_current_sources_and_recomputes_all_records(tmp_path: Pa
         "mask_ledger",
         "output_plan",
         "plaintext_oracle",
+        "strategy_state",
+        "strong_execution",
         "strong_packed_coo",
         "validator",
         "test_source",
     }
-    assert evidence["provenance"]["compiler"]["path"] == ("src/dynamic_cssc/strong_execution.py")
+    assert evidence["provenance"]["compiler"]["path"] == ("src/dynamic_cssc/query_compiler.py")
+    assert evidence["provenance"]["strong_execution"]["path"] == (
+        "src/dynamic_cssc/strong_execution.py"
+    )
+    assert evidence["provenance"]["strategy_state"]["path"] == (
+        "src/dynamic_cssc/strategy_state.py"
+    )
     assert evidence["provenance"]["contract_spec"]["path"] == ("scripts/property_contract_spec.py")
     assert evidence["provenance"]["generator"]["path"] == ("scripts/property_contract.py")
     assert evidence["provenance"]["validator"]["path"] == ("scripts/validate_property_contract.py")
@@ -528,18 +617,26 @@ def test_generator_and_validator_reject_different_valid_shaped_git_sha(
         )
 
 
-def test_generator_and_validator_reject_dirty_mask_ledger_at_unchanged_head(
+@pytest.mark.parametrize(
+    "source_path",
+    (
+        "src/dynamic_cssc/mask_ledger.py",
+        "src/dynamic_cssc/query_compiler.py",
+        "src/dynamic_cssc/strategy_state.py",
+    ),
+)
+def test_generator_and_validator_reject_dirty_bound_source_at_unchanged_head(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     real_source_snapshot: None,
+    source_path: str,
 ) -> None:
     root = Path(__file__).resolve().parents[1]
-    mask_ledger_path = "src/dynamic_cssc/mask_ledger.py"
 
     def simulated_git_blob(source_git_sha: str, relative_path: str) -> bytes:
         assert source_git_sha == SOURCE_GIT_SHA
         current = (root / relative_path).read_bytes()
-        if relative_path == mask_ledger_path:
+        if relative_path == source_path:
             return current + b"# simulated committed blob differs\n"
         return current
 
@@ -568,13 +665,13 @@ def test_generator_and_validator_reject_dirty_mask_ledger_at_unchanged_head(
         raising=False,
     )
 
-    with pytest.raises(PropertyContractError, match="mask_ledger.py"):
+    with pytest.raises(PropertyContractError, match=Path(source_path).name):
         generate_property_contract_evidence(
             tmp_path / "generated",
             source_git_sha=SOURCE_GIT_SHA,
             seed=SEED,
         )
-    with pytest.raises(PropertyContractValidationError, match="mask_ledger.py"):
+    with pytest.raises(PropertyContractValidationError, match=Path(source_path).name):
         validate_property_contract_evidence(
             tmp_path / "missing",
             expected_source_git_sha=SOURCE_GIT_SHA,
@@ -600,7 +697,8 @@ def _write_canonical_json(path: Path, value: object) -> None:
     (
         "evidence-extra-field",
         "claim-escalation",
-        "source-digest",
+        "query-compiler-source-digest",
+        "strategy-state-source-digest",
         "case-set-digest",
         "manifest-rehashed",
         "record-rehashed",
@@ -627,8 +725,11 @@ def test_validator_fails_closed_after_self_consistent_tampering(
     elif mutation == "claim-escalation":
         evidence["claims"]["formal_security_claim"] = True
         _write_canonical_json(evidence_path, evidence)
-    elif mutation == "source-digest":
+    elif mutation == "query-compiler-source-digest":
         evidence["provenance"]["compiler"]["sha256"] = "0" * 64
+        _write_canonical_json(evidence_path, evidence)
+    elif mutation == "strategy-state-source-digest":
+        evidence["provenance"]["strategy_state"]["sha256"] = "0" * 64
         _write_canonical_json(evidence_path, evidence)
     elif mutation == "case-set-digest":
         evidence["case_set"]["sha256"] = "0" * 64
@@ -732,6 +833,54 @@ def test_validator_rejects_a_self_consistent_generator_recompute_bug(
     monkeypatch.setattr(property_contract_module, "recompute_case_records", buggy_recompute)
     if hasattr(validator_module, "recompute_case_records"):
         monkeypatch.setattr(validator_module, "recompute_case_records", buggy_recompute)
+    generate_property_contract_evidence(
+        tmp_path,
+        source_git_sha=SOURCE_GIT_SHA,
+        seed=SEED,
+    )
+
+    with pytest.raises(PropertyContractValidationError):
+        validate_property_contract_evidence(
+            tmp_path,
+            expected_source_git_sha=SOURCE_GIT_SHA,
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("dropped-wave", "fact", "page-count", "version", "query-only"),
+)
+def test_validator_rejects_self_consistent_persistent_strong_record_attacks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    original_recompute = property_contract_module.recompute_case_records
+
+    def buggy_recompute(manifest: dict[str, object]) -> dict[str, object]:
+        records_document = deepcopy(original_recompute(manifest))
+        record = next(
+            item
+            for item in records_document["records"]
+            if item["contract_id"] == "persistent-strong-transition"
+        )
+        observed = {item["name"]: item for item in record["observations"]}
+        waves = observed["waves"]["value"]
+        if mutation == "dropped-wave":
+            waves.pop(7)
+        elif mutation == "fact":
+            waves[3]["facts"]["overflow"] = 0
+        elif mutation == "page-count":
+            waves[8]["page_count"] = 1
+        elif mutation == "version":
+            waves[8]["version_id"] = "v00000008"
+        elif mutation == "query-only":
+            waves[9]["facts"]["query_count"] = 2
+        else:  # pragma: no cover - parameter list is closed
+            raise AssertionError(mutation)
+        return records_document
+
+    monkeypatch.setattr(property_contract_module, "recompute_case_records", buggy_recompute)
     generate_property_contract_evidence(
         tmp_path,
         source_git_sha=SOURCE_GIT_SHA,

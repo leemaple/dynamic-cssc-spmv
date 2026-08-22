@@ -289,7 +289,22 @@ def build_fixed_stride_cloud_program(
 
 
 def validate_cloud_program(program: CloudProgram) -> None:
-    """Validate closed declarations, ordered SSA references, and returned results."""
+    """Validate the strict uniform-F1M public program contract."""
+
+    _validate_cloud_program(program, required_masked_result_ids=None)
+
+
+def _validate_cloud_program(
+    program: CloudProgram,
+    *,
+    required_masked_result_ids: frozenset[str] | None,
+) -> None:
+    """Validate the typed DAG and an exact result-level F1M schedule.
+
+    ``None`` preserves the original strict contract: every returned result has one F1M
+    addition.  A concrete set is used only by the common compiler after deriving that set
+    from its private OutputPlan and result routes.
+    """
 
     if not isinstance(program, CloudProgram):
         raise CloudExecutionPlanError("program must be a CloudProgram")
@@ -432,13 +447,29 @@ def validate_cloud_program(program: CloudProgram) -> None:
             require_ciphertext(node.ciphertext_id, "ciphertext_id")
             if return_id in declared_ids:
                 raise CloudExecutionPlanError("all operand and SSA identifiers must be unique")
-            if not isinstance(node_by_result.get(node.ciphertext_id), AddF1MMask):
+            producer = node_by_result.get(node.ciphertext_id)
+            requires_mask = (
+                required_masked_result_ids is None or return_id in required_masked_result_ids
+            )
+            if requires_mask and not isinstance(producer, AddF1MMask):
                 raise CloudExecutionPlanError(
                     "each ReturnResult must directly return one AddF1MMask result"
+                    if required_masked_result_ids is None
+                    else "each required result must directly return one AddF1MMask result"
+                )
+            if not requires_mask and isinstance(producer, AddF1MMask):
+                raise CloudExecutionPlanError("a nonrequired result must not add an F1M mask")
+            if not requires_mask and not isinstance(
+                producer,
+                (Relinearize, MultiplyPlaintextMask, AddCiphertexts),
+            ):
+                raise CloudExecutionPlanError(
+                    "an unmasked result must return a final evaluated ciphertext"
                 )
             declared_ids.add(return_id)
             return_nodes.append(node)
-            f1m_return_counts[node.ciphertext_id] += 1
+            if isinstance(producer, AddF1MMask):
+                f1m_return_counts[node.ciphertext_id] += 1
         else:
             raise CloudExecutionPlanError("nodes contain an unsupported node type")
 
@@ -449,6 +480,13 @@ def validate_cloud_program(program: CloudProgram) -> None:
         raise CloudExecutionPlanError(
             "result_ids must exactly match ReturnResult identifiers in program order"
         )
+    if required_masked_result_ids is not None:
+        for result_id in required_masked_result_ids:
+            _require_id(result_id, "required masked result ID")
+        if not required_masked_result_ids <= set(program.result_ids):
+            raise CloudExecutionPlanError(
+                "required masked result IDs must be a subset of returned result IDs"
+            )
     f1m_result_ids = {
         result_id for result_id, node in node_by_result.items() if isinstance(node, AddF1MMask)
     }
@@ -566,10 +604,22 @@ def _node_payload(node: CloudNode) -> dict[str, object]:
     raise CloudExecutionPlanError("cannot serialize an unsupported node type")
 
 
+def _masked_return_result_ids(program: CloudProgram) -> frozenset[str]:
+    f1m_results = {node.result_id for node in program.nodes if isinstance(node, AddF1MMask)}
+    return frozenset(
+        node.result_id
+        for node in program.nodes
+        if isinstance(node, ReturnResult) and node.ciphertext_id in f1m_results
+    )
+
+
 def canonical_cloud_program_payload(program: CloudProgram) -> dict[str, object]:
     """Return the exact closed-key public program payload."""
 
-    validate_cloud_program(program)
+    _validate_cloud_program(
+        program,
+        required_masked_result_ids=_masked_return_result_ids(program),
+    )
     return {
         "ciphertext_inputs": [
             {
@@ -680,7 +730,7 @@ def execution_binding_digest(binding: ExecutionBinding) -> str:
 
 
 def validate_cloud_execution_plan(plan: CloudExecutionPlan) -> None:
-    """Validate a public program and its atomic execution binding."""
+    """Validate the strict uniform-F1M plan and its atomic execution binding."""
 
     if not isinstance(plan, CloudExecutionPlan):
         raise CloudExecutionPlanError("plan must be a CloudExecutionPlan")
@@ -692,10 +742,37 @@ def validate_cloud_execution_plan(plan: CloudExecutionPlan) -> None:
         )
 
 
+def _validate_cloud_execution_plan_with_masked_results(
+    plan: CloudExecutionPlan,
+    *,
+    required_masked_result_ids: frozenset[str],
+) -> None:
+    """Validate an exact overlap-only mask set derived at the CompiledQuery seam."""
+
+    if not isinstance(plan, CloudExecutionPlan):
+        raise CloudExecutionPlanError("plan must be a CloudExecutionPlan")
+    _validate_cloud_program(
+        plan.program,
+        required_masked_result_ids=required_masked_result_ids,
+    )
+    validate_execution_binding(plan.binding)
+    if plan.binding.cloud_program_digest != cloud_program_digest(plan.program):
+        raise CloudExecutionPlanError(
+            "binding cloud_program_digest does not match the canonical program"
+        )
+
+
+def _validate_cloud_execution_plan_for_serialization(plan: CloudExecutionPlan) -> None:
+    _validate_cloud_execution_plan_with_masked_results(
+        plan,
+        required_masked_result_ids=_masked_return_result_ids(plan.program),
+    )
+
+
 def canonical_cloud_visible_payload(plan: CloudExecutionPlan) -> dict[str, object]:
     """Return the complete closed-key payload observable by the Cloud."""
 
-    validate_cloud_execution_plan(plan)
+    _validate_cloud_execution_plan_for_serialization(plan)
     return {
         "binding": canonical_execution_binding_payload(plan.binding),
         "format": CLOUD_EXECUTION_PLAN_FORMAT,
@@ -716,7 +793,7 @@ def canonical_cloud_visible_bytes(plan: CloudExecutionPlan) -> bytes:
 def analyze_cloud_plan(plan: CloudExecutionPlan) -> CloudPlanCounts:
     """Fold exact operand-role and typed-node counts from a validated plan."""
 
-    validate_cloud_execution_plan(plan)
+    _validate_cloud_execution_plan_for_serialization(plan)
     node_counts = Counter(type(node) for node in plan.program.nodes)
     input_role_counts = Counter(operand.role for operand in plan.program.ciphertext_inputs)
     rotation_index_counts = Counter(

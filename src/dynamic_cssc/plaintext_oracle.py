@@ -7,6 +7,7 @@ from dynamic_cssc.output_plan import OutputPlan, analyze_output_plan
 
 if TYPE_CHECKING:
     from dynamic_cssc.cloud_execution_plan import CloudExecutionPlan
+    from dynamic_cssc.query_compiler import CompiledQuery, F1MPolicy
 
 Coordinate: TypeAlias = tuple[int, int]
 ShareIdentity: TypeAlias = tuple[str, str]
@@ -114,7 +115,52 @@ def execute_cloud_plan(
     plaintext_masks: Mapping[str, Sequence[int]],
     modulus: int,
 ) -> dict[str, PlaintextVector]:
-    """Execute the public typed Cloud DAG over plaintext modular vectors."""
+    """Execute a strict uniform-F1M Cloud plan over plaintext modular vectors."""
+
+    from dynamic_cssc.cloud_execution_plan import validate_cloud_execution_plan
+
+    modulus = _modulus(modulus)
+    validate_cloud_execution_plan(plan)
+    return _execute_validated_cloud_plan(
+        plan,
+        ciphertext_inputs=ciphertext_inputs,
+        plaintext_masks=plaintext_masks,
+        modulus=modulus,
+    )
+
+
+def execute_compiled_query(
+    compiled: CompiledQuery,
+    *,
+    expected_f1m_policy: F1MPolicy,
+    ciphertext_inputs: Mapping[str, Sequence[int]],
+    plaintext_masks: Mapping[str, Sequence[int]],
+    modulus: int,
+) -> dict[str, PlaintextVector]:
+    """Execute a validated CompiledQuery only under the caller-authorized F1M policy."""
+
+    from dynamic_cssc.query_compiler import QueryCompilerError, validate_compiled_query
+
+    if expected_f1m_policy != compiled.f1m_policy:
+        raise QueryCompilerError("expected_f1m_policy does not match the CompiledQuery policy")
+    modulus = _modulus(modulus)
+    validate_compiled_query(compiled)
+    return _execute_validated_cloud_plan(
+        compiled.cloud_plan,
+        ciphertext_inputs=ciphertext_inputs,
+        plaintext_masks=plaintext_masks,
+        modulus=modulus,
+    )
+
+
+def _execute_validated_cloud_plan(
+    plan: CloudExecutionPlan,
+    *,
+    ciphertext_inputs: Mapping[str, Sequence[int]],
+    plaintext_masks: Mapping[str, Sequence[int]],
+    modulus: int,
+) -> dict[str, PlaintextVector]:
+    """Execute a plan whose policy and binding were validated at its public seam."""
 
     from dynamic_cssc.cloud_execution_plan import (
         AddCiphertexts,
@@ -124,11 +170,8 @@ def execute_cloud_plan(
         Relinearize,
         ReturnResult,
         Rotate,
-        validate_cloud_execution_plan,
     )
 
-    modulus = _modulus(modulus)
-    validate_cloud_execution_plan(plan)
     program = plan.program
     if not isinstance(ciphertext_inputs, Mapping):
         raise ValueError("ciphertext_inputs must be a mapping")
