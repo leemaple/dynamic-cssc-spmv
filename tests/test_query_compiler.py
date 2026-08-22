@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from dataclasses import replace
 
 import pytest
@@ -36,6 +37,44 @@ from dynamic_cssc.strong_packed_coo import (
 )
 
 
+class _LiarPolicy(str):
+    def __eq__(self, other: object) -> bool:
+        return super().__eq__(other)
+
+    def __ne__(self, other: object) -> bool:
+        return False
+
+
+class _NoComparePolicy(str):
+    def __eq__(self, other: object) -> bool:
+        raise AssertionError("policy subclass comparison was dispatched")
+
+    def __ne__(self, other: object) -> bool:
+        raise AssertionError("policy subclass comparison was dispatched")
+
+
+class _NoAccessMapping(Mapping[str, tuple[int, ...]]):
+    def __getitem__(self, key: str) -> tuple[int, ...]:
+        raise AssertionError("operand mapping was accessed")
+
+    def __iter__(self) -> Iterator[str]:
+        raise AssertionError("operand mapping was accessed")
+
+    def __len__(self) -> int:
+        raise AssertionError("operand mapping was accessed")
+
+
+def _single_component():
+    return publish_component(
+        {(0, 0): 2},
+        rows=1,
+        cols=1,
+        effective_slots=2,
+        version_id="v1",
+        component_prefix="base",
+    )
+
+
 def _execute(compiled, vector: tuple[int, ...], modulus: int = 97) -> tuple[int, ...]:
     ciphertexts = {}
     for spec in compiled.operand_specs:
@@ -64,6 +103,95 @@ def _execute(compiled, vector: tuple[int, ...], modulus: int = 97) -> tuple[int,
         {route.output_share_id: returned[route.result_id] for route in compiled.result_routes},
         modulus=modulus,
     )
+
+
+@pytest.mark.parametrize(
+    "policy",
+    (
+        pytest.param(_LiarPolicy("overlap-only"), id="str-subclass"),
+        pytest.param("unsupported", id="out-of-domain"),
+        pytest.param(None, id="non-string"),
+    ),
+)
+def test_compile_query_rejects_a_noncanonical_policy(policy: object) -> None:
+    with pytest.raises(QueryCompilerError, match="f1m_policy"):
+        compile_query((_single_component(),), f1m_policy=policy)
+
+
+@pytest.mark.parametrize(
+    "expected_policy",
+    (
+        pytest.param(_LiarPolicy("overlap-only"), id="str-subclass"),
+        pytest.param("unsupported", id="out-of-domain"),
+        pytest.param(None, id="non-string"),
+    ),
+)
+def test_compiled_execution_rejects_a_noncanonical_expected_policy_before_operands(
+    expected_policy: object,
+) -> None:
+    compiled = compile_query((_single_component(),))
+    operands = _NoAccessMapping()
+
+    with pytest.raises(QueryCompilerError, match="expected_f1m_policy"):
+        execute_compiled_query(
+            compiled,
+            expected_f1m_policy=expected_policy,
+            ciphertext_inputs=operands,
+            plaintext_masks=operands,
+            modulus=97,
+        )
+
+
+@pytest.mark.parametrize(
+    "forged_policy",
+    (
+        pytest.param(_LiarPolicy("overlap-only"), id="liar-str-subclass"),
+        pytest.param(_NoComparePolicy("overlap-only"), id="no-compare-str-subclass"),
+        pytest.param("unsupported", id="out-of-domain"),
+        pytest.param(None, id="non-string"),
+    ),
+)
+def test_forged_compiled_policies_fail_closed_before_comparison_or_operands(
+    forged_policy: object,
+) -> None:
+    forged = replace(
+        compile_query((_single_component(),)),
+        f1m_policy=forged_policy,
+    )
+    operands = _NoAccessMapping()
+
+    with pytest.raises(QueryCompilerError, match="f1m_policy"):
+        validate_compiled_query(forged)
+    with pytest.raises(QueryCompilerError, match="f1m_policy"):
+        execute_compiled_query(
+            forged,
+            expected_f1m_policy="uniform-random-or-zero",
+            ciphertext_inputs=operands,
+            plaintext_masks=operands,
+            modulus=97,
+        )
+
+
+@pytest.mark.parametrize("policy", ("overlap-only", "uniform-random-or-zero"))
+def test_exact_builtin_policies_still_compile_validate_and_execute(policy: str) -> None:
+    compiled = compile_query((_single_component(),), f1m_policy=policy)
+
+    validate_compiled_query(compiled)
+    assert type(compiled.f1m_policy) is str
+    assert _execute(compiled, (5,)) == (10,)
+
+
+def test_compiled_execution_rejects_a_non_compilation_before_attributes_or_operands() -> None:
+    operands = _NoAccessMapping()
+
+    with pytest.raises(QueryCompilerError, match="compiled must be a CompiledQuery"):
+        execute_compiled_query(
+            None,
+            expected_f1m_policy="overlap-only",
+            ciphertext_inputs=operands,
+            plaintext_masks=operands,
+            modulus=97,
+        )
 
 
 def test_default_overlap_only_compilation_executes_a_disjoint_result() -> None:

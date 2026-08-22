@@ -139,8 +139,19 @@ def execute_compiled_query(
 ) -> dict[str, PlaintextVector]:
     """Execute a validated CompiledQuery only under the caller-authorized F1M policy."""
 
-    from dynamic_cssc.query_compiler import QueryCompilerError, validate_compiled_query
+    from dynamic_cssc.query_compiler import (
+        CompiledQuery,
+        QueryCompilerError,
+        is_canonical_f1m_policy,
+        validate_compiled_query,
+    )
 
+    if not isinstance(compiled, CompiledQuery):
+        raise QueryCompilerError("compiled must be a CompiledQuery")
+    if not is_canonical_f1m_policy(compiled.f1m_policy):
+        raise QueryCompilerError("CompiledQuery f1m_policy is unsupported")
+    if not is_canonical_f1m_policy(expected_f1m_policy):
+        raise QueryCompilerError("expected_f1m_policy is unsupported")
     if expected_f1m_policy != compiled.f1m_policy:
         raise QueryCompilerError("expected_f1m_policy does not match the CompiledQuery policy")
     modulus = _modulus(modulus)

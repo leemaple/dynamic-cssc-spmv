@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, TypeGuard
 
 from dynamic_cssc.cloud_execution_plan import (
     CLOUD_PROGRAM_FORMAT,
@@ -54,6 +54,15 @@ F1MPolicy: TypeAlias = Literal["overlap-only", "uniform-random-or-zero"]
 OperandSourceKind: TypeAlias = Literal[
     "published-chunk", "segmented-delta-page", "client-lane-segment"
 ]
+
+
+def is_canonical_f1m_policy(value: object) -> TypeGuard[F1MPolicy]:
+    """Return whether value is an exact built-in string in the F1M policy domain."""
+
+    return type(value) is str and value in (
+        "overlap-only",
+        "uniform-random-or-zero",
+    )
 
 
 class QueryCompilerError(ValueError):
@@ -311,7 +320,7 @@ def _validated_sources(
         raise QueryCompilerError("segmented_delta and client_lane_segments are mutually exclusive")
     if segmented_delta is not None and not isinstance(segmented_delta, SegmentedDeltaState):
         raise QueryCompilerError("segmented_delta must be a SegmentedDeltaState or None")
-    if f1m_policy not in ("overlap-only", "uniform-random-or-zero"):
+    if not is_canonical_f1m_policy(f1m_policy):
         raise QueryCompilerError("f1m_policy is unsupported")
 
     ordered_components = tuple(sorted(components, key=lambda item: item.component_id))
@@ -513,6 +522,8 @@ def validate_compiled_query(compiled: CompiledQuery) -> None:
 
     if not isinstance(compiled, CompiledQuery):
         raise QueryCompilerError("compiled must be a CompiledQuery")
+    if not is_canonical_f1m_policy(compiled.f1m_policy):
+        raise QueryCompilerError("CompiledQuery f1m_policy is unsupported")
     _validate_compiled_parts(compiled)
     expected = compile_query(
         compiled.components,
