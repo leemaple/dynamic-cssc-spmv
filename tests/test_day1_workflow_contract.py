@@ -1,11 +1,38 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from scripts.run_day1_suite import load_experiment_plan
 
 ROOT = Path(__file__).parents[1]
+
+
+def test_ci_lock_exactly_pins_and_hashes_every_dependency() -> None:
+    lock_path = ROOT / "requirements-ci.txt"
+    assert lock_path.is_file()
+
+    lock = lock_path.read_text(encoding="utf-8")
+    requirements = [line for line in lock.splitlines() if line and not line.startswith((" ", "#"))]
+    assert requirements
+    assert all("==" in requirement for requirement in requirements)
+    assert all(
+        "--hash=sha256:" in block for block in re.split(r"(?m)(?=^[^ #])", lock) if "==" in block
+    )
+    assert re.search(r"(?m)^matplotlib==\d+\.\d+\.\d+", lock)
+
+
+def test_day1_workflow_installs_only_the_hashed_ci_lock() -> None:
+    workflow = (ROOT / ".github/workflows/day1-cost-model.yml").read_text(encoding="utf-8")
+
+    install = ".venv/bin/python -m pip install --require-hashes -r requirements-ci.txt"
+    assert workflow.count(install) == 1
+    assert "pip install -e" not in workflow
+    assert ".[dev]" not in workflow
+    assert workflow.count("hashFiles('requirements-ci.txt')") == 3
+    assert "uv.lock" not in workflow
+    assert "\nenv:\n  PYTHONPATH: src:.\n\njobs:" in workflow
 
 
 def test_day1_workflow_guards_the_causal_evidence_contract() -> None:
@@ -37,7 +64,9 @@ def test_dispatch_seed_is_normalized_once_from_env_before_any_use() -> None:
     assert "RAW_SEED: ${{ inputs.seed }}" in workflow
     assert "parse_canonical_seed(os.environ['RAW_SEED'])" in workflow
     assert "normalized_seed: ${{ steps.normalize-seed.outputs.normalized_seed }}" in workflow
-    assert "--seed '${{ needs.plan.outputs.normalized_seed }}'" in workflow
+    assert workflow.count("DAY1_SEED: ${{ needs.plan.outputs.normalized_seed }}") == 3
+    assert workflow.count('--seed "$DAY1_SEED"') == 3
+    assert "--seed '${{ needs.plan.outputs.normalized_seed }}'" not in workflow
     assert (
         "name: r2-day1-shard-${{ github.sha }}-"
         "${{ needs.plan.outputs.normalized_seed }}-${{ matrix.workload }}-"
@@ -61,7 +90,7 @@ def test_workflow_matrix_uses_the_runner_exact_fraction_path_codec() -> None:
 def test_plan_job_runs_the_only_install_test_and_ruff_gate_before_matrix_output() -> None:
     workflow = (ROOT / ".github/workflows/day1-cost-model.yml").read_text(encoding="utf-8")
 
-    install = ".venv/bin/python -m pip install -e '.[dev]'"
+    install = ".venv/bin/python -m pip install --require-hashes -r requirements-ci.txt"
     pytest_gate = ".venv/bin/python -m pytest -q"
     ruff_gate = ".venv/bin/python -m ruff check ."
     assert workflow.count(install) == 1
@@ -83,9 +112,12 @@ def test_day1_workflow_builds_a_dynamic_21_job_shard_matrix_and_aggregates_once(
     assert "matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}" in workflow
     assert "shard:" in workflow
     assert "needs: plan" in workflow
-    assert "timeout-minutes: 330" in workflow
-    assert "--workload '${{ matrix.workload }}'" in workflow
-    assert "--freshness-seconds '${{ matrix.freshness_seconds }}'" in workflow
+    assert "max-parallel: 21" in workflow
+    assert "timeout-minutes: 355" in workflow
+    assert "DAY1_WORKLOAD: ${{ matrix.workload }}" in workflow
+    assert "DAY1_FRESHNESS_SECONDS: ${{ matrix.freshness_seconds }}" in workflow
+    assert workflow.count('--workload "$DAY1_WORKLOAD"') == 2
+    assert workflow.count('--freshness-seconds "$DAY1_FRESHNESS_SECONDS"') == 2
     assert "--queries-per-update" not in workflow
     assert (
         "name: r2-day1-shard-${{ github.sha }}-${{ needs.plan.outputs.normalized_seed }}-"
@@ -105,6 +137,68 @@ def test_day1_workflow_builds_a_dynamic_21_job_shard_matrix_and_aggregates_once(
     assert "--shards-dir downloaded-shards" in workflow
     assert workflow.count("SUITE_STATUS.json") == 1
     assert workflow.count("python scripts/run_day1_suite.py") == 1
+
+
+def test_each_shard_replays_serialized_evidence_in_a_second_process_before_upload() -> None:
+    workflow = (ROOT / ".github/workflows/day1-cost-model.yml").read_text(encoding="utf-8")
+
+    generation = workflow.index("python scripts/run_day1_suite.py")
+    replay = workflow.index("python scripts/replay_day1_shard.py")
+    receipt_guard = workflow.index("results/day1-shard/REPLAY_RECEIPT.json")
+    upload = workflow.index("uses: actions/upload-artifact@v4", replay)
+
+    assert generation < replay < receipt_guard < upload
+    assert workflow.count("python scripts/replay_day1_shard.py") == 1
+    assert workflow.count("\n          SOURCE_GIT_SHA: ${{ github.sha }}") == 2
+    assert workflow.count('--source-sha "$SOURCE_GIT_SHA"') == 2
+    assert "--source-sha '${{ github.sha }}'" not in workflow
+    assert "if: always()" not in workflow
+
+
+def test_shard_guard_requires_a_complete_digest_bound_replay_receipt() -> None:
+    workflow = (ROOT / ".github/workflows/day1-cost-model.yml").read_text(encoding="utf-8")
+
+    assert "assert r['schema'] == 'day1-shard-replay-receipt-v1'" in workflow
+    assert "assert r['validator_schema'] == 'day1-independent-replay-validator-v1'" in workflow
+    assert "assert r['validator_version'] == '1'" in workflow
+    assert "assert r['source_git_sha'] == os.environ['EXPECTED_SOURCE_GIT_SHA']" in workflow
+    assert "assert r['experiment_plan_sha256'] == p['experiment_plan_sha256']" in workflow
+    assert "assert r['manifest_sha256'] == p['manifest_sha256']" in workflow
+    assert "assert r['seed'] == p['seed'] == int(os.environ['EXPECTED_SHARD_SEED'])" in workflow
+    assert "assert r['workload'] == p['workload'] == os.environ['EXPECTED_WORKLOAD']" in workflow
+    assert "assert r['freshness_seconds_fraction'] == p['freshness_seconds_fraction']" in workflow
+    assert "assert r['rho_ids'] == p['rho_ids']" in workflow
+    assert "assert r['cells_expected'] == r['cells_replayed'] == 9" in workflow
+    assert "assert len(r['cells']) == len({c['rho_id'] for c in r['cells']}) == 9" in workflow
+    assert "assert r['verified'] is True" in workflow
+    assert "assert '  REPLAY_RECEIPT.json' in checksums" in workflow
+    assert "(cd results/day1-shard && sha256sum --check --strict SHA256SUMS)" in workflow
+
+
+def test_aggregate_guard_binds_all_receipts_to_source_and_verifies_final_checksums() -> None:
+    workflow = (ROOT / ".github/workflows/day1-cost-model.yml").read_text(encoding="utf-8")
+
+    aggregate = workflow.index("python scripts/aggregate_day1_shards.py")
+    final_checksum_check = workflow.index(
+        "(cd results/day1 && sha256sum --check --strict SHA256SUMS)"
+    )
+    package = workflow.index("python scripts/package_review_bundle.py")
+
+    assert aggregate < final_checksum_check < package
+    assert workflow.count("\n          EXPECTED_SOURCE_GIT_SHA: ${{ github.sha }}") == 2
+    assert "assert p['source_git_sha'] == os.environ['EXPECTED_SOURCE_GIT_SHA']" in workflow
+    receipt_count_guard = (
+        "assert p['replay_receipts_expected'] == p['replay_receipts_completed'] == 21"
+    )
+    assert receipt_count_guard in workflow
+    assert "assert p['replay_receipt_schema'] == 'day1-shard-replay-receipt-v1'" in workflow
+    validator_schema_guard = (
+        "assert p['replay_validator_schema'] == 'day1-independent-replay-validator-v1'"
+    )
+    assert validator_schema_guard in workflow
+    assert "assert len(p['replay_receipts']) == 21" in workflow
+    assert "assert set(item) == receipt_item_keys" in workflow
+    assert "assert re.fullmatch(r'[0-9a-f]{64}', item['sha256'])" in workflow
 
 
 def test_frozen_plan_supplies_the_exact_matrix_and_nine_rhos_per_shard() -> None:

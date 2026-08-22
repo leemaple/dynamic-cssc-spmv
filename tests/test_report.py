@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
+import warnings
 from dataclasses import asdict, replace
 from pathlib import Path
 
 import pytest
 
+import dynamic_cssc.report as report
 from dynamic_cssc.metrics import StrategyMetrics, UnitCosts
 from dynamic_cssc.report import (
     CausalMetricRecord,
@@ -592,6 +595,225 @@ def test_causal_writer_payload_roundtrips_through_public_validator(tmp_path: Pat
     )
 
 
+def test_canonical_renderer_recreates_metrics_json_and_csv_bytes(
+    tmp_path: Path,
+) -> None:
+    source_dir = tmp_path / "source"
+    rendered_dir = tmp_path / "rendered"
+    payload, expected_candidate_ids = _write_auditable_payload(source_dir)
+
+    digests = report.render_causal_artifacts(
+        rendered_dir,
+        payload,
+        expected_candidate_ids=expected_candidate_ids,
+    )
+
+    for filename in ("metrics.json", "metrics.csv", "tuning_aggregates.csv"):
+        source_bytes = (source_dir / filename).read_bytes()
+        assert (rendered_dir / filename).read_bytes() == source_bytes
+        assert digests[filename] == hashlib.sha256(source_bytes).hexdigest()
+
+
+def test_canonical_renderer_recreates_summary_with_fail_closed_disclosures(
+    tmp_path: Path,
+) -> None:
+    source_dir = tmp_path / "source"
+    rendered_dir = tmp_path / "rendered"
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    metadata.update({"workload": "zipf", "windows_total": 4})
+    write_causal_records(
+        source_dir,
+        records,
+        costs,
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
+    )
+    write_causal_summary(
+        source_dir,
+        records,
+        costs,
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
+    )
+    payload = json.loads((source_dir / "metrics.json").read_text(encoding="utf-8"))
+    expected_candidate_ids = [record.candidate_id for record in records[:13]]
+
+    digests = report.render_causal_artifacts(
+        rendered_dir,
+        payload,
+        expected_candidate_ids=expected_candidate_ids,
+    )
+
+    source_bytes = (source_dir / "SUMMARY.md").read_bytes()
+    assert (rendered_dir / "SUMMARY.md").read_bytes() == source_bytes
+    assert digests["SUMMARY.md"] == hashlib.sha256(source_bytes).hexdigest()
+    summary = source_bytes.decode("utf-8").lower()
+    assert "predicted synthetic proxy" in summary
+    assert "bandwidth" in summary and "deferred" in summary
+    assert "complete_reference_set=false" in summary
+    assert "full-baseline hold" in summary
+
+
+def test_canonical_renderer_recreates_deterministic_proxy_plots_with_disclosures(
+    tmp_path: Path,
+) -> None:
+    from PIL import Image
+
+    source_dir = tmp_path / "source"
+    rendered_dir = tmp_path / "rendered"
+    rendered_again_dir = tmp_path / "rendered-again"
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    write_causal_records(
+        source_dir,
+        records,
+        costs,
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
+    )
+    write_causal_plots(
+        source_dir,
+        records,
+        costs,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
+    )
+    payload = json.loads((source_dir / "metrics.json").read_text(encoding="utf-8"))
+    expected_candidate_ids = [record.candidate_id for record in records[:13]]
+
+    digests = report.render_causal_artifacts(
+        rendered_dir,
+        payload,
+        expected_candidate_ids=expected_candidate_ids,
+    )
+    second_digests = report.render_causal_artifacts(
+        rendered_again_dir,
+        payload,
+        expected_candidate_ids=reversed(expected_candidate_ids),
+    )
+
+    for filename in ("ua_vs_qa_proxy.png", "t_rho_proxy.png"):
+        source_bytes = (source_dir / filename).read_bytes()
+        assert (rendered_dir / filename).read_bytes() == source_bytes
+        assert (rendered_again_dir / filename).read_bytes() == source_bytes
+        assert digests[filename] == second_digests[filename]
+        with Image.open(rendered_dir / filename) as image:
+            description = image.info["Description"].lower()
+        assert "predicted synthetic proxy" in description
+        assert "bandwidth" in description and "deferred" in description
+        assert "complete_reference_set=false" in description
+        assert "full-baseline hold" in description
+
+
+def test_canonical_renderer_zero_metrics_has_no_log_warning_and_is_deterministic(
+    tmp_path: Path,
+) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path / "source")
+    numeric_metric_fields = set(asdict(StrategyMetrics("placeholder", "reference"))) - {
+        "strategy",
+        "category",
+        "source",
+        "windows",
+        "queries",
+        "updates",
+    }
+    for aggregate in payload["tuning_aggregates"]:
+        for field_name in numeric_metric_fields:
+            aggregate["metrics"][field_name] = 0
+        aggregate["score"] = 0.0
+    for record in payload["records"]:
+        for field_name in numeric_metric_fields:
+            record[field_name] = 0
+        for field_name in (
+            "predicted_update_time",
+            "predicted_query_time",
+            "predicted_query_time_per_query",
+            "predicted_normalized_time",
+            "update_ct_equivalents_per_update",
+        ):
+            record[field_name] = 0.0
+    canonical_basis_id = min(expected_candidate_ids)
+    payload["metadata"]["selected_candidate_id"] = canonical_basis_id
+    payload["metadata"]["oracle_candidate_id"] = canonical_basis_id
+    payload["records"][13]["candidate_id"] = canonical_basis_id
+    payload["records"][14]["candidate_id"] = canonical_basis_id
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        first_digests = report.render_causal_artifacts(
+            tmp_path / "first",
+            payload,
+            expected_candidate_ids=expected_candidate_ids,
+        )
+        second_digests = report.render_causal_artifacts(
+            tmp_path / "second",
+            payload,
+            expected_candidate_ids=reversed(expected_candidate_ids),
+        )
+
+    assert first_digests["t_rho_proxy.png"] == second_digests["t_rho_proxy.png"]
+    assert (tmp_path / "first" / "t_rho_proxy.png").read_bytes() == (
+        tmp_path / "second" / "t_rho_proxy.png"
+    ).read_bytes()
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["SUMMARY.md", "metrics.csv", "tuning_aggregates.csv", "ua_vs_qa_proxy.png"],
+)
+def test_canonical_renderer_digest_exposes_false_derived_artifact_roundtrips(
+    tmp_path: Path,
+    filename: str,
+) -> None:
+    source_dir = tmp_path / "source"
+    canonical_dir = tmp_path / "canonical"
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    write_causal_records(
+        source_dir,
+        records,
+        costs,
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
+    )
+    write_causal_summary(
+        source_dir,
+        records,
+        costs,
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
+    )
+    write_causal_plots(
+        source_dir,
+        records,
+        costs,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
+    )
+    payload = json.loads((source_dir / "metrics.json").read_text(encoding="utf-8"))
+    expected_candidate_ids = [record.candidate_id for record in records[:13]]
+    expected_digests = report.render_causal_artifacts(
+        canonical_dir,
+        payload,
+        expected_candidate_ids=expected_candidate_ids,
+    )
+    artifact_path = source_dir / filename
+    artifact_path.write_bytes(artifact_path.read_bytes() + b"forged")
+
+    assert hashlib.sha256(artifact_path.read_bytes()).hexdigest() != expected_digests[filename]
+    assert artifact_path.read_bytes() != (canonical_dir / filename).read_bytes()
+
+
 def test_causal_writer_canonicalizes_fixed_record_order_before_validation(
     tmp_path: Path,
 ) -> None:
@@ -705,6 +927,46 @@ def test_causal_payload_validator_rejects_tuning_score_tampering(tmp_path: Path)
     payload["tuning_aggregates"][0]["score"] += 1
 
     with pytest.raises(ValueError, match=r"tuning_aggregates\[0\].score"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def test_causal_payload_validator_rejects_noncanonical_integral_score_type(
+    tmp_path: Path,
+) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    original_score = payload["tuning_aggregates"][0]["score"]
+    assert isinstance(original_score, float) and original_score.is_integer()
+    payload["tuning_aggregates"][0]["score"] = int(original_score)
+
+    with pytest.raises((TypeError, ValueError), match=r"tuning_aggregates\[0\]\.score"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def test_causal_payload_validator_rejects_jointly_forged_costs_and_scores(
+    tmp_path: Path,
+) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    forged_encrypt_cost = 9.0
+    payload["unit_costs"]["encrypt"] = forged_encrypt_cost
+    for aggregate in payload["tuning_aggregates"]:
+        aggregate["score"] = aggregate["metrics"]["update_encryptions"] * forged_encrypt_cost
+    for record in payload["records"]:
+        forged_update_time = record["update_encryptions"] * forged_encrypt_cost
+        record["predicted_update_time"] = forged_update_time
+        record["predicted_normalized_time"] = forged_update_time + record["predicted_query_time"]
+        record["unit_cost_encrypt"] = forged_encrypt_cost
+
+    with pytest.raises(ValueError, match=r"unit_costs\.encrypt.*frozen"):
+        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def test_causal_payload_validator_requires_the_frozen_unit_cost_label(tmp_path: Path) -> None:
+    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload["unit_costs"]["label"] = "self-consistent-but-unfrozen"
+    for record in payload["records"]:
+        record["unit_cost_label"] = "self-consistent-but-unfrozen"
+
+    with pytest.raises(ValueError, match=r"unit_costs\.label.*frozen"):
         validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
 
 

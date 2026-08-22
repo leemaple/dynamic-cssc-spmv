@@ -4,44 +4,49 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import re
 import shutil
-from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from fractions import Fraction
 from pathlib import Path
 
-from dynamic_cssc.events import EventKind, publication_windows
 from dynamic_cssc.manifest import load_manifest
 from dynamic_cssc.preflight import run_day1_preflight
 from dynamic_cssc.report import (
     CAUSAL_MEASUREMENT_KIND,
     CAUSAL_SCHEMA,
     CAUSAL_STATE_MODEL,
-    validate_causal_payload,
 )
-from dynamic_cssc.selection import split_boundaries
-from dynamic_cssc.workloads import generate_event_stream, generate_initial_matrix
+from dynamic_cssc.workloads import generate_initial_matrix
 
 if __package__:
+    from .replay_day1_shard import (
+        REPLAY_RECEIPT_FILENAME,
+        REPLAY_RECEIPT_SCHEMA,
+        VALIDATOR_SCHEMA,
+        validate_replay_receipt,
+    )
     from .run_day1_suite import (
         DEFERRED_REFERENCE_BASELINES,
         EVENT_WINDOW_TRACE_SCHEMA,
         ExperimentPlan,
         freshness_path_id,
-        insert_queries_by_ratio,
         load_experiment_plan,
         rho_path_id,
     )
 else:
+    from replay_day1_shard import (  # type: ignore[import-not-found]
+        REPLAY_RECEIPT_FILENAME,
+        REPLAY_RECEIPT_SCHEMA,
+        VALIDATOR_SCHEMA,
+        validate_replay_receipt,
+    )
     from run_day1_suite import (  # type: ignore[import-not-found]
         DEFERRED_REFERENCE_BASELINES,
         EVENT_WINDOW_TRACE_SCHEMA,
         ExperimentPlan,
         freshness_path_id,
-        insert_queries_by_ratio,
         load_experiment_plan,
         rho_path_id,
     )
@@ -101,58 +106,14 @@ CELL_STATUS_KEYS = frozenset(
         "cell_checksums_sha256",
     }
 )
-CELL_METADATA_KEYS = frozenset(
-    {
-        "workload",
-        "seed",
-        "suite_seed",
-        "rows",
-        "cols",
-        "initial_nnz_per_row",
-        "events_planned",
-        "effective_slots",
-        "partition_rows",
-        "layout_measurement_kind",
-        "freshness_seconds",
-        "freshness_seconds_fraction",
-        "queries_per_update_target",
-        "queries_per_update_fraction",
-        "rho_id",
-        "queries_per_update_scheduled",
-        "update_events_total",
-        "queries_total",
-        "held_out_queries",
-        "windows_total",
-        "warmup_windows",
-        "tuning_windows",
-        "held_out_windows",
-        "fixed_candidate_count",
-        "selected_candidate_id",
-        "oracle_candidate_id",
-        "span80_by_candidate",
-        "experiment_plan_sha256",
-        "manifest_sha256",
-        "initial_state_sha256",
-        "event_window_trace_schema",
-        "event_window_trace_sha256",
-        "real_temporal_dataset",
-        "state_model",
-        "measurement_kind",
-        "gate_eligible",
-        "complete_cost_claim_allowed",
-        "complete_reference_set",
-    }
-)
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
-_EXPECTED_TRACE_CACHE_MAX_BYTES = 64 * 1024 * 1024
+_SOURCE_GIT_SHA_RE = re.compile(r"[0-9a-f]{40}")
 
 
 @dataclass(frozen=True, slots=True)
 class CellEvidence:
     source: Path
     cell_id: str
-    trace_sha256: str
-    initial_state_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,46 +122,7 @@ class ShardEvidence:
     workload: str
     freshness: Fraction
     cells: tuple[CellEvidence, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class TraceContract:
-    initial_state: Mapping[tuple[int, int], int]
-    initial_state_sha256: str
-    microbatch_max_updates: int
-    query_requires_latest: bool
-    matrix_entry_abs_bound: int
-
-
-@dataclass(frozen=True, slots=True)
-class TraceEvidence:
-    sha256: str
-    initial_state_sha256: str
-    window_count: int
-    warmup_end: int
-    tuning_end: int
-    update_events_total: int
-    queries_total: int
-    tuning_queries: int
-    held_out_queries: int
-
-
-@dataclass(frozen=True, slots=True)
-class ReconstructedTrace:
-    canonical_jsonl: bytes
-    window_count: int
-    warmup_end: int
-    tuning_end: int
-    update_events_total: int
-    queries_total: int
-    tuning_queries: int
-    held_out_queries: int
-
-
-_EXPECTED_TRACE_CACHE: OrderedDict[tuple[str, str, int, str, str, str], ReconstructedTrace] = (
-    OrderedDict()
-)
-_expected_trace_cache_bytes = 0
+    replay_receipt: Path
 
 
 def _sha256(path: Path) -> str:
@@ -318,7 +240,7 @@ def _validate_checksum_targets(directory: Path, checksums: Mapping[str, str]) ->
 
 
 def _validate_exact_shard_tree(shard_dir: Path, cells: tuple[CellEvidence, ...]) -> set[str]:
-    expected_files = {"SHARD_STATUS.json", "SHA256SUMS"}
+    expected_files = {"SHARD_STATUS.json", REPLAY_RECEIPT_FILENAME, "SHA256SUMS"}
     expected_directories: set[str] = set()
     for cell in cells:
         cell_path = Path(cell.cell_id)
@@ -363,12 +285,6 @@ def _validate_exact_shard_tree(shard_dir: Path, cells: tuple[CellEvidence, ...])
     }
 
 
-def _canonical_json_line(payload: Mapping[str, object]) -> bytes:
-    return (
-        json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n"
-    ).encode("utf-8")
-
-
 def _initial_state_sha256(initial_state: Mapping[tuple[int, int], int]) -> str:
     entries = [
         {"row": row, "col": col, "value": value}
@@ -383,323 +299,13 @@ def _initial_state_sha256(initial_state: Mapping[tuple[int, int], int]) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
-def _reconstruct_trace(
-    *,
-    plan: ExperimentPlan,
-    plan_sha256: str,
-    manifest_sha256: str,
-    seed: int,
-    workload: str,
-    freshness: Fraction,
-    ratio: Fraction,
-    contract: TraceContract,
-) -> ReconstructedTrace:
-    global _expected_trace_cache_bytes
-
-    cache_key = (
-        plan_sha256,
-        manifest_sha256,
-        seed,
-        workload,
-        str(freshness),
-        str(ratio),
-    )
-    cached = _EXPECTED_TRACE_CACHE.get(cache_key)
-    if cached is not None:
-        _EXPECTED_TRACE_CACHE.move_to_end(cache_key)
-        return cached
-
-    workload_seed = seed + plan.workloads.index(workload) + 1
-    base_events = generate_event_stream(
-        workload,
-        dict(contract.initial_state),
-        rows=plan.rows,
-        cols=plan.cols,
-        update_count=plan.events,
-        seed=workload_seed,
-        query_every=0,
-        matrix_entry_abs_bound=contract.matrix_entry_abs_bound,
-    )
-    events = insert_queries_by_ratio(base_events, ratio)
-    windows = list(
-        publication_windows(
-            events,
-            dict(contract.initial_state),
-            max_seconds=float(freshness),
-            microbatch_max_updates=contract.microbatch_max_updates,
-            query_requires_latest=contract.query_requires_latest,
-        )
-    )
-    try:
-        warmup_end, tuning_end = split_boundaries(len(windows), plan.split)
-    except ValueError as error:
-        raise ValueError(
-            f"deterministic generated stream has empty phases for {workload}/{freshness}/{ratio}"
-        ) from error
-
-    header: dict[str, object] = {
-        "record_type": "header",
-        "schema": EVENT_WINDOW_TRACE_SCHEMA,
-        "cell": {
-            "workload": workload,
-            "freshness_seconds_fraction": str(freshness),
-            "rho_fraction": str(ratio),
-            "rho_id": rho_path_id(ratio),
-        },
-        "experiment_plan_sha256": plan_sha256,
-        "manifest_sha256": manifest_sha256,
-        "seed": seed,
-        "workload_seed": workload_seed,
-        "matrix": {
-            "rows": plan.rows,
-            "cols": plan.cols,
-            "initial_nnz_per_row": plan.initial_nnz_per_row,
-        },
-        "effective_slots": plan.effective_slots,
-        "partition_rows": plan.partition_rows,
-        "layout_measurement_kind": plan.layout_measurement_kind,
-        "initial_state_sha256": contract.initial_state_sha256,
-        "initial_state_digest_algorithm": "sha256-canonical-json-v1",
-        "microbatch_max_updates": contract.microbatch_max_updates,
-        "query_requires_latest": contract.query_requires_latest,
-        "split": {
-            "warmup": str(plan.split[0]),
-            "tuning": str(plan.split[1]),
-            "held_out": str(plan.split[2]),
-        },
-        "window_count": len(windows),
-    }
-    chunks = [_canonical_json_line(header)]
-    for position, window in enumerate(windows):
-        if window.index != position:
-            raise ValueError("deterministic publication windows must have contiguous indexes")
-        chunks.append(
-            _canonical_json_line(
-                {
-                    "record_type": "window",
-                    "position": position,
-                    "index": window.index,
-                    "start": window.start_time,
-                    "end": window.end_time,
-                    "reason": window.reason,
-                    "query_count": window.query_count,
-                    "updates": [
-                        {
-                            "row": update.row,
-                            "col": update.col,
-                            "before": update.before,
-                            "after": update.after,
-                        }
-                        for update in window.updates
-                    ],
-                }
-            )
-        )
-    reconstructed = ReconstructedTrace(
-        canonical_jsonl=b"".join(chunks),
-        window_count=len(windows),
-        warmup_end=warmup_end,
-        tuning_end=tuning_end,
-        update_events_total=sum(event.kind == EventKind.SET for event in events),
-        queries_total=sum(event.kind == EventKind.QUERY for event in events),
-        tuning_queries=sum(window.query_count for window in windows[warmup_end:tuning_end]),
-        held_out_queries=sum(window.query_count for window in windows[tuning_end:]),
-    )
-    cache_entry_bytes = len(reconstructed.canonical_jsonl)
-    if cache_entry_bytes <= _EXPECTED_TRACE_CACHE_MAX_BYTES:
-        while (
-            _EXPECTED_TRACE_CACHE
-            and _expected_trace_cache_bytes + cache_entry_bytes > _EXPECTED_TRACE_CACHE_MAX_BYTES
-        ):
-            _evicted_key, evicted = _EXPECTED_TRACE_CACHE.popitem(last=False)
-            _expected_trace_cache_bytes -= len(evicted.canonical_jsonl)
-        _EXPECTED_TRACE_CACHE[cache_key] = reconstructed
-        _expected_trace_cache_bytes += cache_entry_bytes
-    return reconstructed
-
-
-def _validate_trace(
-    path: Path,
-    *,
-    plan: ExperimentPlan,
-    plan_sha256: str,
-    manifest_sha256: str,
-    seed: int,
-    workload: str,
-    freshness: Fraction,
-    ratio: Fraction,
-    contract: TraceContract,
-) -> TraceEvidence:
-    raw = path.read_bytes()
-    if not raw or not raw.endswith(b"\n"):
-        raise ValueError(f"event-window trace must be nonempty canonical JSONL: {path}")
-    try:
-        records = [json.loads(line) for line in raw.splitlines()]
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError(f"event-window trace contains invalid JSONL: {path}") from error
-    if any(not isinstance(record, dict) for record in records):
-        raise ValueError(f"event-window trace records must be objects: {path}")
-    if b"".join(_canonical_json_line(record) for record in records) != raw:
-        raise ValueError(f"event-window trace is not canonical JSONL: {path}")
-    reconstructed = _reconstruct_trace(
-        plan=plan,
-        plan_sha256=plan_sha256,
-        manifest_sha256=manifest_sha256,
-        seed=seed,
-        workload=workload,
-        freshness=freshness,
-        ratio=ratio,
-        contract=contract,
-    )
-    if raw != reconstructed.canonical_jsonl:
-        raise ValueError(
-            f"event-window trace diverges from the deterministic generated stream: {path}"
-        )
-    return TraceEvidence(
-        sha256=hashlib.sha256(raw).hexdigest(),
-        initial_state_sha256=contract.initial_state_sha256,
-        window_count=reconstructed.window_count,
-        warmup_end=reconstructed.warmup_end,
-        tuning_end=reconstructed.tuning_end,
-        update_events_total=reconstructed.update_events_total,
-        queries_total=reconstructed.queries_total,
-        tuning_queries=reconstructed.tuning_queries,
-        held_out_queries=reconstructed.held_out_queries,
-    )
-
-
-def _validate_metrics(
-    path: Path,
-    *,
-    plan: ExperimentPlan,
-    plan_sha256: str,
-    manifest_sha256: str,
-    seed: int,
-    workload: str,
-    freshness: Fraction,
-    ratio: Fraction,
-    trace: TraceEvidence,
-) -> None:
-    payload = _load_json(path, "cell metrics")
-    try:
-        validate_causal_payload(
-            payload,
-            expected_candidate_ids=(candidate.candidate_id for candidate in plan.candidates),
-        )
-    except (TypeError, ValueError) as error:
-        raise ValueError(f"cell metrics causal payload is invalid: {path}: {error}") from error
-    records = _list(payload.get("records"), "cell metrics records")
-    fixed_records = [
-        _mapping(record, "cell metrics record")
-        for record in records
-        if _mapping(record, "cell metrics record").get("record_kind") == "fixed-candidate"
-    ]
-    held_out_windows = trace.window_count - trace.tuning_end
-    for record in fixed_records:
-        for field, expected in (
-            ("windows", held_out_windows),
-            ("queries", trace.held_out_queries),
-        ):
-            if _strict_int(record.get(field), f"held-out fixed metrics {field}") != expected:
-                raise ValueError(
-                    f"held-out fixed metrics {field} does not match reconstructed trace: {path}"
-                )
-    tuning_aggregates = _list(
-        payload.get("tuning_aggregates"),
-        "cell metrics tuning_aggregates",
-    )
-    tuning_windows = trace.tuning_end - trace.warmup_end
-    for aggregate in tuning_aggregates:
-        tuning_metrics = _mapping(
-            _mapping(aggregate, "cell tuning aggregate").get("metrics"),
-            "cell tuning aggregate metrics",
-        )
-        for field, expected in (
-            ("windows", tuning_windows),
-            ("queries", trace.tuning_queries),
-        ):
-            if _strict_int(tuning_metrics.get(field), f"tuning metrics {field}") != expected:
-                raise ValueError(
-                    f"tuning metrics {field} does not match reconstructed trace: {path}"
-                )
-    metadata = _mapping(payload.get("metadata"), "cell metrics metadata")
-    _require_exact_keys(metadata, CELL_METADATA_KEYS, "cell metrics metadata")
-    expected_rho_id = rho_path_id(ratio)
-    for field, expected in (
-        ("workload", workload),
-        ("seed", seed + plan.workloads.index(workload) + 1),
-        ("suite_seed", seed),
-        ("rows", plan.rows),
-        ("cols", plan.cols),
-        ("initial_nnz_per_row", plan.initial_nnz_per_row),
-        ("events_planned", plan.events),
-        ("effective_slots", plan.effective_slots),
-        ("partition_rows", plan.partition_rows),
-        ("layout_measurement_kind", plan.layout_measurement_kind),
-        ("freshness_seconds", float(freshness)),
-        ("freshness_seconds_fraction", str(freshness)),
-        ("queries_per_update_target", float(ratio)),
-        ("queries_per_update_fraction", str(ratio)),
-        ("rho_id", expected_rho_id),
-        (
-            "queries_per_update_scheduled",
-            trace.queries_total / trace.update_events_total if trace.update_events_total else 0.0,
-        ),
-        ("update_events_total", trace.update_events_total),
-        ("queries_total", trace.queries_total),
-        ("held_out_queries", trace.held_out_queries),
-        ("windows_total", trace.window_count),
-        ("warmup_windows", trace.warmup_end),
-        ("tuning_windows", trace.tuning_end - trace.warmup_end),
-        ("held_out_windows", trace.window_count - trace.tuning_end),
-        ("fixed_candidate_count", len(plan.candidates)),
-        ("experiment_plan_sha256", plan_sha256),
-        ("manifest_sha256", manifest_sha256),
-        ("initial_state_sha256", trace.initial_state_sha256),
-        ("event_window_trace_schema", EVENT_WINDOW_TRACE_SCHEMA),
-        ("event_window_trace_sha256", trace.sha256),
-        ("real_temporal_dataset", False),
-        ("state_model", CAUSAL_STATE_MODEL),
-        ("measurement_kind", CAUSAL_MEASUREMENT_KIND),
-    ):
-        try:
-            _require_exact_json_value(
-                metadata.get(field), expected, f"cell metrics metadata {field}"
-            )
-        except ValueError as error:
-            raise ValueError(f"cell metrics metadata {field} is inconsistent: {path}") from error
-    for field in ("gate_eligible", "complete_cost_claim_allowed", "complete_reference_set"):
-        _exact_false(metadata.get(field), f"cell metrics metadata {field}")
-    span80_by_candidate = _mapping(
-        metadata.get("span80_by_candidate"),
-        "cell metrics metadata span80_by_candidate",
-    )
-    expected_candidate_ids = {candidate.candidate_id for candidate in plan.candidates}
-    if set(span80_by_candidate) != expected_candidate_ids:
-        raise ValueError(f"cell metrics Span80 candidate IDs are inconsistent: {path}")
-    for candidate_id, serialized_curve in span80_by_candidate.items():
-        curve = _mapping(serialized_curve, f"Span80 curve {candidate_id}")
-        if set(curve) != {"1", "2", "4", "8"}:
-            raise ValueError(f"cell metrics Span80 curve keys are inconsistent: {path}")
-        for interval_count, value in curve.items():
-            if type(value) is not float or not math.isfinite(value) or not 0.0 <= value <= 1.0:
-                raise ValueError(
-                    f"cell metrics Span80[{candidate_id}][{interval_count}] is invalid: {path}"
-                )
-
-
 def _validate_cell(
     shard_dir: Path,
     cell_payload: Mapping[str, object],
     *,
-    plan: ExperimentPlan,
-    plan_sha256: str,
-    manifest_sha256: str,
-    seed: int,
     workload: str,
     freshness: Fraction,
     ratio: Fraction,
-    trace_contract: TraceContract,
 ) -> CellEvidence:
     _require_exact_keys(cell_payload, CELL_STATUS_KEYS, "SHARD_STATUS cell")
     rho_id = rho_path_id(ratio)
@@ -742,35 +348,12 @@ def _validate_cell(
     if cell_payload.get("cell_checksums_sha256") != _sha256(checksums_path):
         raise ValueError(f"cell_checksums_sha256 is inconsistent: {cell_dir}")
 
-    trace = _validate_trace(
-        cell_dir / "event-window-trace.jsonl",
-        plan=plan,
-        plan_sha256=plan_sha256,
-        manifest_sha256=manifest_sha256,
-        seed=seed,
-        workload=workload,
-        freshness=freshness,
-        ratio=ratio,
-        contract=trace_contract,
-    )
-    if cell_payload.get("event_window_trace_sha256") != trace.sha256:
+    trace_sha256 = checksums["event-window-trace.jsonl"]
+    if cell_payload.get("event_window_trace_sha256") != trace_sha256:
         raise ValueError(f"event_window_trace_sha256 is inconsistent: {cell_dir}")
-    _validate_metrics(
-        cell_dir / "metrics.json",
-        plan=plan,
-        plan_sha256=plan_sha256,
-        manifest_sha256=manifest_sha256,
-        seed=seed,
-        workload=workload,
-        freshness=freshness,
-        ratio=ratio,
-        trace=trace,
-    )
     return CellEvidence(
         source=cell_dir,
         cell_id=expected_relative,
-        trace_sha256=trace.sha256,
-        initial_state_sha256=trace.initial_state_sha256,
     )
 
 
@@ -781,8 +364,8 @@ def _validate_shard(
     plan_sha256: str,
     manifest_sha256: str,
     seed: int,
+    source_sha: str,
     expected_preflight: Mapping[str, object],
-    trace_contract: TraceContract,
 ) -> ShardEvidence:
     status = _load_json(shard_dir / "SHARD_STATUS.json", "SHARD_STATUS")
     _require_exact_keys(status, SHARD_STATUS_KEYS, "SHARD_STATUS")
@@ -882,19 +465,26 @@ def _validate_shard(
         _validate_cell(
             shard_dir,
             _mapping(cell_payload, "SHARD_STATUS cell"),
-            plan=plan,
-            plan_sha256=plan_sha256,
-            manifest_sha256=manifest_sha256,
-            seed=seed,
             workload=workload,
             freshness=freshness,
             ratio=ratio,
-            trace_contract=trace_contract,
         )
         for cell_payload, ratio in zip(cell_payloads, plan.ratio_grid, strict=True)
     )
     if len({cell.cell_id for cell in cells}) != R2_RHO_COUNT:
         raise ValueError(f"duplicate cell identity inside shard: {shard_dir}")
+
+    validate_replay_receipt(
+        shard_dir / REPLAY_RECEIPT_FILENAME,
+        shard_dir=shard_dir,
+        plan=plan,
+        experiment_plan_sha256=plan_sha256,
+        manifest_sha256=manifest_sha256,
+        seed=seed,
+        workload=workload,
+        freshness=freshness,
+        expected_source_sha=source_sha,
+    )
 
     expected_root_checksum_paths = _validate_exact_shard_tree(shard_dir, cells)
     root_checksums = _parse_checksum_manifest(shard_dir / "SHA256SUMS")
@@ -905,7 +495,13 @@ def _validate_shard(
             f"extra={sorted(root_checksums.keys() - expected_root_checksum_paths)}"
         )
     _validate_checksum_targets(shard_dir, root_checksums)
-    return ShardEvidence(shard_dir.name, workload, freshness, cells)
+    return ShardEvidence(
+        shard_dir.name,
+        workload,
+        freshness,
+        cells,
+        shard_dir / REPLAY_RECEIPT_FILENAME,
+    )
 
 
 def _write_root_checksums(output_dir: Path) -> None:
@@ -925,24 +521,18 @@ def aggregate_shards(
     experiment_plan: Path,
     manifest: Path,
     seed: int,
+    source_sha: str,
 ) -> dict[str, object]:
     """Validate all downloaded shard artifacts before materializing a complete suite."""
 
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise ValueError("seed must be a strict integer")
+    if not isinstance(source_sha, str) or _SOURCE_GIT_SHA_RE.fullmatch(source_sha) is None:
+        raise ValueError("source_sha must be an exact lowercase 40-hex commit SHA")
     plan = load_experiment_plan(experiment_plan)
     _validate_plan_shape(plan)
     manifest_payload = load_manifest(manifest)
     expected_preflight = asdict(run_day1_preflight(manifest_payload))
-    freshness_contract = _mapping(manifest_payload.get("freshness"), "manifest.freshness")
-    microbatch_max_updates = _strict_int(
-        freshness_contract.get("microbatch_max_updates"),
-        "manifest.freshness.microbatch_max_updates",
-        minimum=1,
-    )
-    query_requires_latest = freshness_contract.get("query_requires_latest")
-    if type(query_requires_latest) is not bool:
-        raise ValueError("manifest.freshness.query_requires_latest must be an exact bool")
     integer_correctness = _mapping(
         manifest_payload.get("integer_correctness"),
         "manifest.integer_correctness",
@@ -959,13 +549,7 @@ def aggregate_shards(
         seed=seed,
         matrix_entry_abs_bound=matrix_entry_abs_bound,
     )
-    trace_contract = TraceContract(
-        initial_state=initial_state,
-        initial_state_sha256=_initial_state_sha256(initial_state),
-        microbatch_max_updates=microbatch_max_updates,
-        query_requires_latest=query_requires_latest,
-        matrix_entry_abs_bound=matrix_entry_abs_bound,
-    )
+    initial_state_sha256 = _initial_state_sha256(initial_state)
     plan_sha256 = _sha256(experiment_plan)
     manifest_sha256 = _sha256(manifest)
     if not shards_dir.is_dir():
@@ -988,8 +572,8 @@ def aggregate_shards(
             plan_sha256=plan_sha256,
             manifest_sha256=manifest_sha256,
             seed=seed,
+            source_sha=source_sha,
             expected_preflight=expected_preflight,
-            trace_contract=trace_contract,
         )
         key = (shard.workload, shard.freshness)
         if key in shard_keys:
@@ -1008,9 +592,6 @@ def aggregate_shards(
     cell_ids = [cell.cell_id for cell in cells]
     if len(cells) != R2_CELL_COUNT or len(set(cell_ids)) != R2_CELL_COUNT:
         raise ValueError("expected exactly 189 unique cells with no missing or duplicate cell")
-    initial_state_digests = {cell.initial_state_sha256 for cell in cells}
-    if len(initial_state_digests) != 1:
-        raise ValueError("initial-state digest must be consistent across all 189 cells")
     if output_dir.exists() and any(output_dir.iterdir()):
         raise ValueError(f"output directory must be absent or empty: {output_dir}")
 
@@ -1020,6 +601,30 @@ def aggregate_shards(
         destination.mkdir(parents=True, exist_ok=False)
         for filename in sorted(REQUIRED_CELL_FILES | {"SHA256SUMS"}):
             shutil.copy2(cell.source / filename, destination / filename)
+    replay_receipts: list[dict[str, object]] = []
+    for shard in sorted(
+        shards,
+        key=lambda item: (
+            plan.workloads.index(item.workload),
+            plan.freshness_seconds.index(item.freshness),
+        ),
+    ):
+        relative_path = (
+            Path("replay-receipts")
+            / shard.workload
+            / (f"{freshness_path_id(shard.freshness)}.json")
+        )
+        destination = output_dir / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(shard.replay_receipt, destination)
+        replay_receipts.append(
+            {
+                "relative_path": relative_path.as_posix(),
+                "sha256": _sha256(destination),
+                "workload": shard.workload,
+                "freshness_seconds_fraction": str(shard.freshness),
+            }
+        )
     sorted_cell_ids = sorted(cell_ids)
     status: dict[str, object] = {
         "schema": CAUSAL_SCHEMA,
@@ -1031,11 +636,12 @@ def aggregate_shards(
         "suite_complete": True,
         "deferred_reference_baselines": list(DEFERRED_REFERENCE_BASELINES),
         "seed": seed,
+        "source_git_sha": source_sha,
         "experiment_plan_sha256": plan_sha256,
         "manifest_sha256": manifest_sha256,
         "experiment_plan_version": plan.plan_version,
         "event_window_trace_schema": EVENT_WINDOW_TRACE_SCHEMA,
-        "initial_state_sha256": next(iter(initial_state_digests)),
+        "initial_state_sha256": initial_state_sha256,
         "candidate_ids": sorted(candidate.candidate_id for candidate in plan.candidates),
         "effective_slots": plan.effective_slots,
         "partition_rows": plan.partition_rows,
@@ -1052,6 +658,11 @@ def aggregate_shards(
         "cells_completed": len(cells),
         "shard_artifacts": [shard.artifact_name for shard in shards],
         "cell_ids": sorted_cell_ids,
+        "replay_receipt_schema": REPLAY_RECEIPT_SCHEMA,
+        "replay_validator_schema": VALIDATOR_SCHEMA,
+        "replay_receipts_expected": R2_SHARD_COUNT,
+        "replay_receipts_completed": len(replay_receipts),
+        "replay_receipts": replay_receipts,
     }
     (output_dir / "SUITE_STATUS.json").write_text(
         json.dumps(status, indent=2, sort_keys=True, allow_nan=False),
@@ -1072,6 +683,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--experiment-plan", default=Path("config/experiment_plan.json"), type=Path)
     parser.add_argument("--manifest", default=Path("config/params_manifest.json"), type=Path)
     parser.add_argument("--seed", required=True, type=int)
+    parser.add_argument("--source-sha", required=True)
     return parser
 
 
@@ -1083,6 +695,7 @@ def main() -> int:
         experiment_plan=args.experiment_plan,
         manifest=args.manifest,
         seed=args.seed,
+        source_sha=args.source_sha,
     )
     return 0
 

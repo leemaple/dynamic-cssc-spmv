@@ -15,6 +15,10 @@ from .metrics import StrategyMetrics, UnitCosts
 CAUSAL_SCHEMA = "day1-causal-predicted-v1"
 CAUSAL_STATE_MODEL = "persistent-strategy-snapshots"
 CAUSAL_MEASUREMENT_KIND = "predicted-proxy"
+CAUSAL_DISCLOSURE = (
+    "Predicted synthetic proxy; bandwidth dimension deferred; "
+    "complete_reference_set=false; full-baseline HOLD."
+)
 CausalRecordKind = Literal["fixed-candidate", "tuned-fixed-policy", "diagnostic-oracle"]
 _CAUSAL_RECORD_KINDS = {
     "fixed-candidate",
@@ -102,6 +106,24 @@ _CAUSAL_METADATA_REQUIRED_KEYS = frozenset(
         "oracle_candidate_id",
     }
 )
+CAUSAL_ARTIFACT_FILENAMES = (
+    "metrics.json",
+    "metrics.csv",
+    "tuning_aggregates.csv",
+    "SUMMARY.md",
+    "ua_vs_qa_proxy.png",
+    "t_rho_proxy.png",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _DecodedCausalPayload:
+    records: tuple[CausalMetricRecord, ...]
+    costs: UnitCosts
+    tuning_results: dict[str, StrategyMetrics]
+    metadata: dict[str, object]
+    selected_candidate_id: str
+    oracle_candidate_id: str
 
 
 def _require_exact_dict(value: object, field_name: str) -> dict[str, object]:
@@ -167,6 +189,13 @@ def _decode_unit_costs(value: object) -> UnitCosts:
     _require_exact_keys(serialized, _UNIT_COST_KEYS, "unit_costs")
     costs = UnitCosts(**serialized)
     _serialize_unit_costs(costs)
+    frozen_costs = asdict(UnitCosts())
+    for field_name, expected in frozen_costs.items():
+        actual = serialized[field_name]
+        if type(actual) is not type(expected) or actual != expected:
+            raise ValueError(
+                f"unit_costs.{field_name} does not match the frozen UnitCosts() vector"
+            )
     return costs
 
 
@@ -210,7 +239,7 @@ def _decode_tuning_aggregates(
         metrics = _decode_strategy_metrics(item["metrics"], f"{field_name}.metrics")
         score = _require_finite_number(item["score"], f"{field_name}.score")
         recomputed_score = metrics.predicted_time(costs)
-        if score != recomputed_score:
+        if type(score) is not type(recomputed_score) or score != recomputed_score:
             raise ValueError(f"{field_name}.score does not match reconstructed metrics")
         serialized_ids.append(candidate_id)
         decoded[candidate_id] = metrics
@@ -311,6 +340,16 @@ def validate_causal_payload(
 ) -> None:
     """Validate one serialized Day-1 causal payload without external state."""
 
+    _decode_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+
+def _decode_causal_payload(
+    payload: object,
+    *,
+    expected_candidate_ids: Iterable[str],
+) -> _DecodedCausalPayload:
+    """Validate and decode one serialized Day-1 causal payload."""
+
     _validate_json_value(payload, "payload")
     payload_dict = _require_exact_dict(payload, "payload")
     _require_exact_keys(payload_dict, _CAUSAL_PAYLOAD_KEYS, "payload")
@@ -365,6 +404,14 @@ def validate_causal_payload(
     if oracle_candidate_id != recomputed_oracle_id:
         raise ValueError("oracle_candidate_id does not match held-out fixed ranking")
     _validate_alias_ids(records, selected_candidate_id, oracle_candidate_id)
+    return _DecodedCausalPayload(
+        records=tuple(records),
+        costs=costs,
+        tuning_results=tuning_by_candidate,
+        metadata=dict(payload_dict["metadata"]),
+        selected_candidate_id=selected_candidate_id,
+        oracle_candidate_id=oracle_candidate_id,
+    )
 
 
 def _require_nonempty_exact_str(value: object, field_name: str) -> None:
@@ -703,138 +750,47 @@ def _serialize_unit_costs(costs: UnitCosts) -> dict[str, object]:
     return serialized
 
 
-def _validate_causal_audit(
-    items: list[CausalMetricRecord],
-    costs: UnitCosts,
-    metadata: Mapping[str, object],
-    *,
-    tuning_results: Mapping[str, StrategyMetrics],
-    selected_candidate_id: str,
-    oracle_candidate_id: str,
-) -> tuple[dict[str, object], list[dict[str, object]]]:
-    serialized_costs = _serialize_unit_costs(costs)
-    _validate_causal_record_set(items)
-    _validate_metadata_ids(metadata, selected_candidate_id, oracle_candidate_id)
-    _validate_metadata_candidate_ids(metadata, items)
-    tuning_aggregates = _validate_tuning_selection(
-        items,
-        tuning_results,
-        costs,
-        selected_candidate_id,
-    )
-    _validate_oracle_selection(items, costs, oracle_candidate_id)
-    _validate_alias_ids(items, selected_candidate_id, oracle_candidate_id)
-    return serialized_costs, tuning_aggregates
-
-
-def write_causal_records(
-    output_dir: Path,
-    items: list[CausalMetricRecord],
-    costs: UnitCosts,
-    metadata: dict[str, object],
-    *,
-    tuning_results: Mapping[str, StrategyMetrics],
-    selected_candidate_id: str,
-    oracle_candidate_id: str,
-) -> None:
-    """Write Day-1 causal proxy records without implying a gate verdict."""
-
-    serialized_costs, tuning_aggregates = _validate_causal_audit(
-        items,
-        costs,
-        metadata,
-        tuning_results=tuning_results,
-        selected_candidate_id=selected_candidate_id,
-        oracle_candidate_id=oracle_candidate_id,
-    )
-    causal_metadata = {
-        **metadata,
-        "state_model": CAUSAL_STATE_MODEL,
-        "measurement_kind": CAUSAL_MEASUREMENT_KIND,
-        "gate_eligible": False,
-        "complete_cost_claim_allowed": False,
-    }
-    canonical_items = [
-        *sorted(
-            (item for item in items if item.record_kind == "fixed-candidate"),
-            key=lambda item: item.candidate_id,
-        ),
-        *(item for item in items if item.record_kind == "tuned-fixed-policy"),
-        *(item for item in items if item.record_kind == "diagnostic-oracle"),
-    ]
-    records = [_causal_record(item, costs) for item in canonical_items]
-    payload = {
+def _canonical_payload(decoded: _DecodedCausalPayload) -> dict[str, object]:
+    serialized_costs = _serialize_unit_costs(decoded.costs)
+    return {
         "schema": CAUSAL_SCHEMA,
         "state_model": CAUSAL_STATE_MODEL,
         "measurement_kind": CAUSAL_MEASUREMENT_KIND,
         "gate_eligible": False,
         "complete_cost_claim_allowed": False,
         "unit_costs": serialized_costs,
-        "tuning_aggregates": tuning_aggregates,
-        "metadata": causal_metadata,
-        "records": records,
+        "tuning_aggregates": [
+            {
+                "candidate_id": candidate_id,
+                "metrics": asdict(decoded.tuning_results[candidate_id]),
+                "score": decoded.tuning_results[candidate_id].predicted_time(decoded.costs),
+            }
+            for candidate_id in sorted(decoded.tuning_results)
+        ],
+        "metadata": decoded.metadata,
+        "records": [_causal_record(item, decoded.costs) for item in decoded.records],
     }
-    json_text = json.dumps(payload, indent=2, sort_keys=True, allow_nan=False)
-    serialized_payload = json.loads(json_text)
-    validate_causal_payload(
-        serialized_payload,
-        expected_candidate_ids=(
-            item.candidate_id for item in canonical_items if item.record_kind == "fixed-candidate"
-        ),
-    )
-    held_out_csv = _csv_text(records)
-    serialized_cost_columns = {
-        f"unit_cost_{field_name}": value for field_name, value in serialized_costs.items()
-    }
-    tuning_rows = [
-        {
-            "candidate_id": aggregate["candidate_id"],
-            **aggregate["metrics"],
-            "score": aggregate["score"],
-            **serialized_cost_columns,
-        }
-        for aggregate in tuning_aggregates
-    ]
-    tuning_csv = _csv_text(tuning_rows)
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "metrics.json").write_text(json_text, encoding="utf-8")
-    if held_out_csv:
-        (output_dir / "metrics.csv").write_text(held_out_csv, encoding="utf-8")
-    if tuning_csv:
-        (output_dir / "tuning_aggregates.csv").write_text(tuning_csv, encoding="utf-8")
 
 
-def write_causal_summary(
-    output_dir: Path,
-    items: list[CausalMetricRecord],
-    costs: UnitCosts,
-    metadata: dict[str, object],
-    *,
-    tuning_results: Mapping[str, StrategyMetrics],
-    selected_candidate_id: str,
-    oracle_candidate_id: str,
-) -> None:
-    serialized_costs, tuning_aggregates = _validate_causal_audit(
-        items,
-        costs,
-        metadata,
-        tuning_results=tuning_results,
-        selected_candidate_id=selected_candidate_id,
-        oracle_candidate_id=oracle_candidate_id,
-    )
+def _causal_summary_text(decoded: _DecodedCausalPayload) -> str:
+    serialized_costs = _serialize_unit_costs(decoded.costs)
     lines = [
         "# Day-1 causal predicted report",
+        "",
+        f"> Evidence scope: **{CAUSAL_DISCLOSURE}**",
         "",
         f"- Schema: `{CAUSAL_SCHEMA}`",
         f"- State model: `{CAUSAL_STATE_MODEL}`",
         f"- Measurement kind: `{CAUSAL_MEASUREMENT_KIND}`",
         "- `gate_eligible=false`",
         "- `complete_cost_claim_allowed=false`",
-        f"- Workload: `{metadata.get('workload')}`",
-        f"- Publication windows: `{metadata.get('windows_total')}`",
-        f"- Selected fixed basis: `{selected_candidate_id}`",
-        f"- Held-out oracle basis: `{oracle_candidate_id}`",
+        "- `complete_reference_set=false`",
+        "- Bandwidth dimension: `deferred`",
+        "- Full-baseline verdict: **HOLD**",
+        f"- Workload: `{decoded.metadata.get('workload')}`",
+        f"- Publication windows: `{decoded.metadata.get('windows_total')}`",
+        f"- Selected fixed basis: `{decoded.selected_candidate_id}`",
+        f"- Held-out oracle basis: `{decoded.oracle_candidate_id}`",
         "",
         "## Unit-cost vector",
         "",
@@ -851,12 +807,12 @@ def write_causal_summary(
             "|---|---|---:|---:|---:|---:|",
         ]
     )
-    for aggregate in tuning_aggregates:
-        metrics = aggregate["metrics"]
+    for candidate_id in sorted(decoded.tuning_results):
+        metrics = decoded.tuning_results[candidate_id]
         lines.append(
-            f"| {aggregate['candidate_id']} | {metrics['strategy']} | "
-            f"{metrics['windows']} | {metrics['updates']} | {metrics['queries']} | "
-            f"{aggregate['score']:.2f} |"
+            f"| {candidate_id} | {metrics.strategy} | {metrics.windows} | "
+            f"{metrics.updates} | {metrics.queries} | "
+            f"{metrics.predicted_time(decoded.costs):.2f} |"
         )
     lines.extend(
         [
@@ -868,19 +824,19 @@ def write_causal_summary(
             "|---|---|---|---:|---:|---:|---:|",
         ]
     )
-    for item in items:
+    for item in decoded.records:
         metrics = item.metrics
         lines.append(
             f"| {item.record_kind} | {item.candidate_id} | "
             f"{metrics.strategy} | {metrics.windows} | {metrics.updates} | "
-            f"{metrics.queries} | {metrics.predicted_time(costs):.2f} |"
+            f"{metrics.queries} | {metrics.predicted_time(decoded.costs):.2f} |"
         )
-    span80_by_candidate = metadata.get("span80_by_candidate")
+    span80_by_candidate = decoded.metadata.get("span80_by_candidate")
     if span80_by_candidate is not None:
         if not isinstance(span80_by_candidate, dict):
             raise TypeError("span80_by_candidate must be a mapping")
         fixed_candidate_ids = [
-            item.candidate_id for item in items if item.record_kind == "fixed-candidate"
+            item.candidate_id for item in decoded.records if item.record_kind == "fixed-candidate"
         ]
         if set(span80_by_candidate) != set(fixed_candidate_ids):
             raise ValueError("span80_by_candidate keys must match fixed candidate_id values")
@@ -908,9 +864,279 @@ def write_causal_summary(
             "",
         ]
     )
-    summary_text = "\n".join(lines)
+    return "\n".join(lines)
+
+
+def _figure_png_bytes(figure: object) -> bytes:
+    import matplotlib.pyplot as plt
+
+    output = io.BytesIO()
+    figure.savefig(  # type: ignore[attr-defined]
+        output,
+        format="png",
+        dpi=160,
+        metadata={
+            "Software": "dynamic-cssc-spmv canonical causal renderer",
+            "Description": CAUSAL_DISCLOSURE,
+        },
+    )
+    plt.close(figure)
+    return output.getvalue()
+
+
+def _causal_plot_artifacts(decoded: _DecodedCausalPayload) -> dict[str, bytes]:
+    import matplotlib.pyplot as plt
+
+    items = decoded.records
+    labels = [_causal_plot_label(item) for item in items]
+    update_values = [item.metrics.update_ct_equivalents() for item in items]
+    query_values = [
+        (
+            (item.metrics.cc_multiplications + item.metrics.rotations) / item.metrics.queries
+            if item.metrics.queries
+            else 0.0
+        )
+        for item in items
+    ]
+    footer = "Bandwidth deferred | complete_reference_set=false | full-baseline HOLD"
+
+    figure, axis = plt.subplots(figsize=(10, 6))
+    axis.scatter(query_values, update_values)
+    for label, x_value, y_value in zip(
+        labels,
+        query_values,
+        update_values,
+        strict=True,
+    ):
+        axis.annotate(label, (x_value, y_value), fontsize=7)
+    axis.set_xlabel("Query operation proxy per query (CC multiplications + rotations)")
+    axis.set_ylabel("Update ciphertext-equivalents per update")
+    axis.set_title("Predicted synthetic proxy: update amplification vs query cost")
+    figure.text(0.5, 0.01, footer, ha="center", fontsize=7)
+    figure.tight_layout(rect=(0, 0.04, 1, 1))
+    ua_vs_qa = _figure_png_bytes(figure)
+
+    figure, axis = plt.subplots(figsize=(10, 6))
+    plotted = False
+    positive_y_plotted = False
+    for item, label in zip(items, labels, strict=True):
+        metrics = item.metrics
+        if metrics.updates == 0:
+            continue
+        rho = metrics.queries / metrics.updates
+        per_update = metrics.predicted_update_time(decoded.costs) / metrics.updates
+        value = per_update + rho * metrics.predicted_query_time_per_query(decoded.costs)
+        axis.scatter([rho], [value], label=label)
+        axis.annotate(label, (rho, value), fontsize=7)
+        plotted = True
+        positive_y_plotted = positive_y_plotted or value > 0
+    if items and all(item.metrics.queries > 0 and item.metrics.updates > 0 for item in items):
+        axis.set_xscale("log")
+    if positive_y_plotted:
+        axis.set_yscale("log")
+    axis.set_xlabel("Actual query/update ratio ρ from the event schedule")
+    axis.set_ylabel("Predicted normalized cost per update at actual ρ")
+    axis.set_title("Predicted synthetic proxy at the executed query/update ratio")
+    figure.text(0.5, 0.01, footer, ha="center", fontsize=7)
+    if plotted:
+        axis.legend(fontsize=7)
+    figure.tight_layout(rect=(0, 0.04, 1, 1))
+    t_rho = _figure_png_bytes(figure)
+    return {
+        "ua_vs_qa_proxy.png": ua_vs_qa,
+        "t_rho_proxy.png": t_rho,
+    }
+
+
+def _render_causal_artifact_bytes(
+    decoded: _DecodedCausalPayload,
+    filenames: Iterable[str],
+) -> dict[str, bytes]:
+    requested = frozenset(filenames)
+    payload = _canonical_payload(decoded)
+    records = payload["records"]
+    tuning_aggregates = payload["tuning_aggregates"]
+    if not isinstance(records, list) or not isinstance(tuning_aggregates, list):
+        raise TypeError("canonical causal rows must be lists")
+    serialized_cost_columns = {
+        f"unit_cost_{field_name}": value for field_name, value in asdict(decoded.costs).items()
+    }
+    tuning_rows = [
+        {
+            "candidate_id": aggregate["candidate_id"],
+            **aggregate["metrics"],
+            "score": aggregate["score"],
+            **serialized_cost_columns,
+        }
+        for aggregate in tuning_aggregates
+    ]
+    artifacts: dict[str, bytes] = {}
+    if "metrics.json" in requested:
+        artifacts["metrics.json"] = json.dumps(
+            payload,
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    if "metrics.csv" in requested:
+        artifacts["metrics.csv"] = _csv_text(records).encode("utf-8")
+    if "tuning_aggregates.csv" in requested:
+        artifacts["tuning_aggregates.csv"] = _csv_text(tuning_rows).encode("utf-8")
+    if "SUMMARY.md" in requested:
+        artifacts["SUMMARY.md"] = _causal_summary_text(decoded).encode("utf-8")
+    if requested & {"ua_vs_qa_proxy.png", "t_rho_proxy.png"}:
+        for filename, content in _causal_plot_artifacts(decoded).items():
+            if filename in requested:
+                artifacts[filename] = content
+    return artifacts
+
+
+def render_causal_artifacts(
+    output_dir: Path,
+    payload: object,
+    *,
+    expected_candidate_ids: Iterable[str],
+) -> dict[str, str]:
+    """Validate a payload and write its canonical, reproducible report artifacts."""
+
+    decoded = _decode_causal_payload(
+        payload,
+        expected_candidate_ids=expected_candidate_ids,
+    )
+    artifacts = _render_causal_artifact_bytes(decoded, CAUSAL_ARTIFACT_FILENAMES)
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "SUMMARY.md").write_text(summary_text, encoding="utf-8")
+    for filename, content in artifacts.items():
+        (output_dir / filename).write_bytes(content)
+    return {
+        filename: hashlib.sha256(content).hexdigest() for filename, content in artifacts.items()
+    }
+
+
+def _validate_causal_audit(
+    items: list[CausalMetricRecord],
+    costs: UnitCosts,
+    metadata: Mapping[str, object],
+    *,
+    tuning_results: Mapping[str, StrategyMetrics],
+    selected_candidate_id: str,
+    oracle_candidate_id: str,
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    serialized_costs = _serialize_unit_costs(costs)
+    _validate_causal_record_set(items)
+    _validate_metadata_ids(metadata, selected_candidate_id, oracle_candidate_id)
+    _validate_metadata_candidate_ids(metadata, items)
+    tuning_aggregates = _validate_tuning_selection(
+        items,
+        tuning_results,
+        costs,
+        selected_candidate_id,
+    )
+    _validate_oracle_selection(items, costs, oracle_candidate_id)
+    _validate_alias_ids(items, selected_candidate_id, oracle_candidate_id)
+    return serialized_costs, tuning_aggregates
+
+
+def _decode_causal_inputs(
+    items: list[CausalMetricRecord],
+    costs: UnitCosts,
+    metadata: Mapping[str, object],
+    *,
+    tuning_results: Mapping[str, StrategyMetrics],
+    selected_candidate_id: str,
+    oracle_candidate_id: str,
+) -> _DecodedCausalPayload:
+    serialized_costs, tuning_aggregates = _validate_causal_audit(
+        items,
+        costs,
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_candidate_id,
+        oracle_candidate_id=oracle_candidate_id,
+    )
+    canonical_items = [
+        *sorted(
+            (item for item in items if item.record_kind == "fixed-candidate"),
+            key=lambda item: item.candidate_id,
+        ),
+        *(item for item in items if item.record_kind == "tuned-fixed-policy"),
+        *(item for item in items if item.record_kind == "diagnostic-oracle"),
+    ]
+    payload = {
+        "schema": CAUSAL_SCHEMA,
+        "state_model": CAUSAL_STATE_MODEL,
+        "measurement_kind": CAUSAL_MEASUREMENT_KIND,
+        "gate_eligible": False,
+        "complete_cost_claim_allowed": False,
+        "unit_costs": serialized_costs,
+        "tuning_aggregates": tuning_aggregates,
+        "metadata": {
+            **metadata,
+            "state_model": CAUSAL_STATE_MODEL,
+            "measurement_kind": CAUSAL_MEASUREMENT_KIND,
+            "gate_eligible": False,
+            "complete_cost_claim_allowed": False,
+        },
+        "records": [_causal_record(item, costs) for item in canonical_items],
+    }
+    serialized_payload = json.loads(json.dumps(payload, allow_nan=False))
+    return _decode_causal_payload(
+        serialized_payload,
+        expected_candidate_ids=(
+            item.candidate_id for item in canonical_items if item.record_kind == "fixed-candidate"
+        ),
+    )
+
+
+def write_causal_records(
+    output_dir: Path,
+    items: list[CausalMetricRecord],
+    costs: UnitCosts,
+    metadata: dict[str, object],
+    *,
+    tuning_results: Mapping[str, StrategyMetrics],
+    selected_candidate_id: str,
+    oracle_candidate_id: str,
+) -> None:
+    """Write Day-1 causal proxy records without implying a gate verdict."""
+
+    decoded = _decode_causal_inputs(
+        items,
+        costs,
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_candidate_id,
+        oracle_candidate_id=oracle_candidate_id,
+    )
+    artifacts = _render_causal_artifact_bytes(
+        decoded,
+        ("metrics.json", "metrics.csv", "tuning_aggregates.csv"),
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for filename, content in artifacts.items():
+        (output_dir / filename).write_bytes(content)
+
+
+def write_causal_summary(
+    output_dir: Path,
+    items: list[CausalMetricRecord],
+    costs: UnitCosts,
+    metadata: dict[str, object],
+    *,
+    tuning_results: Mapping[str, StrategyMetrics],
+    selected_candidate_id: str,
+    oracle_candidate_id: str,
+) -> None:
+    decoded = _decode_causal_inputs(
+        items,
+        costs,
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_candidate_id,
+        oracle_candidate_id=oracle_candidate_id,
+    )
+    artifacts = _render_causal_artifact_bytes(decoded, ("SUMMARY.md",))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "SUMMARY.md").write_bytes(artifacts["SUMMARY.md"])
 
 
 def write_records(
@@ -998,65 +1224,25 @@ def write_causal_plots(
 ) -> None:
     """Plot causal records without discarding fixed-candidate identity."""
 
-    _serialize_unit_costs(costs)
-    _validate_causal_record_set(items)
-    _validate_tuning_selection(items, tuning_results, costs, selected_candidate_id)
-    _validate_oracle_selection(items, costs, oracle_candidate_id)
-    _validate_alias_ids(items, selected_candidate_id, oracle_candidate_id)
-
-    import matplotlib.pyplot as plt
-
+    decoded = _decode_causal_inputs(
+        items,
+        costs,
+        {
+            "selected_candidate_id": selected_candidate_id,
+            "oracle_candidate_id": oracle_candidate_id,
+            "fixed_candidate_count": 13,
+        },
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_candidate_id,
+        oracle_candidate_id=oracle_candidate_id,
+    )
+    artifacts = _render_causal_artifact_bytes(
+        decoded,
+        ("ua_vs_qa_proxy.png", "t_rho_proxy.png"),
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
-    labels = [_causal_plot_label(item) for item in items]
-    update_values = [item.metrics.update_ct_equivalents() for item in items]
-    query_values = [
-        (
-            (item.metrics.cc_multiplications + item.metrics.rotations) / item.metrics.queries
-            if item.metrics.queries
-            else 0.0
-        )
-        for item in items
-    ]
-
-    figure, axis = plt.subplots(figsize=(10, 6))
-    axis.scatter(query_values, update_values)
-    for label, x_value, y_value in zip(
-        labels,
-        query_values,
-        update_values,
-        strict=True,
-    ):
-        axis.annotate(label, (x_value, y_value), fontsize=7)
-    axis.set_xlabel("Query operation proxy per query (CC multiplications + rotations)")
-    axis.set_ylabel("Update ciphertext-equivalents per update")
-    axis.set_title("Predicted proxy: update amplification vs query cost")
-    figure.tight_layout()
-    figure.savefig(output_dir / "ua_vs_qa_proxy.png", dpi=160)
-    plt.close(figure)
-
-    figure, axis = plt.subplots(figsize=(10, 6))
-    plotted = False
-    for item, label in zip(items, labels, strict=True):
-        metrics = item.metrics
-        if metrics.updates == 0:
-            continue
-        rho = metrics.queries / metrics.updates
-        per_update = metrics.predicted_update_time(costs) / metrics.updates
-        value = per_update + rho * metrics.predicted_query_time_per_query(costs)
-        axis.scatter([rho], [value], label=label)
-        axis.annotate(label, (rho, value), fontsize=7)
-        plotted = True
-    if items and all(item.metrics.queries > 0 and item.metrics.updates > 0 for item in items):
-        axis.set_xscale("log")
-    axis.set_yscale("log")
-    axis.set_xlabel("Actual query/update ratio ρ from the event schedule")
-    axis.set_ylabel("Predicted normalized cost per update at actual ρ")
-    axis.set_title("Predicted proxy at the executed query/update ratio")
-    if plotted:
-        axis.legend(fontsize=7)
-    figure.tight_layout()
-    figure.savefig(output_dir / "t_rho_proxy.png", dpi=160)
-    plt.close(figure)
+    for filename, content in artifacts.items():
+        (output_dir / filename).write_bytes(content)
 
 
 def write_plots(output_dir: Path, metrics: list[StrategyMetrics], costs: UnitCosts) -> None:

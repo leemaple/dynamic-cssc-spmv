@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
-from dataclasses import replace
+import tempfile
+from dataclasses import asdict, fields, replace
 from fractions import Fraction
 from functools import cache
 from pathlib import Path
@@ -15,13 +17,23 @@ import pytest
 
 from dynamic_cssc.events import EventKind, PublicationWindow, publication_windows
 from dynamic_cssc.metrics import StrategyMetrics, UnitCosts
-from dynamic_cssc.report import CausalMetricRecord, write_causal_records
+from dynamic_cssc.report import (
+    CAUSAL_ARTIFACT_FILENAMES,
+    render_causal_artifacts,
+    write_causal_plots,
+    write_causal_records,
+    write_causal_summary,
+)
 from dynamic_cssc.selection import split_boundaries
+from dynamic_cssc.simulator import SimulationConfig
 from dynamic_cssc.workloads import generate_event_stream, generate_initial_matrix
-from scripts import aggregate_day1_shards
+from scripts import aggregate_day1_shards, replay_day1_shard
 from scripts.run_day1_suite import (
     EVENT_WINDOW_TRACE_SCHEMA,
     ExperimentPlan,
+    _candidate_records,
+    _candidate_span80,
+    evaluate_causal_cell,
     freshness_path_id,
     insert_queries_by_ratio,
     load_experiment_plan,
@@ -33,10 +45,11 @@ ROOT = Path(__file__).resolve().parents[1]
 PLAN_PATH = ROOT / "config" / "experiment_plan.json"
 MANIFEST_PATH = ROOT / "config" / "params_manifest.json"
 SEED = 20260821
+SOURCE_SHA = "a" * 40
 FIXTURE_ROWS = 8
 FIXTURE_COLS = 8
 FIXTURE_INITIAL_NNZ_PER_ROW = 1
-FIXTURE_EVENTS = 130
+FIXTURE_EVENTS = 4
 REQUIRED_CELL_FILES = (
     "SUMMARY.md",
     "event-window-trace.jsonl",
@@ -59,6 +72,7 @@ PREFLIGHT = {
     "reconstructed_matches_direct": True,
     "reconstructed_high_row_value": 1,
 }
+_LAYOUT_TEMPLATE_ROOT: Path | None = None
 
 
 def _sha256(path: Path) -> str:
@@ -78,6 +92,7 @@ def _fixture_plan_path(download_dir: Path) -> Path:
             "events": FIXTURE_EVENTS,
         }
     )
+    payload["freshness_seconds"] = [0.001, 0.002, 0.003]
     path.write_text(
         json.dumps(payload, indent=2, sort_keys=True, allow_nan=False),
         encoding="utf-8",
@@ -172,6 +187,7 @@ def _write_cell(
     microbatch_max_updates: int,
     query_requires_latest: bool,
     matrix_entry_abs_bound: int,
+    max_row_nnz: int,
 ) -> dict[str, object]:
     freshness_id = freshness_path_id(freshness)
     rho_id = rho_path_id(ratio)
@@ -193,7 +209,6 @@ def _write_cell(
         query_requires_latest,
     )
     warmup_end, tuning_end = split_boundaries(len(windows), plan.split)
-    tuning_windows = windows[warmup_end:tuning_end]
     held_out_windows = windows[tuning_end:]
     trace_path = cell_dir / "event-window-trace.jsonl"
     trace_sha256 = write_event_window_trace(
@@ -218,10 +233,30 @@ def _write_cell(
         split=plan.split,
     )
 
-    candidates_by_id = {candidate.candidate_id: candidate for candidate in plan.candidates}
-    canonical_candidate_ids = sorted(candidates_by_id)
-    selected_candidate_id = canonical_candidate_ids[0]
-    oracle_candidate_id = canonical_candidate_ids[0]
+    result = evaluate_causal_cell(
+        windows=list(windows),
+        initial_state=generate_initial_matrix(
+            plan.rows,
+            plan.cols,
+            plan.initial_nnz_per_row,
+            seed=SEED,
+            matrix_entry_abs_bound=matrix_entry_abs_bound,
+        ),
+        base_config=SimulationConfig(
+            rows=plan.rows,
+            cols=plan.cols,
+            effective_slots=plan.effective_slots,
+            partition_rows=plan.partition_rows,
+            matrix_value_bound=matrix_entry_abs_bound,
+            max_row_nnz=max_row_nnz,
+            reserved_slack_beta=0.1,
+            periodic_repack_windows=4,
+            packed_coo_segment_capacity=128,
+        ),
+        split=plan.split,
+        candidates=plan.candidates,
+        costs=UnitCosts(),
+    )
     metadata = {
         "workload": workload,
         "suite_seed": SEED,
@@ -249,93 +284,39 @@ def _write_cell(
         "queries_total": queries_total,
         "held_out_queries": sum(window.query_count for window in held_out_windows),
         "windows_total": len(windows),
-        "warmup_windows": warmup_end,
-        "tuning_windows": len(tuning_windows),
+        "warmup_windows": result.warmup_end,
+        "tuning_windows": result.tuning_end - result.warmup_end,
         "held_out_windows": len(held_out_windows),
         "fixed_candidate_count": 13,
-        "span80_by_candidate": {
-            candidate_id: {"1": 0.0, "2": 0.0, "4": 0.0, "8": 0.0} for candidate_id in candidate_ids
-        },
+        "span80_by_candidate": _candidate_span80(plan.rows, plan.candidates, result),
         "initial_state_sha256": initial_state_sha256,
         "real_temporal_dataset": False,
-        "selected_candidate_id": selected_candidate_id,
-        "oracle_candidate_id": oracle_candidate_id,
+        "selected_candidate_id": result.selected_candidate_id,
+        "oracle_candidate_id": result.oracle_candidate_id,
         "state_model": "persistent-strategy-snapshots",
         "measurement_kind": "predicted-proxy",
         "gate_eligible": False,
         "complete_cost_claim_allowed": False,
         "complete_reference_set": False,
     }
-    fixed_records: list[CausalMetricRecord] = []
-    tuning_results: dict[str, StrategyMetrics] = {}
-    for index, candidate_id in enumerate(canonical_candidate_ids):
-        strategy = candidates_by_id[candidate_id].strategy
-        fixed_records.append(
-            CausalMetricRecord(
-                "fixed-candidate",
-                candidate_id,
-                candidate_id,
-                strategy,
-                "fixed-candidate",
-                StrategyMetrics(
-                    strategy,
-                    "reference",
-                    windows=len(held_out_windows),
-                    queries=sum(window.query_count for window in held_out_windows),
-                    updates=sum(len(window.updates) for window in held_out_windows),
-                    update_encryptions=index + 1,
-                    source="persistent-state-predicted",
-                ),
-            )
-        )
-        tuning_results[candidate_id] = StrategyMetrics(
-            strategy,
-            "reference",
-            windows=len(tuning_windows),
-            queries=sum(window.query_count for window in tuning_windows),
-            updates=sum(len(window.updates) for window in tuning_windows),
-            update_encryptions=index + 1,
-            source="persistent-state-predicted",
-        )
-    selected_basis = fixed_records[0]
-    tuned_record = CausalMetricRecord(
-        "tuned-fixed-policy",
-        selected_candidate_id,
-        "TunedFixedPolicy",
-        selected_basis.strategy_kind,
-        "tuning-prefix-only",
-        replace(
-            selected_basis.metrics,
-            strategy="TunedFixedPolicy",
-            category="tuned-fixed-policy",
-            source="tuning-prefix-frozen",
-        ),
-    )
-    oracle_record = CausalMetricRecord(
-        "diagnostic-oracle",
-        oracle_candidate_id,
-        "BestFixed-Offline-Oracle",
-        selected_basis.strategy_kind,
-        "held-out-hindsight-diagnostic-only",
-        replace(
-            selected_basis.metrics,
-            strategy="BestFixed-Offline-Oracle",
-            category="diagnostic-oracle",
-            source="held-out-hindsight-diagnostic",
-        ),
-    )
+    records = _candidate_records(plan.candidates, result)
+    report_audit = {
+        "tuning_results": {
+            candidate_id: simulation.metrics
+            for candidate_id, simulation in result.tuning_results.items()
+        },
+        "selected_candidate_id": result.selected_candidate_id,
+        "oracle_candidate_id": result.oracle_candidate_id,
+    }
     write_causal_records(
         cell_dir,
-        [*fixed_records, tuned_record, oracle_record],
+        records,
         UnitCosts(),
         metadata,
-        tuning_results=tuning_results,
-        selected_candidate_id=selected_candidate_id,
-        oracle_candidate_id=oracle_candidate_id,
+        **report_audit,
     )
-    (cell_dir / "SUMMARY.md").write_text("# fixture\n", encoding="utf-8")
-    (cell_dir / "t_rho_proxy.png").write_bytes(b"fixture-t-rho")
-    (cell_dir / "ua_vs_qa_proxy.png").write_bytes(b"fixture-ua-qa")
+    write_causal_summary(cell_dir, records, UnitCosts(), metadata, **report_audit)
+    write_causal_plots(cell_dir, records, UnitCosts(), **report_audit)
     _write_checksums(cell_dir, REQUIRED_CELL_FILES)
     return {
         "relative_path": relative_path.as_posix(),
@@ -354,7 +335,7 @@ def _write_root_checksums(shard_dir: Path) -> None:
     (shard_dir / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _build_download_layout(download_dir: Path) -> list[Path]:
+def _create_download_layout(download_dir: Path) -> list[Path]:
     plan_path = _fixture_plan_path(download_dir)
     plan = load_experiment_plan(plan_path)
     assert (len(plan.workloads), len(plan.freshness_seconds), len(plan.ratio_grid)) == (7, 3, 9)
@@ -392,6 +373,7 @@ def _build_download_layout(download_dir: Path) -> list[Path]:
                 microbatch_max_updates=manifest["freshness"]["microbatch_max_updates"],
                 query_requires_latest=manifest["freshness"]["query_requires_latest"],
                 matrix_entry_abs_bound=manifest["integer_correctness"]["matrix_entry_abs_bound"],
+                max_row_nnz=manifest["matrix"]["max_nnz_per_row"],
             )
             for ratio in plan.ratio_grid
         ]
@@ -429,8 +411,27 @@ def _build_download_layout(download_dir: Path) -> list[Path]:
             json.dumps(status, sort_keys=True), encoding="utf-8"
         )
         _write_root_checksums(shard_dir)
+        replay_day1_shard.replay_shard(
+            shard_dir=shard_dir,
+            experiment_plan=plan_path,
+            manifest=MANIFEST_PATH,
+            seed=SEED,
+            workload=workload,
+            freshness=freshness,
+            source_sha=SOURCE_SHA,
+        )
         shards.append(shard_dir)
     return shards
+
+
+def _build_download_layout(download_dir: Path) -> list[Path]:
+    global _LAYOUT_TEMPLATE_ROOT
+    if _LAYOUT_TEMPLATE_ROOT is None:
+        _LAYOUT_TEMPLATE_ROOT = Path(tempfile.mkdtemp(prefix="day1-shard-fixture-"))
+        atexit.register(shutil.rmtree, _LAYOUT_TEMPLATE_ROOT, True)
+        _create_download_layout(_LAYOUT_TEMPLATE_ROOT / "downloaded-shards")
+    shutil.copytree(_LAYOUT_TEMPLATE_ROOT / "downloaded-shards", download_dir)
+    return sorted(download_dir.iterdir())
 
 
 def _resign_cell_and_shard(shard_dir: Path, cell_dir: Path) -> None:
@@ -450,6 +451,303 @@ def _resign_cell_and_shard(shard_dir: Path, cell_dir: Path) -> None:
     _write_root_checksums(shard_dir)
 
 
+def _resign_checksums_only(shard_dir: Path, cell_dir: Path) -> None:
+    _write_checksums(cell_dir, REQUIRED_CELL_FILES)
+    status_path = shard_dir / "SHARD_STATUS.json"
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    relative_path = cell_dir.relative_to(shard_dir).as_posix()
+    cell_status = next(cell for cell in status["cells"] if cell["relative_path"] == relative_path)
+    cell_status["event_window_trace_sha256"] = _sha256(cell_dir / "event-window-trace.jsonl")
+    cell_status["cell_checksums_sha256"] = _sha256(cell_dir / "SHA256SUMS")
+    status_path.write_text(json.dumps(status, sort_keys=True), encoding="utf-8")
+    _write_root_checksums(shard_dir)
+
+
+def _metrics_from_mapping(value: dict[str, object]) -> StrategyMetrics:
+    return StrategyMetrics(
+        **{metric_field.name: value[metric_field.name] for metric_field in fields(StrategyMetrics)}
+    )
+
+
+def _write_zero_operation_forgery(cell_dir: Path, *, keep_updates: bool) -> None:
+    metrics_path = cell_dir / "metrics.json"
+    payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+    costs = UnitCosts()
+    preserved = {"strategy", "category", "source", "windows", "queries"}
+    if keep_updates:
+        preserved.add("updates")
+
+    def zeroed(value: dict[str, object]) -> StrategyMetrics:
+        metrics = _metrics_from_mapping(value)
+        changes = {
+            metric_field.name: 0
+            for metric_field in fields(StrategyMetrics)
+            if metric_field.name not in preserved
+        }
+        return replace(metrics, **changes)
+
+    tuning_by_id: dict[str, StrategyMetrics] = {}
+    for aggregate in payload["tuning_aggregates"]:
+        metrics = zeroed(aggregate["metrics"])
+        aggregate["metrics"] = asdict(metrics)
+        aggregate["score"] = metrics.predicted_time(costs)
+        tuning_by_id[aggregate["candidate_id"]] = metrics
+
+    fixed_records = [
+        record for record in payload["records"] if record["record_kind"] == "fixed-candidate"
+    ]
+    fixed_by_id: dict[str, StrategyMetrics] = {}
+    for record in fixed_records:
+        metrics = zeroed(record)
+        record.update(metrics.to_record(costs))
+        fixed_by_id[record["candidate_id"]] = metrics
+
+    selected_id = min(
+        (metrics.predicted_time(costs), candidate_id)
+        for candidate_id, metrics in tuning_by_id.items()
+    )[1]
+    oracle_id = min(
+        (metrics.predicted_time(costs), candidate_id)
+        for candidate_id, metrics in fixed_by_id.items()
+    )[1]
+    payload["metadata"]["selected_candidate_id"] = selected_id
+    payload["metadata"]["oracle_candidate_id"] = oracle_id
+    alias_specs = {
+        "tuned-fixed-policy": (
+            selected_id,
+            "TunedFixedPolicy",
+            "tuned-fixed-policy",
+            "tuning-prefix-frozen",
+        ),
+        "diagnostic-oracle": (
+            oracle_id,
+            "BestFixed-Offline-Oracle",
+            "diagnostic-oracle",
+            "held-out-hindsight-diagnostic",
+        ),
+    }
+    for record in payload["records"]:
+        spec = alias_specs.get(record["record_kind"])
+        if spec is None:
+            continue
+        candidate_id, strategy, category, source = spec
+        basis = fixed_by_id[candidate_id]
+        alias_metrics = replace(
+            basis,
+            strategy=strategy,
+            category=category,
+            source=source,
+        )
+        record["candidate_id"] = candidate_id
+        record["strategy_kind"] = basis.strategy
+        record.update(alias_metrics.to_record(costs))
+
+    with tempfile.TemporaryDirectory(prefix="day1-forged-render-") as temporary:
+        rendered = Path(temporary)
+        render_causal_artifacts(
+            rendered,
+            payload,
+            expected_candidate_ids=sorted(fixed_by_id),
+        )
+        for filename in CAUSAL_ARTIFACT_FILENAMES:
+            shutil.copy2(rendered / filename, cell_dir / filename)
+
+
+def test_independent_replay_accepts_an_official_small_plan_shard(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloaded-shards"
+    shard_dir = _build_download_layout(download_dir)[0]
+    status = json.loads((shard_dir / "SHARD_STATUS.json").read_text(encoding="utf-8"))
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/replay_day1_shard.py",
+            "--shard-dir",
+            str(shard_dir),
+            "--experiment-plan",
+            str(_fixture_plan_path(download_dir)),
+            "--manifest",
+            str(MANIFEST_PATH),
+            "--seed",
+            str(SEED),
+            "--workload",
+            status["workload"],
+            "--freshness-seconds",
+            status["freshness_seconds_fraction"],
+            "--source-sha",
+            SOURCE_SHA,
+        ],
+        cwd=ROOT,
+        env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
+        check=True,
+    )
+    receipt = json.loads((shard_dir / "REPLAY_RECEIPT.json").read_text(encoding="utf-8"))
+
+    assert receipt["verified"] is True
+    assert receipt["cells_replayed"] == 9
+    assert [cell["rho_id"] for cell in receipt["cells"]] == status["rho_ids"]
+
+
+def _replay_existing_shard(
+    shard_dir: Path,
+    download_dir: Path,
+) -> dict[str, object]:
+    status = json.loads((shard_dir / "SHARD_STATUS.json").read_text(encoding="utf-8"))
+    return replay_day1_shard.replay_shard(
+        shard_dir=shard_dir,
+        experiment_plan=_fixture_plan_path(download_dir),
+        manifest=MANIFEST_PATH,
+        seed=SEED,
+        workload=status["workload"],
+        freshness=Fraction(status["freshness_seconds_fraction"]),
+        source_sha=SOURCE_SHA,
+    )
+
+
+@pytest.mark.parametrize("keep_updates", [False, True])
+def test_independent_replay_rejects_self_consistent_zero_operation_forgery(
+    tmp_path: Path,
+    keep_updates: bool,
+) -> None:
+    download_dir = tmp_path / "downloaded-shards"
+    shard_dir = _build_download_layout(download_dir)[0]
+    cell_dir = next(path.parent for path in shard_dir.rglob("metrics.json"))
+    _write_zero_operation_forgery(cell_dir, keep_updates=keep_updates)
+    _resign_checksums_only(shard_dir, cell_dir)
+
+    with pytest.raises(ValueError, match="replay metrics"):
+        _replay_existing_shard(shard_dir, download_dir)
+
+    assert not (shard_dir / "REPLAY_RECEIPT.json").exists()
+
+
+def test_independent_replay_rejects_finite_forged_unit_costs(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloaded-shards"
+    shard_dir = _build_download_layout(download_dir)[0]
+    cell_dir = next(path.parent for path in shard_dir.rglob("metrics.json"))
+    metrics_path = cell_dir / "metrics.json"
+    payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+    forged_costs = replace(UnitCosts(), encrypt=UnitCosts().encrypt + 1.0)
+    payload["unit_costs"] = asdict(forged_costs)
+    for aggregate in payload["tuning_aggregates"]:
+        metrics = _metrics_from_mapping(aggregate["metrics"])
+        aggregate["score"] = metrics.predicted_time(forged_costs)
+    flat_costs = {
+        f"unit_cost_{field_name}": value for field_name, value in asdict(forged_costs).items()
+    }
+    for record in payload["records"]:
+        metrics = _metrics_from_mapping(record)
+        record.update(metrics.to_record(forged_costs))
+        record.update(flat_costs)
+    metrics_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, allow_nan=False),
+        encoding="utf-8",
+    )
+    _resign_checksums_only(shard_dir, cell_dir)
+
+    with pytest.raises(ValueError, match="frozen UnitCosts"):
+        _replay_existing_shard(shard_dir, download_dir)
+
+
+def test_independent_replay_rejects_forged_selected_and_oracle_aliases(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloaded-shards"
+    shard_dir = _build_download_layout(download_dir)[0]
+    cell_dir = next(path.parent for path in shard_dir.rglob("metrics.json"))
+    metrics_path = cell_dir / "metrics.json"
+    payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+    fixed_ids = sorted(
+        record["candidate_id"]
+        for record in payload["records"]
+        if record["record_kind"] == "fixed-candidate"
+    )
+    forged_id = next(
+        candidate_id
+        for candidate_id in fixed_ids
+        if candidate_id
+        not in {
+            payload["metadata"]["selected_candidate_id"],
+            payload["metadata"]["oracle_candidate_id"],
+        }
+    )
+    payload["metadata"]["selected_candidate_id"] = forged_id
+    payload["metadata"]["oracle_candidate_id"] = forged_id
+    for record in payload["records"]:
+        if record["record_kind"] in {"tuned-fixed-policy", "diagnostic-oracle"}:
+            record["candidate_id"] = forged_id
+    metrics_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, allow_nan=False),
+        encoding="utf-8",
+    )
+    _resign_checksums_only(shard_dir, cell_dir)
+
+    with pytest.raises(ValueError, match="canonical causal validation"):
+        _replay_existing_shard(shard_dir, download_dir)
+
+
+@pytest.mark.parametrize("filename", replay_day1_shard.DERIVED_ARTIFACT_FILENAMES)
+def test_independent_replay_rejects_resigned_noncanonical_derived_artifacts(
+    tmp_path: Path,
+    filename: str,
+) -> None:
+    download_dir = tmp_path / "downloaded-shards"
+    shard_dir = _build_download_layout(download_dir)[0]
+    cell_dir = next(path.parent for path in shard_dir.rglob("metrics.json"))
+    artifact = cell_dir / filename
+    artifact.write_bytes(artifact.read_bytes() + b"tampered")
+    _resign_checksums_only(shard_dir, cell_dir)
+
+    with pytest.raises(ValueError, match=filename):
+        _replay_existing_shard(shard_dir, download_dir)
+
+
+def test_aggregator_rejects_receipts_from_a_different_source_sha(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloaded-shards"
+    _build_download_layout(download_dir)
+
+    with pytest.raises(ValueError, match="source_git_sha"):
+        aggregate_day1_shards.aggregate_shards(
+            shards_dir=download_dir,
+            output_dir=tmp_path / "day1",
+            experiment_plan=_fixture_plan_path(download_dir),
+            manifest=MANIFEST_PATH,
+            seed=SEED,
+            source_sha="b" * 40,
+        )
+
+
+def test_aggregator_rejects_a_resigned_artifact_not_bound_by_the_receipt(tmp_path: Path) -> None:
+    download_dir = tmp_path / "downloaded-shards"
+    shard_dir = _build_download_layout(download_dir)[0]
+    cell_dir = next(path.parent for path in shard_dir.rglob("metrics.json"))
+    artifact = cell_dir / "metrics.csv"
+    artifact.write_bytes(artifact.read_bytes() + b"tampered")
+    _resign_checksums_only(shard_dir, cell_dir)
+
+    with pytest.raises(ValueError, match="derived digest metrics.csv"):
+        aggregate_day1_shards.aggregate_shards(
+            shards_dir=download_dir,
+            output_dir=tmp_path / "day1",
+            experiment_plan=_fixture_plan_path(download_dir),
+            manifest=MANIFEST_PATH,
+            seed=SEED,
+            source_sha=SOURCE_SHA,
+        )
+
+
+def test_aggregator_requires_an_explicit_canonical_source_sha(tmp_path: Path) -> None:
+    common = {
+        "shards_dir": tmp_path / "unused-shards",
+        "output_dir": tmp_path / "unused-output",
+        "experiment_plan": PLAN_PATH,
+        "manifest": MANIFEST_PATH,
+        "seed": SEED,
+    }
+    with pytest.raises(TypeError, match="source_sha"):
+        aggregate_day1_shards.aggregate_shards(**common)
+    with pytest.raises(ValueError, match="lowercase 40-hex"):
+        aggregate_day1_shards.aggregate_shards(source_sha="A" * 40, **common)
+
+
 def test_aggregator_accepts_only_the_complete_21_shard_189_cell_cartesian_product(
     tmp_path: Path,
 ) -> None:
@@ -463,6 +761,7 @@ def test_aggregator_accepts_only_the_complete_21_shard_189_cell_cartesian_produc
         experiment_plan=_fixture_plan_path(download_dir),
         manifest=MANIFEST_PATH,
         seed=SEED,
+        source_sha=SOURCE_SHA,
     )
 
     assert len(shards) == 21
@@ -470,6 +769,15 @@ def test_aggregator_accepts_only_the_complete_21_shard_189_cell_cartesian_produc
     assert status["complete_reference_set"] is False
     assert status["shards_expected"] == status["shards_completed"] == 21
     assert status["cells_expected"] == status["cells_completed"] == 189
+    assert status["source_git_sha"] == SOURCE_SHA
+    assert status["replay_receipts_expected"] == status["replay_receipts_completed"] == 21
+    assert len(status["replay_receipts"]) == 21
+    assert len({item["relative_path"] for item in status["replay_receipts"]}) == 21
+    for item in status["replay_receipts"]:
+        receipt_path = output_dir / item["relative_path"]
+        assert receipt_path.is_file()
+        assert item["sha256"] == _sha256(receipt_path)
+        assert json.loads(receipt_path.read_text(encoding="utf-8"))["source_git_sha"] == SOURCE_SHA
     assert len(status["cell_ids"]) == len(set(status["cell_ids"])) == 189
     assert status["experiment_plan_sha256"] == _sha256(_fixture_plan_path(download_dir))
     assert status["manifest_sha256"] == _sha256(MANIFEST_PATH)
@@ -492,7 +800,7 @@ def test_aggregator_accepts_only_the_complete_21_shard_189_cell_cartesian_produc
         if path.is_file() and path != output_dir / "SHA256SUMS"
     }
     assert checksummed_paths == output_files
-    assert len(checksummed_paths) == 1 + 189 * 8
+    assert len(checksummed_paths) == 1 + 189 * 8 + 21
 
 
 def test_aggregator_cli_loads_when_executed_by_workflow_script_path() -> None:
@@ -568,6 +876,7 @@ def test_aggregator_fails_closed_before_writing_suite_status(
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
     assert not (output_dir / "SUITE_STATUS.json").exists()
@@ -587,6 +896,7 @@ def test_aggregator_rejects_an_unchecksummed_extra_cell_file(tmp_path: Path) -> 
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
     assert not (output_dir / "SUITE_STATUS.json").exists()
@@ -618,6 +928,7 @@ def test_aggregator_rejects_an_extra_checksum_alias(tmp_path: Path) -> None:
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
     assert not (output_dir / "SUITE_STATUS.json").exists()
@@ -641,6 +952,7 @@ def test_aggregator_rejects_a_symlinked_required_cell_file(tmp_path: Path) -> No
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
     assert not (output_dir / "SUITE_STATUS.json").exists()
@@ -659,6 +971,7 @@ def test_aggregator_rejects_an_extra_shard_root_file(tmp_path: Path) -> None:
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
     assert not (output_dir / "SUITE_STATUS.json").exists()
@@ -676,6 +989,7 @@ def test_aggregator_rejects_an_extra_shard_directory(tmp_path: Path) -> None:
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
 
@@ -696,6 +1010,7 @@ def test_aggregator_rejects_an_extra_root_checksum_alias(tmp_path: Path) -> None
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
 
@@ -711,6 +1026,7 @@ def test_aggregator_rejects_nonartifact_entries_in_download_root(tmp_path: Path)
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
 
@@ -745,6 +1061,7 @@ def test_aggregator_rejects_status_dimensions_that_contradict_frozen_sources(
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
 
@@ -772,13 +1089,14 @@ def test_aggregator_binds_trace_header_to_manifest_and_plan(
     trace_path.write_bytes(_canonical_jsonl(records))
     _resign_cell_and_shard(shards[0], cell_dir)
 
-    with pytest.raises(ValueError, match="deterministic generated stream"):
+    with pytest.raises(ValueError, match="event_window_trace_sha256"):
         aggregate_day1_shards.aggregate_shards(
             shards_dir=download_dir,
             output_dir=tmp_path / "day1",
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
 
@@ -792,13 +1110,14 @@ def test_aggregator_requires_exact_trace_header_keys(tmp_path: Path) -> None:
     trace_path.write_bytes(_canonical_jsonl(records))
     _resign_cell_and_shard(shards[0], cell_dir)
 
-    with pytest.raises(ValueError, match="deterministic generated stream"):
+    with pytest.raises(ValueError, match="event_window_trace_sha256"):
         aggregate_day1_shards.aggregate_shards(
             shards_dir=download_dir,
             output_dir=tmp_path / "day1",
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
 
@@ -825,13 +1144,14 @@ def test_aggregator_reuses_report_validator_for_causal_payloads(
     metrics_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     _resign_cell_and_shard(shards[0], cell_dir)
 
-    with pytest.raises(ValueError, match="causal payload"):
+    with pytest.raises(ValueError, match="metrics_json_sha256"):
         aggregate_day1_shards.aggregate_shards(
             shards_dir=download_dir,
             output_dir=tmp_path / "day1",
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
 
@@ -853,6 +1173,7 @@ def test_aggregator_requires_canonical_candidate_id_set_in_shard_status(
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
 
@@ -877,7 +1198,7 @@ def test_aggregator_rejects_trace_content_that_is_not_bound_to_the_frozen_stream
 
     with pytest.raises(
         ValueError,
-        match="initial_state_sha256|deterministic generated stream|before value",
+        match="event_window_trace_sha256",
     ):
         aggregate_day1_shards.aggregate_shards(
             shards_dir=download_dir,
@@ -885,6 +1206,7 @@ def test_aggregator_rejects_trace_content_that_is_not_bound_to_the_frozen_stream
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
 
@@ -905,13 +1227,14 @@ def test_aggregator_requires_exact_trace_derived_metrics_metadata(
     metrics_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     _resign_cell_and_shard(shards[0], cell_dir)
 
-    with pytest.raises(ValueError, match="metadata"):
+    with pytest.raises(ValueError, match="metrics_json_sha256"):
         aggregate_day1_shards.aggregate_shards(
             shards_dir=download_dir,
             output_dir=tmp_path / "day1",
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
 
@@ -926,13 +1249,14 @@ def test_aggregator_rejects_invalid_per_candidate_span80_curve(tmp_path: Path) -
     metrics_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     _resign_cell_and_shard(shards[0], cell_dir)
 
-    with pytest.raises(ValueError, match="Span80"):
+    with pytest.raises(ValueError, match="metrics_json_sha256"):
         aggregate_day1_shards.aggregate_shards(
             shards_dir=download_dir,
             output_dir=tmp_path / "day1",
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
 
@@ -954,6 +1278,7 @@ def test_aggregator_rejects_extra_status_keys(tmp_path: Path, location: str) -> 
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
 
@@ -971,13 +1296,14 @@ def test_aggregator_rejects_a_canonical_trace_that_diverges_from_the_generated_s
     trace_path.write_bytes(_canonical_jsonl(records))
     _resign_cell_and_shard(shards[0], cell_dir)
 
-    with pytest.raises(ValueError, match="deterministic generated stream"):
+    with pytest.raises(ValueError, match="event_window_trace_sha256"):
         aggregate_day1_shards.aggregate_shards(
             shards_dir=download_dir,
             output_dir=tmp_path / "day1",
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
 
@@ -1010,13 +1336,14 @@ def test_aggregator_binds_report_window_and_query_counts_to_reconstructed_phases
     metrics_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     _resign_cell_and_shard(shards[0], cell_dir)
 
-    with pytest.raises(ValueError, match=f"{phase}.*{metric_field}"):
+    with pytest.raises(ValueError, match="metrics_json_sha256"):
         aggregate_day1_shards.aggregate_shards(
             shards_dir=download_dir,
             output_dir=tmp_path / "day1",
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )
 
 
@@ -1044,11 +1371,12 @@ def test_aggregator_binds_metadata_counts_to_plan_stream_and_split(
     metrics_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     _resign_cell_and_shard(shards[0], cell_dir)
 
-    with pytest.raises(ValueError, match=field):
+    with pytest.raises(ValueError, match="metrics_json_sha256"):
         aggregate_day1_shards.aggregate_shards(
             shards_dir=download_dir,
             output_dir=tmp_path / "day1",
             experiment_plan=_fixture_plan_path(download_dir),
             manifest=MANIFEST_PATH,
             seed=SEED,
+            source_sha=SOURCE_SHA,
         )

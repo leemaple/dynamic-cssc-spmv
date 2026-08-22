@@ -11,6 +11,9 @@ on:
 permissions:
   contents: read
 
+env:
+  PYTHONPATH: src:.
+
 jobs:
   plan:
     runs-on: ubuntu-latest
@@ -27,12 +30,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .venv
-          key: day1-python-${{ runner.os }}-py312-${{ hashFiles('pyproject.toml', 'uv.lock') }}-${{ github.sha }}
+          key: day1-python-${{ runner.os }}-py312-${{ hashFiles('requirements-ci.txt') }}-${{ github.sha }}
       - name: Install the shared Python environment once
         if: steps.python-env-cache.outputs.cache-hit != 'true'
         run: |
           python -m venv .venv
-          .venv/bin/python -m pip install -e '.[dev]'
+          .venv/bin/python -m pip install --require-hashes -r requirements-ci.txt
       - name: Run the only short test and Ruff gate
         run: |
           .venv/bin/python scripts/validate_manifest.py config/params_manifest.json
@@ -59,6 +62,7 @@ jobs:
           .venv/bin/python - <<'PY'
           import json
           import os
+          import re
           from fractions import Fraction
 
           from scripts.run_day1_suite import freshness_path_id, rho_path_id
@@ -92,9 +96,10 @@ jobs:
   shard:
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 355
     strategy:
       fail-fast: false
+      max-parallel: 21
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     name: Day 1 shard (${{ matrix.workload }}, ${{ matrix.freshness_seconds }}s)
     steps:
@@ -106,21 +111,52 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .venv
-          key: day1-python-${{ runner.os }}-py312-${{ hashFiles('pyproject.toml', 'uv.lock') }}-${{ github.sha }}
+          key: day1-python-${{ runner.os }}-py312-${{ hashFiles('requirements-ci.txt') }}-${{ github.sha }}
           fail-on-cache-miss: true
       - name: Run one workload-freshness shard with all nine rho cells
+        env:
+          DAY1_SEED: ${{ needs.plan.outputs.normalized_seed }}
+          DAY1_WORKLOAD: ${{ matrix.workload }}
+          DAY1_FRESHNESS_SECONDS: ${{ matrix.freshness_seconds }}
         run: >-
           .venv/bin/python scripts/run_day1_suite.py
           --output-dir results/day1-shard
-          --seed '${{ needs.plan.outputs.normalized_seed }}'
-          --workload '${{ matrix.workload }}'
-          --freshness-seconds '${{ matrix.freshness_seconds }}'
-      - name: Guard shard evidence and false claim flags
+          --seed "$DAY1_SEED"
+          --workload "$DAY1_WORKLOAD"
+          --freshness-seconds "$DAY1_FRESHNESS_SECONDS"
+      - name: Independently replay all serialized shard evidence and issue a receipt
+        env:
+          DAY1_SEED: ${{ needs.plan.outputs.normalized_seed }}
+          DAY1_WORKLOAD: ${{ matrix.workload }}
+          DAY1_FRESHNESS_SECONDS: ${{ matrix.freshness_seconds }}
+          SOURCE_GIT_SHA: ${{ github.sha }}
+        run: >-
+          .venv/bin/python scripts/replay_day1_shard.py
+          --shard-dir results/day1-shard
+          --experiment-plan config/experiment_plan.json
+          --manifest config/params_manifest.json
+          --seed "$DAY1_SEED"
+          --workload "$DAY1_WORKLOAD"
+          --freshness-seconds "$DAY1_FRESHNESS_SECONDS"
+          --source-sha "$SOURCE_GIT_SHA"
+      - name: Guard replay receipt, final checksums, and false claim flags
+        env:
+          EXPECTED_SOURCE_GIT_SHA: ${{ github.sha }}
+          EXPECTED_SHARD_SEED: ${{ needs.plan.outputs.normalized_seed }}
+          EXPECTED_WORKLOAD: ${{ matrix.workload }}
+          EXPECTED_FRESHNESS_SECONDS: ${{ matrix.freshness_seconds }}
+          EXPECTED_FRESHNESS_ID: ${{ matrix.freshness_id }}
         run: |
+          (cd results/day1-shard && sha256sum --check --strict SHA256SUMS)
           .venv/bin/python - <<'PY'
           import json
+          import os
+          import re
+          from fractions import Fraction
+          from pathlib import Path
 
           p = json.load(open('results/day1-shard/SHARD_STATUS.json'))
+          r = json.load(open('results/day1-shard/REPLAY_RECEIPT.json'))
           assert p['schema'] == 'day1-causal-predicted-v1'
           assert p['state_model'] == 'persistent-strategy-snapshots'
           assert p['measurement_kind'] == 'predicted-proxy'
@@ -137,6 +173,56 @@ jobs:
           assert p['preflight']['status'] == 'pass'
           assert p['cells_expected'] == p['cells_completed'] == 9
           assert len(p['rho_ids']) == len(set(p['rho_ids'])) == 9
+
+          assert r['schema'] == 'day1-shard-replay-receipt-v1'
+          assert r['validator_schema'] == 'day1-independent-replay-validator-v1'
+          assert r['validator_version'] == '1'
+          assert re.fullmatch(r'[0-9a-f]{64}', r['validator_source_sha256'])
+          assert r['source_git_sha'] == os.environ['EXPECTED_SOURCE_GIT_SHA']
+          assert re.fullmatch(r'[0-9a-f]{40}', r['source_git_sha'])
+          assert r['experiment_plan_sha256'] == p['experiment_plan_sha256']
+          assert r['manifest_sha256'] == p['manifest_sha256']
+          assert r['seed'] == p['seed'] == int(os.environ['EXPECTED_SHARD_SEED'])
+          assert r['workload'] == p['workload'] == os.environ['EXPECTED_WORKLOAD']
+          assert r['freshness_seconds_fraction'] == p['freshness_seconds_fraction']
+          assert r['freshness_seconds_fraction'] == str(
+              Fraction(os.environ['EXPECTED_FRESHNESS_SECONDS'])
+          )
+          assert r['freshness_id'] == os.environ['EXPECTED_FRESHNESS_ID']
+          assert r['rho_ids'] == p['rho_ids']
+          assert r['cells_expected'] == r['cells_replayed'] == 9
+          assert len(r['cells']) == len({c['rho_id'] for c in r['cells']}) == 9
+          assert [c['rho_id'] for c in r['cells']] == r['rho_ids']
+          assert r['verified'] is True
+
+          cell_keys = {
+              'relative_path',
+              'rho_id',
+              'rho_fraction',
+              'event_window_trace_sha256',
+              'metrics_json_sha256',
+              'derived_artifact_sha256',
+          }
+          derived_names = {
+              'SUMMARY.md',
+              'metrics.csv',
+              'tuning_aggregates.csv',
+              't_rho_proxy.png',
+              'ua_vs_qa_proxy.png',
+          }
+          for cell in r['cells']:
+              assert set(cell) == cell_keys
+              assert re.fullmatch(r'[0-9a-f]{64}', cell['event_window_trace_sha256'])
+              assert re.fullmatch(r'[0-9a-f]{64}', cell['metrics_json_sha256'])
+              assert set(cell['derived_artifact_sha256']) == derived_names
+              assert all(
+                  re.fullmatch(r'[0-9a-f]{64}', digest)
+                  for digest in cell['derived_artifact_sha256'].values()
+              )
+
+          checksums = Path('results/day1-shard/SHA256SUMS').read_text(encoding='utf-8')
+          assert '  REPLAY_RECEIPT.json' in checksums
+          assert '  SHARD_STATUS.json' in checksums
           PY
       - name: Upload uniquely named shard evidence
         uses: actions/upload-artifact@v4
@@ -160,7 +246,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .venv
-          key: day1-python-${{ runner.os }}-py312-${{ hashFiles('pyproject.toml', 'uv.lock') }}-${{ github.sha }}
+          key: day1-python-${{ runner.os }}-py312-${{ hashFiles('requirements-ci.txt') }}-${{ github.sha }}
           fail-on-cache-miss: true
       - name: Download 21 shards into downloaded-shards/<artifact-name>/SHARD_STATUS.json
         uses: actions/download-artifact@v4
@@ -169,15 +255,24 @@ jobs:
           path: downloaded-shards
           merge-multiple: false
       - name: Fail-closed validation and aggregation of all 189 cells
+        env:
+          DAY1_SEED: ${{ needs.plan.outputs.normalized_seed }}
+          SOURCE_GIT_SHA: ${{ github.sha }}
         run: >-
           .venv/bin/python scripts/aggregate_day1_shards.py
           --shards-dir downloaded-shards
           --output-dir results/day1
-          --seed '${{ needs.plan.outputs.normalized_seed }}'
+          --seed "$DAY1_SEED"
+          --source-sha "$SOURCE_GIT_SHA"
       - name: Guard the only complete-suite status
+        env:
+          EXPECTED_SOURCE_GIT_SHA: ${{ github.sha }}
         run: |
+          (cd results/day1 && sha256sum --check --strict SHA256SUMS)
           .venv/bin/python - <<'PY'
           import json
+          import os
+          import re
 
           p = json.load(open('results/day1/SUITE_STATUS.json'))
           assert p['schema'] == 'day1-causal-predicted-v1'
@@ -196,6 +291,26 @@ jobs:
           assert p['preflight']['status'] == 'pass'
           assert p['shards_expected'] == p['shards_completed'] == 21
           assert p['cells_expected'] == p['cells_completed'] == 189
+          assert p['source_git_sha'] == os.environ['EXPECTED_SOURCE_GIT_SHA']
+          assert p['replay_receipts_expected'] == p['replay_receipts_completed'] == 21
+          assert p['replay_receipt_schema'] == 'day1-shard-replay-receipt-v1'
+          assert p['replay_validator_schema'] == 'day1-independent-replay-validator-v1'
+          assert len(p['replay_receipts']) == 21
+          receipt_item_keys = {
+              'relative_path',
+              'sha256',
+              'workload',
+              'freshness_seconds_fraction',
+          }
+          for item in p['replay_receipts']:
+              assert set(item) == receipt_item_keys
+              assert item['relative_path'].startswith('replay-receipts/')
+              assert re.fullmatch(r'[0-9a-f]{64}', item['sha256'])
+          assert len({item['relative_path'] for item in p['replay_receipts']}) == 21
+          assert len({
+              (item['workload'], item['freshness_seconds_fraction'])
+              for item in p['replay_receipts']
+          }) == 21
           print('All synthetic shards completed; no paper gate verdict issued.')
           PY
       - name: Create R2 audit bundle
