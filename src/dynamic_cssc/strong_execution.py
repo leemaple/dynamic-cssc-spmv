@@ -7,28 +7,10 @@ from dataclasses import dataclass
 from typing import Literal
 
 from dynamic_cssc.cloud_execution_plan import (
-    CLOUD_PROGRAM_FORMAT,
-    EXECUTION_BINDING_FORMAT,
-    AddCiphertexts,
-    AddF1MMask,
-    CiphertextInput,
     CloudExecutionPlan,
     CloudPlanCounts,
-    CloudProgram,
-    ExecutionBinding,
-    MultiplyCiphertexts,
-    MultiplyPlaintextMask,
-    PlaintextMask,
-    Relinearize,
-    ReturnResult,
-    Rotate,
-    RotationCatalog,
-    analyze_cloud_plan,
-    cloud_program_digest,
-    execution_binding_digest,
-    validate_cloud_execution_plan,
 )
-from dynamic_cssc.cssc import OutputBlockLayout, PublishedComponent, ValueChunk, output_plan_for
+from dynamic_cssc.cssc import PublishedComponent
 from dynamic_cssc.mask_ledger import (
     PreparedF1MCommitment,
     PreparedF1MCommitmentLedger,
@@ -37,16 +19,11 @@ from dynamic_cssc.output_plan import (
     OutputPlan,
     OutputPlanAnalysis,
     PreparedMask,
-    analyze_output_plan,
     prepare_f1m_masks,
 )
 from dynamic_cssc.plaintext_oracle import execute_cloud_plan, reconstruct_output
 from dynamic_cssc.strong_packed_coo import (
-    STRONG_COMPONENT_ID,
     SegmentedDeltaState,
-    client_b_page_metadata,
-    decode_segmented_delta,
-    post_aggregation_output_shares,
 )
 
 OperandSourceKind = Literal["base-chunk", "delta-page"]
@@ -153,210 +130,6 @@ def _is_strict_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _valid_id(value: object) -> bool:
-    return (
-        isinstance(value, str)
-        and bool(value)
-        and all(0x21 <= ord(character) <= 0x7E for character in value)
-    )
-
-
-def _validate_base_component(base: PublishedComponent) -> None:
-    invalid = StrongExecutionError("base PublishedComponent is invalid")
-    spec = base.layout_spec
-    if (
-        not _valid_id(base.component_id)
-        or not _valid_id(base.version_id)
-        or not all(
-            _is_strict_int(value) and value > 0
-            for value in (spec.rows, spec.cols, spec.effective_slots, spec.partition_rows)
-        )
-        or spec.partition_rows > spec.effective_slots
-        or not isinstance(base.blocks, tuple)
-        or not isinstance(base._coordinate_slots, tuple)
-        or not isinstance(base._available_slots, tuple)
-    ):
-        raise invalid
-
-    expected_block_ranges = tuple(
-        (start, min(spec.rows, start + spec.partition_rows))
-        for start in range(0, spec.rows, spec.partition_rows)
-    )
-    if len(base.blocks) != len(expected_block_ranges):
-        raise invalid
-    block_ids: set[str] = set()
-    chunk_ids: set[str] = set()
-    scanned_coordinates: dict[tuple[int, int], tuple[str, str, int]] = {}
-    scanned_available: list[tuple[int, str, tuple[str, str, int]]] = []
-    lane_kinds = {"actual", "tombstone", "natural-padding", "reserved", "tail"}
-    for block, expected_range in zip(base.blocks, expected_block_ranges, strict=True):
-        if (
-            not isinstance(block, OutputBlockLayout)
-            or not _valid_id(block.output_block_id)
-            or block.output_block_id in block_ids
-            or (block.logical_row_start, block.logical_row_stop) != expected_range
-            or not isinstance(block.row_map, tuple)
-            or set(block.row_map) != set(range(*expected_range))
-            or len(block.row_map) != expected_range[1] - expected_range[0]
-            or not isinstance(block.physical_row_capacities, tuple)
-            or len(block.physical_row_capacities) != len(block.row_map)
-            or any(
-                not _is_strict_int(capacity) or not 0 <= capacity <= spec.cols
-                for capacity in block.physical_row_capacities
-            )
-            or not isinstance(block.chunks, tuple)
-        ):
-            raise invalid
-        block_ids.add(block.output_block_id)
-        max_width = max(block.physical_row_capacities, default=0)
-        next_column = 0
-        materialized_width = {row: 0 for row in block.row_map}
-        for chunk in block.chunks:
-            if (
-                not isinstance(chunk, ValueChunk)
-                or not _valid_id(chunk.chunk_id)
-                or chunk.chunk_id in chunk_ids
-                or not all(
-                    _is_strict_int(value)
-                    for value in (
-                        chunk.start_column,
-                        chunk.width,
-                        chunk.height,
-                        chunk.used_slots,
-                        chunk.reserved_slots,
-                        chunk.rectangular_slots,
-                    )
-                )
-                or chunk.start_column != next_column
-                or chunk.width <= 0
-                or chunk.height <= 0
-                or chunk.rectangular_slots != chunk.width * chunk.height
-                or chunk.rectangular_slots > spec.effective_slots
-                or chunk.height
-                != sum(capacity > chunk.start_column for capacity in block.physical_row_capacities)
-                or chunk.width
-                != min(max_width - chunk.start_column, spec.effective_slots // chunk.height)
-            ):
-                raise invalid
-            lane_arrays = (
-                chunk.values,
-                chunk.column_indices,
-                chunk.slot_coordinates,
-                chunk.slot_owner_rows,
-                chunk.slot_kinds,
-            )
-            if any(not isinstance(values, tuple) for values in lane_arrays) or any(
-                len(values) != spec.effective_slots for values in lane_arrays
-            ):
-                raise invalid
-            chunk_ids.add(chunk.chunk_id)
-            used_slots = 0
-            reserved_slots = 0
-            for lane, (value, column, coordinate, owner, kind) in enumerate(
-                zip(*lane_arrays, strict=True)
-            ):
-                if (
-                    kind not in lane_kinds
-                    or not _is_strict_int(value)
-                    or not _is_strict_int(column)
-                ):
-                    raise invalid
-                location = (base.component_id, chunk.chunk_id, lane)
-                if lane < chunk.rectangular_slots:
-                    physical_row = lane % chunk.height
-                    expected_owner = block.row_map[physical_row]
-                    rank = chunk.start_column + lane // chunk.height
-                    expected_materialized = rank < block.physical_row_capacities[physical_row]
-                    if owner != expected_owner:
-                        raise invalid
-                    if expected_materialized and kind not in {"actual", "tombstone", "reserved"}:
-                        raise invalid
-                    if not expected_materialized and kind != "natural-padding":
-                        raise invalid
-                elif kind != "tail" or owner is not None:
-                    raise invalid
-
-                if kind == "actual":
-                    if (
-                        owner is None
-                        or coordinate != (owner, column)
-                        or value == 0
-                        or not 0 <= owner < spec.rows
-                        or not 0 <= column < spec.cols
-                        or coordinate in scanned_coordinates
-                    ):
-                        raise invalid
-                    scanned_coordinates[coordinate] = location
-                    materialized_width[owner] = max(
-                        materialized_width[owner],
-                        chunk.start_column + lane // chunk.height + 1,
-                    )
-                    used_slots += 1
-                elif kind == "tombstone":
-                    if (
-                        owner is None
-                        or coordinate is not None
-                        or value != 0
-                        or not 0 <= column < spec.cols
-                    ):
-                        raise invalid
-                    materialized_width[owner] = max(
-                        materialized_width[owner],
-                        chunk.start_column + lane // chunk.height + 1,
-                    )
-                    scanned_available.append((owner, kind, location))
-                elif kind in {"natural-padding", "reserved"}:
-                    if owner is None or coordinate is not None or value != 0 or column != -1:
-                        raise invalid
-                    if kind == "reserved":
-                        materialized_width[owner] = max(
-                            materialized_width[owner],
-                            chunk.start_column + lane // chunk.height + 1,
-                        )
-                        reserved_slots += 1
-                    scanned_available.append((owner, kind, location))
-                elif owner is not None or coordinate is not None or value != 0 or column != -1:
-                    raise invalid
-            if chunk.used_slots != used_slots or chunk.reserved_slots != reserved_slots:
-                raise invalid
-            next_column += chunk.width
-        if next_column != max_width or block.physical_row_capacities != tuple(
-            materialized_width[row] for row in block.row_map
-        ):
-            raise invalid
-    if (
-        tuple(sorted(scanned_coordinates.items())) != base._coordinate_slots
-        or tuple(scanned_available) != base._available_slots
-    ):
-        raise invalid
-
-
-def _validate_dimensions(base: PublishedComponent, delta: SegmentedDeltaState) -> None:
-    if not isinstance(base, PublishedComponent):
-        raise StrongExecutionError("base must be a PublishedComponent")
-    if not isinstance(delta, SegmentedDeltaState):
-        raise StrongExecutionError("delta must be a SegmentedDeltaState")
-    _validate_base_component(base)
-    try:
-        decode_segmented_delta(delta)
-    except (AssertionError, ValueError) as error:
-        raise StrongExecutionError("delta state is invalid") from error
-    if base.version_id != delta.version_id:
-        raise StrongExecutionError("base and delta version_id must match")
-    if (
-        base.layout_spec.rows,
-        base.layout_spec.cols,
-        base.layout_spec.effective_slots,
-    ) != (delta.rows, delta.cols, delta.effective_slots):
-        raise StrongExecutionError("base and delta matrix and slot dimensions must match")
-    if base.component_id == STRONG_COMPONENT_ID:
-        raise StrongExecutionError("base component_id collides with the strong delta")
-    base_coordinates = set(base.coord_to_slot)
-    delta_coordinates = set(decode_segmented_delta(delta))
-    if base_coordinates & delta_coordinates:
-        raise StrongExecutionError("active base and delta coordinates must be disjoint")
-
-
 def _canonical_private_plan_payload(
     specs: tuple[PrivateOperandSpec, ...],
     routes: tuple[PrivateResultRoute, ...],
@@ -420,257 +193,69 @@ def _private_plan_digest(
 
 
 def _compile(base: PublishedComponent, delta: SegmentedDeltaState) -> StrongExecutionBundle:
-    _validate_dimensions(base, delta)
-    slot_count = base.layout_spec.effective_slots
-    base_plan = output_plan_for((base,))
-    output_plan = OutputPlan(
-        logical_output_size=base_plan.logical_output_size,
-        slot_count=base_plan.slot_count,
-        shares=(*base_plan.shares, *post_aggregation_output_shares(delta)),
+    from dynamic_cssc.query_compiler import QueryCompilerError, compile_query
+
+    try:
+        compiled = compile_query(
+            (base,),
+            segmented_delta=delta,
+            f1m_policy="uniform-random-or-zero",
+        )
+    except QueryCompilerError as error:
+        message = str(error)
+        if message == "PublishedComponent is invalid":
+            message = "base PublishedComponent is invalid"
+        elif message == "active source coordinates must not overlap":
+            message = "active base and delta coordinates must be disjoint"
+        raise StrongExecutionError(message) from error
+
+    source_kind_by_common = {
+        "published-chunk": "base-chunk",
+        "segmented-delta-page": "delta-page",
+    }
+    specs = tuple(
+        PrivateOperandSpec(
+            value_ciphertext_id=spec.value_ciphertext_id,
+            query_ciphertext_id=spec.query_ciphertext_id,
+            source_kind=source_kind_by_common[spec.source_kind],
+            source_ordinal=spec.source_ordinal,
+            result_id=spec.result_id,
+            values=spec.values,
+            global_column_indices=spec.global_column_indices,
+        )
+        for spec in compiled.operand_specs
     )
-    output_analysis = analyze_output_plan(output_plan)
-
-    ciphertext_inputs: list[CiphertextInput] = []
-    plaintext_masks: list[PlaintextMask] = []
-    nodes = []
-    result_ids: list[str] = []
-    specs: list[PrivateOperandSpec] = []
-    routes: list[PrivateResultRoute] = []
-    rotation_shifts: set[int] = set()
-    operand_ordinal = 0
-    result_ordinal = 0
-
-    for block in base.blocks:
-        if not block.chunks:
-            continue
-        selected_ids: list[str] = []
-        block_specs: list[PrivateOperandSpec] = []
-        for chunk in block.chunks:
-            ordinal = f"{operand_ordinal:06d}"
-            value_id = f"ct-value-{ordinal}"
-            query_id = f"ct-query-{ordinal}"
-            product_id = f"ssa-product-{ordinal}"
-            relinearized_id = f"ssa-relinearized-{ordinal}"
-            ciphertext_inputs.extend(
-                (
-                    CiphertextInput(value_id, "value", slot_count),
-                    CiphertextInput(query_id, "query", slot_count),
-                )
-            )
-            nodes.extend(
-                (
-                    MultiplyCiphertexts(product_id, value_id, query_id),
-                    Relinearize(relinearized_id, product_id),
-                )
-            )
-            accumulated_id = relinearized_id
-            for local_column in range(1, chunk.width):
-                shift = local_column * chunk.height
-                rotation_shifts.add(shift)
-                rotated_id = f"ssa-rotate-{ordinal}-{local_column:06d}"
-                sum_id = f"ssa-column-sum-{ordinal}-{local_column:06d}"
-                nodes.extend(
-                    (
-                        Rotate(rotated_id, relinearized_id, shift, shift),
-                        AddCiphertexts(sum_id, accumulated_id, rotated_id),
-                    )
-                )
-                accumulated_id = sum_id
-            mask_id = f"pt-selection-{ordinal}"
-            selected_id = f"ssa-selected-{ordinal}"
-            plaintext_masks.append(
-                PlaintextMask(
-                    mask_id,
-                    "selection",
-                    slot_count,
-                    tuple(1 if lane < chunk.height else 0 for lane in range(slot_count)),
-                )
-            )
-            nodes.append(MultiplyPlaintextMask(selected_id, accumulated_id, mask_id))
-            selected_ids.append(selected_id)
-            block_specs.append(
-                PrivateOperandSpec(
-                    value_ciphertext_id=value_id,
-                    query_ciphertext_id=query_id,
-                    source_kind="base-chunk",
-                    source_ordinal=operand_ordinal,
-                    result_id="",
-                    values=chunk.values,
-                    global_column_indices=chunk.column_indices,
-                )
-            )
-            operand_ordinal += 1
-
-        accumulated_id = selected_ids[0]
-        for cross_ordinal, selected_id in enumerate(selected_ids[1:], start=1):
-            sum_id = f"ssa-result-sum-{result_ordinal:06d}-{cross_ordinal:06d}"
-            nodes.append(AddCiphertexts(sum_id, accumulated_id, selected_id))
-            accumulated_id = sum_id
-        result_id = f"result-{result_ordinal:06d}"
-        f1m_id = f"ct-f1m-{result_ordinal:06d}"
-        masked_id = f"ssa-masked-{result_ordinal:06d}"
-        ciphertext_inputs.append(CiphertextInput(f1m_id, "f1m-mask", slot_count))
-        nodes.extend(
-            (
-                AddF1MMask(masked_id, accumulated_id, f1m_id, "opaque-zero-sum"),
-                ReturnResult(result_id, masked_id),
-            )
+    routes = tuple(
+        PrivateResultRoute(
+            result_id=route.result_id,
+            f1m_ciphertext_id=route.f1m_ciphertext_id,
+            component_id=route.component_id,
+            output_block_id=route.output_block_id,
         )
-        result_ids.append(result_id)
-        routes.append(
-            PrivateResultRoute(
-                result_id=result_id,
-                f1m_ciphertext_id=f1m_id,
-                component_id=base.component_id,
-                output_block_id=block.output_block_id,
-            )
-        )
-        specs.extend(
-            PrivateOperandSpec(
-                value_ciphertext_id=spec.value_ciphertext_id,
-                query_ciphertext_id=spec.query_ciphertext_id,
-                source_kind=spec.source_kind,
-                source_ordinal=spec.source_ordinal,
-                result_id=result_id,
-                values=spec.values,
-                global_column_indices=spec.global_column_indices,
-            )
-            for spec in block_specs
-        )
-        result_ordinal += 1
-
-    page_metadata = client_b_page_metadata(delta)
-    page_values = [[0] * slot_count for _ in page_metadata]
-    for segment in delta.segments:
-        for offset, entry in enumerate(segment.entries):
-            if entry is not None:
-                page_values[segment.page_ordinal][segment.slot_start + offset] = entry.value
-    for page_ordinal, metadata in enumerate(page_metadata):
-        ordinal = f"{operand_ordinal:06d}"
-        value_id = f"ct-value-{ordinal}"
-        query_id = f"ct-query-{ordinal}"
-        product_id = f"ssa-product-{ordinal}"
-        relinearized_id = f"ssa-relinearized-{ordinal}"
-        ciphertext_inputs.extend(
-            (
-                CiphertextInput(value_id, "value", slot_count),
-                CiphertextInput(query_id, "query", slot_count),
-            )
-        )
-        nodes.extend(
-            (
-                MultiplyCiphertexts(product_id, value_id, query_id),
-                Relinearize(relinearized_id, product_id),
-            )
-        )
-        accumulated_id = relinearized_id
-        shift = 1
-        while shift < delta.segment_width:
-            rotation_shifts.add(shift)
-            rotated_id = f"ssa-rotate-{ordinal}-{shift:06d}"
-            sum_id = f"ssa-segment-sum-{ordinal}-{shift * 2:06d}"
-            nodes.extend(
-                (
-                    Rotate(rotated_id, accumulated_id, shift, shift),
-                    AddCiphertexts(sum_id, accumulated_id, rotated_id),
-                )
-            )
-            accumulated_id = sum_id
-            shift *= 2
-        mask_id = f"pt-selection-{ordinal}"
-        selected_id = f"ssa-selected-{ordinal}"
-        plaintext_masks.append(
-            PlaintextMask(
-                mask_id,
-                "selection",
-                slot_count,
-                tuple(
-                    1
-                    if lane < delta.segments_per_page * delta.segment_width
-                    and lane % delta.segment_width == 0
-                    else 0
-                    for lane in range(slot_count)
-                ),
-            )
-        )
-        nodes.append(MultiplyPlaintextMask(selected_id, accumulated_id, mask_id))
-        result_id = f"result-{result_ordinal:06d}"
-        f1m_id = f"ct-f1m-{result_ordinal:06d}"
-        masked_id = f"ssa-masked-{result_ordinal:06d}"
-        ciphertext_inputs.append(CiphertextInput(f1m_id, "f1m-mask", slot_count))
-        nodes.extend(
-            (
-                AddF1MMask(masked_id, selected_id, f1m_id, "opaque-zero-sum"),
-                ReturnResult(result_id, masked_id),
-            )
-        )
-        result_ids.append(result_id)
-        routes.append(
-            PrivateResultRoute(
-                result_id=result_id,
-                f1m_ciphertext_id=f1m_id,
-                component_id=STRONG_COMPONENT_ID,
-                output_block_id=metadata.page_id,
-            )
-        )
-        specs.append(
-            PrivateOperandSpec(
-                value_ciphertext_id=value_id,
-                query_ciphertext_id=query_id,
-                source_kind="delta-page",
-                source_ordinal=page_ordinal,
-                result_id=result_id,
-                values=tuple(page_values[page_ordinal]),
-                global_column_indices=metadata.global_column_indices,
-            )
-        )
-        operand_ordinal += 1
-        result_ordinal += 1
-
-    program = CloudProgram(
-        format=CLOUD_PROGRAM_FORMAT,
-        slot_count=slot_count,
-        ciphertext_inputs=tuple(ciphertext_inputs),
-        plaintext_masks=tuple(plaintext_masks),
-        nodes=tuple(nodes),
-        result_ids=tuple(result_ids),
-        rotation_catalog=RotationCatalog(
-            tuple((shift, shift) for shift in sorted(rotation_shifts))
-        ),
+        for route in compiled.result_routes
+        if route.f1m_ciphertext_id is not None
     )
-    program_digest = cloud_program_digest(program)
-    cloud_plan = CloudExecutionPlan(
-        program=program,
-        binding=ExecutionBinding(
-            format=EXECUTION_BINDING_FORMAT,
-            version_id=base.version_id,
-            output_plan_digest=output_analysis.output_plan_digest,
-            cloud_program_digest=program_digest,
-        ),
-    )
-    validate_cloud_execution_plan(cloud_plan)
-    cloud_counts = analyze_cloud_plan(cloud_plan)
-    random_ciphertexts = output_analysis.masked_result_ciphertexts
+    if len(routes) != len(compiled.result_routes):
+        raise AssertionError("the strong adapter requires uniform F1M operands")
+    random_ciphertexts = compiled.output_analysis.masked_result_ciphertexts
     return StrongExecutionBundle(
         base=base,
         delta=delta,
-        cloud_plan=cloud_plan,
-        output_plan=output_plan,
-        result_routes=tuple(routes),
-        value_operand_specs=tuple(specs),
-        cloud_program_digest=program_digest,
-        output_plan_digest=output_analysis.output_plan_digest,
-        execution_binding_digest=execution_binding_digest(cloud_plan.binding),
-        private_plan_digest=_private_plan_digest(
-            tuple(specs), tuple(routes), output_analysis.output_plan_digest
-        ),
-        cloud_counts=cloud_counts,
-        output_analysis=output_analysis,
+        cloud_plan=compiled.cloud_plan,
+        output_plan=compiled.output_plan,
+        result_routes=routes,
+        value_operand_specs=specs,
+        cloud_program_digest=compiled.cloud_program_digest,
+        output_plan_digest=compiled.output_plan_digest,
+        execution_binding_digest=compiled.execution_binding_digest,
+        private_plan_digest=_private_plan_digest(specs, routes, compiled.output_plan_digest),
+        cloud_counts=compiled.cloud_counts,
+        output_analysis=compiled.output_analysis,
         f1m_counts=F1MOperandCounts(
             random_zero_sum_ciphertexts=random_ciphertexts,
             encrypted_zero_dummy_ciphertexts=len(routes) - random_ciphertexts,
-            random_elements=output_analysis.mask_random_elements,
-            ciphertext_additions=cloud_counts.add_f1m_masks,
+            random_elements=compiled.output_analysis.mask_random_elements,
+            ciphertext_additions=compiled.cloud_counts.add_f1m_masks,
         ),
     )
 

@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import pytest
+
+import dynamic_cssc.query_compiler as query_compiler_module
+from dynamic_cssc.cssc import ValueChunk
 from dynamic_cssc.events import NetUpdate, PublicationWindow
 from dynamic_cssc.metrics import StrategyMetrics, UnitCosts
-from dynamic_cssc.simulator import SimulationConfig, simulate
+from dynamic_cssc.simulator import (
+    SimulationConfig,
+    SimulationTarget,
+    simulate,
+    simulate_targets,
+)
 
 QUERY_SIDE_FIELDS = (
     "query_ciphertexts",
@@ -12,6 +21,7 @@ QUERY_SIDE_FIELDS = (
     "additions",
     "plaintext_masks",
     "blinding_mask_ciphertexts",
+    "blinding_dummy_ciphertexts",
     "blinding_encryptions",
     "blinding_additions",
     "decryptions",
@@ -49,6 +59,43 @@ def _query_window(index: int, query_count: int) -> PublicationWindow:
     )
 
 
+@pytest.mark.parametrize(("width", "rotations"), ((3, 2), (7, 4)))
+def test_query_accounting_uses_compiled_non_power_of_two_schedule_when_proxy_is_unusable(
+    monkeypatch: pytest.MonkeyPatch,
+    width: int,
+    rotations: int,
+) -> None:
+    def obsolete_proxy(_chunk: ValueChunk) -> int:
+        raise AssertionError("the simulator must not read the legacy rotation proxy")
+
+    monkeypatch.setattr(ValueChunk, "aggregation_rotations_proxy", property(obsolete_proxy))
+    config = _config(
+        rows=1,
+        cols=width,
+        effective_slots=8,
+        partition_rows=1,
+        max_row_nnz=width,
+        packed_coo_segment_capacity=8,
+    )
+
+    metrics = simulate_targets(
+        [_query_window(0, 1)],
+        {(0, column): column + 1 for column in range(width)},
+        [SimulationTarget("padding", "PaddingReuse-CSSC", config)],
+        measure_from=0,
+    )["padding"].metrics
+
+    assert (
+        metrics.query_ciphertexts,
+        metrics.cc_multiplications,
+        metrics.rotations,
+        metrics.additions,
+        metrics.plaintext_masks,
+        metrics.result_ciphertexts,
+        metrics.decryptions,
+    ) == (1, 1, rotations, rotations, 1, 1, 1)
+
+
 def test_update_only_window_has_zero_query_side_accounting() -> None:
     window = PublicationWindow(
         index=0,
@@ -69,6 +116,48 @@ def test_update_only_window_has_zero_query_side_accounting() -> None:
         }
 
 
+def test_update_only_window_does_not_compile_a_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_compile(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("a zero-query window must not compile a query")
+
+    monkeypatch.setattr("dynamic_cssc.simulator.compile_query", unexpected_compile)
+
+    metrics = simulate_targets(
+        [_query_window(0, 0)],
+        {(0, 0): 1},
+        [SimulationTarget("padding", "PaddingReuse-CSSC", _config())],
+        measure_from=0,
+    )["padding"].metrics
+
+    assert metrics.queries == 0
+    assert all(getattr(metrics, field) == 0 for field in QUERY_SIDE_FIELDS)
+
+
+def test_one_query_is_analyzed_once_by_the_common_compiler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    analyze_calls = 0
+    real_analyze = query_compiler_module.analyze_output_plan
+
+    def counting_analyze(plan: object) -> object:
+        nonlocal analyze_calls
+        analyze_calls += 1
+        return real_analyze(plan)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(query_compiler_module, "analyze_output_plan", counting_analyze)
+
+    simulate_targets(
+        [_query_window(0, 1)],
+        {(0, 0): 1},
+        [SimulationTarget("padding", "PaddingReuse-CSSC", _config())],
+        measure_from=0,
+    )
+
+    assert analyze_calls == 1
+
+
 def test_update_amplification_excludes_query_blinding_masks() -> None:
     metrics = StrategyMetrics(
         "example",
@@ -80,6 +169,32 @@ def test_update_amplification_excludes_query_blinding_masks() -> None:
     )
 
     assert metrics.update_ct_equivalents() == 1.0
+
+
+def test_random_and_dummy_blinding_ciphertexts_merge_and_serialize_without_double_charge() -> None:
+    metrics = StrategyMetrics(
+        "example",
+        "reference",
+        blinding_mask_ciphertexts=2,
+        blinding_dummy_ciphertexts=3,
+        blinding_encryptions=5,
+    )
+    metrics.merge(
+        StrategyMetrics(
+            "example",
+            "reference",
+            blinding_mask_ciphertexts=11,
+            blinding_dummy_ciphertexts=7,
+            blinding_encryptions=18,
+        )
+    )
+
+    record = metrics.to_record(UnitCosts())
+
+    assert record["blinding_mask_ciphertexts"] == 13
+    assert record["blinding_dummy_ciphertexts"] == 10
+    assert record["blinding_encryptions"] == 23
+    assert record["predicted_query_time"] == 23 * UnitCosts().encrypt
 
 
 def test_query_side_counts_scale_with_queries_and_accumulate() -> None:
@@ -225,13 +340,54 @@ def test_delta_masks_only_output_blocks_that_overlap_logical_rows() -> None:
     mini = metrics["Mini-CSSC-Delta"]
     assert mini.result_ciphertexts == 3
     assert mini.blinding_mask_ciphertexts == 2
+    assert mini.blinding_dummy_ciphertexts == 0
     assert mini.blinding_encryptions == 2
     assert mini.blinding_additions == 2
+    assert mini.additions == 0
     assert mini.mask_random_elements == 1
     assert mini.mask_mapped_elements == 2
     assert mini.client_reorder_elements == 5
     assert mini.client_merges == 1
     assert metrics["PaddingReuse-CSSC"].blinding_mask_ciphertexts == 0
+
+
+def test_client_lane_uses_one_unaggregated_query_pipeline_per_active_segment() -> None:
+    window = PublicationWindow(
+        index=0,
+        start_time=0.0,
+        end_time=0.0,
+        updates=(
+            NetUpdate(row=0, col=1, before=0, after=2),
+            NetUpdate(row=1, col=1, before=0, after=3),
+            NetUpdate(row=0, col=2, before=0, after=5),
+        ),
+        query_count=3,
+        reason="query",
+    )
+    config = _config(
+        rows=2,
+        cols=4,
+        effective_slots=4,
+        partition_rows=2,
+        max_row_nnz=4,
+        packed_coo_segment_capacity=2,
+    )
+
+    metrics = simulate_targets(
+        [window],
+        {},
+        [SimulationTarget("coo", "Packed-COO-Client-Lane-Delta", config)],
+        measure_from=0,
+    )["coo"].metrics
+
+    assert (
+        metrics.query_ciphertexts,
+        metrics.cc_multiplications,
+        metrics.result_ciphertexts,
+        metrics.decryptions,
+    ) == (6, 6, 6, 6)
+    assert (metrics.rotations, metrics.additions, metrics.plaintext_masks) == (0, 0, 0)
+    assert metrics.client_merges == 3
 
 
 def test_simulator_returns_only_fixed_metrics_and_leaves_oracle_to_runner() -> None:

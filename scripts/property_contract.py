@@ -11,13 +11,13 @@ import subprocess
 import sys
 import tempfile
 from collections import Counter
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import dynamic_cssc.output_plan as output_plan_module
 from dynamic_cssc.cloud_execution_plan import AddF1MMask, canonical_cloud_program_bytes
 from dynamic_cssc.cssc import publish_component
-from dynamic_cssc.events import NetUpdate
+from dynamic_cssc.events import NetUpdate, PublicationWindow
 from dynamic_cssc.mask_ledger import (
     ConsumedPreparedF1MCommitmentError,
     DuplicateMaskBindingError,
@@ -26,6 +26,11 @@ from dynamic_cssc.mask_ledger import (
 )
 from dynamic_cssc.output_plan import prepare_f1m_masks
 from dynamic_cssc.plaintext_oracle import direct_spmv
+from dynamic_cssc.strategy_state import (
+    advance_strong_publication,
+    decode_strong_state,
+    initialize_strong_strategy,
+)
 from dynamic_cssc.strong_execution import (
     PreparedQueryOperand,
     StrongExecutionError,
@@ -63,13 +68,15 @@ _REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 _SOURCE_FILES = {
     "cloud_execution_plan": "src/dynamic_cssc/cloud_execution_plan.py",
     "contract_spec": "scripts/property_contract_spec.py",
-    "compiler": "src/dynamic_cssc/strong_execution.py",
+    "compiler": "src/dynamic_cssc/query_compiler.py",
     "cssc": "src/dynamic_cssc/cssc.py",
     "events": "src/dynamic_cssc/events.py",
     "generator": "scripts/property_contract.py",
     "mask_ledger": "src/dynamic_cssc/mask_ledger.py",
     "output_plan": "src/dynamic_cssc/output_plan.py",
     "plaintext_oracle": "src/dynamic_cssc/plaintext_oracle.py",
+    "strategy_state": "src/dynamic_cssc/strategy_state.py",
+    "strong_execution": "src/dynamic_cssc/strong_execution.py",
     "strong_packed_coo": "src/dynamic_cssc/strong_packed_coo.py",
     "validator": "scripts/validate_property_contract.py",
     "test_source": "tests/test_strong_property_contract.py",
@@ -264,6 +271,92 @@ def _independent_spmv(
 
 def _observation(name: str, value: object) -> dict[str, object]:
     return {"name": name, "value": value}
+
+
+def _logical_sha256(logical: dict[tuple[int, int], int]) -> str:
+    entries = [[row, column, value] for (row, column), value in sorted(logical.items())]
+    return _sha256_bytes(spec_canonical_json_bytes(entries))
+
+
+def _strong_query_compile_summary(bundle) -> dict[str, str]:
+    return {
+        "cloud_program_digest": bundle.cloud_program_digest,
+        "output_plan_digest": bundle.output_plan_digest,
+        "execution_binding_digest": bundle.execution_binding_digest,
+        "private_plan_digest": bundle.private_plan_digest,
+    }
+
+
+def _persistent_strong_record(case: dict[str, object]) -> dict[str, object]:
+    dimensions = case["dimensions"]
+    policy = case["policy"]
+    initial = case["initial"]
+    assert isinstance(dimensions, dict)
+    assert isinstance(policy, dict)
+    assert isinstance(initial, dict)
+    state = initialize_strong_strategy(
+        {(row, column): value for row, column, value in initial["entries"]},
+        rows=dimensions["rows"],
+        cols=dimensions["cols"],
+        effective_slots=dimensions["effective_slots"],
+        partition_rows=dimensions["partition_rows"],
+        matrix_value_bound=dimensions["matrix_value_bound"],
+        max_row_nnz=policy["max_row_nnz"],
+        reserved_slack_beta=policy["reserved_slack_beta"],
+        segment_width=dimensions["segment_width"],
+    )
+    initial_decoded = decode_strong_state(state)
+    initial_version = {
+        "ordinal": state.version_ordinal,
+        "version_id": state.version_id,
+    }
+    waves = []
+    final_compile = None
+    for window_spec in case["windows"]:
+        window = PublicationWindow(
+            index=window_spec["index"],
+            start_time=window_spec["start_time"],
+            end_time=window_spec["end_time"],
+            updates=tuple(NetUpdate(*update) for update in window_spec["updates"]),
+            query_count=window_spec["query_count"],
+            reason=window_spec["reason"],
+        )
+        transition = advance_strong_publication(state, window)
+        state = transition.state
+        decoded = decode_strong_state(state)
+        page_count = (
+            len(state.delta.segments) + state.delta.segments_per_page - 1
+        ) // state.delta.segments_per_page
+        final_compile = _strong_query_compile_summary(transition.execution_bundle)
+        waves.append(
+            {
+                "window_index": window.index,
+                "version_ordinal": state.version_ordinal,
+                "version_id": state.version_id,
+                "decode_sha256": _logical_sha256(decoded),
+                "segment_count": len(state.delta.segments),
+                "page_count": page_count,
+                "facts": asdict(transition.facts),
+                "output_plan": asdict(transition.execution_bundle.output_analysis),
+                "cloud_counts": asdict(transition.execution_bundle.cloud_counts),
+                "query_compile": final_compile,
+            }
+        )
+    if final_compile is None:  # pragma: no cover - the frozen case has windows
+        raise PropertyContractError("persistent strong case must have a query window")
+    return {
+        "case_id": case["case_id"],
+        "contract_id": "persistent-strong-transition",
+        "observations": [
+            _observation(
+                "initial_version",
+                initial_version,
+            ),
+            _observation("initial_decode_sha256", _logical_sha256(initial_decoded)),
+            _observation("waves", waves),
+            _observation("final_query_compile", final_compile),
+        ],
+    }
 
 
 def _oracle_record(case: dict[str, object]) -> dict[str, object]:
@@ -1047,6 +1140,8 @@ def recompute_case_records(manifest: dict[str, object]) -> dict[str, object]:
             records.append(_ledger_concurrency_record(case))
         if "seeded-extension" in contracts:
             records.append(_seeded_extension_record(case, seed=manifest["seed"]))
+        if "persistent-strong-transition" in contracts:
+            records.append(_persistent_strong_record(case))
     return {
         "schema_version": RECORDS_SCHEMA_VERSION,
         "case_set_id": manifest["case_set_id"],
