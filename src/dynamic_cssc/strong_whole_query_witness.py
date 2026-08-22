@@ -189,9 +189,9 @@ def _centered(values: tuple[int, ...], modulus: int) -> tuple[int, ...]:
 def _query_vector() -> tuple[int, ...]:
     vector = [0] * COLS
     vector[0] = 1
-    vector[1] = 2
-    vector[7] = 4
-    vector[8192] = -3
+    vector[1] = 1
+    vector[7] = 1
+    vector[8192] = -1
     for column in range(100, 100 + ACTIVE_DELTA_PAYLOAD):
         vector[column] = 1
     return tuple(vector)
@@ -224,7 +224,7 @@ def build_strong_whole_query_fixture() -> StrongWholeQueryFixture:
         cols=COLS,
         effective_slots=EFFECTIVE_SLOTS,
         segment_width=SEGMENT_WIDTH,
-        matrix_value_bound=16,
+        matrix_value_bound=7,
         version_id="strong-whole-query-witness-empty-v1",
     )
     delta = advance_segmented_delta(

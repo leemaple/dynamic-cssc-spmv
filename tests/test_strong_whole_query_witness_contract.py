@@ -51,6 +51,10 @@ PROPERTY_ARTIFACTS = (
 
 def test_fixture_compiles_and_prepares_the_real_whole_query_bundle() -> None:
     fixture = build_strong_whole_query_fixture()
+    manifest = json.loads(
+        (ROOT / "config" / "params_manifest.json").read_text(encoding="utf-8")
+    )
+    integer_correctness = manifest["integer_correctness"]
 
     assert isinstance(fixture.bundle, StrongExecutionBundle)
     assert isinstance(fixture.bundle.base, PublishedComponent)
@@ -59,7 +63,13 @@ def test_fixture_compiles_and_prepares_the_real_whole_query_bundle() -> None:
     assert fixture.bundle.base.layout_spec.cols == COLS == 8193
     assert fixture.bundle.base.layout_spec.effective_slots == EFFECTIVE_SLOTS == 4096
     assert fixture.bundle.delta.segment_width == SEGMENT_WIDTH == 128
+    assert (
+        fixture.bundle.delta.matrix_value_bound
+        == integer_correctness["matrix_entry_abs_bound"]
+        == 7
+    )
     assert fixture.modulus == PLAINTEXT_MODULUS == 65537
+    assert max(map(abs, fixture.vector)) <= integer_correctness["query_entry_abs_bound"] == 1
 
     base_width_three = next(
         spec
@@ -76,8 +86,8 @@ def test_fixture_compiles_and_prepares_the_real_whole_query_bundle() -> None:
     assert delta_page.values[127] == 0
     assert fixture.query_values_by_ciphertext[base_width_three.query_ciphertext_id][:3] == (
         1,
-        2,
-        -3,
+        1,
+        -1,
     )
 
     assert fixture.f1m_kinds == (
@@ -88,8 +98,8 @@ def test_fixture_compiles_and_prepares_the_real_whole_query_bundle() -> None:
     assert fixture.bundle.cloud_counts.add_f1m_masks == 3
     assert fixture.bundle.cloud_counts.returned_ciphertexts == 3
     assert fixture.typed_plaintext_centered_output == fixture.direct_centered_output
-    assert fixture.direct_centered_output[0] == 123
-    assert fixture.direct_centered_output[4095] == 20
+    assert fixture.direct_centered_output[0] == 128
+    assert fixture.direct_centered_output[4095] == 5
     assert sum(value != 0 for value in fixture.direct_centered_output) == 2
 
 
@@ -153,6 +163,11 @@ def test_pinned_adapter_is_a_separate_real_whole_query_target() -> None:
     assert "kEffectiveSlots = 4096" in source
     assert "kActiveDeltaPayload = 127" in source
     assert "kSegmentWidth = 128" in source
+    assert "kQueryEntryAbsBound = 1" in source
+    assert "for (const auto entry : globalQuery)" in source
+    assert "queryEntryBoundRespected = false" in source
+    assert "queryEntryBoundRespected &&" in source
+    assert '\\"query_entry_bound_respected\\\":"' in source
     assert "kCompleteReferenceSet = false" in source
     assert "kCandidateRegistered = false" in source
 
@@ -206,15 +221,16 @@ def _valid_witness(bindings: dict[str, str]) -> dict[str, object]:
         },
         "correctness": {
             "active_offset_126_exercised": True,
-            "decrypted_centered_output_sparse": [[0, 123], [4095, 20]],
+            "decrypted_centered_output_sparse": [[0, 128], [4095, 5]],
             "decryptions_valid": True,
-            "direct_spmv_centered_output_sparse": [[0, 123], [4095, 20]],
+            "direct_spmv_centered_output_sparse": [[0, 128], [4095, 5]],
             "global_column_index_anti_alias": True,
             "matches_python_direct_spmv": True,
             "matches_python_typed_plaintext_oracle": True,
             "padding_offset_127_zero": True,
             "product_element_counts": [2, 2, 2],
             "products_relinearized": True,
+            "query_entry_bound_respected": True,
             "unrelinearized_product_element_counts": [3, 3, 3],
         },
         "evidence_scope": ("actual-cssc-base-plus-strong-delta-whole-query-pinned-openfhe"),
@@ -361,6 +377,35 @@ def test_strict_validator_accepts_only_recomputed_whole_query_evidence(
     rejected = _validate_payload(tmp_path / "tampered", tampered)
     assert rejected.returncode != 0
     assert "realized_contract" in rejected.stderr
+
+
+def test_validator_rejects_realized_entries_beyond_manifest_bounds(tmp_path: Path) -> None:
+    _, binding_payload = _binding_payload(tmp_path)
+    valid = _valid_witness(binding_payload["bindings"])  # type: ignore[arg-type]
+
+    global_query_tamper = json.loads(json.dumps(valid))
+    global_query_tamper["realized_contract"]["prepared_query"][
+        "vector_nonzero_entries"
+    ][0][1] = 2
+    rejected_global = _validate_payload(tmp_path / "global-query-bound", global_query_tamper)
+    assert rejected_global.returncode != 0
+    assert "manifest.integer_correctness.query_entry_abs_bound=1" in rejected_global.stderr
+
+    prepared_query_tamper = json.loads(json.dumps(valid))
+    prepared_query_tamper["realized_contract"]["prepared_query"]["query_operands"][0][
+        "values"
+    ][0] = 2
+    rejected_prepared = _validate_payload(
+        tmp_path / "prepared-query-bound", prepared_query_tamper
+    )
+    assert rejected_prepared.returncode != 0
+    assert "manifest.integer_correctness.query_entry_abs_bound=1" in rejected_prepared.stderr
+
+    matrix_tamper = json.loads(json.dumps(valid))
+    matrix_tamper["realized_contract"]["private_plan"]["operands"][0]["values"][0] = 8
+    rejected_matrix = _validate_payload(tmp_path / "matrix-bound", matrix_tamper)
+    assert rejected_matrix.returncode != 0
+    assert "manifest.integer_correctness.matrix_entry_abs_bound=7" in rejected_matrix.stderr
 
 
 def test_validator_rejects_duplicate_json_and_provenance_retargeting(

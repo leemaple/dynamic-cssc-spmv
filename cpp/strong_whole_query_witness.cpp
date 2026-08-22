@@ -30,6 +30,7 @@ constexpr std::uint32_t kMultiplicativeDepth = 2;
 constexpr std::uint32_t kEstimatorEvalAddCount = 0;
 constexpr std::uint32_t kEstimatorKeySwitchCount = 0;
 constexpr std::uint32_t kGlobalColumn = 8192;
+constexpr std::int64_t kQueryEntryAbsBound = 1;
 constexpr bool kCompleteReferenceSet = false;
 constexpr bool kCandidateRegistered = false;
 constexpr std::array<std::int32_t, 7> kDeltaRotations = {1, 2, 4, 8, 16, 32, 64};
@@ -137,9 +138,9 @@ std::uint64_t ReadNonzeroMask() {
 std::vector<std::int64_t> MakeGlobalQuery() {
     std::vector<std::int64_t> query(kCols, 0);
     query.at(0) = 1;
-    query.at(1) = 2;
-    query.at(7) = 4;
-    query.at(kGlobalColumn) = -3;
+    query.at(1) = 1;
+    query.at(7) = 1;
+    query.at(kGlobalColumn) = -1;
     for (std::uint32_t column = 100; column < 100 + kActiveDeltaPayload; ++column) {
         query.at(column) = 1;
     }
@@ -531,6 +532,7 @@ void WriteWitness(
     const std::array<std::string, 7>& bindings,
     bool secondRowZero,
     bool masksCorrect,
+    bool queryEntryBoundRespected,
     bool checksPassed) {
     std::ofstream output(outputPath, std::ios::out | std::ios::trunc);
     if (!output) {
@@ -587,7 +589,9 @@ void WriteWitness(
     output << ",\"product_element_counts\":";
     WriteSizeArray(output, relinearized);
     output << ",\"global_column_index_anti_alias\":true,"
-              "\"active_offset_126_exercised\":true,\"padding_offset_127_zero\":true},\n";
+              "\"active_offset_126_exercised\":true,\"padding_offset_127_zero\":true,"
+              "\"query_entry_bound_respected\":"
+           << (queryEntryBoundRespected ? "true" : "false") << "},\n";
     output << "  \"f1m\": {\"mode\":\"encrypted-correctness-test-operands\","
               "\"return_ciphertext_count\":3,\"ciphertext_additions\":3,"
               "\"random_zero_sum_ciphertext_count\":2,"
@@ -660,6 +664,13 @@ int main(int argc, char** argv) {
             std::vector<std::int32_t>(kDeltaRotations.begin(), kDeltaRotations.end()));
 
         const auto globalQuery = MakeGlobalQuery();
+        bool queryEntryBoundRespected = true;
+        for (const auto entry : globalQuery) {
+            if (entry < -kQueryEntryAbsBound || entry > kQueryEntryAbsBound) {
+                queryEntryBoundRespected = false;
+                break;
+            }
+        }
         const auto randomMask = ReadNonzeroMask();
         const auto operands = MakeOperands(globalQuery, randomMask);
         const bool antiAlias = operands.at(0).alignedQuery.at(2) == globalQuery.at(kGlobalColumn) &&
@@ -731,8 +742,9 @@ int main(int argc, char** argv) {
             relinearized == std::array<std::size_t, 3>{2, 2, 2};
         const bool checksPassed = decryptionsValid && productsRelinearized && antiAlias &&
                                   deltaBoundary && masksCorrect && secondRowZero &&
+                                  queryEntryBoundRespected &&
                                   trace.size() == 33 && decrypted == direct &&
-                                  decrypted.at(0) == 123 && decrypted.at(4095) == 20;
+                                  decrypted.at(0) == 128 && decrypted.at(4095) == 5;
         WriteWitness(
             outputPath,
             decrypted,
@@ -745,6 +757,7 @@ int main(int argc, char** argv) {
             bindings,
             secondRowZero,
             masksCorrect,
+            queryEntryBoundRespected,
             checksPassed);
         std::cout << outputPath << '\n';
         return checksPassed ? 0 : 5;
