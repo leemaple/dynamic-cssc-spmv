@@ -22,8 +22,20 @@ QUERY_SIDE_FIELDS = (
 )
 
 
-def _config() -> SimulationConfig:
-    return SimulationConfig(rows=4, effective_slots=8, partition_rows=2)
+def _config(**overrides: object) -> SimulationConfig:
+    values: dict[str, object] = {
+        "rows": 4,
+        "cols": 8,
+        "effective_slots": 8,
+        "partition_rows": 2,
+        "matrix_value_bound": 7,
+        "max_row_nnz": 8,
+        "reserved_slack_beta": 0.1,
+        "periodic_repack_windows": 4,
+        "packed_coo_segment_capacity": 8,
+    }
+    values.update(overrides)
+    return SimulationConfig(**values)  # type: ignore[arg-type]
 
 
 def _query_window(index: int, query_count: int) -> PublicationWindow:
@@ -96,7 +108,7 @@ def test_cssc_query_counts_reduction_adds_masks_and_cross_chunk_merge() -> None:
         for row, width in enumerate((4, 2, 1))
         for col in range(width)
     }
-    config = SimulationConfig(rows=3, effective_slots=8, partition_rows=3)
+    config = _config(rows=3, effective_slots=8, partition_rows=3)
 
     metrics = {
         item.strategy: item
@@ -113,7 +125,14 @@ def test_cssc_query_counts_reduction_adds_masks_and_cross_chunk_merge() -> None:
 
 def test_cssc_query_omits_identity_lane_mask() -> None:
     initial = {(row, 0): 1 for row in range(4)}
-    config = SimulationConfig(rows=4, effective_slots=4, partition_rows=4)
+    config = _config(
+        rows=4,
+        cols=4,
+        effective_slots=4,
+        partition_rows=4,
+        max_row_nnz=4,
+        packed_coo_segment_capacity=4,
+    )
 
     metrics = {
         item.strategy: item
@@ -140,10 +159,12 @@ def test_mini_cssc_accumulates_base_and_delta_query_operations() -> None:
         query_count=3,
         reason="query",
     )
-    config = SimulationConfig(
+    config = _config(
         rows=3,
+        cols=5,
         effective_slots=8,
         partition_rows=3,
+        max_row_nnz=5,
         reserved_slack_beta=0.0,
     )
 
@@ -189,11 +210,14 @@ def test_delta_masks_only_output_blocks_that_overlap_logical_rows() -> None:
         query_count=1,
         reason="query",
     )
-    config = SimulationConfig(
+    config = _config(
         rows=4,
+        cols=4,
         effective_slots=4,
         partition_rows=2,
+        max_row_nnz=4,
         reserved_slack_beta=0.0,
+        packed_coo_segment_capacity=4,
     )
 
     metrics = {item.strategy: item for item in simulate([window], initial, config)}
@@ -210,11 +234,19 @@ def test_delta_masks_only_output_blocks_that_overlap_logical_rows() -> None:
     assert metrics["PaddingReuse-CSSC"].blinding_mask_ciphertexts == 0
 
 
-def test_hindsight_selection_is_labeled_as_an_offline_oracle() -> None:
+def test_simulator_returns_only_fixed_metrics_and_leaves_oracle_to_runner() -> None:
     metrics = simulate([_query_window(0, 1)], {(0, 0): 1}, _config())
     by_name = {item.strategy: item for item in metrics}
 
     assert "Hybrid-Selector-Proxy" not in by_name
-    oracle = by_name["BestFixed-Offline-Oracle"]
-    assert oracle.category == "diagnostic-oracle"
-    assert oracle.source == "held-out-hindsight-diagnostic"
+    assert "BestFixed-Offline-Oracle" not in by_name
+    assert set(by_name) == {
+        "PaddingReuse-CSSC",
+        "ReservedSlack-CSSC",
+        "Mini-CSSC-Delta",
+        "Packed-COO-Client-Lane-Delta",
+        "Strict-LocalRepack",
+        "PeriodicRepack",
+    }
+    assert all(item.category == "reference" for item in metrics)
+    assert all(item.source == "persistent-state-predicted" for item in metrics)

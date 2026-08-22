@@ -40,7 +40,9 @@ single slot domain. It does not assert contiguous `ceil(cols / slots)` column bl
 An OutputPlan in `dynamic-cssc-output-plan-v1` format identifies every Result Component
 and Output Block and maps its physical lanes to logical output coordinates. Client A
 sends the complete version-bound plan to Client B, which uses it to reorder and combine
-decrypted shares. For a logical coordinate with contributor
+decrypted shares. Client B initializes the public-length logical output vector to zero;
+any coordinate absent from every physical share remains an implicit zero and creates no
+result ciphertext or mask. For a logical coordinate with contributor
 multiplicity `h > 1`, Client A samples `h - 1` independent uniform elements of `Z_t` and
 uses the negative modular sum for the final contributor. A coordinate with multiplicity
 one is concatenated/reordered and is not masked merely because another ciphertext was

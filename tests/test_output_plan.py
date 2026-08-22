@@ -152,6 +152,33 @@ def test_disjoint_output_blocks_are_concatenated_without_masks() -> None:
     assert analysis.client_modular_additions == 0
 
 
+def test_uncovered_logical_coordinates_reconstruct_as_implicit_zero() -> None:
+    plan = OutputPlan(
+        logical_output_size=3,
+        slot_count=2,
+        shares=(OutputShare("base", "row-1", ((0, 1),)),),
+    )
+
+    analysis = analyze_output_plan(plan)
+
+    assert analysis.reconstruction_mode == "concatenate"
+    assert analysis.result_ciphertexts == 1
+    assert analysis.implicit_zero_coordinates == 2
+    assert analysis.client_reorder_elements == 1
+    assert analysis.masked_result_ciphertexts == 0
+
+
+def test_all_zero_output_plan_returns_no_ciphertexts() -> None:
+    analysis = analyze_output_plan(
+        OutputPlan(logical_output_size=4, slot_count=2, shares=())
+    )
+
+    assert analysis.result_ciphertexts == 0
+    assert analysis.implicit_zero_coordinates == 4
+    assert analysis.client_reorder_elements == 0
+    assert analysis.masked_result_ciphertexts == 0
+
+
 def test_overlapping_shares_receive_physical_zero_sum_masks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -296,7 +323,6 @@ def test_digest_is_canonical_but_changes_with_output_semantics() -> None:
 @pytest.mark.parametrize(
     "plan",
     [
-        OutputPlan(2, 2, (OutputShare("base", "out", ((0, 0),)),)),
         OutputPlan(1, 1, (OutputShare("base", "out", ((0, 0), (0, 0))),)),
         OutputPlan(1, 1, (OutputShare("base id", "out", ((0, 0),)),)),
         OutputPlan(

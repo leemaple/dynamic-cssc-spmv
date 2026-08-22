@@ -5,6 +5,16 @@ from collections.abc import Iterable
 
 from .events import Event
 
+SYNTHETIC_WORKLOADS = (
+    "zipf",
+    "migrating-hotspot",
+    "single-row-hotspot",
+    "multi-row-hotspot",
+    "bursty",
+    "mixed-insert-delete-modify",
+    "repeated-coordinate",
+)
+
 
 def generate_initial_matrix(
     rows: int,
@@ -61,8 +71,7 @@ def _bounded_modified_value(
     candidates = [
         current + delta
         for delta in (-1, 1, 2)
-        if current + delta != 0
-        and abs(current + delta) <= matrix_entry_abs_bound
+        if current + delta != 0 and abs(current + delta) <= matrix_entry_abs_bound
     ]
     return rng.choice(candidates) if candidates else current
 
@@ -80,6 +89,8 @@ def generate_event_stream(
 ) -> list[Event]:
     """Generate deterministic skewed update/query streams for CI smoke tests."""
 
+    if workload not in SYNTHETIC_WORKLOADS:
+        raise ValueError(f"unknown workload: {workload}")
     if update_count <= 0:
         raise ValueError("update_count must be positive")
     if (

@@ -37,6 +37,7 @@ class OutputPlanAnalysis:
     reconstruction_mode: Literal["concatenate", "coordinate-sum"]
     result_ciphertexts: int
     masked_result_ciphertexts: int
+    implicit_zero_coordinates: int
     overlap_coordinates: int
     mask_random_elements: int
     mask_mapped_elements: int
@@ -109,8 +110,8 @@ def _validate(plan: OutputPlan) -> Counter[int]:
         plan.logical_output_size, "logical_output_size"
     )
     slot_count = _require_positive_int(plan.slot_count, "slot_count")
-    if not isinstance(plan.shares, tuple) or not plan.shares:
-        raise OutputPlanError("shares must be a non-empty tuple")
+    if not isinstance(plan.shares, tuple):
+        raise OutputPlanError("shares must be a tuple")
 
     share_ids: set[tuple[str, str]] = set()
     logical_multiplicity: Counter[int] = Counter()
@@ -142,9 +143,6 @@ def _validate(plan: OutputPlan) -> Counter[int]:
                 raise OutputPlanError("logical coordinate is outside the output vector")
             logical_multiplicity[logical_coordinate] += 1
 
-    missing = set(range(logical_output_size)) - logical_multiplicity.keys()
-    if missing:
-        raise OutputPlanError("every logical output coordinate must be covered")
     return logical_multiplicity
 
 
@@ -152,6 +150,7 @@ def analyze_output_plan(plan: OutputPlan) -> OutputPlanAnalysis:
     """Validate a plan and derive its reconstruction, masking, and accounting facts."""
 
     multiplicity = _validate(plan)
+    implicit_zero_coordinates = plan.logical_output_size - len(multiplicity)
     overlap_coordinates = {coordinate for coordinate, count in multiplicity.items() if count > 1}
     masked_share_ids = {
         (share.component_id, share.output_block_id)
@@ -172,6 +171,7 @@ def analyze_output_plan(plan: OutputPlan) -> OutputPlanAnalysis:
         reconstruction_mode="coordinate-sum" if overlap_coordinates else "concatenate",
         result_ciphertexts=len(plan.shares),
         masked_result_ciphertexts=len(masked_share_ids),
+        implicit_zero_coordinates=implicit_zero_coordinates,
         overlap_coordinates=len(overlap_coordinates),
         mask_random_elements=sum(
             multiplicity[coordinate] - 1 for coordinate in overlap_coordinates

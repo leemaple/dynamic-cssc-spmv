@@ -6,20 +6,21 @@ Each checkpoint is exported as a workflow artifact named `review-pack-<stage>-<s
 
 Contains the original task, v2.1a patch, parameter manifest, role/leakage freeze, source tree, and passing unit-test report.
 
-Latest audited freeze: **PASS** at `69bd6eb7d593bb33bd59b84bae409994219fa2f5`
-(run `32508675883`; 22 tests; 62/62 internal checksums). The permanent private
-release is `r1-p0a-20260822`; the R0 ZIP SHA-256 is
-`3be48683e183b8f9e3caa9b2115c4a15d485874db6bf53181c796182551bb526`.
+Latest audited freeze: **PASS** at `eb15adf5da22f600a31d4b62897ed35c1ecde2e2`
+(run `32514351610`; 105 tests; 74/74 internal checksums). The permanent private
+release is [`r1-p0a-v21b-20260822`](https://github.com/leemaple/dynamic-cssc-spmv/releases/tag/r1-p0a-v21b-20260822);
+the R0 ZIP SHA-256 is
+`1c3a5f14f87991212b6bc36afe8ab5a4484f638c7a9469591d1b98531140e3b1`.
 
 ## R1 — P0a
 
 Contains decrypted slot permutations, the direct rotation-key inventory, the logical rotation plan, compiler/OpenFHE provenance, and raw logs.
 
-Audited gate: **PASS** at the same commit (run `32508734242`). All 27 requested
+Audited gate: **PASS** at the same commit (run `32514435923`). All 27 requested
 direct rotations are valid permutations of all 8192 slots. The evidence scope is
 `p0a-layout-semantics-only`: it does not freeze a mixed-workload parameterization
 or synthesize cross-row operations. The R1 ZIP SHA-256 is
-`08abe505d5eec61f646d517a6e6349b2cc76b9cb07f8d8a92d0b98527e3732f9`.
+`8e818195d61793f72b05fd2191b297decccd70427e6f1507bb7446f139faf4f9`.
 
 ## R2 — Day 1
 

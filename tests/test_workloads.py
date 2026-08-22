@@ -63,3 +63,17 @@ def test_stream_rejects_an_initial_state_outside_the_frozen_domain() -> None:
             query_every=0,
             matrix_entry_abs_bound=7,
         )
+
+
+def test_stream_rejects_an_unknown_workload_at_the_source_boundary() -> None:
+    with pytest.raises(ValueError, match="unknown workload"):
+        generate_event_stream(
+            "zifp",
+            {(0, 0): 1},
+            rows=2,
+            cols=2,
+            update_count=1,
+            seed=1,
+            query_every=0,
+            matrix_entry_abs_bound=7,
+        )

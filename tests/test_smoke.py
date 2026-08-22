@@ -31,8 +31,10 @@ def test_smoke_cli_writes_predicted_only_artifacts(tmp_path: Path, monkeypatch) 
     )
     assert main() == 0
     payload = json.loads((output / "metrics.json").read_text())
-    assert payload["metadata"]["status"] == "predicted-proxy-not-measured"
+    assert "status" not in payload["metadata"]
+    assert payload["metadata"]["measurement_kind"] == "predicted-proxy"
     assert payload["metadata"]["gate_eligible"] is False
-    assert payload["metadata"]["state_model"] == "static-initial-layout-proxy"
+    assert payload["metadata"]["complete_cost_claim_allowed"] is False
+    assert payload["metadata"]["state_model"] == "persistent-strategy-snapshots"
     assert any(record["strategy"] == "Mini-CSSC-Delta" for record in payload["records"])
     assert (output / "SHA256SUMS").exists()
