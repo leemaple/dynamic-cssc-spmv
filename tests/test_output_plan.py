@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -9,7 +10,10 @@ import pytest
 
 import dynamic_cssc.output_plan as output_plan_module
 from dynamic_cssc.mask_ledger import (
+    ConsumedPreparedF1MCommitmentError,
     DuplicateMaskBindingError,
+    PreparedF1MCommitment,
+    PreparedF1MCommitmentError,
     SQLiteMaskBindingLedger,
 )
 from dynamic_cssc.output_plan import (
@@ -128,6 +132,180 @@ def test_mask_binding_identity_uses_all_five_fields(tmp_path: Path) -> None:
 
     with pytest.raises(DuplicateMaskBindingError):
         ledger.reserve_all((original,))
+
+
+def test_prepared_f1m_schema_contains_only_binding_mask_commitment_and_state(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "mask-bindings.sqlite3"
+    SQLiteMaskBindingLedger(ledger_path)
+
+    connection = sqlite3.connect(ledger_path)
+    try:
+        batch_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(prepared_f1m_batches)")
+        }
+        commitment_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(prepared_f1m_commitments)")
+        }
+    finally:
+        connection.close()
+
+    assert batch_columns == {
+        "commitment_token",
+        "query_id",
+        "version_id",
+        "output_plan_digest",
+        "private_plan_digest",
+        "execution_binding_digest",
+        "modulus",
+        "consumed",
+    }
+    assert commitment_columns == {
+        "commitment_token",
+        "component_id",
+        "output_block_id",
+        "kind",
+        "value_count",
+        "values_digest",
+    }
+
+
+def test_prepared_f1m_verification_has_one_atomic_winner_across_restarts(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "mask-bindings.sqlite3"
+    ledger = SQLiteMaskBindingLedger(ledger_path)
+    commitment = PreparedF1MCommitment(
+        query_id="query-atomic",
+        version_id="version-1",
+        output_plan_digest="4" * 64,
+        component_id="base",
+        output_block_id="out",
+        kind="random-zero-sum",
+        values=(3, 14),
+    )
+    ledger.reserve_all((commitment.binding,))
+    token = ledger.commit_prepared_f1m(
+        (commitment,),
+        query_id=commitment.query_id,
+        version_id=commitment.version_id,
+        output_plan_digest=commitment.output_plan_digest,
+        private_plan_digest="5" * 64,
+        execution_binding_digest="6" * 64,
+        modulus=17,
+    )
+    ledgers = (SQLiteMaskBindingLedger(ledger_path), SQLiteMaskBindingLedger(ledger_path))
+    start = Barrier(2)
+
+    def verify_once(restarted: SQLiteMaskBindingLedger) -> str:
+        start.wait()
+        try:
+            restarted.verify_and_consume_prepared_f1m(
+                (commitment,),
+                commitment_token=token,
+                query_id=commitment.query_id,
+                version_id=commitment.version_id,
+                output_plan_digest=commitment.output_plan_digest,
+                private_plan_digest="5" * 64,
+                execution_binding_digest="6" * 64,
+                modulus=17,
+            )
+        except ConsumedPreparedF1MCommitmentError:
+            return "consumed"
+        return "verified"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(verify_once, ledgers))
+
+    assert sorted(outcomes) == ["consumed", "verified"]
+
+
+def test_legacy_prepared_batch_schema_migrates_without_authorizing_unknown_execution_binding(
+    tmp_path: Path,
+) -> None:
+    ledger_path = tmp_path / "mask-bindings.sqlite3"
+    legacy_token = "a" * 64
+    connection = sqlite3.connect(ledger_path)
+    try:
+        connection.execute(
+            """
+            CREATE TABLE prepared_f1m_batches (
+                commitment_token TEXT NOT NULL PRIMARY KEY,
+                query_id TEXT NOT NULL,
+                version_id TEXT NOT NULL,
+                output_plan_digest TEXT NOT NULL,
+                private_plan_digest TEXT NOT NULL,
+                modulus TEXT NOT NULL,
+                consumed INTEGER NOT NULL CHECK (consumed IN (0, 1)),
+                UNIQUE (query_id, version_id, output_plan_digest)
+            ) WITHOUT ROWID
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO prepared_f1m_batches (
+                commitment_token,
+                query_id,
+                version_id,
+                output_plan_digest,
+                private_plan_digest,
+                modulus,
+                consumed
+            ) VALUES (?, ?, ?, ?, ?, ?, 0)
+            """,
+            (legacy_token, "query-legacy", "version-1", "4" * 64, "5" * 64, "17"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    ledger = SQLiteMaskBindingLedger(ledger_path)
+    with pytest.raises(PreparedF1MCommitmentError, match="execution binding"):
+        ledger.verify_and_consume_prepared_f1m(
+            (),
+            commitment_token=legacy_token,
+            query_id="query-legacy",
+            version_id="version-1",
+            output_plan_digest="4" * 64,
+            private_plan_digest="5" * 64,
+            execution_binding_digest="6" * 64,
+            modulus=17,
+        )
+
+    connection = sqlite3.connect(ledger_path)
+    try:
+        legacy_state = connection.execute(
+            """
+            SELECT execution_binding_digest, consumed
+            FROM prepared_f1m_batches
+            WHERE commitment_token = ?
+            """,
+            (legacy_token,),
+        ).fetchone()
+    finally:
+        connection.close()
+    assert legacy_state == (None, 0)
+
+    new_token = ledger.commit_prepared_f1m(
+        (),
+        query_id="query-new",
+        version_id="version-1",
+        output_plan_digest="4" * 64,
+        private_plan_digest="5" * 64,
+        execution_binding_digest="6" * 64,
+        modulus=17,
+    )
+    ledger.verify_and_consume_prepared_f1m(
+        (),
+        commitment_token=new_token,
+        query_id="query-new",
+        version_id="version-1",
+        output_plan_digest="4" * 64,
+        private_plan_digest="5" * 64,
+        execution_binding_digest="6" * 64,
+        modulus=17,
+    )
 
 
 def test_disjoint_output_blocks_are_concatenated_without_masks() -> None:
