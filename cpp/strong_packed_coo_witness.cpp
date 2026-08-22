@@ -77,6 +77,28 @@ struct ExecutionTraceNode {
     std::string maskRole;
     std::int32_t logicalShift = 0;
     std::int32_t openfheIndex = 0;
+
+    ExecutionTraceNode(
+        std::string operationValue,
+        std::string resultIdValue,
+        std::string ciphertextIdValue = {},
+        std::string leftIdValue = {},
+        std::string rightIdValue = {},
+        std::string maskIdValue = {},
+        std::string maskCiphertextIdValue = {},
+        std::string maskRoleValue = {},
+        std::int32_t logicalShiftValue = 0,
+        std::int32_t openfheIndexValue = 0)
+        : operation(std::move(operationValue)),
+          resultId(std::move(resultIdValue)),
+          ciphertextId(std::move(ciphertextIdValue)),
+          leftId(std::move(leftIdValue)),
+          rightId(std::move(rightIdValue)),
+          maskId(std::move(maskIdValue)),
+          maskCiphertextId(std::move(maskCiphertextIdValue)),
+          maskRole(std::move(maskRoleValue)),
+          logicalShift(logicalShiftValue),
+          openfheIndex(openfheIndexValue) {}
 };
 
 struct F1MMasks {
