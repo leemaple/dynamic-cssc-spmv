@@ -31,6 +31,8 @@ link_libraries(${OpenFHE_SHARED_LIBRARIES})
 
 add_executable(rotation_probe rotation_probe.cpp)
 add_executable(openfhe_microbench microbench.cpp)
+add_executable(strong_packed_coo_witness strong_packed_coo_witness.cpp)
 
 target_compile_options(rotation_probe PRIVATE -Wall -Wextra -Wpedantic)
 target_compile_options(openfhe_microbench PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(strong_packed_coo_witness PRIVATE -Wall -Wextra -Wpedantic)

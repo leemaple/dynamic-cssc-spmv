@@ -11,7 +11,9 @@ Research repository for an update-aware maintenance layer around ciphertext–ci
 - Day 1 full-baseline status: **HOLD**. Artifacts must report
   `complete_reference_set=false` and identify `strong-packed-coo` as a deferred/missing
   baseline; the implemented packed-COO candidate is client-lane reconstruction, not the
-  strong cloud-segmented baseline. Day 2 remains downstream of the resulting operation plan
+  strong cloud-segmented baseline. ADR 0007 permits only an unregistered, anonymous
+  fixed-segment primitive while its whole-query integration and pinned witness are built.
+  Day 2 remains downstream of the resulting operation plan
 - Main functional mode: **F1-M**, with output-component leakage prevented by one-time zero-sum blinding
 - OpenFHE baseline: **v1.5.1**, pinned by commit in `config/params_manifest.json`
 
