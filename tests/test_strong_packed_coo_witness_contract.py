@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import replace
@@ -15,6 +16,61 @@ ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = ROOT / "scripts" / "validate_strong_packed_coo_witness.py"
 GENERATOR = ROOT / "scripts" / "make_strong_packed_coo_witness_binding.py"
 SCRIPT_ENV = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+
+
+def test_execution_trace_short_initializers_compile_without_warnings(tmp_path: Path) -> None:
+    compiler = shutil.which("c++")
+    if compiler is None:
+        pytest.skip("c++ compiler is unavailable")
+
+    source = (ROOT / "cpp" / "strong_packed_coo_witness.cpp").read_text(encoding="utf-8")
+    definition_start = source.index("struct ExecutionTraceNode {")
+    definition_end = source.index("\n};", definition_start) + len("\n};")
+    definition = source[definition_start:definition_end]
+
+    translation_unit = tmp_path / "execution_trace_initializers.cpp"
+    translation_unit.write_text(
+        f"""
+#include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
+
+{definition}
+
+int main() {{
+    std::vector<ExecutionTraceNode> execution_trace;
+    execution_trace.push_back({{"multiply-ciphertexts", "product", "", "values", "query"}});
+    execution_trace.push_back({{"relinearize", "relinearized", "product"}});
+    execution_trace.push_back(
+        {{"rotate", "rotated", "reduced", "", "", "", "", "", 1, 1}});
+    execution_trace.push_back(
+        {{"add-f1m-mask", "masked", "selected", "", "", "", "f1m-mask", "opaque-zero-sum"}});
+    execution_trace.push_back({{"return-result", "result", "masked"}});
+    return execution_trace.empty();
+}}
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [
+            compiler,
+            "-std=c++17",
+            "-Wall",
+            "-Wextra",
+            "-Wpedantic",
+            "-Werror",
+            "-Wmissing-field-initializers",
+            "-fsyntax-only",
+            str(translation_unit),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def _make_bindings(tmp_path: Path) -> dict[str, str]:
