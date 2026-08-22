@@ -505,31 +505,26 @@ def test_validator_binds_current_sources_and_recomputes_all_records(tmp_path: Pa
     )
 
 
-def test_generator_and_validator_reject_another_valid_git_commit(
+def test_generator_and_validator_reject_different_valid_shaped_git_sha(
     tmp_path: Path,
     real_source_snapshot: None,
 ) -> None:
-    root = Path(__file__).resolve().parents[1]
-    old_sha = subprocess.run(
-        ["git", "rev-parse", "--verify", "HEAD^"],
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    assert len(old_sha) == 40
-    assert old_sha != SOURCE_GIT_SHA
+    replacement = "0" if SOURCE_GIT_SHA[0] != "0" else "1"
+    retargeted_sha = replacement + SOURCE_GIT_SHA[1:]
+    assert len(retargeted_sha) == 40
+    assert all(character in "0123456789abcdef" for character in retargeted_sha)
+    assert retargeted_sha != SOURCE_GIT_SHA
 
     with pytest.raises(PropertyContractError, match="current Git HEAD"):
         generate_property_contract_evidence(
             tmp_path / "generated",
-            source_git_sha=old_sha,
+            source_git_sha=retargeted_sha,
             seed=SEED,
         )
     with pytest.raises(PropertyContractValidationError, match="current Git HEAD"):
         validate_property_contract_evidence(
             tmp_path / "missing",
-            expected_source_git_sha=old_sha,
+            expected_source_git_sha=retargeted_sha,
         )
 
 
