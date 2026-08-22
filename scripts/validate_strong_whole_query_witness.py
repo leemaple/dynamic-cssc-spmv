@@ -100,6 +100,82 @@ def _require_exact(actual: Any, expected: Any, path: str) -> None:
         raise WitnessValidationError(f"{path} must equal {expected!r}; got {actual!r}")
 
 
+def _require_bounded_integer(value: Any, *, bound: int, path: str, bound_path: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise WitnessValidationError(f"{path} must be a strict integer")
+    if abs(value) > bound:
+        raise WitnessValidationError(f"{path} violates {bound_path}={bound}")
+
+
+def _require_realized_manifest_bounds(
+    witness: dict[str, Any], manifest: dict[str, Any]
+) -> None:
+    query_bound = manifest["integer_correctness"]["query_entry_abs_bound"]
+    matrix_bound = manifest["integer_correctness"]["matrix_entry_abs_bound"]
+    realized = witness.get("realized_contract")
+    if not isinstance(realized, dict):
+        raise WitnessValidationError("witness.realized_contract must be an object")
+    prepared_query = realized.get("prepared_query")
+    if not isinstance(prepared_query, dict):
+        raise WitnessValidationError("witness.realized_contract.prepared_query must be an object")
+
+    vector_entries = prepared_query.get("vector_nonzero_entries")
+    if not isinstance(vector_entries, list):
+        raise WitnessValidationError(
+            "witness.realized_contract.prepared_query.vector_nonzero_entries must be an array"
+        )
+    for ordinal, entry in enumerate(vector_entries):
+        path = (
+            "witness.realized_contract.prepared_query.vector_nonzero_entries"
+            f"[{ordinal}]"
+        )
+        if not isinstance(entry, list) or len(entry) != 2:
+            raise WitnessValidationError(f"{path} must be a [column, value] pair")
+        _require_bounded_integer(
+            entry[1],
+            bound=query_bound,
+            path=f"{path}[1]",
+            bound_path="manifest.integer_correctness.query_entry_abs_bound",
+        )
+
+    query_operands = prepared_query.get("query_operands")
+    if not isinstance(query_operands, list):
+        raise WitnessValidationError(
+            "witness.realized_contract.prepared_query.query_operands must be an array"
+        )
+    for operand_ordinal, operand in enumerate(query_operands):
+        operand_path = (
+            "witness.realized_contract.prepared_query.query_operands"
+            f"[{operand_ordinal}]"
+        )
+        if not isinstance(operand, dict) or not isinstance(operand.get("values"), list):
+            raise WitnessValidationError(f"{operand_path}.values must be an array")
+        for value_ordinal, value in enumerate(operand["values"]):
+            _require_bounded_integer(
+                value,
+                bound=query_bound,
+                path=f"{operand_path}.values[{value_ordinal}]",
+                bound_path="manifest.integer_correctness.query_entry_abs_bound",
+            )
+
+    private_plan = realized.get("private_plan")
+    if not isinstance(private_plan, dict) or not isinstance(private_plan.get("operands"), list):
+        raise WitnessValidationError(
+            "witness.realized_contract.private_plan.operands must be an array"
+        )
+    for operand_ordinal, operand in enumerate(private_plan["operands"]):
+        operand_path = f"witness.realized_contract.private_plan.operands[{operand_ordinal}]"
+        if not isinstance(operand, dict) or not isinstance(operand.get("values"), list):
+            raise WitnessValidationError(f"{operand_path}.values must be an array")
+        for value_ordinal, value in enumerate(operand["values"]):
+            _require_bounded_integer(
+                value,
+                bound=matrix_bound,
+                path=f"{operand_path}.values[{value_ordinal}]",
+                bound_path="manifest.integer_correctness.matrix_entry_abs_bound",
+            )
+
+
 def _expected_witness(
     manifest: dict[str, Any],
     binding_payload: dict[str, object],
@@ -128,15 +204,16 @@ def _expected_witness(
         },
         "correctness": {
             "active_offset_126_exercised": True,
-            "decrypted_centered_output_sparse": [[0, 123], [4095, 20]],
+            "decrypted_centered_output_sparse": [[0, 128], [4095, 5]],
             "decryptions_valid": True,
-            "direct_spmv_centered_output_sparse": [[0, 123], [4095, 20]],
+            "direct_spmv_centered_output_sparse": [[0, 128], [4095, 5]],
             "global_column_index_anti_alias": True,
             "matches_python_direct_spmv": True,
             "matches_python_typed_plaintext_oracle": True,
             "padding_offset_127_zero": True,
             "product_element_counts": [2, 2, 2],
             "products_relinearized": True,
+            "query_entry_bound_respected": True,
             "unrelinearized_product_element_counts": [3, 3, 3],
         },
         "evidence_scope": ("actual-cssc-base-plus-strong-delta-whole-query-pinned-openfhe"),
@@ -269,6 +346,7 @@ def validate_witness(
     bindings = _read_json(bindings_path)
     provenance = _read_json(provenance_path)
     validate_manifest(manifest)
+    _require_realized_manifest_bounds(witness, manifest)
     recomputed_bindings = make_witness_binding_payload(manifest)
     _require_exact(bindings, recomputed_bindings, "bindings")
     _require_exact(witness, _expected_witness(manifest, recomputed_bindings), "witness")
