@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -225,6 +226,102 @@ def test_descriptor_read_rejects_same_inode_same_size_aba_content(
         verify_existing_directory(root, verifier=verifier)
 
     assert member.read_bytes() == original
+
+
+def test_descriptor_view_streams_and_completely_binds_bounded_canonical_jsonl(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "result"
+    root.mkdir()
+    rows = ({"ordinal": 0, "value": "a"}, {"ordinal": 1, "value": "b"})
+    content = b"".join(
+        (json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n").encode() for row in rows
+    )
+    (root / "records.jsonl").write_bytes(content)
+    consumed: list[tuple[int, bytes, dict[str, object]]] = []
+
+    receipt = verify_existing_directory(
+        root,
+        verifier=lambda view: view.consume_canonical_jsonl(
+            "records.jsonl",
+            maximum_file_bytes=len(content),
+            maximum_line_bytes=max(len(line) for line in content.splitlines(keepends=True)),
+            consumer=lambda index, line, payload: consumed.append((index, line, payload)),
+        ),
+    )
+
+    assert receipt.sha256 == hashlib.sha256(content).hexdigest()
+    assert receipt.line_count == 2
+    assert receipt.byte_count == len(content)
+    assert [payload for _index, _line, payload in consumed] == list(rows)
+
+
+def test_descriptor_jsonl_stream_rejects_same_inode_same_size_aba_content(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "result"
+    root.mkdir()
+    member = root / "records.jsonl"
+    original = b'{"value":"alpha"}\n'
+    alternate = b'{"value":"bravo"}\n'
+    assert len(original) == len(alternate)
+    member.write_bytes(original)
+    member_identity = _identity(member)
+
+    def verifier(view: PublicationArtifactDirectory) -> object:
+        member.write_bytes(alternate)
+        assert _identity(member) == member_identity
+        try:
+            return view.consume_canonical_jsonl(
+                "records.jsonl",
+                maximum_file_bytes=len(original),
+                maximum_line_bytes=len(original),
+                consumer=lambda *_values: None,
+            )
+        finally:
+            member.write_bytes(original)
+            assert _identity(member) == member_identity
+
+    with pytest.raises(PublicationArtifactInstallError, match="snapshotted content"):
+        verify_existing_directory(root, verifier=verifier)
+
+    assert member.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    ("content", "file_limit", "line_limit", "message"),
+    (
+        (b'{"a":1}\n', 7, 8, "file limit"),
+        (b'{"a":1}\n', 8, 7, "line limit"),
+        (b'{"a":1}', 7, 8, "final newline"),
+        (b'{ "a": 1 }\n', 11, 11, "canonically encoded"),
+    ),
+)
+def test_descriptor_jsonl_stream_fails_closed_on_every_bound(
+    tmp_path: Path,
+    content: bytes,
+    file_limit: int,
+    line_limit: int,
+    message: str,
+) -> None:
+    root = tmp_path / "result"
+    root.mkdir()
+    (root / "records.jsonl").write_bytes(content)
+    consumed: list[object] = []
+
+    with pytest.raises(PublicationArtifactInstallError, match=message):
+        verify_existing_directory(
+            root,
+            verifier=lambda view: view.consume_canonical_jsonl(
+                "records.jsonl",
+                maximum_file_bytes=file_limit,
+                maximum_line_bytes=line_limit,
+                consumer=lambda *values: consumed.append(values),
+            ),
+        )
+
+    if message == "file limit":
+        assert consumed == []
 
 
 def test_concurrent_destination_is_preserved_and_never_replaced(tmp_path: Path) -> None:

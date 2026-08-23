@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 from contextlib import suppress
@@ -21,11 +22,16 @@ import dynamic_cssc.publication_day1b as day1b_module
 import dynamic_cssc.publication_day1b_worker_protocol as worker_protocol
 import dynamic_cssc.publication_statistics as statistics_module
 from dynamic_cssc.day1_registry import Day1CandidateCatalog, RegistrationEvidence
+from dynamic_cssc.publication_artifact_install import (
+    PublicationArtifactInstallError,
+    verify_existing_directory,
+)
 from dynamic_cssc.publication_day1b import (
     DAY1B_UNIT_FRAGMENT_SCHEMA,
     DAY1B_UNIT_SCHEMA,
     PublicationDay1BHold,
     PublicationDay1BResourcePolicy,
+    PublicationDay1BUnitBundle,
     _Day1BSourceAuthority,
     _Day1BTraceInput,
     _Day1BWorkerContractSeed,
@@ -75,6 +81,7 @@ from dynamic_cssc.publication_statistics import (
 )
 from dynamic_cssc.publication_traces import (
     _PRODUCTION_CONFIG,
+    ACQUISITION_TRACE_BINDING_SCHEMA,
     PUBLICATION_TRACE_MANIFEST_SCHEMA,
     LicenseTermsObject,
     LocalSourceObject,
@@ -109,7 +116,7 @@ def _trace_v6_history_row(*, timestamp: datetime, user_id: int) -> str:
     return "\t".join(fields) + "\n"
 
 
-def _write_trace_v6_fixture(tmp_path: Path) -> Path:
+def _write_trace_v7_fixture(tmp_path: Path) -> Path:
     source_path = tmp_path / "history.tsv.bz2"
     start = datetime(2020, 1, 1, tzinfo=UTC)
     rows = "".join(
@@ -179,7 +186,7 @@ def _write_trace_v6_fixture(tmp_path: Path) -> Path:
         ),
         repository_snapshot=_test_only_repository_snapshot(),
     )
-    trace_dir = tmp_path / "trace-v6"
+    trace_dir = tmp_path / "trace-v7"
     trace_dir.mkdir()
     artifacts = {
         "publication-trace-manifest.json": bundle.manifest_bytes,
@@ -303,12 +310,17 @@ def _program(
 def _trace() -> _Day1BTraceInput:
     query_vector = {"schema_version": QUERY_VECTOR_SCHEMA, "values": [1, 0, -1]}
     query_vector_bytes = _canonical_bytes(query_vector)
+    trace_behavior_sources = (("src/dynamic_cssc/publication_traces.py", "b" * 64),)
     return _Day1BTraceInput(
         dataset_id="simplewiki-2026-07",
         dataset_release="mediawiki-history-2026-07-simplewiki-all-time",
         semantics="T1",
         source_partition=0,
         trace_source_git_sha="4" * 40,
+        trace_behavior_source_blob_sha256=trace_behavior_sources,
+        trace_behavior_source_inventory_sha256=hashlib.sha256(
+            _canonical_bytes(dict(trace_behavior_sources))
+        ).hexdigest(),
         repository_provenance_sha256="5" * 64,
         trace_manifest_sha256="6" * 64,
         mapping_sha256="7" * 64,
@@ -816,7 +828,7 @@ class _StreamingExecutor:
 def test_repository_loader_consumes_one_descriptor_bound_trace_v7_snapshot(
     tmp_path: Path,
 ) -> None:
-    trace_dir = _write_trace_v6_fixture(tmp_path)
+    trace_dir = _write_trace_v7_fixture(tmp_path)
 
     trace = day1b_module._load_repository_trace_input_for_test(trace_dir)
     manifest = json.loads((trace_dir / "publication-trace-manifest.json").read_bytes())
@@ -834,6 +846,12 @@ def test_repository_loader_consumes_one_descriptor_bound_trace_v7_snapshot(
     assert trace.source_set_sha256 == acquisition_binding["source_set_sha256"]
     assert trace.acquisition_behavior_set_sha256 == (behavior_inventory["behavior_set_sha256"])
     assert trace.acquisition_behavior_inventory_sha256 == _sha(behavior_inventory)
+    assert trace.trace_behavior_source_blob_sha256 == tuple(
+        sorted(manifest["repository_provenance"]["behavior_source_blob_sha256"].items())
+    )
+    assert trace.trace_behavior_source_inventory_sha256 == _sha(
+        manifest["repository_provenance"]["behavior_source_blob_sha256"]
+    )
     program = trace.compile_schedule(Fraction("0.1"))
     assert program.accepted_group_count == 70
     assert program.rho == Fraction("0.1")
@@ -939,20 +957,27 @@ def test_cli_exposes_only_the_two_public_paths_and_preserves_the_hold(tmp_path: 
     assert not output_dir.exists()
 
 
-def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
-    tmp_path: Path,
-) -> None:
-    executor = _StreamingExecutor(tmp_path / "controlled-scratch")
-    output_dir = tmp_path / "unit"
-
+@pytest.fixture(scope="module")
+def _complete_unit_fixture(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[PublicationDay1BUnitBundle, _StreamingExecutor]:
+    root = tmp_path_factory.mktemp("complete-day1b-unit")
+    executor = _StreamingExecutor(root / "controlled-scratch")
     bundle = _produce_publication_day1b_unit_for_test(
         trace=_trace(),
-        output_dir=output_dir,
+        output_dir=root / "unit",
         source_authority=_source(),
         candidate_catalog=_catalog(),
         resource_policy=_resource_policy(),
         execution_adapter=executor,
     )
+    return bundle, executor
+
+
+def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+) -> None:
+    bundle, executor = _complete_unit_fixture
 
     manifest = json.loads(bundle.manifest_path.read_bytes())
     fragment = json.loads(bundle.heldout_fragment_path.read_bytes())
@@ -963,8 +988,18 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
     cells = fragment["cell_bindings"]
     records = fragment["records"]
 
-    assert manifest["schema_version"] == DAY1B_UNIT_SCHEMA
-    assert fragment["schema_version"] == DAY1B_UNIT_FRAGMENT_SCHEMA
+    assert manifest["schema_version"] == (
+        "dynamic-cssc-publication-day1b-unit-private-test-fixture-v1"
+    )
+    assert manifest["artifact_variant"] == {
+        "claims_authorized": False,
+        "fixture_seam": "pytest-only-private-day1b-unit-producer",
+        "kind": "private-test-fixture",
+        "schema_version": "dynamic-cssc-publication-day1b-artifact-variant-v1",
+    }
+    assert fragment["schema_version"] == (
+        "dynamic-cssc-publication-day1b-unit-fragment-private-test-fixture-v1"
+    )
     assert trace_unit["schema_version"] == TRACE_UNIT_SCHEMA
     assert set(trace_unit) == statistics_module._TRACE_UNIT_KEYS
     assert len(cells) == 18
@@ -1051,6 +1086,28 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
         "serialization_ledger_count": 486,
     }
     assert manifest["experiment_source"]["behavior_inventory"] == (_source().behavior_inventory)
+    assert manifest["trace_source"] == {
+        "authority_state": "HOLD-no-central-TRACE-post-run-anchor",
+        "git_sha": "4" * 40,
+        "repository_provenance_sha256": "5" * 64,
+        "trace_behavior_source_blob_sha256": {"src/dynamic_cssc/publication_traces.py": "b" * 64},
+        "trace_behavior_source_inventory_sha256": _trace().trace_behavior_source_inventory_sha256,
+        "trace_central_behavior_inventory_present": False,
+        "trace_manifest_schema_version": PUBLICATION_TRACE_MANIFEST_SCHEMA,
+        "trace_manifest_sha256": "6" * 64,
+        "trace_source_authority_verified": False,
+    }
+    assert manifest["acquisition_binding"] == {
+        "acquisition_authority_state": None,
+        "acquisition_behavior_inventory_sha256": None,
+        "acquisition_behavior_set_sha256": None,
+        "acquisition_network_authority_verified": False,
+        "acquisition_transaction_sha256": None,
+        "central_behavior_inventory_present": False,
+        "schema_version": ACQUISITION_TRACE_BINDING_SCHEMA,
+        "source_bundle_sha256": "a" * 64,
+        "source_set_sha256": None,
+    }
     assert manifest["resource_policy"]["candidate_retry_count"] == 0
     assert {
         receipt["peak_resident_memory_bytes"] for receipt in manifest["cell_execution_receipts"]
@@ -1058,7 +1115,18 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
     assert {receipt["peak_scratch_bytes"] for receipt in manifest["cell_execution_receipts"]} == {
         500_000_000
     }
-    assert manifest["authority"]["publication_claim_allowed"] is False
+    assert manifest["authority"] == {
+        "state": "HOLD-pre-S1-no-central-TRACE-anchor-no-runtime-admission",
+        "local_integrity_verified": False,
+        "schedule_v2_verified": False,
+        "serialized_protocol_object_bytes_verified": False,
+        "derived_aliases_materialized": False,
+        "day1b_behavior_source_verified": False,
+        "trace_source_authority_verified": False,
+        "acquisition_network_authority_verified": False,
+        "runtime_execution_isolation_verified": False,
+        "publication_claim_allowed": False,
+    }
     assert (
         len([line for line in schedule_lines if b'"rho":{"denominator":1,"numerator":100}' in line])
         == 1
@@ -1069,6 +1137,677 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
         bundle.heldout_fragment_sha256
         == hashlib.sha256(bundle.heldout_fragment_path.read_bytes()).hexdigest()
     )
+    verified = verify_existing_directory(
+        bundle.output_dir,
+        verifier=lambda view: day1b_module._verify_day1b_unit_view(
+            view,
+            artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+        ),
+    )
+    assert verified.cardinality == (18, 252, 486, 486)
+    assert verified.manifest_sha256 == bundle.manifest_sha256
+
+
+def test_prepared_day1b_staging_installs_through_shared_descriptor_seam(
+    tmp_path: Path,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    expected = verify_existing_directory(
+        bundle.output_dir,
+        verifier=lambda view: day1b_module._verify_day1b_unit_view(
+            view,
+            artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+        ),
+    )
+    staging = tmp_path / "staging"
+    output = tmp_path / "installed"
+    old_lock = tmp_path / ".installed.publication-day1b.lock"
+    old_lock.write_bytes(b"foreign-lock-name\n")
+    shutil.copytree(bundle.output_dir, staging)
+    observed = staging.stat()
+
+    installed = day1b_module._install_verified_day1b_staging(
+        staging=staging,
+        staging_identity=(observed.st_dev, observed.st_ino),
+        output_dir=output,
+        artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+        expected_verification=expected,
+    )
+
+    assert installed == expected
+    assert output.is_dir()
+    assert not staging.exists()
+    assert old_lock.read_bytes() == b"foreign-lock-name\n"
+
+
+def _fixture_verification(bundle: PublicationDay1BUnitBundle) -> object:
+    return verify_existing_directory(
+        bundle.output_dir,
+        verifier=lambda view: day1b_module._verify_day1b_unit_view(
+            view,
+            artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+        ),
+    )
+
+
+def _rewrite_manifest_and_checksums(root: Path, manifest: dict[str, object]) -> None:
+    (root / "publication-day1b-unit-manifest.json").write_bytes(_canonical_bytes(manifest))
+    checksums = b"".join(
+        f"{hashlib.sha256((root / name).read_bytes()).hexdigest()}  {name}\n".encode()
+        for name in (
+            "publication-day1b-unit-manifest.json",
+            "publication-heldout-fragment.json",
+            "accepted-event-schedules.jsonl",
+            "serialized-object-ledgers.jsonl",
+            "serialized-object-receipts.jsonl",
+        )
+    )
+    (root / "SHA256SUMS").write_bytes(checksums)
+
+
+def _rewrite_as_production_variant(root: Path) -> None:
+    fragment_path = root / "publication-heldout-fragment.json"
+    manifest_path = root / "publication-day1b-unit-manifest.json"
+    fragment = json.loads(fragment_path.read_bytes())
+    manifest = json.loads(manifest_path.read_bytes())
+    fragment["schema_version"] = DAY1B_UNIT_FRAGMENT_SCHEMA
+    fragment_bytes = _canonical_bytes(fragment)
+    fragment_path.write_bytes(fragment_bytes)
+    fragment_sha256 = hashlib.sha256(fragment_bytes).hexdigest()
+    manifest["schema_version"] = DAY1B_UNIT_SCHEMA
+    manifest["artifact_variant"] = {
+        "claims_authorized": False,
+        "kind": "production",
+        "producer_entrypoint": "scripts/run_publication_day1b.py",
+        "schema_version": "dynamic-cssc-publication-day1b-artifact-variant-v1",
+    }
+    manifest["experiment_source"]["source_attestation"] = "repository-clean-head"
+    manifest["acquisition_binding"].update(
+        {
+            "acquisition_authority_state": "HOLD-no-repository-post-run-anchor",
+            "acquisition_behavior_inventory_sha256": "d" * 64,
+            "acquisition_behavior_set_sha256": "e" * 64,
+            "acquisition_transaction_sha256": "f" * 64,
+            "central_behavior_inventory_present": True,
+            "source_set_sha256": "0" * 64,
+        }
+    )
+    manifest["members"]["publication-heldout-fragment.json"] = {
+        "byte_count": len(fragment_bytes),
+        "sha256": fragment_sha256,
+    }
+    manifest["heldout_input_member_sha256"] = fragment_sha256
+    _rewrite_manifest_and_checksums(root, manifest)
+
+
+def test_day1b_verifier_streams_all_jsonl_without_whole_member_reads(
+    monkeypatch: pytest.MonkeyPatch,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    real_read = day1b_module.PublicationArtifactDirectory.read_regular
+
+    def reject_jsonl_read(view: object, relative_path: str) -> bytes:
+        if relative_path.endswith(".jsonl"):
+            raise AssertionError("Day1B verifier must not whole-read a JSONL member")
+        return real_read(view, relative_path)
+
+    monkeypatch.setattr(
+        day1b_module.PublicationArtifactDirectory,
+        "read_regular",
+        reject_jsonl_read,
+    )
+
+    observed = _fixture_verification(bundle)
+
+    assert observed.cardinality == (18, 252, 486, 486)
+
+
+def test_day1b_verifier_rejects_oversize_members_before_any_jsonl_read(
+    monkeypatch: pytest.MonkeyPatch,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    manifest = json.loads(bundle.manifest_path.read_bytes())
+    output_limit = manifest["resource_policy"]["output_bytes_per_unit"]
+    real_size = day1b_module.PublicationArtifactDirectory.regular_size
+    real_read = day1b_module.PublicationArtifactDirectory.read_regular
+    read_members: list[str] = []
+
+    def inflate_object_member(view: object, relative_path: str) -> int:
+        if relative_path == "serialized-object-receipts.jsonl":
+            return output_limit + 1
+        return real_size(view, relative_path)
+
+    def record_small_reads(view: object, relative_path: str) -> bytes:
+        read_members.append(relative_path)
+        if relative_path.endswith(".jsonl"):
+            raise AssertionError("oversize rejection must precede JSONL reads")
+        return real_read(view, relative_path)
+
+    monkeypatch.setattr(
+        day1b_module.PublicationArtifactDirectory,
+        "regular_size",
+        inflate_object_member,
+    )
+    monkeypatch.setattr(
+        day1b_module.PublicationArtifactDirectory,
+        "read_regular",
+        record_small_reads,
+    )
+
+    with pytest.raises(ValueError, match="resource-policy output limit"):
+        _fixture_verification(bundle)
+
+    assert read_members == [
+        "publication-day1b-unit-manifest.json",
+        "SHA256SUMS",
+    ]
+
+
+def test_day1b_verifier_rejects_a_rehashed_output_limit_above_the_hard_ceiling(
+    tmp_path: Path,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    root = tmp_path / "unbounded-policy"
+    shutil.copytree(bundle.output_dir, root)
+    manifest = json.loads((root / "publication-day1b-unit-manifest.json").read_bytes())
+    resource_policy = manifest["resource_policy"]
+    resource_policy["output_bytes_per_unit"] = 8_000_000_001
+    resource_policy["resource_policy_sha256"] = _sha(
+        {key: value for key, value in resource_policy.items() if key != "resource_policy_sha256"}
+    )
+    _rewrite_manifest_and_checksums(root, manifest)
+
+    with pytest.raises(ValueError, match="repository hard ceiling"):
+        verify_existing_directory(
+            root,
+            verifier=lambda view: day1b_module._verify_day1b_unit_view(
+                view,
+                artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value", "message"),
+    (
+        (
+            "trace_source",
+            "trace_manifest_schema_version",
+            "dynamic-cssc-publication-trace-manifest-v6",
+            "exact v7",
+        ),
+        (
+            "acquisition_binding",
+            "schema_version",
+            "dynamic-cssc-trace-acquisition-binding-v1",
+            "exact v2",
+        ),
+    ),
+)
+def test_day1b_manifest_rejects_rehashed_trace_schema_downgrades(
+    tmp_path: Path,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+    section: str,
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    root = tmp_path / "schema-downgrade"
+    shutil.copytree(bundle.output_dir, root)
+    manifest = json.loads((root / "publication-day1b-unit-manifest.json").read_bytes())
+    manifest[section][field] = value
+    _rewrite_manifest_and_checksums(root, manifest)
+
+    with pytest.raises(ValueError, match=message):
+        verify_existing_directory(
+            root,
+            verifier=lambda view: day1b_module._verify_day1b_unit_view(
+                view,
+                artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+            ),
+        )
+
+
+def test_manifest_and_fragment_variants_are_mutually_exclusive_on_reparse(
+    tmp_path: Path,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    with pytest.raises(ValueError, match="schemas cross artifact variants"):
+        verify_existing_directory(
+            bundle.output_dir,
+            verifier=lambda view: day1b_module._verify_day1b_unit_view(
+                view,
+                artifact_variant_token=day1b_module._PRODUCTION_ARTIFACT_VARIANT_TOKEN,
+            ),
+        )
+
+    projected = tmp_path / "production-projection"
+    shutil.copytree(bundle.output_dir, projected)
+    _rewrite_as_production_variant(projected)
+    verified = verify_existing_directory(
+        projected,
+        verifier=lambda view: day1b_module._verify_day1b_unit_view(
+            view,
+            artifact_variant_token=day1b_module._PRODUCTION_ARTIFACT_VARIANT_TOKEN,
+        ),
+    )
+    assert verified.artifact_variant_kind == "production"
+    with pytest.raises(ValueError, match="schemas cross artifact variants"):
+        verify_existing_directory(
+            projected,
+            verifier=lambda view: day1b_module._verify_day1b_unit_view(
+                view,
+                artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+            ),
+        )
+
+
+@pytest.mark.parametrize("destination_kind", ("file", "directory", "symlink"))
+def test_shared_day1b_install_never_replaces_an_existing_destination(
+    tmp_path: Path,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+    destination_kind: str,
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    staging = tmp_path / "staging"
+    output = tmp_path / "output"
+    shutil.copytree(bundle.output_dir, staging)
+    if destination_kind == "file":
+        output.write_bytes(b"foreign-file\n")
+    elif destination_kind == "directory":
+        output.mkdir()
+        (output / "foreign.txt").write_bytes(b"foreign-directory\n")
+    else:
+        target = tmp_path / "foreign-target"
+        target.write_bytes(b"foreign-symlink-target\n")
+        output.symlink_to(target)
+    before = output.lstat()
+    observed = staging.stat()
+
+    with pytest.raises(PublicationArtifactInstallError, match="already exists"):
+        day1b_module._install_verified_day1b_staging(
+            staging=staging,
+            staging_identity=(observed.st_dev, observed.st_ino),
+            output_dir=output,
+            artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+            expected_verification=_fixture_verification(bundle),
+        )
+
+    after = output.lstat()
+    assert (after.st_dev, after.st_ino, after.st_mode) == (
+        before.st_dev,
+        before.st_ino,
+        before.st_mode,
+    )
+    assert not staging.exists()
+    assert any(".retained-staging-" in path.name for path in tmp_path.iterdir())
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("extra-member", "member-replacement", "same-size", "rehash-splice"),
+)
+def test_shared_day1b_install_quarantines_the_whole_mutated_staging_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+    mutation: str,
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    staging = tmp_path / "staging"
+    output = tmp_path / "output"
+    shutil.copytree(bundle.output_dir, staging)
+    expected = _fixture_verification(bundle)
+    observed = staging.stat()
+    real_install = day1b_module.install_verified_directory
+
+    def mutate_then_install(*args: object, **kwargs: object) -> object:
+        if mutation == "extra-member":
+            (staging / "foreign-extra.txt").write_bytes(b"foreign-extra\n")
+        elif mutation == "member-replacement":
+            member = staging / "publication-heldout-fragment.json"
+            member.rename(staging / "owned-original-fragment.json")
+            member.write_bytes(b"x" * len(bundle.heldout_fragment_path.read_bytes()))
+        elif mutation == "same-size":
+            member = staging / "publication-day1b-unit-manifest.json"
+            value = bytearray(member.read_bytes())
+            value[len(value) // 2] ^= 1
+            member.write_bytes(bytes(value))
+        else:
+            manifest_path = staging / "publication-day1b-unit-manifest.json"
+            manifest = json.loads(manifest_path.read_bytes())
+            manifest["unit_identity"]["dataset_release"] = "valid-alternate-release"
+            _rewrite_manifest_and_checksums(staging, manifest)
+            alternate = verify_existing_directory(
+                staging,
+                verifier=lambda view: day1b_module._verify_day1b_unit_view(
+                    view,
+                    artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+                ),
+            )
+            assert alternate != expected
+        return real_install(*args, **kwargs)
+
+    monkeypatch.setattr(day1b_module, "install_verified_directory", mutate_then_install)
+    with pytest.raises(PublicationArtifactInstallError):
+        day1b_module._install_verified_day1b_staging(
+            staging=staging,
+            staging_identity=(observed.st_dev, observed.st_ino),
+            output_dir=output,
+            artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+            expected_verification=expected,
+        )
+
+    assert not output.exists()
+    retained = [path for path in tmp_path.iterdir() if ".retained-staging-" in path.name]
+    assert len(retained) == 1
+    retained_names = {path.name for path in retained[0].iterdir()}
+    if mutation == "extra-member":
+        assert "foreign-extra.txt" in retained_names
+    elif mutation == "member-replacement":
+        assert "owned-original-fragment.json" in retained_names
+
+
+def test_shared_day1b_install_preserves_a_same_name_foreign_staging_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    staging = tmp_path / "staging"
+    displaced_owned = tmp_path / "displaced-owned-staging"
+    output = tmp_path / "output"
+    shutil.copytree(bundle.output_dir, staging)
+    expected = _fixture_verification(bundle)
+    observed = staging.stat()
+    real_install = day1b_module.install_verified_directory
+
+    def replace_root_then_install(*args: object, **kwargs: object) -> object:
+        staging.rename(displaced_owned)
+        staging.mkdir()
+        (staging / "foreign.txt").write_bytes(b"foreign-root\n")
+        return real_install(*args, **kwargs)
+
+    monkeypatch.setattr(day1b_module, "install_verified_directory", replace_root_then_install)
+    with pytest.raises(PublicationArtifactInstallError):
+        day1b_module._install_verified_day1b_staging(
+            staging=staging,
+            staging_identity=(observed.st_dev, observed.st_ino),
+            output_dir=output,
+            artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+            expected_verification=expected,
+        )
+
+    assert (staging / "foreign.txt").read_bytes() == b"foreign-root\n"
+    assert displaced_owned.is_dir()
+    assert not output.exists()
+
+
+def test_shared_day1b_install_rejects_a_replaced_staging_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    live_parent = tmp_path / "live-parent"
+    live_parent.mkdir()
+    staging = live_parent / "staging"
+    output = live_parent / "output"
+    displaced_parent = tmp_path / "displaced-parent"
+    shutil.copytree(bundle.output_dir, staging)
+    expected = _fixture_verification(bundle)
+    observed = staging.stat()
+    real_install = day1b_module.install_verified_directory
+
+    def replace_parent_then_install(*args: object, **kwargs: object) -> object:
+        live_parent.rename(displaced_parent)
+        live_parent.mkdir()
+        (live_parent / "foreign.txt").write_bytes(b"foreign-parent\n")
+        return real_install(*args, **kwargs)
+
+    monkeypatch.setattr(day1b_module, "install_verified_directory", replace_parent_then_install)
+    with pytest.raises(PublicationArtifactInstallError):
+        day1b_module._install_verified_day1b_staging(
+            staging=staging,
+            staging_identity=(observed.st_dev, observed.st_ino),
+            output_dir=output,
+            artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+            expected_verification=expected,
+        )
+
+    assert (live_parent / "foreign.txt").read_bytes() == b"foreign-parent\n"
+    assert (displaced_parent / "staging").is_dir()
+    assert not output.exists()
+
+
+def test_renderer_never_writes_into_a_same_name_foreign_staging_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executor = _StreamingExecutor(tmp_path / "controlled-scratch")
+    output = tmp_path / "unit"
+    detached = tmp_path / "detached-owned-staging"
+    foreign_root: Path | None = None
+    real_write = day1b_module._write_new_file_at
+
+    def swap_before_first_write(
+        directory_fd: int,
+        name: str,
+        content: bytes,
+    ) -> tuple[str, int]:
+        nonlocal foreign_root
+        if foreign_root is None:
+            staging = next(
+                path for path in tmp_path.iterdir() if ".publication-day1b-staging-" in path.name
+            )
+            staging.rename(detached)
+            staging.mkdir()
+            foreign_root = staging
+        return real_write(directory_fd, name, content)
+
+    monkeypatch.setattr(day1b_module, "_write_new_file_at", swap_before_first_write)
+    with pytest.raises(PublicationArtifactInstallError):
+        _produce_publication_day1b_unit_for_test(
+            trace=_trace(),
+            output_dir=output,
+            source_authority=_source(),
+            candidate_catalog=_catalog(),
+            resource_policy=_resource_policy(),
+            execution_adapter=executor,
+        )
+
+    assert foreign_root is not None
+    assert list(foreign_root.iterdir()) == []
+    assert detached.is_dir()
+    assert {path.name for path in detached.iterdir()} == {
+        "SHA256SUMS",
+        "accepted-event-schedules.jsonl",
+        "publication-day1b-unit-manifest.json",
+        "publication-heldout-fragment.json",
+        "serialized-object-ledgers.jsonl",
+        "serialized-object-receipts.jsonl",
+    }
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("failure_point", ("pre-verifier", "post-verifier", "final-tree"))
+def test_shared_day1b_install_failure_points_never_publish_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+    failure_point: str,
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    expected = _fixture_verification(bundle)
+    staging = tmp_path / "staging"
+    output = tmp_path / "output"
+    shutil.copytree(bundle.output_dir, staging)
+    observed = staging.stat()
+
+    if failure_point in {"pre-verifier", "post-verifier"}:
+        real_verify = day1b_module._verify_day1b_unit_view
+        calls = 0
+
+        def fail_selected_verifier(*args: object, **kwargs: object) -> object:
+            nonlocal calls
+            calls += 1
+            if calls == (1 if failure_point == "pre-verifier" else 2):
+                raise RuntimeError(f"injected {failure_point}")
+            return real_verify(*args, **kwargs)
+
+        monkeypatch.setattr(day1b_module, "_verify_day1b_unit_view", fail_selected_verifier)
+    else:
+        real_revalidate = day1b_module.PublicationArtifactDirectory._revalidate
+        calls = 0
+
+        def fail_final_tree(*args: object, **kwargs: object) -> object:
+            nonlocal calls
+            calls += 1
+            if calls == 5:
+                raise RuntimeError("injected final tree revalidation")
+            return real_revalidate(*args, **kwargs)
+
+        monkeypatch.setattr(
+            day1b_module.PublicationArtifactDirectory,
+            "_revalidate",
+            fail_final_tree,
+        )
+
+    with pytest.raises((PublicationArtifactInstallError, RuntimeError)):
+        day1b_module._install_verified_day1b_staging(
+            staging=staging,
+            staging_identity=(observed.st_dev, observed.st_ino),
+            output_dir=output,
+            artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+            expected_verification=expected,
+        )
+
+    assert not output.exists()
+    retained = [
+        path
+        for path in tmp_path.iterdir()
+        if ".retained-staging-" in path.name or ".rejected-staging-" in path.name
+    ]
+    assert len(retained) == 1
+    assert {path.name for path in retained[0].iterdir()} == {
+        "SHA256SUMS",
+        "accepted-event-schedules.jsonl",
+        "publication-day1b-unit-manifest.json",
+        "publication-heldout-fragment.json",
+        "serialized-object-ledgers.jsonl",
+        "serialized-object-receipts.jsonl",
+    }
+
+
+def test_day1b_descriptor_read_rejects_same_inode_same_size_aba_restore(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    root = tmp_path / "aba"
+    shutil.copytree(bundle.output_dir, root)
+    manifest_path = root / "publication-day1b-unit-manifest.json"
+    original = manifest_path.read_bytes()
+    alternate = bytearray(original)
+    alternate[len(alternate) // 2] ^= 1
+    real_read = day1b_module.PublicationArtifactDirectory.read_regular
+    injected = False
+
+    def read_with_aba(
+        view: object,
+        relative_path: str,
+    ) -> bytes:
+        nonlocal injected
+        if relative_path == "publication-day1b-unit-manifest.json" and not injected:
+            injected = True
+            manifest_path.write_bytes(bytes(alternate))
+            try:
+                return real_read(view, relative_path)
+            finally:
+                manifest_path.write_bytes(original)
+        return real_read(view, relative_path)
+
+    monkeypatch.setattr(
+        day1b_module.PublicationArtifactDirectory,
+        "read_regular",
+        read_with_aba,
+    )
+    with pytest.raises(PublicationArtifactInstallError, match="snapshotted content"):
+        verify_existing_directory(
+            root,
+            verifier=lambda view: day1b_module._verify_day1b_unit_view(
+                view,
+                artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+            ),
+        )
+
+    assert manifest_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("invalid_token", (False, "production", object()))
+def test_core_rejects_noncapability_artifact_variant_before_worker_or_output(
+    tmp_path: Path,
+    invalid_token: object,
+) -> None:
+    executor = _StreamingExecutor(tmp_path / "controlled-scratch")
+    output_dir = tmp_path / "unit"
+
+    with pytest.raises(TypeError, match="artifact variant.*capability"):
+        day1b_module._produce_publication_day1b_unit(
+            trace=_trace(),
+            output_dir=output_dir,
+            source_authority=_source(),
+            candidate_catalog=_catalog(),
+            resource_policy=_resource_policy(),
+            execution_adapter=executor,
+            repository_root=Path(__file__).resolve().parents[1],
+            artifact_variant_token=invalid_token,
+        )
+
+    assert executor.calls == []
+    assert not output_dir.exists()
+
+
+def test_artifact_variants_reject_crossed_source_and_trace_provenance_before_worker(
+    tmp_path: Path,
+) -> None:
+    cases = (
+        (
+            _trace(),
+            replace(_source(), source_attestation="repository-clean-head"),
+            day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+            "fixture artifact variant",
+        ),
+        (
+            _trace(),
+            replace(_source(), source_attestation="repository-clean-head"),
+            day1b_module._PRODUCTION_ARTIFACT_VARIANT_TOKEN,
+            "production artifact variant",
+        ),
+    )
+    for index, (trace, source, token, message) in enumerate(cases):
+        executor = _StreamingExecutor(tmp_path / f"controlled-scratch-{index}")
+        output_dir = tmp_path / f"unit-{index}"
+        with pytest.raises(ValueError, match=message):
+            day1b_module._produce_publication_day1b_unit(
+                trace=trace,
+                output_dir=output_dir,
+                source_authority=source,
+                candidate_catalog=_catalog(),
+                resource_policy=_resource_policy(),
+                execution_adapter=executor,
+                repository_root=Path(__file__).resolve().parents[1],
+                artifact_variant_token=token,
+            )
+        assert executor.calls == []
+        assert not output_dir.exists()
 
 
 def test_t2_realized_set_cardinality_is_separate_from_stats_update_denominator() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import errno
 import hashlib
+import json
 import os
 import secrets
 import stat
@@ -18,6 +19,7 @@ from typing import TypeVar
 __all__ = [
     "PublicationArtifactDirectory",
     "PublicationArtifactInstallError",
+    "PublicationArtifactJsonlReceipt",
     "install_verified_directory",
     "quarantine_owned_directory",
     "verify_existing_directory",
@@ -30,6 +32,15 @@ _VIEW_TOKEN = object()
 
 class PublicationArtifactInstallError(RuntimeError):
     """A publication directory could not be installed without identity drift."""
+
+
+@dataclass(frozen=True, slots=True)
+class PublicationArtifactJsonlReceipt:
+    """Bounded complete-consumption facts for one descriptor-held JSONL member."""
+
+    sha256: str
+    line_count: int
+    byte_count: int
 
 
 @dataclass(frozen=True)
@@ -90,6 +101,35 @@ class PublicationArtifactDirectory:
         entry = self._regular_entry(relative_path)
         _require_exact_descriptor_metadata(entry, relative_path)
         return entry.size
+
+    def consume_canonical_jsonl(
+        self,
+        relative_path: str,
+        *,
+        maximum_file_bytes: int,
+        maximum_line_bytes: int,
+        consumer: Callable[[int, bytes, dict[str, object]], None],
+    ) -> PublicationArtifactJsonlReceipt:
+        """Stream one bounded canonical-object JSONL member to a synchronous consumer."""
+
+        entry = self._regular_entry(relative_path)
+        if (
+            type(maximum_file_bytes) is not int
+            or maximum_file_bytes <= 0
+            or type(maximum_line_bytes) is not int
+            or maximum_line_bytes <= 0
+            or not callable(consumer)
+        ):
+            raise TypeError("JSONL limits must be strict positive integers and consumer callable")
+        if entry.size > maximum_file_bytes:
+            raise PublicationArtifactInstallError(
+                f"artifact member {relative_path!r} exceeds its bounded JSONL file limit"
+            )
+        return _consume_canonical_jsonl(
+            entry,
+            maximum_line_bytes=maximum_line_bytes,
+            consumer=consumer,
+        )
 
     def _regular_entry(self, relative_path: str) -> _HeldEntry:
         self._require_open()
@@ -326,6 +366,104 @@ def _hash_regular(entry: _HeldEntry) -> str:
             "artifact regular file differs from its snapshotted content"
         )
     return observed
+
+
+def _canonical_json_line(line: bytes, line_index: int) -> dict[str, object]:
+    try:
+        payload = json.loads(line.decode("ascii"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise PublicationArtifactInstallError(
+            f"artifact JSONL line {line_index} is not ASCII JSON"
+        ) from error
+    if type(payload) is not dict:
+        raise PublicationArtifactInstallError(f"artifact JSONL line {line_index} is not one object")
+    try:
+        canonical = (
+            json.dumps(
+                payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("ascii")
+    except (TypeError, ValueError) as error:
+        raise PublicationArtifactInstallError(
+            f"artifact JSONL line {line_index} is not finite canonical JSON"
+        ) from error
+    if canonical != line:
+        raise PublicationArtifactInstallError(
+            f"artifact JSONL line {line_index} is not canonically encoded"
+        )
+    return payload
+
+
+def _consume_canonical_jsonl(
+    entry: _HeldEntry,
+    *,
+    maximum_line_bytes: int,
+    consumer: Callable[[int, bytes, dict[str, object]], None],
+) -> PublicationArtifactJsonlReceipt:
+    _require_exact_descriptor_metadata(entry, "artifact JSONL file")
+    hasher = hashlib.sha256()
+    pending = bytearray()
+    offset = 0
+    line_index = 0
+    try:
+        while offset < entry.size:
+            try:
+                chunk = os.pread(
+                    entry.descriptor,
+                    min(_READ_CHUNK_BYTES, entry.size - offset),
+                    offset,
+                )
+            except OSError as error:
+                raise PublicationArtifactInstallError(
+                    "publication artifact JSONL file could not be read"
+                ) from error
+            if not chunk:
+                raise PublicationArtifactInstallError(
+                    "publication artifact JSONL file ended before its snapshotted size"
+                )
+            offset += len(chunk)
+            hasher.update(chunk)
+            pending.extend(chunk)
+            while (newline := pending.find(b"\n")) >= 0:
+                line = bytes(pending[: newline + 1])
+                del pending[: newline + 1]
+                if len(line) > maximum_line_bytes:
+                    raise PublicationArtifactInstallError(
+                        f"artifact JSONL line {line_index} exceeds its bounded line limit"
+                    )
+                consumer(line_index, line, _canonical_json_line(line, line_index))
+                line_index += 1
+            if len(pending) >= maximum_line_bytes:
+                raise PublicationArtifactInstallError(
+                    f"artifact JSONL line {line_index} exceeds its bounded line limit"
+                )
+        try:
+            overflow = os.pread(entry.descriptor, 1, entry.size)
+        except OSError as error:
+            raise PublicationArtifactInstallError(
+                "publication artifact JSONL overflow check failed"
+            ) from error
+        if overflow or pending:
+            raise PublicationArtifactInstallError(
+                "publication artifact JSONL changed size or lacks a final newline"
+            )
+        observed = hasher.hexdigest()
+        if observed != entry.content_sha256:
+            raise PublicationArtifactInstallError(
+                "artifact JSONL file differs from its snapshotted content"
+            )
+        return PublicationArtifactJsonlReceipt(
+            sha256=observed,
+            line_count=line_index,
+            byte_count=offset,
+        )
+    finally:
+        _require_exact_descriptor_metadata(entry, "artifact JSONL file")
 
 
 def _require_entry_mapping(

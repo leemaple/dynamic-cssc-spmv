@@ -3,6 +3,7 @@ from __future__ import annotations
 import bz2
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from fractions import Fraction
@@ -11,7 +12,10 @@ from pathlib import Path
 import pytest
 
 import dynamic_cssc.publication_schedule as schedule_module
-from dynamic_cssc.publication_artifact_install import PublicationArtifactDirectory
+from dynamic_cssc.publication_artifact_install import (
+    PublicationArtifactDirectory,
+    PublicationArtifactInstallError,
+)
 from dynamic_cssc.publication_schedule import (
     _compile_accepted_group_program_for_test,
     _load_publication_trace_bundle_for_test,
@@ -200,6 +204,30 @@ def test_private_loader_accepts_and_rehashes_one_closed_v7_v3_fixture(tmp_path: 
         trace.query_vector_sha256
         == hashlib.sha256((trace_dir / "publication-query-vector.json").read_bytes()).hexdigest()
     )
+
+
+@pytest.mark.parametrize(
+    "loader",
+    (load_publication_trace_bundle, _load_publication_trace_bundle_for_test),
+)
+def test_descriptor_transaction_failure_never_mints_either_trace_capability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    loader: Callable[[Path], object],
+) -> None:
+    trace_dir = _write_trace_bundle(tmp_path)
+    production_issued_before = set(schedule_module._ISSUED_PRODUCTION_TRACES)
+    test_issued_before = set(schedule_module._ISSUED_TEST_TRACES)
+
+    def fail_transaction(*args: object, **kwargs: object) -> object:
+        raise PublicationArtifactInstallError("injected descriptor transaction failure")
+
+    monkeypatch.setattr(schedule_module, "verify_existing_directory", fail_transaction)
+    with pytest.raises(ValueError, match="descriptor-bound"):
+        loader(trace_dir)
+
+    assert set(schedule_module._ISSUED_PRODUCTION_TRACES) == production_issued_before
+    assert set(schedule_module._ISSUED_TEST_TRACES) == test_issued_before
 
 
 @pytest.mark.parametrize("mutation", ("member", "root", "parent", "extra", "content"))

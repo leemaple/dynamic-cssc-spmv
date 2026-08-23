@@ -438,12 +438,13 @@ class _TraceGroup:
 class ValidatedPublicationTrace:
     """Immutable result of validating and rehashing one closed trace bundle."""
 
-    trace_dir: Path | None
     dataset_id: str
     dataset_release: str
     semantics: str
     source_partition: int
     trace_source_git_sha: str
+    behavior_source_blob_sha256: tuple[tuple[str, str], ...]
+    behavior_source_inventory_sha256: str
     repository_provenance_sha256: str
     mapping_sha256: str
     accepted_raw_event_sha256: str
@@ -1790,7 +1791,6 @@ def _validate_production_trace_contract(
 def _load_publication_trace_members(
     members: dict[str, bytes],
     *,
-    trace_dir: Path | None,
     production: bool,
 ) -> ValidatedPublicationTrace:
     """Decode one already-bound exact member set without reopening any path."""
@@ -1828,6 +1828,10 @@ def _load_publication_trace_members(
     contract = _object(manifest["frozen_contract"], "frozen_contract")
     mapping = _object(manifest["mapping"], "mapping")
     provenance = _object(manifest["repository_provenance"], "repository_provenance")
+    behavior_digests = _object(
+        provenance["behavior_source_blob_sha256"],
+        "repository_provenance.behavior_source_blob_sha256",
+    )
     acquisition_binding = _object(manifest["acquisition_binding"], "acquisition_binding")
     acquisition_provenance = _object(
         acquisition_binding["repository_provenance"],
@@ -1843,12 +1847,15 @@ def _load_publication_trace_members(
     )
     eligibility = _object(manifest["eligibility"], "eligibility")
     validated = ValidatedPublicationTrace(
-        trace_dir=trace_dir,
         dataset_id=str(manifest["dataset_id"]),
         dataset_release=str(manifest["dataset_release"]),
         semantics=str(manifest["semantics"]),
         source_partition=int(manifest["source_partition"]),
         trace_source_git_sha=str(provenance["source_git_sha"]),
+        behavior_source_blob_sha256=tuple(sorted(behavior_digests.items())),
+        behavior_source_inventory_sha256=hashlib.sha256(
+            _canonical_json_bytes(behavior_digests)
+        ).hexdigest(),
         repository_provenance_sha256=str(provenance["repository_provenance_sha256"]),
         mapping_sha256=str(mapping["mapping_sha256"]),
         accepted_raw_event_sha256=_sha256(
@@ -1917,7 +1924,6 @@ def _load_publication_trace_artifact(
     members = {name: artifact.read_regular(name) for name in _BUNDLE_FILENAMES}
     return _load_publication_trace_members(
         members,
-        trace_dir=None,
         production=production,
     )
 
