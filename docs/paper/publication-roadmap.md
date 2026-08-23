@@ -324,11 +324,12 @@ is this tuning-selected procedure versus
 confirmatory family. All four semantics-by-freshness panels are still reported.
 
 Implementation checkpoint: the first-wave per-unit producer now has a tested
-closed path for 18 cells, 486 physical records, schedule-v2 RLE consumption,
-canonical serialized-object ledgers, and per-cell resource observations. This
-is E1 implementation evidence only. It cannot dispatch until the trace and
-catalog authorities, repository execution adapter, and outcome-blind resource
-policy are installed, and it is not a 30-unit publication artifact.
+closed path for 18 cells, 252 singular candidate-by-cell worker receipts, 486
+physical records, schedule-v2 RLE consumption, canonical serialized-object
+ledgers, and per-candidate-by-cell controller resource observations. This is E1
+implementation evidence only. It cannot dispatch until the trace and catalog
+authorities, repository execution adapter, and outcome-blind resource policy
+are installed, and it is not a 30-unit publication artifact.
 
 ### Phase F — statistics, mixed-circuit safety, and R4
 

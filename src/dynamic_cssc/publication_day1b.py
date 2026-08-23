@@ -14,14 +14,15 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import stat
 import tempfile
-import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from fractions import Fraction
 from pathlib import Path
-from typing import Protocol
+from typing import BinaryIO, Protocol
 
 from dynamic_cssc.day1_registry import (
     Day1CandidateCatalog,
@@ -34,6 +35,24 @@ from dynamic_cssc.evidence_compatibility import (
     EvidenceRole,
     capture_behavior_inventory,
     verify_current_role_source,
+)
+from dynamic_cssc.publication_day1b_worker_protocol import (
+    DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES,
+    Day1BClaimedWorkerEvidence,
+    Day1BWorkerCandidateSpec,
+    Day1BWorkerCellReceipt,
+    Day1BWorkerInvocationCapability,
+    Day1BWorkerPhaseAudit,
+    Day1BWorkerPhaseRange,
+    Day1BWorkerPhaseReceipt,
+    Day1BWorkerProtocolContract,
+    Day1BWorkerProtocolError,
+    Day1BWorkerResourceLimits,
+    Day1BWorkerSerializedCategoryReceipt,
+    abandon_day1b_worker_invocation,
+    canonical_day1b_worker_window_audit_bytes,
+    claim_day1b_worker_evidence,
+    consume_day1b_worker_frames,
 )
 from dynamic_cssc.publication_schedule import (
     ACCEPTED_EVENT_SCHEDULE_SCHEMA,
@@ -74,12 +93,14 @@ _MANIFEST_FILENAME = "publication-day1b-unit-manifest.json"
 _FRAGMENT_FILENAME = "publication-heldout-fragment.json"
 _SCHEDULE_FILENAME = "accepted-event-schedules.jsonl"
 _LEDGER_FILENAME = "serialized-object-ledgers.jsonl"
+_OBJECT_RECEIPT_FILENAME = "serialized-object-receipts.jsonl"
 _CHECKSUM_FILENAME = "SHA256SUMS"
 _ARTIFACT_FILENAMES = (
     _MANIFEST_FILENAME,
     _FRAGMENT_FILENAME,
     _SCHEDULE_FILENAME,
     _LEDGER_FILENAME,
+    _OBJECT_RECEIPT_FILENAME,
     _CHECKSUM_FILENAME,
 )
 _CHECKSUM_TARGETS = _ARTIFACT_FILENAMES[:-1]
@@ -110,9 +131,15 @@ class PublicationDay1BHold(RuntimeError):
 class PublicationDay1BResourcePolicy:
     """One outcome-blind resource envelope fixed before a unit is dispatched."""
 
-    wall_clock_seconds_per_cell: int
-    resident_memory_bytes: int
-    scratch_bytes_per_cell: int
+    wall_clock_seconds_per_candidate_cell: int
+    resident_memory_bytes_per_candidate_cell: int
+    scratch_bytes_per_candidate_cell: int
+    serialized_object_bytes_maximum: int
+    serialized_object_receipt_count_maximum: int
+    serialized_object_receipt_spool_bytes_maximum: int
+    serialized_payload_bytes_per_cell_maximum: int
+    worker_frame_count_maximum: int
+    controller_registered_scratch_bytes_checkpoint_maximum: int
     output_bytes_per_unit: int
     cells_per_shard: int
     max_concurrency: int
@@ -122,9 +149,15 @@ class PublicationDay1BResourcePolicy:
 
     def __post_init__(self) -> None:
         for field in (
-            "wall_clock_seconds_per_cell",
-            "resident_memory_bytes",
-            "scratch_bytes_per_cell",
+            "wall_clock_seconds_per_candidate_cell",
+            "resident_memory_bytes_per_candidate_cell",
+            "scratch_bytes_per_candidate_cell",
+            "serialized_object_bytes_maximum",
+            "serialized_object_receipt_count_maximum",
+            "serialized_object_receipt_spool_bytes_maximum",
+            "serialized_payload_bytes_per_cell_maximum",
+            "worker_frame_count_maximum",
+            "controller_registered_scratch_bytes_checkpoint_maximum",
             "output_bytes_per_unit",
             "cells_per_shard",
             "max_concurrency",
@@ -136,9 +169,15 @@ class PublicationDay1BResourcePolicy:
                 raise ValueError(f"resource_policy.{field} must be a strict nonnegative integer")
         if (
             min(
-                self.wall_clock_seconds_per_cell,
-                self.resident_memory_bytes,
-                self.scratch_bytes_per_cell,
+                self.wall_clock_seconds_per_candidate_cell,
+                self.resident_memory_bytes_per_candidate_cell,
+                self.scratch_bytes_per_candidate_cell,
+                self.serialized_object_bytes_maximum,
+                self.serialized_object_receipt_count_maximum,
+                self.serialized_object_receipt_spool_bytes_maximum,
+                self.serialized_payload_bytes_per_cell_maximum,
+                self.worker_frame_count_maximum,
+                self.controller_registered_scratch_bytes_checkpoint_maximum,
                 self.output_bytes_per_unit,
             )
             <= 0
@@ -158,56 +197,28 @@ class PublicationDay1BResourcePolicy:
         document["resource_policy_sha256"] = _digest(document)
         return document
 
-
-@dataclass(frozen=True, slots=True)
-class PublicationDay1BSerializedObject:
-    """Actual canonical protocol bytes plus their exact occurrence multiplicity."""
-
-    serialized_bytes: bytes
-    multiplicity: int = 1
-
-    def __post_init__(self) -> None:
-        if type(self.serialized_bytes) is not bytes or not self.serialized_bytes:
-            raise ValueError("serialized protocol objects must contain nonempty exact bytes")
-        if type(self.multiplicity) is not int or self.multiplicity <= 0:
-            raise ValueError("serialized protocol-object multiplicity must be positive")
-
-
-@dataclass(frozen=True, slots=True)
-class PublicationDay1BSerializedCategory:
-    """One required protocol-object category, present even when it has zero objects."""
-
-    category: str
-    objects: tuple[PublicationDay1BSerializedObject, ...]
-
-    def __post_init__(self) -> None:
-        if type(self.category) is not str or not self.category:
-            raise ValueError("serialized protocol-object category must be a nonempty string")
-        if type(self.objects) is not tuple or any(
-            type(item) is not PublicationDay1BSerializedObject for item in self.objects
-        ):
-            raise ValueError("serialized category objects must be an exact typed tuple")
-
-
-@dataclass(frozen=True, slots=True)
-class PublicationDay1BMeasurement:
-    """One positional physical execution result; candidate identity is assigned by the core."""
-
-    outcome: str
-    failure_reason: str | None
-    update_primitive_counts: tuple[int, ...] | None
-    query_primitive_counts: tuple[int, ...] | None
-    serialized_categories: tuple[PublicationDay1BSerializedCategory, ...] | None
-
-
-@dataclass(frozen=True, slots=True)
-class PublicationDay1BCellMeasurements:
-    """Exact physical roster: 13 tuning references followed by 14 held-out fixed runs."""
-
-    tuning_references: tuple[PublicationDay1BMeasurement, ...]
-    heldout_fixed: tuple[PublicationDay1BMeasurement, ...]
-    peak_resident_memory_bytes: int
-    peak_scratch_bytes: int
+    def to_worker_limits(self) -> Day1BWorkerResourceLimits:
+        return Day1BWorkerResourceLimits(
+            wall_clock_ns_per_candidate_cell=(
+                self.wall_clock_seconds_per_candidate_cell * 1_000_000_000
+            ),
+            resident_memory_bytes_per_candidate_cell=(
+                self.resident_memory_bytes_per_candidate_cell
+            ),
+            scratch_bytes_per_candidate_cell=self.scratch_bytes_per_candidate_cell,
+            serialized_object_bytes_maximum=self.serialized_object_bytes_maximum,
+            serialized_object_receipt_count_maximum=(self.serialized_object_receipt_count_maximum),
+            serialized_object_receipt_spool_bytes_maximum=(
+                self.serialized_object_receipt_spool_bytes_maximum
+            ),
+            serialized_payload_bytes_per_cell_maximum=(
+                self.serialized_payload_bytes_per_cell_maximum
+            ),
+            worker_frame_count_maximum=self.worker_frame_count_maximum,
+            controller_registered_scratch_bytes_checkpoint_maximum=(
+                self.controller_registered_scratch_bytes_checkpoint_maximum
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,19 +270,38 @@ class _Day1BSourceAuthority:
 
 
 class _Day1BExecutionAdapter(Protocol):
-    """Consume one cell as a stream and return the exact positional physical roster."""
+    """Launch exactly one canonical candidate×cell worker invocation.
 
-    def execute_cell(
+    The adapter owns every minted invocation capability until an exact
+    :class:`_Day1BWorkerLaunch` returns. It must abandon that capability on every
+    pre-return exception; after return, ownership transfers to the core.
+    """
+
+    def execute_candidate_cell(
         self,
         *,
         windows: Iterator[ExactPublicationWindow],
-        trace: _Day1BTraceInput,
-        freshness: Fraction,
-        rho: Fraction,
-        candidates: tuple[RegisteredCandidate, ...],
-        query_vector: tuple[int, ...],
-        resource_policy: PublicationDay1BResourcePolicy,
-    ) -> PublicationDay1BCellMeasurements: ...
+        contract_seed: _Day1BWorkerContractSeed,
+    ) -> _Day1BWorkerLaunch: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _Day1BWorkerLaunch:
+    """Controller output for one candidate×cell; never a caller-minted receipt."""
+
+    contract: Day1BWorkerProtocolContract
+    frame_chunks: Iterable[bytes]
+    invocation_capability: Day1BWorkerInvocationCapability
+
+    def __post_init__(self) -> None:
+        if type(self.contract) is not Day1BWorkerProtocolContract:
+            raise TypeError("worker launch requires one exact bound contract")
+        if type(self.invocation_capability) is not Day1BWorkerInvocationCapability:
+            raise TypeError("worker launch requires one exact invocation capability")
+        try:
+            iter(self.frame_chunks)
+        except TypeError as error:
+            raise TypeError("worker launch frame chunks must be iterable") from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -283,17 +313,39 @@ class PublicationDay1BUnitBundle:
     heldout_fragment_path: Path
     schedule_path: Path
     serialization_ledger_path: Path
+    serialized_object_receipt_path: Path
     checksums_path: Path
     manifest_sha256: str
     heldout_fragment_sha256: str
     schedule_sha256: str
     serialization_ledger_sha256: str
+    serialized_object_receipt_sha256: str
     checksums_sha256: str
 
 
 @dataclass(frozen=True, slots=True)
 class _CellAudit:
-    phase_receipts: tuple[dict[str, object], ...]
+    phase_audits: tuple[Day1BWorkerPhaseAudit, ...]
+
+    @property
+    def phase_receipts(self) -> tuple[dict[str, object], ...]:
+        return tuple(
+            {
+                "phase": audit.phase,
+                "accepted_event_group_range": [
+                    audit.accepted_group_start,
+                    audit.accepted_group_end,
+                ],
+                "accepted_event_group_count": (
+                    audit.accepted_group_end - audit.accepted_group_start
+                ),
+                "realized_publication_window_count": audit.realized_window_count,
+                "realized_set_count": audit.realized_set_count,
+                "realized_query_count": audit.realized_query_count,
+                "consumed_window_audit_stream_sha256": (audit.consumed_window_audit_stream_sha256),
+            }
+            for audit in self.phase_audits
+        )
 
 
 class _AuditedWindowStream:
@@ -303,6 +355,7 @@ class _AuditedWindowStream:
         "_expected_index",
         "_exhausted",
         "_iterator",
+        "_phase_hashers",
         "_phase_ranges",
         "_phase_stats",
         "_rho",
@@ -320,6 +373,7 @@ class _AuditedWindowStream:
             phase.name: {"window_count": 0, "set_count": 0, "query_count": 0}
             for phase in phase_ranges
         }
+        self._phase_hashers = {phase.name: hashlib.sha256() for phase in phase_ranges}
         self._rho = rho
         self._expected_index = 0
         self._exhausted = False
@@ -353,6 +407,23 @@ class _AuditedWindowStream:
         stats["window_count"] += 1
         stats["set_count"] += window.set_count
         stats["query_count"] += window.query_count
+        self._phase_hashers[window.phase].update(
+            canonical_day1b_worker_window_audit_bytes(
+                index=window.index,
+                phase=window.phase,
+                accepted_group_start=window.accepted_group_start,
+                accepted_group_end=window.accepted_group_end,
+                start_time=window.start_time,
+                end_time=window.end_time,
+                set_count=window.set_count,
+                updates=tuple(
+                    (update.row, update.col, update.before, update.after)
+                    for update in window.updates
+                ),
+                query_count=window.query_count,
+                reason=window.reason,
+            )
+        )
         return window
 
     def finish(self) -> _CellAudit:
@@ -363,7 +434,7 @@ class _AuditedWindowStream:
                 pass
             else:
                 raise ValueError("execution adapter did not consume the complete window stream")
-        receipts: list[dict[str, object]] = []
+        receipts: list[Day1BWorkerPhaseAudit] = []
         for phase_name in ("warmup", "tuning", "heldout"):
             phase = self._phase_ranges[phase_name]
             stats = self._phase_stats[phase_name]
@@ -371,14 +442,17 @@ class _AuditedWindowStream:
             if stats["query_count"] != expected_query_count:
                 raise ValueError("realized phase QUERY count does not match the exact RLE schedule")
             receipts.append(
-                {
-                    "phase": phase_name,
-                    "accepted_event_group_range": [phase.start, phase.end],
-                    "accepted_event_group_count": phase.end - phase.start,
-                    "realized_publication_window_count": stats["window_count"],
-                    "realized_set_count": stats["set_count"],
-                    "realized_query_count": stats["query_count"],
-                }
+                Day1BWorkerPhaseAudit(
+                    phase=phase_name,
+                    accepted_group_start=phase.start,
+                    accepted_group_end=phase.end,
+                    realized_window_count=stats["window_count"],
+                    realized_set_count=stats["set_count"],
+                    realized_query_count=stats["query_count"],
+                    consumed_window_audit_stream_sha256=(
+                        self._phase_hashers[phase_name].hexdigest()
+                    ),
+                )
             )
         return _CellAudit(tuple(receipts))
 
@@ -634,11 +708,12 @@ def _primitive_count_document(value: tuple[int, ...] | None, field: str) -> dict
 
 
 def _serialized_ledger(
-    categories: tuple[PublicationDay1BSerializedCategory, ...] | None,
+    categories: tuple[Day1BWorkerSerializedCategoryReceipt, ...] | None,
     *,
     phase: str,
     candidate_id: str,
     cell_binding_sha256: str,
+    worker_object_receipt_spool_sha256: str,
 ) -> tuple[dict[str, object], int, int]:
     if type(categories) is not tuple:
         raise ValueError("complete outcomes require the exact serialized-object category ledger")
@@ -647,6 +722,10 @@ def _serialized_ledger(
     )
     if tuple(category.category for category in categories) != expected_categories:
         raise ValueError("serialized-object categories must be exact, complete, and canonical")
+    _require_sha256(
+        worker_object_receipt_spool_sha256,
+        "worker object-receipt spool digest",
+    )
     rows: list[dict[str, object]] = []
     totals = {"update": 0, "query": 0, "one-time": 0}
     for category, (expected_name, transaction) in zip(
@@ -654,46 +733,25 @@ def _serialized_ledger(
         SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
         strict=True,
     ):
-        if category.category != expected_name:
+        if (
+            type(category) is not Day1BWorkerSerializedCategoryReceipt
+            or category.category != expected_name
+            or category.transaction != transaction
+        ):
             raise ValueError("serialized-object category order changed")
-        objects: list[dict[str, object]] = []
-        category_bytes = 0
-        category_objects = 0
-        for ordinal, item in enumerate(category.objects):
-            raw = item.serialized_bytes
-            charged = len(raw) * item.multiplicity
-            category_bytes += charged
-            category_objects += item.multiplicity
-            objects.append(
-                {
-                    "serialization_equivalence_class_ordinal": ordinal,
-                    "serialized_byte_count": len(raw),
-                    "serialized_sha256": hashlib.sha256(raw).hexdigest(),
-                    "multiplicity": item.multiplicity,
-                    "charged_byte_count": charged,
-                }
-            )
-        totals[transaction] += category_bytes
-        rows.append(
-            {
-                "category": expected_name,
-                "transaction": transaction,
-                "serialization_equivalence_class_count": len(objects),
-                "protocol_object_count": category_objects,
-                "charged_byte_count": category_bytes,
-                "raw_serialized_objects": objects,
-                "raw_serialized_object_digest_stream_sha256": _digest(objects),
-            }
-        )
+        totals[transaction] += category.charged_byte_count
+        rows.append(category.to_document())
     ledger: dict[str, object] = {
         "schema_version": DAY1B_SERIALIZATION_LEDGER_SCHEMA,
         "cell_binding_sha256": cell_binding_sha256,
         "phase": phase,
         "candidate_id": candidate_id,
         "byte_derivation": (
-            "sum(actual-canonical-serialized-byte-length-times-exact-occurrence-multiplicity)"
+            "worker-streamed-canonical-byte-length-times-exact-occurrence-multiplicity"
         ),
         "ciphertext_count_used_as_byte_proxy": False,
+        "raw_serialized_protocol_bytes_retained": False,
+        "worker_object_receipt_spool_sha256": (worker_object_receipt_spool_sha256),
         "categories": rows,
         "update_serialized_bytes": totals["update"],
         "query_serialized_bytes": totals["query"],
@@ -703,7 +761,7 @@ def _serialized_ledger(
 
 
 def _physical_record_and_ledger(
-    measurement: PublicationDay1BMeasurement,
+    measurement: Day1BWorkerPhaseReceipt,
     *,
     trace: _Day1BTraceInput,
     cell: Mapping[str, object],
@@ -711,9 +769,14 @@ def _physical_record_and_ledger(
     candidate_id: str,
     candidate_role: str,
     selection_source: str,
+    worker_object_receipt_spool_sha256: str,
 ) -> tuple[dict[str, object], dict[str, object]]:
-    if type(measurement) is not PublicationDay1BMeasurement:
+    if type(measurement) is not Day1BWorkerPhaseReceipt:
         raise TypeError("execution adapter measurements must use the exact typed result")
+    _require_sha256(
+        worker_object_receipt_spool_sha256,
+        "worker object-receipt spool digest",
+    )
     if measurement.outcome not in _OUTCOMES:
         raise ValueError("measurement outcome is outside the closed taxonomy")
     counts = (
@@ -722,7 +785,7 @@ def _physical_record_and_ledger(
         else (cell["heldout_update_count"], cell["heldout_query_count"])
     )
     if measurement.outcome == "complete":
-        if measurement.failure_reason is not None:
+        if measurement.failure_code is not None:
             raise ValueError("complete outcomes must not carry a failure reason")
         update_counts = _primitive_count_document(
             measurement.update_primitive_counts,
@@ -737,9 +800,10 @@ def _physical_record_and_ledger(
             phase=phase,
             candidate_id=candidate_id,
             cell_binding_sha256=str(cell["cell_binding_sha256"]),
+            worker_object_receipt_spool_sha256=(worker_object_receipt_spool_sha256),
         )
     else:
-        if type(measurement.failure_reason) is not str or not measurement.failure_reason.strip():
+        if type(measurement.failure_code) is not str or not measurement.failure_code.strip():
             raise ValueError("incomplete outcomes require a nonempty failure reason")
         if any(
             value is not None
@@ -761,6 +825,8 @@ def _physical_record_and_ledger(
             "candidate_id": candidate_id,
             "byte_derivation": None,
             "ciphertext_count_used_as_byte_proxy": False,
+            "raw_serialized_protocol_bytes_retained": False,
+            "worker_object_receipt_spool_sha256": (worker_object_receipt_spool_sha256),
             "categories": None,
             "update_serialized_bytes": None,
             "query_serialized_bytes": None,
@@ -780,7 +846,7 @@ def _physical_record_and_ledger(
         "selection_source": selection_source,
         "cell_binding_sha256": cell["cell_binding_sha256"],
         "outcome": measurement.outcome,
-        "failure_reason": measurement.failure_reason,
+        "failure_reason": measurement.failure_code,
         "update_count": counts[0],
         "query_count": counts[1],
         "update_primitive_counts": update_counts,
@@ -793,74 +859,294 @@ def _physical_record_and_ledger(
     return record, ledger
 
 
-def _records_for_cell(
-    result: PublicationDay1BCellMeasurements,
+def _records_for_candidate_cell(
+    result: Day1BWorkerCellReceipt,
     *,
     trace: _Day1BTraceInput,
     cell: Mapping[str, object],
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    if type(result) is not PublicationDay1BCellMeasurements:
-        raise TypeError("execution adapter must return exact Day1B cell measurements")
-    if type(result.tuning_references) is not tuple or len(result.tuning_references) != 13:
-        raise ValueError("each cell must return exactly 13 tuning-reference executions")
-    if type(result.heldout_fixed) is not tuple or len(result.heldout_fixed) != 14:
-        raise ValueError("each cell must return exactly 14 held-out fixed executions")
+    if type(result) is not Day1BWorkerCellReceipt:
+        raise TypeError("decoder must return exact candidate-cell evidence")
+    candidate = result.candidate
+    if candidate.candidate_id not in FIXED_CANDIDATE_IDS:
+        raise ValueError("candidate-cell receipt identity changed")
+    is_ablation = candidate.candidate_id == ABLATION_CANDIDATE_ID
+    expected_role = "ablation" if is_ablation else "reference"
+    if candidate.candidate_role != expected_role:
+        raise ValueError("candidate-cell receipt role changed")
+    if candidate.terminal_outcome is None:
+        if tuple(phase.phase for phase in candidate.phases) != (
+            "warmup",
+            "tuning-prefix",
+            "held-out",
+        ):
+            raise ValueError("candidate-cell receipt phase coverage changed")
+        phase_measurements = {phase.phase: phase for phase in candidate.phases}
+        retained_phases = (
+            result.candidate.phases[1:]
+            if expected_role == "reference"
+            else result.candidate.phases[2:]
+        )
+        for retained_index, retained_phase in enumerate(retained_phases):
+            if not retained_phase.retained_measurement:
+                raise ValueError("candidate retained phase role changed")
+            if retained_phase.outcome != "complete":
+                continue
+            if type(retained_phase.serialized_categories) is not tuple:
+                raise ValueError("complete retained phase lost its serialized inventory")
+            one_time = next(
+                (
+                    category
+                    for category in retained_phase.serialized_categories
+                    if category.category == "one-time-evaluation-key-material"
+                ),
+                None,
+            )
+            if one_time is None:
+                raise ValueError("candidate retained phase lost its one-time category")
+            expected_count = int(retained_index == 0)
+            if (
+                one_time.serialization_equivalence_class_count != expected_count
+                or one_time.protocol_object_count != expected_count
+                or (one_time.charged_byte_count > 0) != bool(expected_count)
+            ):
+                raise ValueError(
+                    "one-time evaluation-key inventory must occur exactly once in the "
+                    "first retained phase"
+                )
+    else:
+        if (
+            candidate.phases
+            or candidate.terminal_outcome not in _OUTCOMES - {"complete", "ineligible"}
+            or type(candidate.terminal_failure_code) is not str
+            or not candidate.terminal_failure_code
+            or candidate.receipt_origin != "controller-terminal-null-projection"
+        ):
+            raise ValueError("candidate-cell terminal receipt is not one closed null projection")
+        phase_measurements = {
+            phase: Day1BWorkerPhaseReceipt(
+                phase=phase,
+                retained_measurement=True,
+                outcome=candidate.terminal_outcome,
+                failure_code=candidate.terminal_failure_code,
+                update_primitive_counts=None,
+                query_primitive_counts=None,
+                serialized_categories=None,
+                worker_declared_phase_audit=None,
+            )
+            for phase in (
+                ("tuning-prefix", "held-out") if expected_role == "reference" else ("held-out",)
+            )
+        }
     records: list[dict[str, object]] = []
     ledgers: list[dict[str, object]] = []
-    for measurement, candidate_id in zip(
-        result.tuning_references,
-        REFERENCE_CANDIDATE_IDS,
-        strict=True,
-    ):
+    if expected_role == "reference":
         record, ledger = _physical_record_and_ledger(
-            measurement,
+            phase_measurements["tuning-prefix"],
             trace=trace,
             cell=cell,
             phase="tuning-prefix",
-            candidate_id=candidate_id,
+            candidate_id=candidate.candidate_id,
             candidate_role="reference",
             selection_source="fixed-reference-tuning-prefix",
+            worker_object_receipt_spool_sha256=(result.object_receipt_spool_sha256),
         )
         records.append(record)
         ledgers.append(ledger)
-    for measurement, candidate_id in zip(
-        result.heldout_fixed,
-        FIXED_CANDIDATE_IDS,
-        strict=True,
-    ):
-        is_ablation = candidate_id == ABLATION_CANDIDATE_ID
-        record, ledger = _physical_record_and_ledger(
-            measurement,
-            trace=trace,
-            cell=cell,
-            phase="held-out",
-            candidate_id=candidate_id,
-            candidate_role="ablation" if is_ablation else "reference",
-            selection_source=(
-                "fixed-ablation-held-out" if is_ablation else "fixed-reference-held-out"
-            ),
-        )
-        records.append(record)
-        ledgers.append(ledger)
+    record, ledger = _physical_record_and_ledger(
+        phase_measurements["held-out"],
+        trace=trace,
+        cell=cell,
+        phase="held-out",
+        candidate_id=candidate.candidate_id,
+        candidate_role=expected_role,
+        selection_source=("fixed-ablation-held-out" if is_ablation else "fixed-reference-held-out"),
+        worker_object_receipt_spool_sha256=(result.object_receipt_spool_sha256),
+    )
+    records.append(record)
+    ledgers.append(ledger)
     return records, ledgers
 
 
-def _validate_cell_resource_observations(
-    result: PublicationDay1BCellMeasurements,
-    resource_policy: PublicationDay1BResourcePolicy,
-) -> None:
-    if type(result.peak_resident_memory_bytes) is not int or (
-        result.peak_resident_memory_bytes < 0
-    ):
-        raise ValueError(
-            "cell peak resident-memory observation must be a strict nonnegative integer"
+class _UnitObjectReceiptArchive:
+    """Disk-backed unit spool and cross-invocation ADR-0005 no-reuse registry."""
+
+    def __init__(self) -> None:
+        self._file: BinaryIO = tempfile.TemporaryFile(mode="w+b")  # noqa: SIM115
+        self._registry = sqlite3.connect("")
+        self._registry.execute("PRAGMA journal_mode=OFF")
+        self._registry.execute("PRAGMA synchronous=OFF")
+        self._registry.execute("PRAGMA temp_store=FILE")
+        self._registry.execute(
+            "CREATE TABLE f1m_bindings (query_id TEXT NOT NULL, version_id TEXT NOT NULL, "
+            "output_plan_digest TEXT NOT NULL, component_id TEXT NOT NULL, "
+            "output_block_id TEXT NOT NULL, PRIMARY KEY(query_id, version_id, "
+            "output_plan_digest, component_id, output_block_id)) WITHOUT ROWID"
         )
-    if type(result.peak_scratch_bytes) is not int or result.peak_scratch_bytes < 0:
-        raise ValueError("cell peak scratch-byte observation must be a strict nonnegative integer")
-    if result.peak_resident_memory_bytes > resource_policy.resident_memory_bytes:
-        raise PublicationDay1BHold("Day1B cell exceeded the frozen resident-memory limit")
-    if result.peak_scratch_bytes > resource_policy.scratch_bytes_per_cell:
-        raise PublicationDay1BHold("Day1B cell exceeded the frozen scratch-byte limit")
+        self._registry.execute(
+            "CREATE TABLE f1m_payload_digests (digest TEXT PRIMARY KEY NOT NULL) WITHOUT ROWID"
+        )
+        self._registry.execute(
+            "CREATE TABLE f1m_batch_plans (digest TEXT PRIMARY KEY NOT NULL) WITHOUT ROWID"
+        )
+        self._ledger_identity_sha256: str | None = None
+        self._ledger_root_after_preparation_sha256: str | None = None
+        self._hasher = hashlib.sha256()
+        self.line_count = 0
+        self.byte_count = 0
+        self._sealed = False
+
+    def accept_candidate_receipt(self, receipt: Day1BWorkerCellReceipt) -> None:
+        if self._sealed or type(receipt) is not Day1BWorkerCellReceipt:
+            raise ValueError("unit ledger registry requires one exact unsealed candidate receipt")
+        identity = _require_sha256(
+            receipt.pre_dispatch_ledger_identity_sha256,
+            "candidate-cell ledger identity",
+        )
+        root_before = _require_sha256(
+            receipt.pre_dispatch_ledger_root_before_sha256,
+            "candidate-cell ledger root before",
+        )
+        root_after = _require_sha256(
+            receipt.pre_dispatch_ledger_root_after_preparation_sha256,
+            "candidate-cell ledger root after preparation",
+        )
+        batch_plan = _require_sha256(
+            receipt.pre_dispatch_batch_plan_sha256,
+            "candidate-cell batch plan",
+        )
+        if self._ledger_identity_sha256 is None:
+            self._ledger_identity_sha256 = identity
+        elif identity != self._ledger_identity_sha256:
+            raise ValueError("candidate-cell invocations splice different F1-M ledgers")
+        if (
+            self._ledger_root_after_preparation_sha256 is not None
+            and root_before != self._ledger_root_after_preparation_sha256
+        ):
+            raise ValueError("candidate-cell F1-M ledger transition chain is not contiguous")
+        try:
+            self._registry.execute(
+                "INSERT INTO f1m_batch_plans(digest) VALUES (?)",
+                (batch_plan,),
+            )
+        except sqlite3.IntegrityError as error:
+            raise ValueError(
+                "candidate-cell F1-M batch transition plan was reused within the unit"
+            ) from error
+        self._ledger_root_after_preparation_sha256 = root_after
+
+    def write(self, line: bytes) -> int:
+        if self._sealed or type(line) is not bytes or not line.endswith(b"\n"):
+            raise ValueError("unit object-receipt archive only accepts canonical JSON lines")
+        try:
+            document = json.loads(line.decode("ascii"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError("worker object receipt line is not canonical ASCII JSON") from error
+        if type(document) is not dict or canonical_json_bytes(document) != line:
+            raise ValueError("worker object receipt line is not canonical closed JSON")
+        category = document.get("category")
+        serialized_object = document.get("object")
+        if type(category) is not str or type(serialized_object) is not dict:
+            raise ValueError("worker object receipt line lost category/object identity")
+        f1m_binding = serialized_object.get("f1m_binding")
+        if category in DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES:
+            if type(f1m_binding) is not dict:
+                raise ValueError("F1-M object receipt lost its ADR-0005 binding")
+            no_reuse_key = tuple(
+                f1m_binding.get(field)
+                for field in (
+                    "query_id",
+                    "version_id",
+                    "output_plan_digest",
+                    "component_id",
+                    "output_block_id",
+                )
+            )
+            if any(type(value) is not str or not value for value in no_reuse_key):
+                raise ValueError("F1-M object receipt binding tuple is malformed")
+            try:
+                self._registry.execute(
+                    "INSERT INTO f1m_bindings VALUES (?, ?, ?, ?, ?)",
+                    no_reuse_key,
+                )
+            except sqlite3.IntegrityError as error:
+                raise ValueError(
+                    "F1-M ADR-0005 binding was reused across candidate-cell invocations"
+                ) from error
+            payload_digest = _require_sha256(
+                serialized_object.get("serialized_sha256"),
+                "F1-M serialized payload diagnostic digest",
+            )
+            try:
+                self._registry.execute(
+                    "INSERT INTO f1m_payload_digests(digest) VALUES (?)",
+                    (payload_digest,),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ValueError(
+                    "F1-M serialized payload digest repeated across the Day1B unit"
+                ) from error
+        elif f1m_binding is not None:
+            raise ValueError("non-F1-M object receipt carries an F1-M binding")
+        written = self._file.write(line)
+        if written != len(line):
+            raise OSError("unit object-receipt archive write was incomplete")
+        self._hasher.update(line)
+        self.line_count += 1
+        self.byte_count += len(line)
+        return written
+
+    def seal(self) -> tuple[str, int, int]:
+        self._file.flush()
+        self._sealed = True
+        return self._hasher.hexdigest(), self.line_count, self.byte_count
+
+    def copy_to(self, destination: BinaryIO) -> tuple[str, int, int]:
+        if not self._sealed:
+            raise RuntimeError("unit object-receipt archive is not sealed")
+        self._file.seek(0)
+        hasher = hashlib.sha256()
+        line_count = 0
+        byte_count = 0
+        while line := self._file.readline():
+            written = destination.write(line)
+            if written != len(line):
+                raise OSError("installed object-receipt archive write was incomplete")
+            hasher.update(line)
+            line_count += 1
+            byte_count += len(line)
+        observed = (hasher.hexdigest(), line_count, byte_count)
+        expected = (self._hasher.hexdigest(), self.line_count, self.byte_count)
+        if observed != expected:
+            raise RuntimeError("unit object-receipt archive changed after sealing")
+        return observed
+
+    def close(self) -> None:
+        self._registry.close()
+        self._file.close()
+
+
+def _append_candidate_object_receipts(
+    evidence: Day1BClaimedWorkerEvidence,
+    archive: _UnitObjectReceiptArchive,
+) -> None:
+    """Revalidate one sealed invocation spool, then append its canonical lines."""
+
+    with tempfile.TemporaryFile(mode="w+b") as candidate_copy:
+        copied_sha256 = evidence.copy_object_receipts_to(candidate_copy)
+        if copied_sha256 != evidence.receipt.object_receipt_spool_sha256:
+            raise Day1BWorkerProtocolError(
+                "candidate object-receipt copy differs from its sealed digest"
+            )
+        candidate_copy.seek(0)
+        copied_line_count = 0
+        while line := candidate_copy.readline():
+            archive.write(line)
+            copied_line_count += 1
+        if copied_line_count != evidence.object_receipt_line_count:
+            raise Day1BWorkerProtocolError(
+                "candidate object-receipt copy differs from its sealed line count"
+            )
 
 
 def _write_new_file(path: Path, content: bytes) -> tuple[str, int]:
@@ -877,6 +1163,7 @@ def _atomic_install(
     repository_root: Path,
     fragment: Mapping[str, object],
     ledgers: tuple[Mapping[str, object], ...],
+    object_receipt_archive: _UnitObjectReceiptArchive,
     programs: tuple[_PublicationScheduleAdapter, ...],
     manifest_base: Mapping[str, object],
     resource_policy: PublicationDay1BResourcePolicy,
@@ -906,6 +1193,12 @@ def _atomic_install(
         )
         ledger_bytes = b"".join(canonical_json_bytes(ledger) for ledger in ledgers)
         ledger_sha, ledger_size = _write_new_file(staging / _LEDGER_FILENAME, ledger_bytes)
+        with (staging / _OBJECT_RECEIPT_FILENAME).open("xb") as handle:
+            object_receipt_sha, object_receipt_lines, object_receipt_size = (
+                object_receipt_archive.copy_to(handle)
+            )
+            handle.flush()
+            os.fsync(handle.fileno())
 
         schedule_hasher = hashlib.sha256()
         schedule_size = 0
@@ -948,6 +1241,11 @@ def _atomic_install(
             _FRAGMENT_FILENAME: {"sha256": fragment_sha, "byte_count": fragment_size},
             _SCHEDULE_FILENAME: {"sha256": schedule_sha, "byte_count": schedule_size},
             _LEDGER_FILENAME: {"sha256": ledger_sha, "byte_count": ledger_size},
+            _OBJECT_RECEIPT_FILENAME: {
+                "sha256": object_receipt_sha,
+                "byte_count": object_receipt_size,
+                "jsonl_line_count": object_receipt_lines,
+            },
         }
         manifest = {
             **manifest_base,
@@ -965,6 +1263,7 @@ def _atomic_install(
             _FRAGMENT_FILENAME: (fragment_sha, fragment_size),
             _SCHEDULE_FILENAME: (schedule_sha, schedule_size),
             _LEDGER_FILENAME: (ledger_sha, ledger_size),
+            _OBJECT_RECEIPT_FILENAME: (object_receipt_sha, object_receipt_size),
         }
         checksum_bytes = "".join(
             f"{member_bytes[name][0]}  {name}\n" for name in _CHECKSUM_TARGETS
@@ -991,11 +1290,13 @@ def _atomic_install(
             heldout_fragment_path=output_dir / _FRAGMENT_FILENAME,
             schedule_path=output_dir / _SCHEDULE_FILENAME,
             serialization_ledger_path=output_dir / _LEDGER_FILENAME,
+            serialized_object_receipt_path=output_dir / _OBJECT_RECEIPT_FILENAME,
             checksums_path=output_dir / _CHECKSUM_FILENAME,
             manifest_sha256=manifest_sha,
             heldout_fragment_sha256=fragment_sha,
             schedule_sha256=schedule_sha,
             serialization_ledger_sha256=ledger_sha,
+            serialized_object_receipt_sha256=object_receipt_sha,
             checksums_sha256=checksums_sha,
         )
     finally:
@@ -1003,6 +1304,154 @@ def _atomic_install(
             os.close(lock_fd)
             lock_path.unlink(missing_ok=True)
         shutil.rmtree(staging, ignore_errors=True)
+
+
+@dataclass(frozen=True, slots=True)
+class _Day1BWorkerContractSeed:
+    """Core-owned candidate×cell facts; the adapter may bind only measured expectations."""
+
+    invocation_id: str
+    trace_manifest_sha256: str
+    event_schedule_sha256: str
+    query_vector_sha256: str
+    candidate_catalog_sha256: str
+    resource_policy_sha256: str
+    freshness: str
+    rho: str
+    candidate: Day1BWorkerCandidateSpec
+    phase_ranges: tuple[Day1BWorkerPhaseRange, ...]
+    resource_limits: Day1BWorkerResourceLimits
+
+    def bind(
+        self,
+        *,
+        expected_f1m_binding_set_sha256: str,
+        expected_f1m_binding_count: int,
+        expected_serialized_equivalence_class_count: int,
+        expected_f1m_cardinality_derivation_root_sha256: str,
+    ) -> Day1BWorkerProtocolContract:
+        return Day1BWorkerProtocolContract(
+            invocation_id=self.invocation_id,
+            trace_manifest_sha256=self.trace_manifest_sha256,
+            event_schedule_sha256=self.event_schedule_sha256,
+            query_vector_sha256=self.query_vector_sha256,
+            candidate_catalog_sha256=self.candidate_catalog_sha256,
+            resource_policy_sha256=self.resource_policy_sha256,
+            freshness=self.freshness,
+            rho=self.rho,
+            candidate=self.candidate,
+            phase_ranges=self.phase_ranges,
+            primitive_names=PRIMITIVE_NAMES,
+            serialized_categories=SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
+            f1m_binding_categories=DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES,
+            expected_f1m_binding_set_sha256=expected_f1m_binding_set_sha256,
+            expected_f1m_binding_count=expected_f1m_binding_count,
+            expected_serialized_equivalence_class_count=(
+                expected_serialized_equivalence_class_count
+            ),
+            expected_f1m_cardinality_derivation_root_sha256=(
+                expected_f1m_cardinality_derivation_root_sha256
+            ),
+            resource_limits=self.resource_limits,
+        )
+
+    def require_exact_bound_contract(self, contract: Day1BWorkerProtocolContract) -> None:
+        if type(contract) is not Day1BWorkerProtocolContract:
+            raise TypeError("worker launch contract must be exact typed protocol input")
+        expected = self.bind(
+            expected_f1m_binding_set_sha256=contract.expected_f1m_binding_set_sha256,
+            expected_f1m_binding_count=contract.expected_f1m_binding_count,
+            expected_serialized_equivalence_class_count=(
+                contract.expected_serialized_equivalence_class_count
+            ),
+            expected_f1m_cardinality_derivation_root_sha256=(
+                contract.expected_f1m_cardinality_derivation_root_sha256
+            ),
+        )
+        if contract != expected:
+            raise Day1BWorkerProtocolError(
+                "worker launch retargeted repository-owned candidate-cell contract facts"
+            )
+
+
+def _candidate_policy_digest(candidate: RegisteredCandidate) -> str:
+    return _digest(
+        {
+            "candidate_id": candidate.candidate_id,
+            "candidate_role": candidate.role,
+            "packed_coo_segment_capacity": candidate.packed_coo_segment_capacity,
+            "periodic_repack_windows": candidate.periodic_repack_windows,
+            "reserved_slack_beta": (
+                None
+                if candidate.reserved_slack_beta is None
+                else str(candidate.reserved_slack_beta)
+            ),
+            "strategy": candidate.strategy,
+        }
+    )
+
+
+def _candidate_worker_contract_seed(
+    *,
+    trace: _Day1BTraceInput,
+    program: _PublicationScheduleAdapter,
+    freshness: Fraction,
+    candidate: RegisteredCandidate,
+    cell_binding_sha256: str,
+    candidate_catalog_sha256: str,
+    resource_policy: PublicationDay1BResourcePolicy,
+    resource_policy_sha256: str,
+) -> _Day1BWorkerContractSeed:
+    invocation_id = _digest(
+        {
+            "candidate_id": candidate.candidate_id,
+            "cell_binding_sha256": cell_binding_sha256,
+            "schema_version": "dynamic-cssc-publication-day1b-candidate-cell-invocation-v1",
+        }
+    )
+    return _Day1BWorkerContractSeed(
+        invocation_id=invocation_id,
+        trace_manifest_sha256=trace.trace_manifest_sha256,
+        event_schedule_sha256=program.canonical_schedule_sha256,
+        query_vector_sha256=trace.query_vector_sha256,
+        candidate_catalog_sha256=candidate_catalog_sha256,
+        resource_policy_sha256=resource_policy_sha256,
+        freshness=_fraction_text(freshness),
+        rho=_fraction_text(program.rho),
+        candidate=Day1BWorkerCandidateSpec(
+            candidate_id=candidate.candidate_id,
+            candidate_role=candidate.role,
+            strategy=candidate.strategy,
+            f1m_policy=(
+                "uniform-random-or-zero"
+                if candidate.strategy == "Packed-COO-Cloud-Segmented-Delta"
+                else "overlap-only"
+            ),
+            candidate_policy_digest=_candidate_policy_digest(candidate),
+            retained_phases=(
+                ("tuning-prefix", "held-out") if candidate.role == "reference" else ("held-out",)
+            ),
+        ),
+        phase_ranges=tuple(
+            Day1BWorkerPhaseRange(phase.name, phase.start, phase.end)
+            for phase in program.phase_ranges
+        ),
+        resource_limits=resource_policy.to_worker_limits(),
+    )
+
+
+def _complete_cell_audit(
+    program: _PublicationScheduleAdapter,
+    freshness: Fraction,
+) -> _CellAudit:
+    stream = _AuditedWindowStream(
+        program.stream_windows(freshness),
+        program.phase_ranges,
+        program.rho,
+    )
+    for _window in stream:
+        pass
+    return stream.finish()
 
 
 def _produce_publication_day1b_unit(
@@ -1026,81 +1475,14 @@ def _produce_publication_day1b_unit(
     candidates = _validate_catalog(candidate_catalog)
     if type(resource_policy) is not PublicationDay1BResourcePolicy:
         raise TypeError("resource_policy must be an exact fixed policy")
-    if not callable(getattr(execution_adapter, "execute_cell", None)):
-        raise TypeError("execution_adapter must provide the typed streaming cell seam")
+    if not callable(getattr(execution_adapter, "execute_candidate_cell", None)):
+        raise TypeError("execution_adapter must provide the candidate-cell streaming seam")
 
     programs = tuple(trace.compile_schedule(Fraction(rho)) for rho in RHO_VALUES)
     for program, rho in zip(programs, (Fraction(value) for value in RHO_VALUES), strict=True):
         _validate_program(program, trace=trace, rho=rho)
 
     trace_unit = _trace_unit_document(trace, source_authority)
-    cells: list[dict[str, object]] = []
-    records: list[dict[str, object]] = []
-    ledgers: list[dict[str, object]] = []
-    cell_execution_receipts: list[dict[str, object]] = []
-    for freshness_text in FRESHNESS_VALUES:
-        freshness = Fraction(freshness_text)
-        for program in programs:
-            audited_windows = _AuditedWindowStream(
-                program.stream_windows(freshness),
-                program.phase_ranges,
-                program.rho,
-            )
-            start = time.monotonic()
-            result = execution_adapter.execute_cell(
-                windows=audited_windows,
-                trace=trace,
-                freshness=freshness,
-                rho=program.rho,
-                candidates=candidates,
-                query_vector=trace.query_vector,
-                resource_policy=resource_policy,
-            )
-            elapsed = time.monotonic() - start
-            if elapsed > resource_policy.wall_clock_seconds_per_cell:
-                raise PublicationDay1BHold("Day1B cell exceeded the frozen wall-clock limit")
-            if type(result) is not PublicationDay1BCellMeasurements:
-                raise TypeError("execution adapter must return exact Day1B cell measurements")
-            _validate_cell_resource_observations(result, resource_policy)
-            audit = audited_windows.finish()
-            cell = _cell_document(
-                trace_unit,
-                trace,
-                source_authority,
-                program,
-                freshness,
-                audit,
-            )
-            cell_records, cell_ledgers = _records_for_cell(
-                result,
-                trace=trace,
-                cell=cell,
-            )
-            cells.append(cell)
-            records.extend(cell_records)
-            ledgers.extend(cell_ledgers)
-            cell_execution_receipts.append(
-                {
-                    "cell_binding_sha256": cell["cell_binding_sha256"],
-                    "freshness_seconds": cell["freshness_seconds"],
-                    "rho": cell["rho"],
-                    "phase_receipts": list(audit.phase_receipts),
-                    "physical_record_count": len(cell_records),
-                    "candidate_retry_count": 0,
-                    "peak_resident_memory_bytes": result.peak_resident_memory_bytes,
-                    "peak_scratch_bytes": result.peak_scratch_bytes,
-                }
-            )
-    if (len(cells), len(records), len(ledgers)) != (18, 486, 486):
-        raise RuntimeError("Day1B unit cardinality did not close at 18/486/486")
-
-    fragment = {
-        "schema_version": DAY1B_UNIT_FRAGMENT_SCHEMA,
-        "experiment_source_git_sha": source_authority.git_sha,
-        "trace_units": [trace_unit],
-        "cell_bindings": cells,
-        "records": records,
-    }
     registration = asdict(candidate_catalog.registration)
     catalog_document = {
         "registration": registration,
@@ -1109,83 +1491,259 @@ def _produce_publication_day1b_unit(
         "reference_candidate_ids": list(REFERENCE_CANDIDATE_IDS),
         "ablation_candidate_ids": [ABLATION_CANDIDATE_ID],
     }
+    candidate_catalog_sha256 = _digest(catalog_document)
     resource_document = resource_policy.to_document()
-    manifest_base = {
-        "schema_version": DAY1B_UNIT_SCHEMA,
-        "artifact_policy": "derived-publication-evidence-no-raw-source-redistribution",
-        "unit_identity": {
-            "dataset_id": trace.dataset_id,
-            "dataset_release": trace.dataset_release,
-            "semantics": trace.semantics,
-            "source_partition": trace.source_partition,
-        },
-        "experiment_source": {
-            "git_sha": source_authority.git_sha,
-            "source_attestation": source_authority.source_attestation,
-            "behavior_inventory": dict(source_authority.behavior_inventory),
-        },
-        "trace_source": {
-            "git_sha": trace.trace_source_git_sha,
-            "repository_provenance_sha256": trace.repository_provenance_sha256,
-            "trace_manifest_sha256": trace.trace_manifest_sha256,
-            "trace_source_authority_verified": trace.trace_source_authority_verified,
-        },
-        "acquisition_binding": {
-            "acquisition_transaction_sha256": trace.acquisition_transaction_sha256,
-            "source_set_sha256": trace.source_set_sha256,
-            "source_bundle_sha256": trace.source_bundle_sha256,
-            "acquisition_network_authority_verified": (
-                trace.acquisition_network_authority_verified
-            ),
-        },
-        "query_vector": {
-            "schema_version": QUERY_VECTOR_SCHEMA,
-            "sha256": trace.query_vector_sha256,
-            "reuse_scope": "one-paired-unit-all-18-cells-and-all-physical-candidates",
-        },
-        "candidate_catalog": catalog_document,
-        "resource_policy": resource_document,
-        "invocation": {
-            "entrypoint": "scripts/run_publication_day1b.py",
-            "public_interface": (
-                "produce_publication_day1b_unit(trace_bundle_dir:Path,output_dir:Path)"
-            ),
-            "caller_options_allowed": False,
-            "shard_scope": "exactly-one-paired-unit-18-cells",
-            "selective_candidate_retry_allowed": False,
-        },
-        "cardinality": {
-            "cell_binding_count": 18,
-            "physical_record_count": 486,
-            "schedule_program_count": 9,
-            "serialization_ledger_count": 486,
-        },
-        "cell_execution_receipts": cell_execution_receipts,
-        "authority": {
-            "local_integrity_verified": True,
-            "schedule_v2_verified": True,
-            "serialized_protocol_object_bytes_verified": True,
-            "derived_aliases_materialized": False,
-            "day1b_behavior_source_verified": (
-                source_authority.source_attestation == "repository-clean-head"
-            ),
-            "trace_source_authority_verified": trace.trace_source_authority_verified,
-            "acquisition_network_authority_verified": (
-                trace.acquisition_network_authority_verified
-            ),
-            "runtime_execution_isolation_verified": False,
-            "publication_claim_allowed": False,
-        },
-    }
-    return _atomic_install(
-        output_dir=output_dir,
-        repository_root=repository_root,
-        fragment=fragment,
-        ledgers=tuple(ledgers),
-        programs=programs,
-        manifest_base=manifest_base,
-        resource_policy=resource_policy,
-    )
+    resource_policy_sha256 = str(resource_document["resource_policy_sha256"])
+    cells: list[dict[str, object]] = []
+    records: list[dict[str, object]] = []
+    ledgers: list[dict[str, object]] = []
+    cell_execution_receipts: list[dict[str, object]] = []
+    candidate_cell_receipt_count = 0
+    object_receipt_archive = _UnitObjectReceiptArchive()
+    try:
+        for freshness_text in FRESHNESS_VALUES:
+            freshness = Fraction(freshness_text)
+            for program in programs:
+                audit = _complete_cell_audit(program, freshness)
+                cell = _cell_document(
+                    trace_unit,
+                    trace,
+                    source_authority,
+                    program,
+                    freshness,
+                    audit,
+                )
+                tuning_records: list[dict[str, object]] = []
+                tuning_ledgers: list[dict[str, object]] = []
+                heldout_records: list[dict[str, object]] = []
+                heldout_ledgers: list[dict[str, object]] = []
+                candidate_receipts: list[dict[str, object]] = []
+                peak_resident_memory_bytes = 0
+                peak_scratch_bytes = 0
+
+                for candidate in candidates:
+                    audited_windows = _AuditedWindowStream(
+                        program.stream_windows(freshness),
+                        program.phase_ranges,
+                        program.rho,
+                    )
+                    seed = _candidate_worker_contract_seed(
+                        trace=trace,
+                        program=program,
+                        freshness=freshness,
+                        candidate=candidate,
+                        cell_binding_sha256=str(cell["cell_binding_sha256"]),
+                        candidate_catalog_sha256=candidate_catalog_sha256,
+                        resource_policy=resource_policy,
+                        resource_policy_sha256=resource_policy_sha256,
+                    )
+                    launch: _Day1BWorkerLaunch | None = None
+                    invocation_consumed = False
+                    try:
+                        launch = execution_adapter.execute_candidate_cell(
+                            windows=audited_windows,
+                            contract_seed=seed,
+                        )
+                        if type(launch) is not _Day1BWorkerLaunch:
+                            raise TypeError(
+                                "execution adapter must return one exact candidate-cell launch"
+                            )
+                        candidate_audit = audited_windows.finish()
+                        if candidate_audit != audit:
+                            raise Day1BWorkerProtocolError(
+                                "candidate did not consume the canonical complete cell schedule"
+                            )
+                        seed.require_exact_bound_contract(launch.contract)
+                        evidence_capability = consume_day1b_worker_frames(
+                            launch.frame_chunks,
+                            contract=launch.contract,
+                            invocation_capability=launch.invocation_capability,
+                        )
+                        invocation_consumed = True
+                        with claim_day1b_worker_evidence(evidence_capability) as evidence:
+                            receipt = evidence.receipt
+                            if (
+                                receipt.input_binding_sha256 != launch.contract.input_binding_sha256
+                                or receipt.controller_schedule_phase_audits != audit.phase_audits
+                            ):
+                                raise Day1BWorkerProtocolError(
+                                    "candidate receipt changed its bound input or schedule audit"
+                                )
+                            object_receipt_archive.accept_candidate_receipt(receipt)
+                            _append_candidate_object_receipts(
+                                evidence,
+                                object_receipt_archive,
+                            )
+                            candidate_records, candidate_ledgers = _records_for_candidate_cell(
+                                receipt,
+                                trace=trace,
+                                cell=cell,
+                            )
+                            candidate_receipts.append(receipt.to_document())
+                            peak_resident_memory_bytes = max(
+                                peak_resident_memory_bytes,
+                                receipt.candidate.peak_resident_memory_bytes,
+                            )
+                            peak_scratch_bytes = max(
+                                peak_scratch_bytes,
+                                receipt.candidate.peak_scratch_bytes,
+                            )
+                    except BaseException as error:
+                        if launch is not None and not invocation_consumed:
+                            with suppress(BaseException):
+                                abandon_day1b_worker_invocation(launch.invocation_capability)
+                        if isinstance(
+                            error,
+                            (Day1BWorkerProtocolError, TypeError, ValueError, OSError),
+                        ):
+                            raise PublicationDay1BHold(
+                                "HOLD: candidate-cell worker evidence failed closed validation"
+                            ) from error
+                        raise
+
+                    if candidate.role == "reference":
+                        if len(candidate_records) != 2 or len(candidate_ledgers) != 2:
+                            raise RuntimeError(
+                                "reference candidate did not yield tuning plus held-out records"
+                            )
+                        tuning_records.append(candidate_records[0])
+                        tuning_ledgers.append(candidate_ledgers[0])
+                        heldout_records.append(candidate_records[1])
+                        heldout_ledgers.append(candidate_ledgers[1])
+                    else:
+                        if (
+                            candidate.candidate_id != ABLATION_CANDIDATE_ID
+                            or len(candidate_records) != 1
+                            or len(candidate_ledgers) != 1
+                        ):
+                            raise RuntimeError(
+                                "ablation candidate did not yield one held-out record"
+                            )
+                        heldout_records.append(candidate_records[0])
+                        heldout_ledgers.append(candidate_ledgers[0])
+
+                if (
+                    len(candidate_receipts) != len(FIXED_CANDIDATE_IDS)
+                    or len(tuning_records) != len(REFERENCE_CANDIDATE_IDS)
+                    or len(heldout_records) != len(FIXED_CANDIDATE_IDS)
+                ):
+                    raise RuntimeError("candidate-cell coverage did not close canonically")
+                cell_records = [*tuning_records, *heldout_records]
+                cell_ledgers = [*tuning_ledgers, *heldout_ledgers]
+                cells.append(cell)
+                records.extend(cell_records)
+                ledgers.extend(cell_ledgers)
+                candidate_cell_receipt_count += len(candidate_receipts)
+                cell_execution_receipts.append(
+                    {
+                        "cell_binding_sha256": cell["cell_binding_sha256"],
+                        "freshness_seconds": cell["freshness_seconds"],
+                        "rho": cell["rho"],
+                        "phase_receipts": list(audit.phase_receipts),
+                        "candidate_cell_receipts": candidate_receipts,
+                        "candidate_cell_receipt_count": len(candidate_receipts),
+                        "physical_record_count": len(cell_records),
+                        "candidate_retry_count": 0,
+                        "peak_resident_memory_bytes": peak_resident_memory_bytes,
+                        "peak_scratch_bytes": peak_scratch_bytes,
+                    }
+                )
+        if (
+            len(cells),
+            candidate_cell_receipt_count,
+            len(records),
+            len(ledgers),
+        ) != (18, 252, 486, 486):
+            raise RuntimeError("Day1B unit cardinality did not close at 18/252/486/486")
+        object_receipt_archive.seal()
+
+        fragment = {
+            "schema_version": DAY1B_UNIT_FRAGMENT_SCHEMA,
+            "experiment_source_git_sha": source_authority.git_sha,
+            "trace_units": [trace_unit],
+            "cell_bindings": cells,
+            "records": records,
+        }
+        manifest_base = {
+            "schema_version": DAY1B_UNIT_SCHEMA,
+            "artifact_policy": "derived-publication-evidence-no-raw-source-redistribution",
+            "unit_identity": {
+                "dataset_id": trace.dataset_id,
+                "dataset_release": trace.dataset_release,
+                "semantics": trace.semantics,
+                "source_partition": trace.source_partition,
+            },
+            "experiment_source": {
+                "git_sha": source_authority.git_sha,
+                "source_attestation": source_authority.source_attestation,
+                "behavior_inventory": dict(source_authority.behavior_inventory),
+            },
+            "trace_source": {
+                "git_sha": trace.trace_source_git_sha,
+                "repository_provenance_sha256": trace.repository_provenance_sha256,
+                "trace_manifest_sha256": trace.trace_manifest_sha256,
+                "trace_source_authority_verified": trace.trace_source_authority_verified,
+            },
+            "acquisition_binding": {
+                "acquisition_transaction_sha256": trace.acquisition_transaction_sha256,
+                "source_set_sha256": trace.source_set_sha256,
+                "source_bundle_sha256": trace.source_bundle_sha256,
+                "acquisition_network_authority_verified": (
+                    trace.acquisition_network_authority_verified
+                ),
+            },
+            "query_vector": {
+                "schema_version": QUERY_VECTOR_SCHEMA,
+                "sha256": trace.query_vector_sha256,
+                "reuse_scope": "one-paired-unit-all-18-cells-and-all-physical-candidates",
+            },
+            "candidate_catalog": catalog_document,
+            "resource_policy": resource_document,
+            "invocation": {
+                "entrypoint": "scripts/run_publication_day1b.py",
+                "public_interface": (
+                    "produce_publication_day1b_unit(trace_bundle_dir:Path,output_dir:Path)"
+                ),
+                "caller_options_allowed": False,
+                "shard_scope": "exactly-one-paired-unit-18-cells",
+                "selective_candidate_retry_allowed": False,
+            },
+            "cardinality": {
+                "cell_binding_count": 18,
+                "candidate_cell_receipt_count": 252,
+                "physical_record_count": 486,
+                "schedule_program_count": 9,
+                "serialization_ledger_count": 486,
+            },
+            "cell_execution_receipts": cell_execution_receipts,
+            "authority": {
+                "local_integrity_verified": True,
+                "schedule_v2_verified": True,
+                "serialized_protocol_object_bytes_verified": True,
+                "derived_aliases_materialized": False,
+                "day1b_behavior_source_verified": (
+                    source_authority.source_attestation == "repository-clean-head"
+                ),
+                "trace_source_authority_verified": trace.trace_source_authority_verified,
+                "acquisition_network_authority_verified": (
+                    trace.acquisition_network_authority_verified
+                ),
+                "runtime_execution_isolation_verified": False,
+                "publication_claim_allowed": False,
+            },
+        }
+        return _atomic_install(
+            output_dir=output_dir,
+            repository_root=repository_root,
+            fragment=fragment,
+            ledgers=tuple(ledgers),
+            object_receipt_archive=object_receipt_archive,
+            programs=programs,
+            manifest_base=manifest_base,
+            resource_policy=resource_policy,
+        )
+    finally:
+        object_receipt_archive.close()
 
 
 def _produce_publication_day1b_unit_for_test(
@@ -1425,12 +1983,8 @@ __all__ = (
     "DAY1B_UNIT_FRAGMENT_SCHEMA",
     "DAY1B_UNIT_SCHEMA",
     "SERIALIZED_PROTOCOL_OBJECT_CATEGORIES",
-    "PublicationDay1BCellMeasurements",
     "PublicationDay1BHold",
-    "PublicationDay1BMeasurement",
     "PublicationDay1BResourcePolicy",
-    "PublicationDay1BSerializedCategory",
-    "PublicationDay1BSerializedObject",
     "PublicationDay1BUnitBundle",
     "produce_publication_day1b_unit",
 )
