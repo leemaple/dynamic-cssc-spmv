@@ -310,14 +310,22 @@ def _read_regular_bytes(entry: _HeldEntry) -> bytes:
     _require_exact_descriptor_metadata(entry, "artifact regular file")
     value = _pread_exact(entry.descriptor, entry.size)
     _require_exact_descriptor_metadata(entry, "artifact regular file")
+    if hashlib.sha256(value).hexdigest() != entry.content_sha256:
+        raise PublicationArtifactInstallError(
+            "artifact regular file differs from its snapshotted content"
+        )
     return value
 
 
 def _hash_regular(entry: _HeldEntry) -> str:
     _require_exact_descriptor_metadata(entry, "artifact regular file")
-    value = _hash_descriptor(entry.descriptor, entry.size)
+    observed = _hash_descriptor(entry.descriptor, entry.size)
     _require_exact_descriptor_metadata(entry, "artifact regular file")
-    return value
+    if observed != entry.content_sha256:
+        raise PublicationArtifactInstallError(
+            "artifact regular file differs from its snapshotted content"
+        )
+    return observed
 
 
 def _require_entry_mapping(

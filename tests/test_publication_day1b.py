@@ -60,7 +60,6 @@ from dynamic_cssc.publication_schedule import (
     AcceptedGroupPhaseRange,
     ExactPublicationWindow,
     ScheduledNetUpdate,
-    _load_publication_trace_bundle_for_test,
 )
 from dynamic_cssc.publication_statistics import (
     ABLATION_CANDIDATE_ID,
@@ -318,6 +317,9 @@ def _trace() -> _Day1BTraceInput:
         source_bundle_sha256="a" * 64,
         acquisition_transaction_sha256=None,
         source_set_sha256=None,
+        acquisition_behavior_set_sha256=None,
+        acquisition_behavior_inventory_sha256=None,
+        acquisition_authority_state=None,
         acquisition_network_authority_verified=False,
         accepted_group_count=250,
         query_vector=(1, 0, -1),
@@ -811,21 +813,16 @@ class _StreamingExecutor:
             raise
 
 
-def test_repository_loader_consumes_trace_v6_acquisition_binding_and_preserves_hold(
+def test_repository_loader_consumes_one_descriptor_bound_trace_v7_snapshot(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     trace_dir = _write_trace_v6_fixture(tmp_path)
-    monkeypatch.setattr(
-        day1b_module,
-        "load_publication_trace_bundle",
-        _load_publication_trace_bundle_for_test,
-    )
 
-    trace = day1b_module._load_repository_trace_input(trace_dir)
+    trace = day1b_module._load_repository_trace_input_for_test(trace_dir)
     manifest = json.loads((trace_dir / "publication-trace-manifest.json").read_bytes())
     acquisition_binding = manifest["acquisition_binding"]
     authority = acquisition_binding["authority"]
+    behavior_inventory = acquisition_binding["repository_provenance"]["behavior_inventory"]
 
     assert manifest["schema_version"] == PUBLICATION_TRACE_MANIFEST_SCHEMA
     assert "acquisition_verification" not in manifest
@@ -835,11 +832,26 @@ def test_repository_loader_consumes_trace_v6_acquisition_binding_and_preserves_h
         == (acquisition_binding["acquisition_transaction_sha256"])
     )
     assert trace.source_set_sha256 == acquisition_binding["source_set_sha256"]
+    assert trace.acquisition_behavior_set_sha256 == (behavior_inventory["behavior_set_sha256"])
+    assert trace.acquisition_behavior_inventory_sha256 == _sha(behavior_inventory)
+    program = trace.compile_schedule(Fraction("0.1"))
+    assert program.accepted_group_count == 70
+    assert program.rho == Fraction("0.1")
+    assert tuple(program.stream_windows(Fraction(1)))
     assert authority["state"] == "HOLD-test-only-local-source-fixture"
+    assert trace.acquisition_authority_state == authority["state"]
     assert authority["formal_authority_granted"] is False
     assert authority["acquisition_network_authority_verified"] is False
     assert trace.acquisition_network_authority_verified is False
     assert trace.trace_source_authority_verified is False
+    day1b_module._validate_trace(trace)
+
+    with pytest.raises(ValueError, match="projection must be complete"):
+        day1b_module._validate_trace(replace(trace, acquisition_behavior_set_sha256=None))
+    with pytest.raises(ValueError, match="exact frozen HOLD"):
+        day1b_module._validate_trace(replace(trace, acquisition_authority_state="authorized"))
+    with pytest.raises(ValueError, match="network authority must remain exact false"):
+        day1b_module._validate_trace(replace(trace, acquisition_network_authority_verified=True))
 
 
 def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
@@ -849,6 +861,9 @@ def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
         "trace_bundle_dir",
         "output_dir",
     )
+    assert tuple(signature(day1b_module._repository_trace_anchor_authority).parameters) == ()
+    with pytest.raises(PublicationDay1BHold, match="central TRACE post-run anchor"):
+        day1b_module._repository_trace_anchor_authority()
     trace_dir = tmp_path / "trace"
     trace_dir.mkdir()
     output_dir = tmp_path / "unit"

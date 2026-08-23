@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+import dynamic_cssc.publication_schedule as schedule_module
+from dynamic_cssc.publication_artifact_install import PublicationArtifactDirectory
 from dynamic_cssc.publication_schedule import (
     _compile_accepted_group_program_for_test,
     _load_publication_trace_bundle_for_test,
@@ -198,6 +200,140 @@ def test_private_loader_accepts_and_rehashes_one_closed_v7_v3_fixture(tmp_path: 
         trace.query_vector_sha256
         == hashlib.sha256((trace_dir / "publication-query-vector.json").read_bytes()).hexdigest()
     )
+
+
+@pytest.mark.parametrize("mutation", ("member", "root", "parent", "extra", "content"))
+def test_descriptor_loader_rejects_tree_change_before_issuing_capability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    live_parent = tmp_path / "live-parent"
+    trace_dir = _write_trace_bundle(live_parent)
+    production_issued_before = set(schedule_module._ISSUED_PRODUCTION_TRACES)
+    test_issued_before = set(schedule_module._ISSUED_TEST_TRACES)
+    original_read = PublicationArtifactDirectory.read_regular
+    mutated = False
+
+    def mutate_after_snapshot(
+        artifact: PublicationArtifactDirectory,
+        relative_path: str,
+    ) -> bytes:
+        nonlocal mutated
+        if not mutated:
+            mutated = True
+            if mutation == "member":
+                manifest_path = trace_dir / "publication-trace-manifest.json"
+                content = manifest_path.read_bytes()
+                manifest_path.rename(tmp_path / "detached-manifest.json")
+                manifest_path.write_bytes(content)
+            elif mutation == "root":
+                trace_dir.rename(live_parent / "detached-trace")
+                trace_dir.mkdir()
+            elif mutation == "parent":
+                live_parent.rename(tmp_path / "detached-parent")
+                live_parent.mkdir()
+            elif mutation == "extra":
+                (trace_dir / "late-extra.txt").write_bytes(b"not in the snapshot\n")
+            else:
+                manifest_path = trace_dir / "publication-trace-manifest.json"
+                content = manifest_path.read_bytes()
+                replacement = (b"X" if content[:1] != b"X" else b"Y") + content[1:]
+                assert len(replacement) == len(content)
+                manifest_path.write_bytes(replacement)
+        return original_read(artifact, relative_path)
+
+    monkeypatch.setattr(
+        PublicationArtifactDirectory,
+        "read_regular",
+        mutate_after_snapshot,
+    )
+
+    with pytest.raises(ValueError, match="descriptor-bound"):
+        _load_publication_trace_bundle_for_test(trace_dir)
+
+    assert mutated is True
+    assert set(schedule_module._ISSUED_PRODUCTION_TRACES) == production_issued_before
+    assert set(schedule_module._ISSUED_TEST_TRACES) == test_issued_before
+
+
+def test_descriptor_loader_rejects_four_member_same_inode_aba_before_issuance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace_dir = _write_trace_bundle(tmp_path)
+    original_bytes = {
+        name: (trace_dir / name).read_bytes() for name in schedule_module._BUNDLE_FILENAMES
+    }
+    original_identities = {
+        name: (trace_dir / name).stat().st_ino for name in schedule_module._BUNDLE_FILENAMES
+    }
+    alternate_manifest = json.loads(original_bytes["publication-trace-manifest.json"])
+    original_retrieval = alternate_manifest["acquisition_receipts"][0]["retrieval_utc"]
+    alternate_manifest["acquisition_receipts"][0]["retrieval_utc"] = (
+        "2025" if original_retrieval[:4] != "2025" else "2024"
+    ) + original_retrieval[4:]
+    alternate_manifest_bytes = _canonical_json_bytes(alternate_manifest)
+    alternate_payloads = {
+        "publication-trace-manifest.json": alternate_manifest_bytes,
+        "publication-trace.jsonl": original_bytes["publication-trace.jsonl"],
+        "publication-query-vector.json": original_bytes["publication-query-vector.json"],
+    }
+    alternate_checksums = "".join(
+        f"{hashlib.sha256(value).hexdigest()}  {name}\n"
+        for name, value in alternate_payloads.items()
+    ).encode("ascii")
+    alternate_bytes = {**alternate_payloads, "checksums.sha256": alternate_checksums}
+    assert all(
+        len(alternate_bytes[name]) == len(original_bytes[name])
+        for name in schedule_module._BUNDLE_FILENAMES
+    )
+    production_issued_before = set(schedule_module._ISSUED_PRODUCTION_TRACES)
+    test_issued_before = set(schedule_module._ISSUED_TEST_TRACES)
+    original_read = PublicationArtifactDirectory.read_regular
+    mutated = False
+    successful_reads = 0
+
+    def restore_original() -> None:
+        for name, value in original_bytes.items():
+            (trace_dir / name).write_bytes(value)
+            assert (trace_dir / name).stat().st_ino == original_identities[name]
+
+    def read_during_transient_splice(
+        artifact: PublicationArtifactDirectory,
+        relative_path: str,
+    ) -> bytes:
+        nonlocal mutated, successful_reads
+        if not mutated:
+            mutated = True
+            for name, value in alternate_bytes.items():
+                (trace_dir / name).write_bytes(value)
+                assert (trace_dir / name).stat().st_ino == original_identities[name]
+        try:
+            value = original_read(artifact, relative_path)
+        except BaseException:
+            restore_original()
+            raise
+        successful_reads += 1
+        if successful_reads == len(schedule_module._BUNDLE_FILENAMES):
+            restore_original()
+        return value
+
+    monkeypatch.setattr(
+        PublicationArtifactDirectory,
+        "read_regular",
+        read_during_transient_splice,
+    )
+
+    with pytest.raises(ValueError, match="descriptor-bound"):
+        _load_publication_trace_bundle_for_test(trace_dir)
+
+    assert mutated is True
+    assert set(schedule_module._ISSUED_PRODUCTION_TRACES) == production_issued_before
+    assert set(schedule_module._ISSUED_TEST_TRACES) == test_issued_before
+    assert {
+        name: (trace_dir / name).read_bytes() for name in schedule_module._BUNDLE_FILENAMES
+    } == original_bytes
 
 
 def test_loader_rejects_legacy_acquisition_transaction_v2_after_caller_rehash(
@@ -470,6 +606,17 @@ def test_test_capabilities_cannot_cross_the_public_compile_or_window_seams(tmp_p
     program = _compile_accepted_group_program_for_test(trace, Fraction(1))
     with pytest.raises(TypeError, match="required compiler capability"):
         tuple(stream_publication_windows(program, Fraction(1)))
+
+    production_trace = replace(
+        trace,
+        _validation_token=schedule_module._PRODUCTION_TRACE_TOKEN,
+    )
+    schedule_module._ISSUED_PRODUCTION_TRACES[id(production_trace)] = production_trace
+    try:
+        with pytest.raises(TypeError, match="required loader capability"):
+            _compile_accepted_group_program_for_test(production_trace, Fraction(1))
+    finally:
+        schedule_module._ISSUED_PRODUCTION_TRACES.pop(id(production_trace), None)
 
 
 def test_loader_rejects_self_consistent_query_vector_replacement(tmp_path: Path) -> None:

@@ -15,7 +15,6 @@ import os
 import re
 import shutil
 import sqlite3
-import stat
 import tempfile
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import suppress
@@ -60,6 +59,9 @@ from dynamic_cssc.publication_schedule import (
     AcceptedGroupProgram,
     ExactPublicationWindow,
     ValidatedPublicationTrace,
+    _compile_accepted_group_program_for_test,
+    _load_publication_trace_bundle_for_test,
+    _stream_publication_windows_for_test,
     compile_accepted_group_program,
     load_publication_trace_bundle,
     stream_publication_windows,
@@ -79,7 +81,6 @@ from dynamic_cssc.publication_statistics import (
     TRACE_UNIT_SCHEMA,
     canonical_json_bytes,
 )
-from dynamic_cssc.publication_traces import ACQUISITION_TRACE_BINDING_SCHEMA
 
 DAY1B_UNIT_SCHEMA = "dynamic-cssc-publication-day1b-unit-v1"
 DAY1B_UNIT_FRAGMENT_SCHEMA = "dynamic-cssc-publication-day1b-unit-fragment-v1"
@@ -88,6 +89,16 @@ DAY1B_SERIALIZATION_LEDGER_SCHEMA = (
 )
 DAY1B_RESOURCE_POLICY_SCHEMA = "dynamic-cssc-publication-day1b-resource-policy-v1"
 DAY1B_REPLAY_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-trace-replay-receipt-v1"
+
+_PRODUCTION_TRACE_PROJECTION_TOKEN = object()
+_TEST_TRACE_PROJECTION_TOKEN = object()
+_TRACE_ACQUISITION_HOLD_STATES = frozenset(
+    {
+        "HOLD-no-repository-post-run-anchor",
+        "HOLD-test-only-fixture-no-post-run-anchor",
+        "HOLD-test-only-local-source-fixture",
+    }
+)
 
 _MANIFEST_FILENAME = "publication-day1b-unit-manifest.json"
 _FRAGMENT_FILENAME = "publication-heldout-fragment.json"
@@ -253,6 +264,9 @@ class _Day1BTraceInput:
     source_bundle_sha256: str
     acquisition_transaction_sha256: str | None
     source_set_sha256: str | None
+    acquisition_behavior_set_sha256: str | None
+    acquisition_behavior_inventory_sha256: str | None
+    acquisition_authority_state: str | None
     acquisition_network_authority_verified: bool
     accepted_group_count: int
     query_vector: tuple[int, ...]
@@ -533,14 +547,35 @@ def _validate_trace(trace: _Day1BTraceInput) -> None:
         "query_vector_sha256",
     ):
         _require_sha256(getattr(trace, field), f"trace.{field}")
-    for field in ("acquisition_transaction_sha256", "source_set_sha256"):
+    for field in (
+        "acquisition_transaction_sha256",
+        "source_set_sha256",
+        "acquisition_behavior_set_sha256",
+        "acquisition_behavior_inventory_sha256",
+    ):
         value = getattr(trace, field)
         if value is not None:
             _require_sha256(value, f"trace.{field}")
-    if type(trace.acquisition_network_authority_verified) is not bool:
-        raise ValueError("trace acquisition authority must be one exact boolean")
-    if type(trace.trace_source_authority_verified) is not bool:
-        raise ValueError("trace source authority must be one exact boolean")
+    acquisition_binding_facts = (
+        trace.acquisition_transaction_sha256,
+        trace.source_set_sha256,
+        trace.acquisition_behavior_set_sha256,
+        trace.acquisition_behavior_inventory_sha256,
+        trace.acquisition_authority_state,
+    )
+    if any(value is None for value in acquisition_binding_facts) and not all(
+        value is None for value in acquisition_binding_facts
+    ):
+        raise ValueError("trace acquisition binding projection must be complete or absent")
+    if (
+        trace.acquisition_authority_state is not None
+        and trace.acquisition_authority_state not in _TRACE_ACQUISITION_HOLD_STATES
+    ):
+        raise ValueError("trace acquisition authority state must remain an exact frozen HOLD")
+    if trace.acquisition_network_authority_verified is not False:
+        raise ValueError("trace acquisition network authority must remain exact false")
+    if trace.trace_source_authority_verified is not False:
+        raise ValueError("trace source authority must remain exact false before central admission")
     if type(trace.accepted_group_count) is not int or trace.accepted_group_count < 10:
         raise ValueError("Day1B trace must contain at least ten accepted-event groups")
     if type(trace.query_vector) is not tuple or not trace.query_vector:
@@ -1784,28 +1819,25 @@ def _repository_day1b_execution_adapter() -> _Day1BExecutionAdapter:
     )
 
 
-def _read_regular_file(path: Path, field: str) -> bytes:
-    if path.is_symlink():
-        raise ValueError(f"{field} must not be a symbolic link")
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    try:
-        descriptor = os.open(path, flags)
-    except OSError as error:
-        raise ValueError(f"{field} must be an existing regular file") from error
-    try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            raise ValueError(f"{field} must be an existing regular file")
-        chunks: list[bytes] = []
-        while chunk := os.read(descriptor, 1024 * 1024):
-            chunks.append(chunk)
-        return b"".join(chunks)
-    finally:
-        os.close(descriptor)
+def _repository_trace_anchor_authority() -> None:
+    """Fail closed until the central TRACE post-run anchor is repository-installed."""
+
+    raise PublicationDay1BHold(
+        "HOLD: the central TRACE post-run anchor and compatibility authority are not installed"
+    )
 
 
-def _repository_program_adapter(program: AcceptedGroupProgram) -> _PublicationScheduleAdapter:
+def _repository_program_adapter(
+    program: AcceptedGroupProgram,
+    *,
+    projection_token: object,
+) -> _PublicationScheduleAdapter:
+    if projection_token is _PRODUCTION_TRACE_PROJECTION_TOKEN:
+        stream_windows = stream_publication_windows
+    elif projection_token is _TEST_TRACE_PROJECTION_TOKEN:
+        stream_windows = _stream_publication_windows_for_test
+    else:
+        raise TypeError("trace projection does not carry the required capability")
     return _PublicationScheduleAdapter(
         schema_version=program.schema_version,
         rho=program.rho,
@@ -1815,75 +1847,19 @@ def _repository_program_adapter(program: AcceptedGroupProgram) -> _PublicationSc
         total_query_count=program.total_query_count,
         canonical_schedule_sha256=program.canonical_schedule_sha256,
         iter_canonical_bytes=program.iter_canonical_bytes,
-        stream_windows=lambda freshness: stream_publication_windows(program, freshness),
+        stream_windows=lambda freshness: stream_windows(program, freshness),
     )
 
 
-def _validated_trace_v6_acquisition_binding(
-    manifest: dict[str, object],
-) -> dict[str, object]:
-    binding = manifest.get("acquisition_binding")
-    if type(binding) is not dict:
-        raise ValueError("trace-v6 acquisition_binding must be an exact object")
-    if binding.get("schema_version") != ACQUISITION_TRACE_BINDING_SCHEMA:
-        raise ValueError("trace-v6 acquisition_binding schema is not frozen")
-    if binding.get("dataset_id") != manifest.get("dataset_id") or binding.get(
-        "dataset_release"
-    ) != manifest.get("dataset_release"):
-        raise ValueError("trace-v6 acquisition_binding dataset identity does not match")
-    _require_sha256(
-        binding.get("acquisition_transaction_sha256"),
-        "trace-v6 acquisition transaction",
-    )
-    _require_sha256(binding.get("source_set_sha256"), "trace-v6 source set")
+def _day1b_trace_input(
+    validated: ValidatedPublicationTrace,
+    *,
+    projection_token: object,
+) -> _Day1BTraceInput:
+    """Project one schedule-validated descriptor snapshot into Day1B facts."""
 
-    authority = binding.get("authority")
-    expected_authority_keys = {
-        "state",
-        "formal_authority_granted",
-        "acquisition_network_authority_verified",
-        "post_run_anchor_verified",
-        "evidence_compatibility_verified",
-        "claims_authorized",
-    }
-    if type(authority) is not dict or set(authority) != expected_authority_keys:
-        raise ValueError("trace-v6 acquisition authority must be one closed object")
-    state = authority["state"]
-    false_fields = expected_authority_keys - {"state"}
-    if (
-        type(state) is not str
-        or not state.startswith("HOLD-")
-        or any(authority[field] is not False for field in false_fields)
-    ):
-        raise ValueError("trace-v6 acquisition authority must remain HOLD/false")
-    return binding
-
-
-def _load_repository_trace_input(trace_bundle_dir: Path) -> _Day1BTraceInput:
-    manifest_path = trace_bundle_dir / "publication-trace-manifest.json"
-    query_vector_path = trace_bundle_dir / "publication-query-vector.json"
-    manifest_before = _read_regular_file(manifest_path, "publication trace manifest")
-    query_vector_before = _read_regular_file(query_vector_path, "publication query vector")
-    try:
-        manifest = json.loads(manifest_before.decode("ascii"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError("publication trace manifest must be canonical ASCII JSON") from error
-    if type(manifest) is not dict or canonical_json_bytes(manifest) != manifest_before:
-        raise ValueError("publication trace manifest must be canonical closed JSON")
-    validated: ValidatedPublicationTrace = load_publication_trace_bundle(trace_bundle_dir)
-    manifest_after = _read_regular_file(manifest_path, "publication trace manifest")
-    query_vector_after = _read_regular_file(query_vector_path, "publication query vector")
-    if manifest_after != manifest_before or hashlib.sha256(manifest_after).hexdigest() != (
-        validated.manifest_sha256
-    ):
-        raise ValueError("publication trace manifest changed during Day1B validation")
-    if (
-        query_vector_after != query_vector_before
-        or hashlib.sha256(query_vector_after).hexdigest() != validated.query_vector_sha256
-    ):
-        raise ValueError("publication query vector changed during Day1B validation")
-    provenance = manifest["repository_provenance"]
-    acquisition_binding = _validated_trace_v6_acquisition_binding(manifest)
+    if type(validated) is not ValidatedPublicationTrace:
+        raise TypeError("validated trace must be an exact schedule capability")
     replay_receipt = {
         "schema_version": DAY1B_REPLAY_RECEIPT_SCHEMA,
         "trace_manifest_sha256": validated.manifest_sha256,
@@ -1894,30 +1870,62 @@ def _load_repository_trace_input(trace_bundle_dir: Path) -> _Day1BTraceInput:
         "replayed_by_closed_schedule_loader": True,
     }
 
+    if projection_token is _PRODUCTION_TRACE_PROJECTION_TOKEN:
+        compiler = compile_accepted_group_program
+    elif projection_token is _TEST_TRACE_PROJECTION_TOKEN:
+        compiler = _compile_accepted_group_program_for_test
+    else:
+        raise TypeError("trace projection does not carry the required capability")
+
     def compile_schedule(rho: Fraction) -> _PublicationScheduleAdapter:
-        return _repository_program_adapter(compile_accepted_group_program(validated, rho))
+        return _repository_program_adapter(
+            compiler(validated, rho),
+            projection_token=projection_token,
+        )
 
     return _Day1BTraceInput(
         dataset_id=validated.dataset_id,
         dataset_release=validated.dataset_release,
         semantics=validated.semantics,
         source_partition=validated.source_partition,
-        trace_source_git_sha=str(provenance["source_git_sha"]),
+        trace_source_git_sha=validated.trace_source_git_sha,
         repository_provenance_sha256=validated.repository_provenance_sha256,
         trace_manifest_sha256=validated.manifest_sha256,
         mapping_sha256=validated.mapping_sha256,
-        accepted_events_sha256=str(manifest["accepted_raw_event_sha256"]),
+        accepted_events_sha256=validated.accepted_raw_event_sha256,
         replay_receipt_sha256=_digest(replay_receipt),
-        source_bundle_sha256=_digest(acquisition_binding),
-        acquisition_transaction_sha256=str(acquisition_binding["acquisition_transaction_sha256"]),
-        source_set_sha256=str(acquisition_binding["source_set_sha256"]),
-        acquisition_network_authority_verified=False,
+        source_bundle_sha256=validated.acquisition_binding_sha256,
+        acquisition_transaction_sha256=validated.acquisition_transaction_sha256,
+        source_set_sha256=validated.source_set_sha256,
+        acquisition_behavior_set_sha256=validated.acquisition_behavior_set_sha256,
+        acquisition_behavior_inventory_sha256=(validated.acquisition_behavior_inventory_sha256),
+        acquisition_authority_state=validated.acquisition_authority_state,
+        acquisition_network_authority_verified=(validated.acquisition_network_authority_verified),
         accepted_group_count=validated.accepted_group_count,
         query_vector=validated.query_vector,
-        query_vector_canonical_bytes=query_vector_after,
+        query_vector_canonical_bytes=validated.query_vector_canonical_bytes,
         query_vector_sha256=validated.query_vector_sha256,
         compile_schedule=compile_schedule,
         trace_source_authority_verified=False,
+    )
+
+
+def _load_repository_trace_input(trace_bundle_dir: Path) -> _Day1BTraceInput:
+    return _day1b_trace_input(
+        load_publication_trace_bundle(trace_bundle_dir),
+        projection_token=_PRODUCTION_TRACE_PROJECTION_TOKEN,
+    )
+
+
+def _load_repository_trace_input_for_test(trace_bundle_dir: Path) -> _Day1BTraceInput:
+    """Private small-fixture trace inspection through the production descriptor seam."""
+
+    current_test = os.environ.get("PYTEST_CURRENT_TEST", "")
+    if not current_test.startswith("tests/test_publication_day1b.py::"):
+        raise RuntimeError("the private Day1B trace fixture seam is unavailable to callers")
+    return _day1b_trace_input(
+        _load_publication_trace_bundle_for_test(trace_bundle_dir),
+        projection_token=_TEST_TRACE_PROJECTION_TOKEN,
     )
 
 
@@ -1959,13 +1967,10 @@ def produce_publication_day1b_unit(
         raise PublicationDay1BHold(
             f"HOLD: complete Day1B candidate catalog unavailable: {error}"
         ) from error
+    trace = _load_repository_trace_input(trace_bundle_dir)
+    _repository_trace_anchor_authority()
     resource_policy = _repository_day1b_resource_policy()
     execution_adapter = _repository_day1b_execution_adapter()
-    trace = _load_repository_trace_input(trace_bundle_dir)
-    if not trace.trace_source_authority_verified:
-        raise PublicationDay1BHold(
-            "HOLD: trace acquisition/evidence compatibility authority is not installed"
-        )
     return _produce_publication_day1b_unit(
         trace=trace,
         output_dir=output_dir,

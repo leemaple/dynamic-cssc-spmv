@@ -180,7 +180,10 @@ def test_same_inode_member_mutation_after_verifier_read_is_rejected(
             assert _identity(claimed / "artifact.json") == member_identity
         return fingerprint
 
-    with pytest.raises(PublicationArtifactInstallError, match="tree changed"):
+    with pytest.raises(
+        PublicationArtifactInstallError,
+        match="tree changed|snapshotted content",
+    ):
         install_verified_directory(
             staging,
             output,
@@ -191,6 +194,37 @@ def test_same_inode_member_mutation_after_verifier_read_is_rejected(
 
     assert not output.exists()
     assert (staging / "artifact.json").read_bytes() == b"tampered\n"
+
+
+@pytest.mark.parametrize("operation", ("read", "sha256"))
+def test_descriptor_read_rejects_same_inode_same_size_aba_content(
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    root = tmp_path / "result"
+    root.mkdir()
+    member = root / "artifact.json"
+    original = b"verified\n"
+    alternate = b"tampered\n"
+    assert len(original) == len(alternate)
+    member.write_bytes(original)
+    member_identity = _identity(member)
+
+    def verifier(view: PublicationArtifactDirectory) -> object:
+        member.write_bytes(alternate)
+        assert _identity(member) == member_identity
+        try:
+            if operation == "read":
+                return view.read_regular("artifact.json")
+            return view.sha256_regular("artifact.json")
+        finally:
+            member.write_bytes(original)
+            assert _identity(member) == member_identity
+
+    with pytest.raises(PublicationArtifactInstallError, match="snapshot|tree changed"):
+        verify_existing_directory(root, verifier=verifier)
+
+    assert member.read_bytes() == original
 
 
 def test_concurrent_destination_is_preserved_and_never_replaced(tmp_path: Path) -> None:
@@ -404,7 +438,10 @@ def test_rebound_output_parent_requires_a_current_tree_revalidation(
         rebind_then_require,
     )
 
-    with pytest.raises(PublicationArtifactInstallError, match="tree changed"):
+    with pytest.raises(
+        PublicationArtifactInstallError,
+        match="tree changed|snapshotted content",
+    ):
         install_verified_directory(
             staging,
             output,
@@ -456,7 +493,10 @@ def test_rebound_existing_parent_requires_a_current_tree_revalidation(
         rebind_then_require,
     )
 
-    with pytest.raises(PublicationArtifactInstallError, match="tree changed"):
+    with pytest.raises(
+        PublicationArtifactInstallError,
+        match="tree changed|snapshotted content",
+    ):
         verify_existing_directory(
             root,
             verifier=lambda view: view.read_regular("artifact.json"),

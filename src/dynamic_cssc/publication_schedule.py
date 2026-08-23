@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-import stat
 from collections import Counter, deque
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -25,6 +23,11 @@ from dynamic_cssc.evidence_compatibility import (
     BEHAVIOR_INVENTORY_SCHEMA,
     EvidenceRole,
     repository_behavior_paths,
+)
+from dynamic_cssc.publication_artifact_install import (
+    PublicationArtifactDirectory,
+    PublicationArtifactInstallError,
+    verify_existing_directory,
 )
 from dynamic_cssc.publication_traces import (
     _LICENSE_TERMS_MEDIA_TYPES,
@@ -435,13 +438,22 @@ class _TraceGroup:
 class ValidatedPublicationTrace:
     """Immutable result of validating and rehashing one closed trace bundle."""
 
-    trace_dir: Path
+    trace_dir: Path | None
     dataset_id: str
     dataset_release: str
     semantics: str
     source_partition: int
+    trace_source_git_sha: str
     repository_provenance_sha256: str
     mapping_sha256: str
+    accepted_raw_event_sha256: str
+    acquisition_binding_sha256: str
+    acquisition_transaction_sha256: str
+    source_set_sha256: str
+    acquisition_behavior_set_sha256: str
+    acquisition_behavior_inventory_sha256: str
+    acquisition_authority_state: str
+    acquisition_network_authority_verified: bool
     accepted_group_count: int
     transition_count: int
     clock_denominator: int
@@ -450,6 +462,7 @@ class ValidatedPublicationTrace:
     rows: int
     cols: int
     query_vector: tuple[int, ...]
+    query_vector_canonical_bytes: bytes = field(repr=False)
     manifest_sha256: str
     trace_jsonl_sha256: str
     query_vector_sha256: str
@@ -631,27 +644,6 @@ def _decode_canonical_json(raw: bytes, field: str) -> object:
     if _canonical_json_bytes(payload) != raw:
         raise ValueError(f"{field} must use canonical JSON serialization")
     return payload
-
-
-def _read_regular_file(path: Path, field: str) -> bytes:
-    if path.is_symlink():
-        raise ValueError(f"{field} must not be a symbolic link")
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    try:
-        descriptor = os.open(path, flags)
-    except OSError as error:
-        raise ValueError(f"{field} must name an existing regular file") from error
-    try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            raise ValueError(f"{field} must name an existing regular file")
-        chunks: list[bytes] = []
-        while chunk := os.read(descriptor, 1024 * 1024):
-            chunks.append(chunk)
-        return b"".join(chunks)
-    finally:
-        os.close(descriptor)
 
 
 def _validate_nonnegative_count_map(
@@ -1795,40 +1787,22 @@ def _validate_production_trace_contract(
         )
 
 
-def _load_publication_trace_bundle(
-    trace_dir: Path,
+def _load_publication_trace_members(
+    members: dict[str, bytes],
     *,
+    trace_dir: Path | None,
     production: bool,
 ) -> ValidatedPublicationTrace:
-    """Implement the production loader and its explicitly non-authoritative test seam."""
+    """Decode one already-bound exact member set without reopening any path."""
 
-    if not isinstance(trace_dir, Path):
-        raise TypeError("trace_dir must be a pathlib.Path")
-    try:
-        directory_mode = trace_dir.lstat().st_mode
-    except OSError as error:
-        raise ValueError("trace_dir must name an existing directory") from error
-    if trace_dir.is_symlink() or not stat.S_ISDIR(directory_mode):
-        raise ValueError("trace_dir must name a non-symlink directory")
-    actual_names = {entry.name for entry in trace_dir.iterdir()}
-    expected_names = set(_BUNDLE_FILENAMES)
-    if actual_names != expected_names:
-        raise ValueError(
-            "trace bundle tree is closed; "
-            f"missing={sorted(expected_names - actual_names)}, "
-            f"extra={sorted(actual_names - expected_names)}"
-        )
-
-    checksums = _parse_checksums(
-        _read_regular_file(trace_dir / "checksums.sha256", "checksums.sha256")
-    )
-    manifest_raw = _read_regular_file(
-        trace_dir / "publication-trace-manifest.json", "publication-trace-manifest.json"
-    )
-    trace_raw = _read_regular_file(trace_dir / "publication-trace.jsonl", "publication-trace.jsonl")
-    vector_raw = _read_regular_file(
-        trace_dir / "publication-query-vector.json", "publication-query-vector.json"
-    )
+    if set(members) != set(_BUNDLE_FILENAMES) or any(
+        type(content) is not bytes for content in members.values()
+    ):
+        raise ValueError("trace bundle members must match the exact closed byte schema")
+    checksums = _parse_checksums(members["checksums.sha256"])
+    manifest_raw = members["publication-trace-manifest.json"]
+    trace_raw = members["publication-trace.jsonl"]
+    vector_raw = members["publication-query-vector.json"]
     observed = {
         "publication-trace-manifest.json": hashlib.sha256(manifest_raw).hexdigest(),
         "publication-trace.jsonl": hashlib.sha256(trace_raw).hexdigest(),
@@ -1854,6 +1828,19 @@ def _load_publication_trace_bundle(
     contract = _object(manifest["frozen_contract"], "frozen_contract")
     mapping = _object(manifest["mapping"], "mapping")
     provenance = _object(manifest["repository_provenance"], "repository_provenance")
+    acquisition_binding = _object(manifest["acquisition_binding"], "acquisition_binding")
+    acquisition_provenance = _object(
+        acquisition_binding["repository_provenance"],
+        "acquisition_binding.repository_provenance",
+    )
+    acquisition_inventory = _object(
+        acquisition_provenance["behavior_inventory"],
+        "acquisition behavior_inventory",
+    )
+    acquisition_authority = _object(
+        acquisition_binding["authority"],
+        "acquisition_binding.authority",
+    )
     eligibility = _object(manifest["eligibility"], "eligibility")
     validated = ValidatedPublicationTrace(
         trace_dir=trace_dir,
@@ -1861,8 +1848,24 @@ def _load_publication_trace_bundle(
         dataset_release=str(manifest["dataset_release"]),
         semantics=str(manifest["semantics"]),
         source_partition=int(manifest["source_partition"]),
+        trace_source_git_sha=str(provenance["source_git_sha"]),
         repository_provenance_sha256=str(provenance["repository_provenance_sha256"]),
         mapping_sha256=str(mapping["mapping_sha256"]),
+        accepted_raw_event_sha256=_sha256(
+            manifest["accepted_raw_event_sha256"],
+            "accepted_raw_event_sha256",
+        ),
+        acquisition_binding_sha256=hashlib.sha256(
+            _canonical_json_bytes(acquisition_binding)
+        ).hexdigest(),
+        acquisition_transaction_sha256=str(acquisition_binding["acquisition_transaction_sha256"]),
+        source_set_sha256=str(acquisition_binding["source_set_sha256"]),
+        acquisition_behavior_set_sha256=str(acquisition_inventory["behavior_set_sha256"]),
+        acquisition_behavior_inventory_sha256=hashlib.sha256(
+            _canonical_json_bytes(acquisition_inventory)
+        ).hexdigest(),
+        acquisition_authority_state=str(acquisition_authority["state"]),
+        acquisition_network_authority_verified=False,
         accepted_group_count=len(groups),
         transition_count=sum(len(group.transitions) for group in groups),
         clock_denominator=128,
@@ -1871,6 +1874,7 @@ def _load_publication_trace_bundle(
         rows=int(contract["rows"]),
         cols=int(contract["cols"]),
         query_vector=query_vector,
+        query_vector_canonical_bytes=vector_raw,
         manifest_sha256=observed["publication-trace-manifest.json"],
         trace_jsonl_sha256=observed["publication-trace.jsonl"],
         query_vector_sha256=observed["publication-query-vector.json"],
@@ -1878,25 +1882,82 @@ def _load_publication_trace_bundle(
         _groups=groups,
         _validation_token=_PRODUCTION_TRACE_TOKEN if production else _TEST_TRACE_TOKEN,
     )
+    return validated
+
+
+def _issue_validated_publication_trace(
+    validated: ValidatedPublicationTrace,
+    *,
+    production: bool,
+) -> ValidatedPublicationTrace:
+    """Mint scheduling capability only after the owning snapshot transaction succeeds."""
+
     issued = _ISSUED_PRODUCTION_TRACES if production else _ISSUED_TEST_TRACES
     issued[id(validated)] = validated
     return validated
 
 
+def _load_publication_trace_artifact(
+    artifact: PublicationArtifactDirectory,
+    *,
+    production: bool,
+) -> ValidatedPublicationTrace:
+    """Decode one held descriptor view; the caller cannot substitute byte mappings."""
+
+    if type(artifact) is not PublicationArtifactDirectory:
+        raise TypeError("artifact must be an exact descriptor-held publication directory")
+    actual_names = set(artifact.entries())
+    expected_names = set(_BUNDLE_FILENAMES)
+    if actual_names != expected_names:
+        raise ValueError(
+            "trace bundle tree is closed; "
+            f"missing={sorted(expected_names - actual_names)}, "
+            f"extra={sorted(actual_names - expected_names)}"
+        )
+    members = {name: artifact.read_regular(name) for name in _BUNDLE_FILENAMES}
+    return _load_publication_trace_members(
+        members,
+        trace_dir=None,
+        production=production,
+    )
+
+
+def _load_descriptor_bound_publication_trace(
+    trace_dir: Path,
+    *,
+    production: bool,
+) -> ValidatedPublicationTrace:
+    """Own one held exact-tree transaction and mint only after its final revalidation."""
+
+    if not isinstance(trace_dir, Path):
+        raise TypeError("trace_dir must be a pathlib.Path")
+    try:
+        validated = verify_existing_directory(
+            trace_dir,
+            verifier=lambda artifact: _load_publication_trace_artifact(
+                artifact,
+                production=production,
+            ),
+        )
+    except PublicationArtifactInstallError as error:
+        raise ValueError("trace bundle failed descriptor-bound verification") from error
+    return _issue_validated_publication_trace(validated, production=production)
+
+
 def load_publication_trace_bundle(trace_dir: Path) -> ValidatedPublicationTrace:
-    """Validate one exact, eligible production-shaped v6/v3 trace bundle.
+    """Validate one exact eligible v7/v2 trace through a held directory snapshot.
 
     The returned capability binds this local validation result. It is not acquisition,
     repository, workflow, or publication authority.
     """
 
-    return _load_publication_trace_bundle(trace_dir, production=True)
+    return _load_descriptor_bound_publication_trace(trace_dir, production=True)
 
 
 def _load_publication_trace_bundle_for_test(trace_dir: Path) -> ValidatedPublicationTrace:
     """Private fixture seam; its result has no production capability."""
 
-    return _load_publication_trace_bundle(trace_dir, production=False)
+    return _load_descriptor_bound_publication_trace(trace_dir, production=False)
 
 
 def _accepted_group_phase_ranges(total: int) -> tuple[AcceptedGroupPhaseRange, ...]:
