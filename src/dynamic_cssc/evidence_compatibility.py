@@ -308,6 +308,7 @@ _HISTORICAL_STRONG_BEHAVIOR_SCHEMA = "dynamic-cssc-historical-strong-correctness
 
 _DAY1_REGISTRATION_BEHAVIOR_PATHS = (
     ".github/workflows/day1-cost-model.yml",
+    ".github/workflows/day1-registration-evidence.yml",
     "config/experiment_plan.json",
     "config/params_manifest.json",
     "config/params_manifest.schema.json",
@@ -333,6 +334,7 @@ _DAY1_REGISTRATION_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/output_plan.py",
     "src/dynamic_cssc/plaintext_oracle.py",
     "src/dynamic_cssc/preflight.py",
+    "src/dynamic_cssc/publication_artifact_install.py",
     "src/dynamic_cssc/publication_traces.py",
     "src/dynamic_cssc/query_compiler.py",
     "src/dynamic_cssc/report.py",
@@ -370,7 +372,7 @@ _ROLE_BEHAVIOR_SCHEMAS = {
     EvidenceRole.DAY2: "dynamic-cssc-day2-behavior-set-v1",
     EvidenceRole.ANALYZER: "dynamic-cssc-publication-analyzer-behavior-set-v1",
     EvidenceRole.STRONG_CORRECTNESS: "dynamic-cssc-strong-correctness-behavior-set-v1",
-    EvidenceRole.DAY1_REGISTRATION: "dynamic-cssc-day1-registration-behavior-set-v1",
+    EvidenceRole.DAY1_REGISTRATION: "dynamic-cssc-day1-registration-behavior-set-v2",
 }
 
 _LOWER_GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")

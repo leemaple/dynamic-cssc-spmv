@@ -1618,6 +1618,7 @@ def test_role_sets_freeze_entrypoint_workflow_build_lock_runtime_and_transitive_
     } <= strong_correctness_paths
     assert {
         ".github/workflows/day1-cost-model.yml",
+        ".github/workflows/day1-registration-evidence.yml",
         "config/params_manifest.json",
         "requirements-ci.txt",
         "scripts/aggregate_day1_shards.py",
@@ -1629,6 +1630,7 @@ def test_role_sets_freeze_entrypoint_workflow_build_lock_runtime_and_transitive_
         "src/dynamic_cssc/evidence_compatibility.py",
         "src/dynamic_cssc/metrics.py",
         "src/dynamic_cssc/plaintext_oracle.py",
+        "src/dynamic_cssc/publication_artifact_install.py",
         "src/dynamic_cssc/report.py",
         "src/dynamic_cssc/selection.py",
         "src/dynamic_cssc/strong_reference_receipt.py",
