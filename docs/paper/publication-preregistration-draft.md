@@ -207,21 +207,57 @@ a closed acquisition bundle; it independently rehashes that bundle's members,
 source-set, transaction, raw bytes, terms bytes, and central ACQUISITION Behavior
 Set inventory. Those checks still do not by themselves prove the URL-to-byte
 acquisition history. Formal acquisition authority requires the repository-owned
-downloader or CI transaction to fetch each exact URL, reject an unexpected
-redirect, request `Accept-Encoding: identity`, reject any response
-`Content-Encoding` other than absent/`identity`, require a positive exact
-`Content-Length`, reject `Content-Range`, record the request/response metadata,
-and emit a digest-bound receipt
-that cannot be replaced by caller-supplied HTTP fields. Until that transaction
-exists and is admitted, `acquisition_network_authority_verified=false` and no
-dataset result is evidence-bearing. The authoritative mapping, license, and
-provenance rules are recorded in
+downloader or CI transaction to fetch each exact URL with `GET`, require status
+200 and the exact final URL, reject an unexpected redirect, request
+`Accept-Encoding: identity`, reject any response `Content-Encoding` other than
+absent/`identity`, reject `Content-Range`, record normalized contract-relevant
+response-header observations, and emit a digest-bound receipt that cannot be
+replaced by caller-supplied HTTP fields. A data-object response must carry one
+positive decimal `Content-Length` equal to the retained byte count. For a terms
+object only, `Content-Length` may be absent: true absence is recorded as `null`
+and is never synthesized from the retained byte count; the response must end
+cleanly after 1 through 2,097,152 bytes. Observing any byte beyond that cap
+causes HOLD and prevents installation of the acquisition bundle; no accepted or
+retained terms object exceeds the cap. A present terms-page `Content-Length`
+remains positive, at most that cap, and exactly equal to the retained byte count.
+Acquisition and trace directories are installed through one repository-owned,
+inode-bound, descriptor-relative no-replace seam: the exact staging member set is
+verified before installation, the installed same-inode directory is reverified,
+and any staging identity drift or destination collision returns HOLD without a
+success receipt. Identity-changed, rejected, and incomplete pre-install staging
+trees are preserved under random diagnostic quarantine names after an
+identity-bound root claim. The producer never recursively unlinks or removes a
+staging tree by reusable pathname because POSIX has no portable
+unlink/rmdir-if-inode operation.
+
+Here, atomic installation means no-replace namespace publication during a
+running process; it is not a claim that a just-returned directory is durable
+across sudden power loss. The trace-preparation consumer of an acquisition
+bundle must reopen that installed directory, bind one descriptor-backed
+exact-tree snapshot, and repeat the closed semantic and digest validation
+before use.
+
+The two exact Stack Overflow terms URLs use only the repository-frozen
+`curl_cffi==0.16.1` `chrome150` adapter, explicit Mac Chrome 150 user-agent,
+HTTP/2, the hash-locked acquisition environment and CA bundle, no redirects,
+retries, cookies, authentication, or ambient proxy, and no browser/profile
+fallback. This is a disclosed HTTP fingerprint, not a claim that a real Chrome
+browser executed. Other frozen URLs use the explicit no-proxy CPython urllib
+adapter with the same frozen CA bundle. The current-process transport receipt is
+descriptive: `runtime_execution_isolation_verified=false` and
+`formal_authority_granted=false` remain mandatory until an isolated repository
+runner, post-run anchor, and ADR 0010 compatibility verification admit the run.
+Until then, no dataset result is evidence-bearing. The authoritative mapping,
+license, and provenance rules are recorded in
 `docs/research/publication-venues-datasets-preregistration.md`.
 
 The production trace manifest uses
-`dynamic-cssc-publication-trace-manifest-v6`. Its closed
-`acquisition_binding` binds the acquisition transaction SHA-256, source-set
-SHA-256, and the embedded exact central ACQUISITION Behavior Set inventory.
+`dynamic-cssc-publication-trace-manifest-v7`. Its closed
+`dynamic-cssc-trace-acquisition-binding-v2` `acquisition_binding` binds the
+`dynamic-cssc-acquisition-transaction-v3` transaction SHA-256, source-set
+SHA-256, and the embedded exact central
+`dynamic-cssc-acquisition-behavior-set-v2` inventory; the trace execution set is
+`dynamic-cssc-trace-behavior-set-v2`.
 Until the S2 post-run anchor and Evidence Compatibility Receipt are installed
 and independently revalidated, `formal_authority_granted`,
 `acquisition_network_authority_verified`, `post_run_anchor_verified`,

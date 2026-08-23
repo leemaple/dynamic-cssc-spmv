@@ -261,6 +261,8 @@ def test_repository_snapshot_binds_frozen_behavior_sources_and_rejects_dirty_hea
         "scripts/run_publication_structure_pilot.py",
         "src/dynamic_cssc/__init__.py",
         "src/dynamic_cssc/evidence_compatibility.py",
+        "src/dynamic_cssc/publication_acquisition.py",
+        "src/dynamic_cssc/publication_artifact_install.py",
         "src/dynamic_cssc/publication_structure_pilot.py",
         "src/dynamic_cssc/publication_traces.py",
     }

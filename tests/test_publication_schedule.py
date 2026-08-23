@@ -171,7 +171,7 @@ def _rewrite_trace_records(trace_dir: Path, records: list[dict[str, object]]) ->
     _refresh_checksums(trace_dir)
 
 
-def test_private_loader_accepts_and_rehashes_one_closed_v6_v3_fixture(tmp_path: Path) -> None:
+def test_private_loader_accepts_and_rehashes_one_closed_v7_v3_fixture(tmp_path: Path) -> None:
     trace_dir = _write_trace_bundle(tmp_path)
 
     trace = _load_publication_trace_bundle_for_test(trace_dir)
@@ -198,6 +198,22 @@ def test_private_loader_accepts_and_rehashes_one_closed_v6_v3_fixture(tmp_path: 
         trace.query_vector_sha256
         == hashlib.sha256((trace_dir / "publication-query-vector.json").read_bytes()).hexdigest()
     )
+
+
+def test_loader_rejects_legacy_acquisition_transaction_v2_after_caller_rehash(
+    tmp_path: Path,
+) -> None:
+    trace_dir = _write_trace_bundle(tmp_path)
+    manifest_path = trace_dir / "publication-trace-manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    manifest["acquisition_binding"]["acquisition_transaction_schema_version"] = (
+        "dynamic-cssc-acquisition-transaction-v2"
+    )
+    manifest_path.write_bytes(_canonical_json_bytes(manifest))
+    _refresh_checksums(trace_dir)
+
+    with pytest.raises(ValueError, match="acquisition transaction schema is not frozen"):
+        _load_publication_trace_bundle_for_test(trace_dir)
 
 
 def test_loader_rejects_extra_nested_manifest_fields_even_after_caller_rehash(

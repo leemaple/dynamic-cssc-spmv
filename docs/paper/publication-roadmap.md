@@ -150,20 +150,43 @@ model must include:
 
 Acquire only after the transform code and acquisition manifest are reviewed.
 Run the transform from a clean exact-HEAD checkout with raw inputs and outputs
-outside the checkout. Install the publication-only parser environment with
-`pip install --require-hashes -r requirements-publication.txt`; the locked
-CPython 3.12.13 `pyarrow==25.0.1` wheel set, accepted wheel platform tag, and
-the preregistered `America/New_York` TZif SHA-256 are part of the acquisition identity.
+outside the checkout. Install the downloader environment separately with
+`pip install --require-hashes -r requirements-acquisition.txt`; install the
+publication-only parser environment with
+`pip install --require-hashes -r requirements-publication.txt`. The locked
+CPython 3.12.13 transport/parser dependencies, accepted wheel platform tags,
+`pyarrow==25.0.1`, and preregistered `America/New_York` TZif SHA-256 are distinct
+parts of the acquisition and transform identities.
 The repository-owned downloader/CI transaction—not a caller-authored local
-manifest—must fetch each exact URL, reject unexpected redirects, retain a
-digest-bound request/response log, require the identity/absent content encoding,
-positive exact content length, and absent content range, and bind the downloaded
-bytes to the receipt.
+manifest—must fetch each exact URL by `GET`, require status 200 and the exact
+final URL, reject redirects, require identity/absent content encoding and absent
+content range, and bind normalized contract-relevant response headers and the
+downloaded bytes to the receipt. Every data object requires one positive exact
+`Content-Length`. A terms page may instead record a genuinely absent header as
+`null` and use the frozen clean-transfer cap of 2,097,152 bytes; a present header
+remains positive, at most the cap, and exact. Only the two exact Stack Overflow
+terms URLs use the fixed `curl_cffi==0.16.1` `chrome150` HTTP/2 adapter with the
+explicit Mac Chrome 150 user-agent, hash-locked CA/runtime, no ambient proxy, and
+no fallback. It is a disclosed fingerprint, not a real-browser claim.
 Until that authority exists, local byte/hash validation is descriptive and the
-manifest must state `acquisition_network_authority_verified=false`.
-The production trace manifest v6 must additionally carry a closed
-`acquisition_binding` over the transaction SHA-256, source-set SHA-256, and
-embedded exact central ACQUISITION Behavior Set inventory. Before its S2
+transport receipt must state `runtime_execution_isolation_verified=false`,
+`formal_authority_granted=false`, and
+`acquisition_network_authority_verified=false`.
+Both acquisition and trace publication use the same inode-bound,
+descriptor-relative no-replace directory installer. It verifies the exact
+staging artifact before installation, rehashes the installed same-inode
+directory, rejects identity drift or a destination collision without returning
+a success receipt, preserves rejected installation evidence, and binds ordinary
+pre-install failure handling to the invocation-owned root inode. Incomplete
+staging trees are retained whole under random diagnostic quarantine names; the
+producer never recursively unlinks or removes them through reusable pathnames.
+This is a running-process atomic namespace guarantee, not a sudden-power-loss
+durability claim. The trace-preparation acquisition consumer must reopen and
+reverify one descriptor-bound exact-tree snapshot of that acquisition bundle.
+The production trace manifest v7 must additionally carry a closed acquisition
+binding v2 over the acquisition transaction v3 SHA-256, source-set SHA-256, and
+embedded exact central ACQUISITION Behavior Set v2 inventory; TRACE uses Behavior
+Set v2. Before its S2
 post-run anchor and compatibility receipt are installed and revalidated,
 `formal_authority_granted`, `acquisition_network_authority_verified`,
 `post_run_anchor_verified`, `evidence_compatibility_verified`, and

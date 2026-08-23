@@ -3,12 +3,18 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import re
-import shutil
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
+from dynamic_cssc.publication_artifact_install import (
+    PublicationArtifactDirectory,
+    PublicationArtifactInstallError,
+    install_verified_directory,
+    quarantine_owned_directory,
+)
 from dynamic_cssc.publication_traces import (
     PublicationTraceBundle,
     PublicationTraceRequest,
@@ -20,6 +26,56 @@ from dynamic_cssc.publication_traces import (
 )
 
 _CANONICAL_PARTITION = re.compile(r"[0-4]")
+_MANIFEST_NAME = "publication-trace-manifest.json"
+_TRACE_NAME = "publication-trace.jsonl"
+_QUERY_VECTOR_NAME = "publication-query-vector.json"
+_CHECKSUMS_NAME = "checksums.sha256"
+
+
+def _write_regular_file_new(path: Path, content: bytes) -> None:
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise RuntimeError("trace artifact writing requires OS O_NOFOLLOW support")
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+        0o600,
+    )
+    try:
+        os.fchmod(descriptor, 0o644)
+        remaining = memoryview(content)
+        while remaining:
+            written = os.write(descriptor, remaining)
+            if written <= 0:  # pragma: no cover - defensive OS contract guard
+                raise OSError("trace artifact write made no progress")
+            remaining = remaining[written:]
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _trace_bundle_fingerprint(
+    artifact_directory: PublicationArtifactDirectory,
+    *,
+    expected_members: tuple[tuple[str, bytes], ...],
+) -> tuple[tuple[str, str], ...]:
+    expected_names = tuple(name for name, _ in expected_members)
+    if artifact_directory.entries() != tuple(sorted(expected_names)):
+        raise RuntimeError("trace artifact directory does not have the exact member set")
+    observed: list[tuple[str, str]] = []
+    for name, expected_bytes in expected_members:
+        content = artifact_directory.read_regular(name)
+        if content != expected_bytes:
+            raise RuntimeError("trace artifact member bytes changed")
+        observed.append((name, artifact_directory.sha256_regular(name)))
+    return tuple(observed)
+
+
+def _quarantine_trace_staging(staging: Path, identity: tuple[int, int]) -> None:
+    try:
+        quarantine_owned_directory(staging, staging_identity=identity)
+    except (OSError, PublicationArtifactInstallError):
+        # Preserve any changed directory as diagnostic evidence; never delete it by path.
+        return
 
 
 def _parse_partition(value: str) -> int:
@@ -60,22 +116,46 @@ def _write_bundle(
     if not parent.is_dir():
         raise ValueError("output directory parent must already exist")
     temporary = Path(tempfile.mkdtemp(prefix=f".{output_dir.name}.tmp-", dir=parent))
+    temporary_stat = temporary.lstat()
+    staging_identity = temporary_stat.st_dev, temporary_stat.st_ino
     try:
-        manifest_name = "publication-trace-manifest.json"
-        trace_name = "publication-trace.jsonl"
-        query_vector_name = "publication-query-vector.json"
-        (temporary / manifest_name).write_bytes(manifest_bytes)
-        (temporary / trace_name).write_bytes(trace_bytes)
-        (temporary / query_vector_name).write_bytes(query_vector_bytes)
-        checksums = (
-            f"{hashlib.sha256(manifest_bytes).hexdigest()}  {manifest_name}\n"
-            f"{hashlib.sha256(trace_bytes).hexdigest()}  {trace_name}\n"
-            f"{hashlib.sha256(query_vector_bytes).hexdigest()}  {query_vector_name}\n"
+        checksums_bytes = (
+            f"{hashlib.sha256(manifest_bytes).hexdigest()}  {_MANIFEST_NAME}\n"
+            f"{hashlib.sha256(trace_bytes).hexdigest()}  {_TRACE_NAME}\n"
+            f"{hashlib.sha256(query_vector_bytes).hexdigest()}  {_QUERY_VECTOR_NAME}\n"
+        ).encode("ascii")
+        expected_members = (
+            (_MANIFEST_NAME, manifest_bytes),
+            (_TRACE_NAME, trace_bytes),
+            (_QUERY_VECTOR_NAME, query_vector_bytes),
+            (_CHECKSUMS_NAME, checksums_bytes),
         )
-        (temporary / "checksums.sha256").write_text(checksums, encoding="utf-8")
-        temporary.replace(output_dir)
+        for name, content in expected_members:
+            _write_regular_file_new(temporary / name, content)
+        directory_fd = os.open(
+            temporary,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+        )
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        install_verified_directory(
+            temporary,
+            output_dir,
+            staging_identity=staging_identity,
+            verifier=lambda root: _trace_bundle_fingerprint(
+                root,
+                expected_members=expected_members,
+            ),
+            fingerprint=lambda value: value,
+        )
+    except PublicationArtifactInstallError:
+        # The installer preserves rejected or identity-changed evidence.  Do not
+        # recurse through a directory whose member ownership is no longer known.
+        raise
     except BaseException:
-        shutil.rmtree(temporary, ignore_errors=True)
+        _quarantine_trace_staging(temporary, staging_identity)
         raise
 
 

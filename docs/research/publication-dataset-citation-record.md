@@ -17,6 +17,25 @@ reported `Content-Length`, `Last-Modified`, and `ETag` values are therefore
 transport metadata observed on the access date, not locally verified content
 facts.
 
+A separate non-authoritative transport-compatibility probe on 2026-08-23 used
+the frozen `curl_cffi==0.16.1` `chrome150` impersonation target, explicit Mac
+Chrome 150 user-agent, `Accept-Encoding: identity`, HTTP/2, no redirects, and
+`CURLOPT_PROXY` set to the empty string while ambient proxy variables pointed to
+an unreachable address. The exact licensing URL returned status 200 at final URL
+`https://stackoverflow.com/help/licensing`, no `Content-Encoding` or
+`Content-Length`, 142,889 bytes, and local SHA-256
+`c3951fa5ad6b3d40c44b5f928dd85fcb9c79538aefe59db69541116198af1ec5`
+(2026-08-23T09:47:20.338666Z–09:47:21.974828Z). The exact public-terms URL
+returned status 200 at final URL
+`https://stackoverflow.com/legal/terms-of-service/public`, likewise no
+`Content-Encoding` or `Content-Length`, 179,775 bytes, and local SHA-256
+`2388f420efe51045eed6537681c4fd7296ea9280a03aea1dd62357af6496088e`
+(2026-08-23T09:47:21.975946Z–09:47:23.193658Z). Numeric HTTP version 3 in
+curl_cffi/libcurl denotes HTTP/2. These volatile observations establish only
+that the preregistered adapter configuration can retrieve the pages; they are
+not an acquisition bundle, license determination, browser-execution claim, or
+formal evidence authority.
+
 In this record, **fixed object identity** means the exact object URL or URL set
 that the experiment must acquire. It does not mean that a publisher promises
 the URL is immutable. None of the three publishers supplies a SHA-256 manifest
@@ -433,10 +452,14 @@ Before any manuscript reports results from these sources:
 
 1. Use the repository-owned downloader or CI transaction to acquire only the
    exact URLs listed here, fail closed on redirects to an unexpected object,
-   request the identity representation, require positive exact `Content-Length`,
-   reject non-identity `Content-Encoding` and every `Content-Range`, and preserve
-   a digest-bound request/response log. A caller-authored local manifest is not
-   URL-to-byte acquisition authority.
+   request the identity representation, reject non-identity `Content-Encoding`
+   and every `Content-Range`, and preserve digest-bound normalized observations
+   of every contract-relevant response header. A data object requires one
+   positive exact `Content-Length`. A terms object may record true absence as
+   `null` and accept only a cleanly completed body of 1 through 2,097,152 bytes;
+   a present terms-page length remains positive, within the cap, and exact. Never
+   synthesize a missing header from the retained byte count. A caller-authored
+   local manifest is not URL-to-byte acquisition authority.
 2. Record retrieval UTC, final URL, byte count, `Last-Modified`, `ETag`, media
    type, and a locally computed SHA-256 for every object. Treat the local
    SHA-256, not an ETag, as the experiment's cryptographic identity.
@@ -453,3 +476,19 @@ Before any manuscript reports results from these sources:
    promptly because the official readme describes limited version retention.
    For TLC, identify the taxi-zone CSV as the lookup accessed on 2026-08-23,
    not as a publisher-versioned 2022 zone release.
+6. Produce only acquisition transaction v3 and bind it through trace acquisition
+   binding v2 and publication trace manifest v7. The two exact Stack Overflow
+   terms URLs have a single frozen `curl_cffi==0.16.1` `chrome150` HTTP/2 route;
+   there is no runtime fallback. Until the isolated runtime, post-run anchor, and
+   ADR 0010 receipt are admitted, runtime/network/formal authority flags remain
+   false.
+7. Install acquisition and trace directories only through the repository-owned
+   inode-bound, descriptor-relative no-replace seam, with exact verification
+   before installation and same-inode revalidation afterward. Identity drift or
+   a destination collision must return HOLD without a success receipt. Preserve
+   rejected or incomplete staging trees whole under random diagnostic
+   quarantine names after an identity-bound root claim; do not recursively
+   unlink or remove staging entries through reusable pathnames. Treat this as a
+   running-process atomic namespace guarantee, not as sudden-power-loss
+   durability. The trace-preparation acquisition consumer must reopen and
+   reverify one descriptor-bound exact-tree snapshot of that bundle before use.

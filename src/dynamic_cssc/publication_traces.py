@@ -34,12 +34,12 @@ from dynamic_cssc.evidence_compatibility import (
 )
 
 ACQUISITION_RECEIPT_SCHEMA = "dynamic-cssc-acquisition-receipt-v6"
-ACQUISITION_TRACE_BINDING_SCHEMA = "dynamic-cssc-trace-acquisition-binding-v1"
+ACQUISITION_TRACE_BINDING_SCHEMA = "dynamic-cssc-trace-acquisition-binding-v2"
 CANONICAL_RAW_EVENT_SCHEMA = "dynamic-cssc-canonical-raw-event-v1"
 PUBLICATION_MAPPING_SCHEMA = "dynamic-cssc-publication-mapping-v1"
 PUBLICATION_QUERY_VECTOR_SCHEMA = "dynamic-cssc-publication-query-vector-v1"
 PUBLICATION_QUERY_VECTOR_SEED = 2026082302
-PUBLICATION_TRACE_MANIFEST_SCHEMA = "dynamic-cssc-publication-trace-manifest-v6"
+PUBLICATION_TRACE_MANIFEST_SCHEMA = "dynamic-cssc-publication-trace-manifest-v7"
 PUBLICATION_TRANSITION_SCHEMA = "dynamic-cssc-publication-transition-v3"
 REPOSITORY_PROVENANCE_SCHEMA = "dynamic-cssc-repository-provenance-v1"
 PARSER_RUNTIME_SCHEMA = "dynamic-cssc-publication-parser-runtime-v1"

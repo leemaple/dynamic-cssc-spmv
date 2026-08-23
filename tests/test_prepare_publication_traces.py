@@ -16,6 +16,8 @@ import pytest
 
 from dynamic_cssc.publication_acquisition import (
     _acquire_publication_sources,
+    _normalized_response_header_observation,
+    _normalized_response_headers_sha256,
     _TransportResponse,
 )
 from dynamic_cssc.publication_acquisition import (
@@ -52,6 +54,14 @@ def _closed_simplewiki_acquisition(tmp_path: Path, *, rows: str) -> Path:
     terms_bytes = b"<html>CC0 fixture terms</html>\n"
 
     def response(url: str, content: bytes, media_type: str) -> _TransportResponse:
+        normalized_response_headers = _normalized_response_header_observation(
+            media_type=media_type,
+            content_length=len(content),
+            content_encoding=None,
+            content_range=None,
+            http_etag=None,
+            http_last_modified=None,
+        )
         return _TransportResponse(
             final_url=url,
             http_status=200,
@@ -62,6 +72,15 @@ def _closed_simplewiki_acquisition(tmp_path: Path, *, rows: str) -> Path:
             http_etag=None,
             http_last_modified=None,
             chunks=(content,),
+            http_version="HTTP/1.1",
+            configured_request_headers=(
+                ("accept-encoding", "identity"),
+                ("user-agent", "dynamic-cssc-publication-acquisition/1"),
+            ),
+            normalized_response_headers=normalized_response_headers,
+            normalized_response_headers_sha256=_normalized_response_headers_sha256(
+                normalized_response_headers
+            ),
         )
 
     output_dir = tmp_path / "simplewiki-acquisition"
@@ -256,8 +275,13 @@ def test_cli_consumes_the_closed_acquisition_transaction_and_emits_hold_binding(
 
     assert result == 0
     manifest = json.loads((output_dir / "publication-trace-manifest.json").read_bytes())
-    assert manifest["schema_version"] == "dynamic-cssc-publication-trace-manifest-v6"
+    assert manifest["schema_version"] == "dynamic-cssc-publication-trace-manifest-v7"
     binding = manifest["acquisition_binding"]
+    assert binding["schema_version"] == "dynamic-cssc-trace-acquisition-binding-v2"
+    assert (
+        binding["acquisition_transaction_schema_version"]
+        == "dynamic-cssc-acquisition-transaction-v3"
+    )
     assert (
         binding["acquisition_transaction_sha256"] == hashlib.sha256(transaction_bytes).hexdigest()
     )
@@ -278,7 +302,7 @@ def test_cli_consumes_the_closed_acquisition_transaction_and_emits_hold_binding(
         "bundle_member_set_exact": True,
         "bundle_members_rehashed_no_follow": True,
         "embedded_central_inventory_verified": False,
-        "network_fetch_recorded": True,
+        "network_fetch_recorded": False,
         "source_and_terms_objects_rehashed_no_follow": True,
         "transaction_chain_verified": True,
     }
@@ -290,6 +314,82 @@ def test_cli_consumes_the_closed_acquisition_transaction_and_emits_hold_binding(
     )
     program = _compile_accepted_group_program_for_test(trace, Fraction(1, 100))
     assert (program.accepted_group_count, program.total_set_count) == (70, 70)
+
+
+def test_trace_writer_uses_the_verified_directory_installer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output_dir = tmp_path / "trace-output"
+    calls: list[Path] = []
+
+    def refuse_install(staging: Path, output: Path, **_: object) -> None:
+        calls.extend((staging, output))
+        raise RuntimeError("fixture installer stop")
+
+    monkeypatch.setattr(
+        prepare_publication_traces,
+        "install_verified_directory",
+        refuse_install,
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeError, match="fixture installer stop"):
+        prepare_publication_traces._write_bundle(
+            output_dir,
+            manifest_bytes=b"{}\n",
+            trace_bytes=b"",
+            query_vector_bytes=b"{}\n",
+        )
+
+    assert len(calls) == 2
+    assert calls[1] == output_dir
+    assert not output_dir.exists()
+
+
+def test_descriptor_bound_trace_verification_ignores_transient_parent_name_substitution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_verifier = prepare_publication_traces._trace_bundle_fingerprint
+    displaced = tmp_path / "verified-trace-displaced"
+    foreign_preserved = tmp_path / "foreign-trace-preserved"
+    verifier_calls = 0
+
+    def verifier(artifact_directory: object, **arguments: object):  # type: ignore[no-untyped-def]
+        nonlocal verifier_calls
+        verifier_calls += 1
+        if verifier_calls == 1:
+            [claimed] = [
+                path
+                for path in tmp_path.iterdir()
+                if "trace-output.tmp-" in path.name and ".owned-" in path.name
+            ]
+            claimed.rename(displaced)
+            claimed.mkdir()
+            (claimed / "foreign-unverified.txt").write_bytes(b"not verified\n")
+            try:
+                return original_verifier(  # type: ignore[arg-type]
+                    artifact_directory,
+                    **arguments,
+                )
+            finally:
+                claimed.rename(foreign_preserved)
+                displaced.rename(claimed)
+        return original_verifier(artifact_directory, **arguments)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(prepare_publication_traces, "_trace_bundle_fingerprint", verifier)
+    output_dir = tmp_path / "trace-output"
+
+    prepare_publication_traces._write_bundle(
+        output_dir,
+        manifest_bytes=b"{}\n",
+        trace_bytes=b"",
+        query_vector_bytes=b"{}\n",
+    )
+
+    assert (output_dir / "publication-trace-manifest.json").read_bytes() == b"{}\n"
+    assert (foreign_preserved / "foreign-unverified.txt").read_bytes() == b"not verified\n"
 
 
 def test_cli_writes_only_canonical_derived_artifacts_from_verified_local_input(
@@ -371,7 +471,7 @@ def test_cli_writes_only_canonical_derived_artifacts_from_verified_local_input(
         "trace_jsonl_sha256",
         "eligibility",
     }
-    assert manifest["schema_version"] == "dynamic-cssc-publication-trace-manifest-v6"
+    assert manifest["schema_version"] == "dynamic-cssc-publication-trace-manifest-v7"
     assert manifest["artifact_policy"] == "derived-trace-and-download-by-source-only"
     assert manifest["acquisition_binding"]["authority"]["claims_authorized"] is False
     assert manifest["acquisition_binding"]["verification"]["transaction_chain_verified"] is True

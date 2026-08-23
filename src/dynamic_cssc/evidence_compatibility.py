@@ -151,12 +151,13 @@ _ACQUISITION_BEHAVIOR_PATHS = (
     "docs/research/publication-dataset-citation-record.md",
     "docs/research/publication-venues-datasets-preregistration.md",
     "pyproject.toml",
-    "requirements-publication.txt",
+    "requirements-acquisition.txt",
     "scripts/acquire_publication_sources.py",
     "scripts/prepare_publication_traces.py",
     "src/dynamic_cssc/__init__.py",
     "src/dynamic_cssc/evidence_compatibility.py",
     "src/dynamic_cssc/publication_acquisition.py",
+    "src/dynamic_cssc/publication_artifact_install.py",
     "src/dynamic_cssc/publication_traces.py",
 )
 
@@ -171,6 +172,8 @@ _TRACE_BEHAVIOR_PATHS = (
     "scripts/run_publication_structure_pilot.py",
     "src/dynamic_cssc/__init__.py",
     "src/dynamic_cssc/evidence_compatibility.py",
+    "src/dynamic_cssc/publication_acquisition.py",
+    "src/dynamic_cssc/publication_artifact_install.py",
     "src/dynamic_cssc/publication_structure_pilot.py",
     "src/dynamic_cssc/publication_traces.py",
 )
@@ -361,8 +364,8 @@ _ROLE_BEHAVIOR_PATHS: dict[EvidenceRole, tuple[str, ...] | None] = {
 }
 
 _ROLE_BEHAVIOR_SCHEMAS = {
-    EvidenceRole.ACQUISITION: "dynamic-cssc-acquisition-behavior-set-v1",
-    EvidenceRole.TRACE: "dynamic-cssc-trace-behavior-set-v1",
+    EvidenceRole.ACQUISITION: "dynamic-cssc-acquisition-behavior-set-v2",
+    EvidenceRole.TRACE: "dynamic-cssc-trace-behavior-set-v2",
     EvidenceRole.DAY1B: "dynamic-cssc-day1b-behavior-set-v1",
     EvidenceRole.DAY2: "dynamic-cssc-day2-behavior-set-v1",
     EvidenceRole.ANALYZER: "dynamic-cssc-publication-analyzer-behavior-set-v1",

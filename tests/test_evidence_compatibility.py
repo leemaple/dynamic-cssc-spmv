@@ -33,6 +33,8 @@ TRACE_BEHAVIOR_PATHS = (
     "scripts/run_publication_structure_pilot.py",
     "src/dynamic_cssc/__init__.py",
     "src/dynamic_cssc/evidence_compatibility.py",
+    "src/dynamic_cssc/publication_acquisition.py",
+    "src/dynamic_cssc/publication_artifact_install.py",
     "src/dynamic_cssc/publication_structure_pilot.py",
     "src/dynamic_cssc/publication_traces.py",
 )
@@ -133,7 +135,7 @@ def _acquisition_anchor_record(
 ) -> dict[str, object]:
     return {
         "artifact_sha256": artifact_sha256,
-        "behavior_set_schema_version": "dynamic-cssc-acquisition-behavior-set-v1",
+        "behavior_set_schema_version": "dynamic-cssc-acquisition-behavior-set-v2",
         "behavior_set_sha256": behavior_set_sha256,
         "experiment_source_git_sha": experiment_sha,
         "role": "acquisition",
@@ -1558,12 +1560,13 @@ def test_role_sets_freeze_entrypoint_workflow_build_lock_runtime_and_transitive_
         "docs/research/publication-dataset-citation-record.md",
         "docs/research/publication-venues-datasets-preregistration.md",
         "pyproject.toml",
-        "requirements-publication.txt",
+        "requirements-acquisition.txt",
         "scripts/acquire_publication_sources.py",
         "scripts/prepare_publication_traces.py",
         "src/dynamic_cssc/__init__.py",
         "src/dynamic_cssc/evidence_compatibility.py",
         "src/dynamic_cssc/publication_acquisition.py",
+        "src/dynamic_cssc/publication_artifact_install.py",
         "src/dynamic_cssc/publication_traces.py",
     } == acquisition_paths
     assert set(TRACE_BEHAVIOR_PATHS) == trace_paths

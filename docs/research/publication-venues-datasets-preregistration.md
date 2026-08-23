@@ -336,6 +336,14 @@ For every raw object and every derived trace, record:
 - final URL, status, normalized media type, and a digest-bound downloader
   request/response receipt; a caller-written local manifest is not acquisition
   authority;
+- for each data object, one positive exact `Content-Length`; for each terms
+  object, either the same exact length or a truly absent header recorded as
+  `null` under the frozen 2,097,152-byte clean-transfer cap, never a value
+  synthesized from the retained byte count;
+- the exact repository-owned transport route and locked environment: only the
+  two Stack Overflow terms URLs use the fixed `curl_cffi==0.16.1` `chrome150`
+  HTTP/2 fingerprint adapter, with no browser/profile fallback and no claim that
+  a real Chrome browser executed;
 - publisher checksum where supplied and local SHA-256 in all cases;
 - each applicable license/terms page's no-fragment fetch URL, section anchor,
   retrieval UTC, optional response validators, byte count, local SHA-256,

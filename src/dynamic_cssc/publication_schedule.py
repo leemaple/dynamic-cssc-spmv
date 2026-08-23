@@ -700,8 +700,9 @@ def _validate_acquisition(manifest: dict[str, object]) -> None:
         or binding["dataset_release"] != manifest["dataset_release"]
     ):
         raise ValueError("acquisition_binding dataset identity does not match the trace")
-    if binding["acquisition_transaction_schema_version"] != (
-        "dynamic-cssc-acquisition-transaction-v2"
+    if (
+        binding["acquisition_transaction_schema_version"]
+        != "dynamic-cssc-acquisition-transaction-v3"
     ):
         raise ValueError("acquisition transaction schema is not frozen")
     if binding["source_set_schema_version"] != "dynamic-cssc-local-source-set-v5":
@@ -747,7 +748,7 @@ def _validate_acquisition(manifest: dict[str, object]) -> None:
     )
     if (
         inventory["schema_version"] != BEHAVIOR_INVENTORY_SCHEMA
-        or inventory["behavior_set_schema_version"] != "dynamic-cssc-acquisition-behavior-set-v1"
+        or inventory["behavior_set_schema_version"] != "dynamic-cssc-acquisition-behavior-set-v2"
         or inventory["role"] != EvidenceRole.ACQUISITION.value
         or inventory["source_git_sha"] != acquisition_source_sha
     ):
@@ -803,6 +804,7 @@ def _validate_acquisition(manifest: dict[str, object]) -> None:
     fixture_bundle_verification = {
         **hardened_verification,
         "embedded_central_inventory_verified": False,
+        "network_fetch_recorded": False,
     }
     local_fixture_verification = {
         key: key == "source_and_terms_objects_rehashed_no_follow"
