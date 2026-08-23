@@ -17,6 +17,7 @@ QUERY_SIDE_FIELDS = (
     "query_ciphertexts",
     "result_ciphertexts",
     "cc_multiplications",
+    "relinearizations",
     "rotations",
     "additions",
     "plaintext_masks",
@@ -94,6 +95,29 @@ def test_query_accounting_uses_compiled_non_power_of_two_schedule_when_proxy_is_
         metrics.result_ciphertexts,
         metrics.decryptions,
     ) == (1, 1, rotations, rotations, 1, 1, 1)
+
+
+def test_ordinary_query_exposes_relinearizations_and_exact_rotation_inventory() -> None:
+    config = _config(
+        rows=1,
+        cols=3,
+        effective_slots=8,
+        partition_rows=1,
+        max_row_nnz=3,
+        packed_coo_segment_capacity=8,
+    )
+
+    result = simulate_targets(
+        [_query_window(0, 2)],
+        {(0, 0): 1, (0, 1): 2, (0, 2): 3},
+        [SimulationTarget("padding", "PaddingReuse-CSSC", config)],
+        measure_from=0,
+    )["padding"]
+
+    assert result.metrics.relinearizations == 2
+    assert result.metrics.rotations == 4
+    assert result.rotation_inventory.measured_counts_by_exact_index == ((1, 2), (2, 2))
+    assert result.rotation_inventory.required_indices == (1, 2)
 
 
 def test_update_only_window_has_zero_query_side_accounting() -> None:
@@ -197,6 +221,33 @@ def test_random_and_dummy_blinding_ciphertexts_merge_and_serialize_without_doubl
     assert record["predicted_query_time"] == 23 * UnitCosts().encrypt
 
 
+def test_metadata_total_is_derived_from_ci_patch_and_full_sync_entries() -> None:
+    metrics = StrategyMetrics(
+        "example",
+        "reference",
+        ci_patch_entries=2,
+        ci_full_sync_entries=3,
+    )
+
+    assert metrics.metadata_units == 5
+    with pytest.raises(ValueError, match="metadata_units"):
+        StrategyMetrics(
+            "example",
+            "reference",
+            ci_patch_entries=2,
+            ci_full_sync_entries=3,
+            metadata_units=4,
+        )
+    with pytest.raises(ValueError, match="metadata_units"):
+        StrategyMetrics(
+            "example",
+            "reference",
+            ci_patch_entries=2,
+            ci_full_sync_entries=3,
+            metadata_units=0,
+        )
+
+
 def test_query_side_counts_scale_with_queries_and_accumulate() -> None:
     initial = {(0, 0): 1}
     one_query = {
@@ -204,9 +255,7 @@ def test_query_side_counts_scale_with_queries_and_accumulate() -> None:
     }
     four_queries = {
         item.strategy: item
-        for item in simulate(
-            [_query_window(0, 1), _query_window(1, 3)], initial, _config()
-        )
+        for item in simulate([_query_window(0, 1), _query_window(1, 3)], initial, _config())
     }
 
     assert one_query.keys() == four_queries.keys()
@@ -218,17 +267,10 @@ def test_query_side_counts_scale_with_queries_and_accumulate() -> None:
 
 
 def test_cssc_query_counts_reduction_adds_masks_and_cross_chunk_merge() -> None:
-    initial = {
-        (row, col): 1
-        for row, width in enumerate((4, 2, 1))
-        for col in range(width)
-    }
+    initial = {(row, col): 1 for row, width in enumerate((4, 2, 1)) for col in range(width)}
     config = _config(rows=3, effective_slots=8, partition_rows=3)
 
-    metrics = {
-        item.strategy: item
-        for item in simulate([_query_window(0, 2)], initial, config)
-    }
+    metrics = {item.strategy: item for item in simulate([_query_window(0, 2)], initial, config)}
     padding = metrics["PaddingReuse-CSSC"]
 
     # The two CSSC chunks have widths 2 and 2: two rotate-and-add steps,
@@ -249,10 +291,7 @@ def test_cssc_query_omits_identity_lane_mask() -> None:
         packed_coo_segment_capacity=4,
     )
 
-    metrics = {
-        item.strategy: item
-        for item in simulate([_query_window(0, 1)], initial, config)
-    }
+    metrics = {item.strategy: item for item in simulate([_query_window(0, 1)], initial, config)}
     padding = metrics["PaddingReuse-CSSC"]
 
     assert padding.rotations == 0
@@ -261,11 +300,7 @@ def test_cssc_query_omits_identity_lane_mask() -> None:
 
 
 def test_mini_cssc_accumulates_base_and_delta_query_operations() -> None:
-    initial = {
-        (row, col): 1
-        for row, width in enumerate((4, 2, 1))
-        for col in range(width)
-    }
+    initial = {(row, col): 1 for row, width in enumerate((4, 2, 1)) for col in range(width)}
     window = PublicationWindow(
         index=0,
         start_time=0.0,

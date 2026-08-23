@@ -4,7 +4,8 @@
 > It permits design and protocol descriptions that are supported by the frozen
 > contract and accepted ADRs. It keeps performance, complete-reference,
 > end-to-end, formal, and security-effectiveness claims on HOLD until the exact
-> gates and artifacts listed below exist for the manuscript commit.
+> gates and artifacts listed below exist and an ADR 0010 compatibility receipt
+> binds the experiment, evidence-freeze, and analysis snapshots.
 
 ## 1. Scope and source hierarchy
 
@@ -21,7 +22,11 @@ This skeleton uses the following local sources, in descending order of authority
    [ADR 0005](../decisions/0005-output-plan-overlap-blinding.md),
    [ADR 0006](../decisions/0006-persistent-strategy-snapshots.md),
    [ADR 0007](../decisions/0007-anonymous-fixed-segment-primitive.md), and
-   [ADR 0008](../decisions/0008-strong-whole-query-execution-bundle.md));
+   [ADR 0008](../decisions/0008-strong-whole-query-execution-bundle.md),
+   as superseded for Day-1 admission and roles by
+   [ADR 0009](../decisions/0009-fail-closed-role-aware-day1-catalog.md),
+   with cross-stage source identity defined by
+   [ADR 0010](../decisions/0010-separate-experiment-and-evidence-freeze-snapshots.md));
 4. current repository status and evidence policy
    ([README](../../README.md), [architecture](../architecture.md), and
    [review checkpoints](../review-checkpoints.md)); and
@@ -54,9 +59,9 @@ The following belong to the published static CSSC method:
 - per-chunk aggregation, masking of invalid lanes, and cross-chunk summation in
   the static single-matrix query.
 
-The repository reconstruction is derived from published pseudocode. No author
-code was located, so use **independent pseudocode-derived reconstruction**, never
-“reproduction of the authors' implementation.”
+The repository reconstruction is derived from published pseudocode. We did not
+use or verify an author implementation, so use **independent pseudocode-derived
+reconstruction**, never “reproduction of the authors' implementation.”
 
 ### 2.2 Our method candidates: describe at design/protocol level
 
@@ -70,8 +75,9 @@ The defensible project-specific method candidates are:
 - logical-coordinate contributor multiplicity, implicit-zero reconstruction,
   overlap-only zero-sum blinding, and persistent no-reuse bindings;
 - independent persistent strategy snapshots and a tuning-only fixed policy;
-- the anonymous fixed-segment cloud primitive and client merge of leaders whose
-  logical-row equivalence is hidden from the Cloud;
+- the opaque-identifier fixed-segment cloud primitive and client merge of
+  leaders; same-row-equivalence fields occur only in Client B's typed plan, and
+  no segment-unlinkability claim is made;
 - the single whole-query execution bundle that binds the real CSSC base, strong
   delta, typed Cloud DAG, private routes, operands, counts, and commitments; and
 - fail-closed evidence separation among design, predicted proxy, measured unit
@@ -154,7 +160,7 @@ if current lower bit of w is one:
     acc = original + Rot(acc, h)
 ```
 
-The cited HElib correction preserves the paper-derived abstract node count and works
+The cited HElib form preserves the paper-derived abstract node count and works
 for general widths. It must be described as a **corrected CSSC/HElib total-sum
 interpretation**, not as verified CSSC-author code and not automatically as our
 novel algorithm.
@@ -171,7 +177,7 @@ Keep four cases distinct:
 | Reduction | General-width correctness | Abstract cost | Attribution / role |
 |---|---|---|---|
 | Paper-literal Algorithm 4 | No, when the set-bit branch is reached | `f(w)` nodes | Published pseudocode, with defect |
-| Cited HElib corrected `totalSum` | Yes | `f(w)` nodes | Semantic correction supplied by the cited source |
+| Cited HElib `totalSum` form | Yes | `f(w)` nodes | Source form from which our CSSC compatibility correction is derived |
 | Stored-power/prefix corrected DAG with explicit direct shifts | Yes | `f(w)` nodes | Current repository common compiler used by simulator and strong adapter |
 | Direct rotations of the original product | Yes | `w-1` nodes | Historical repository alternative; no longer the current schedule |
 
@@ -184,7 +190,9 @@ Report separately: abstract rotation nodes, primitive rotations/key switches aft
 key decomposition, intra-chunk additions, plaintext mask multiplications, and
 cross-chunk additions. The common DAG closes predictor/adapter schedule identity only
 at the abstract executable-DAG level. Direct-key realization, primitive key-switch
-count, time, and noise remain unmeasured, and a current successful witness is pending.
+count, time, and noise remain unmeasured. A commit-bound whole-query correctness
+witness passed at `fcb00e0d`, but that fixture is not a Day 2 timing or key-cost
+measurement.
 
 ### 3.4 Independent causal maintenance snapshots
 
@@ -209,11 +217,13 @@ For each version, define a private mapping
 (component_id, output_block_id, physical_lane) -> logical_coordinate.
 ```
 
-Client A and Client B receive the complete RowMap-sensitive OutputPlan. The Cloud
-receives only its canonical digest and opaque identifiers. Client B initializes a
-public-length logical output vector to zero, reorders decrypted shares by the
-plan, adds contributors only when they map to the same logical coordinate, and
-concatenates disjoint horizontal output blocks.
+Client A and Client B receive the complete RowMap-sensitive OutputPlan. The
+Cloud-facing OutputPlan projection contains only its canonical digest and opaque
+identifiers; the other declared Cloud leakage remains the published
+shapes/counts, schedule/timing, query/version identifiers, and binding digests
+listed below. Client B initializes a public-length logical output vector to zero,
+reorders decrypted shares by the plan, adds contributors only when they map to
+the same logical coordinate, and concatenates disjoint horizontal output blocks.
 
 A coordinate without a physical contributor remains an implicit zero. A reserved
 physical lane is different: it is real capacity and must incur the publication and
@@ -243,22 +253,27 @@ returned share. An overlap uses a random zero-sum operand; a disjoint return use
 an encrypted-zero dummy. Dummy operands change operational counts but do not change
 the logical rule that random masks exist only for overlapping coordinates.
 
-Scope the intended effect precisely: F1-M is designed to prevent the decrypting
-recipient from separating overlapping component contributions beyond their final
-sum. It does not hide the full OutputPlan from Client B, hide the result from Client
-B, provide malicious security, or prove simulation-based security.
+Scope the intended effect precisely: F1-M has the confidentiality goal of
+limiting the decrypting recipient to the final sum of overlapping component
+contributions. Current evidence establishes the typed masking/dummy mechanism,
+not that confidentiality property. It does not hide the full OutputPlan from
+Client B, hide the result from Client B, provide malicious security, or prove
+simulation-based security.
 
-### 3.7 Anonymous fixed-segment strong path
+### 3.7 Opaque-identifier fixed-segment strong path
 
 Allocate public fixed-width, power-of-two physical segments. Each segment contains
-entries from one logical row, while the Cloud sees only public page/segment shapes
-and opaque ordinals. The Cloud performs the same page-wide program and reduces each
-segment to its own leader lane.
+entries from one logical row. The typed Cloud plan carries public page/segment
+shapes and opaque ordinals but not RowMap or same-row-equivalence fields. Its
+observable leakage still includes published shapes and counts, schedule and timing,
+opaque identifiers, query/version identifiers, and binding digests. The Cloud
+performs the same page-wide program and reduces each segment to its own leader lane.
 
 Leaders from different opaque segments remain separate even if they contribute to
-the same hidden logical row. Client B merges them under the version-bound OutputPlan.
-Cloud-side merging would reveal row equivalence unless an additional oblivious
-routing construction were specified.
+the same logical row. Client B merges them under the version-bound OutputPlan.
+Cloud-side merging would add an explicit row-equivalence field unless an additional
+oblivious routing construction were specified. The current typed ACL does not
+establish segment unlinkability or prevent inference from the declared leakage.
 
 Compile the real CSSC base and strong delta into one deterministic execution bundle.
 The bundle owns the typed Cloud DAG, private routes, global-column operands,
@@ -266,10 +281,13 @@ versions, commitments, and DAG-derived counts. Any mutation of private routes,
 column metadata, or versions must fail binding validation rather than alter a
 previously valid prepared query.
 
-The Phase 2 whole-query witness passed at `fbd9712`, but manifest-bound changes were
-then merged at `5bf0e51`. No successful witness covers that current implementation.
-The integration and workflow are implemented, but the strong candidate remains
-unevidenced for the current implementation and unregistered.
+The current Phase 2 whole-query witness passed at
+`fcb00e0d7f111f3ab5003c111b124df83ae11813` in run `32581653504`. Its independently
+checksummed artifact is bound to the real CSSC base, strong delta, property
+contract, typed execution, OpenFHE 1.5.1 source commit, and the exact source tree.
+This is narrow E4 correctness evidence only. It does not register the strong
+candidate or establish complete costs, mixed-circuit parameter safety, security,
+or end-to-end performance.
 
 ### 3.8 Correctness and parameter boundaries
 
@@ -311,9 +329,9 @@ claim to eliminate them.
 | E0 — primary-source interpretation | Author PDF/TeX and cited algorithm source, with conflicts disclosed | Attribution and reconstructed algorithm semantics | Author-code behavior or implementation correctness |
 | E1 — design/code inspection | Contract, ADR, typed code, tests present in tree | “specified,” “designed,” or “implemented” at a named commit | A gate passed, measured cost, or executed protocol correctness |
 | E2 — commit-bound CI receipt | Passing workflow artifact, provenance, manifest, raw logs, checksums | Only the artifact's explicit evidence scope | Later commits or a broader circuit/protocol |
-| E3 — causal predicted artifact | Replayed Day 1 suite with persistent snapshots and complete receipts | Predicted-proxy behavior for the admitted candidate set | Measured speed, complete-reference verdict when the set is partial |
+| E3 — causal predicted artifact | Replayed Day 1 suite with persistent snapshots, complete receipts, and the repository-admitted role catalog | Predicted-proxy behavior for the exact admitted candidate set | Measured speed, or any result from a partial or unadmitted set |
 | E4 — pinned cryptographic witness | Successful independently validated primitive or whole-query artifact | Correctness of that exact witness and binding | Security, end-to-end deployment, candidate registration by itself |
-| E5 — measured unit evidence | Pinned Day 2 raw repetitions and key plan | Unit measurements for the exact profiles | End-to-end latency or unfrozen mixed-circuit safety |
+| E5 — measured unit evidence | Pinned Day 2 exact 14 whole-block measurements and key plan | Unit measurements for the exact profiles | End-to-end latency or unfrozen mixed-circuit safety |
 | E6 — end-to-end review artifact | Full protocol execution, correctness vectors, leakage-mode demonstration, accounting, provenance | Narrow claims expressly tested by R4 | Formal security unless a separate proof is supplied |
 
 Evidence never flows upward by implication. In particular, E2 P0a evidence cannot
@@ -321,23 +339,29 @@ be used as E5 or E6 evidence, and an E4 fixture cannot authorize a candidate reg
 
 ## 6. Claim-to-gate and artifact matrix
 
-`<sha>` below is the exact source commit evaluated by the manuscript. A paper claim
-must cite both its source commit and immutable artifact digest.
+`<experiment-sha>` below is the exact experiment source snapshot S1;
+`<freeze-sha>` is the later evidence-freeze snapshot S2 that admits the
+digest-addressed artifact; and `<analysis-sha>` is the analysis snapshot S3.
+A paper claim must cite all applicable identities, the artifact digest, and the
+ADR 0010 compatibility receipt. An anchor-only or analysis-only commit does not
+by itself require rerunning S1; drift in the repository-owned Behavior Set for
+the corresponding role does.
 
 | Future manuscript claim | Minimum required gate | Exact required workflow artifact / content | Current status |
 |---|---|---|---|
-| Protocol roles, ACL, and v2.1b freeze are enforced | R0 on manuscript `<sha>` | [`ci.yml`](../../.github/workflows/ci.yml): `r0-freeze-<sha>` plus `review-pack-R0-<sha>`, manifest, tests, logs, and checksums | Historical R0 exists for an earlier commit only; current-HEAD claim HOLD |
-| Packed BFV slot permutations match the logical rotation plan | P0a/R1 on manuscript `<sha>` | [`p0a-rotation-probe.yml`](../../.github/workflows/p0a-rotation-probe.yml): `r1-p0a-<sha>` plus `review-pack-R1-P0a-<sha>`, raw layouts, plan, build provenance, and checksums | Historical scoped PASS only; do not generalize |
-| Exact publication layout preserves global-column query semantics | Current-commit deterministic preflight inside R2 | [`day1-cost-model.yml`](../../.github/workflows/day1-cost-model.yml): `r2-day1-<sha>-<seed>` with `results/day1/SUITE_STATUS.json`, preflight PASS, replay receipts, and `SHA256SUMS` | Not run; workflow contract exists, but no R2 artifact exists |
-| Maintenance evaluation is causal across windows | R2 causal replay | Same `r2-day1-<sha>-<seed>`; status must declare persistent strategy snapshots and all independent replay receipts must verify | Not run; workflow contract exists, but no R2 artifact exists |
-| Predicted trade-offs for the current partial candidate set | R2 causal replay with strict labeling | Same R2 artifact; must say predicted proxy, `complete_reference_set=false`, missing `strong-packed-coo`, and no gate-eligible full-cost verdict | Not run; therefore no predicted trade-off result currently exists |
-| Anonymous fixed-segment primitive executes correctly | Phase 1 pinned witness | [`strong-packed-coo-witness.yml`](../../.github/workflows/strong-packed-coo-witness.yml): `strong-packed-coo-witness-success-<sha>` with passing `RUN_STATUS.json`, witness, bindings, provenance, validation log, and checksums | Narrow primitive evidence only; no registration/security/performance claim |
-| Real CSSC base plus strong delta execute one bound query correctly | Phase 2 pinned whole-query witness | [`strong-whole-query-witness.yml`](../../.github/workflows/strong-whole-query-witness.yml): `strong-whole-query-witness-success-<sha>`; `RUN_STATUS.json` must be pass/evidence-valid and all witness, property-contract, binding, provenance, manifest, validation, and checksum files must verify | Passed at `fbd9712`, then superseded by manifest-bound changes merged at `5bf0e51`; no successful witness covers the current implementation |
+| Protocol roles, ACL, and v2.1b freeze are enforced | R0 on `<experiment-sha>` | [`ci.yml`](../../.github/workflows/ci.yml): `r0-freeze-<experiment-sha>` plus `review-pack-R0-<experiment-sha>`, manifest, tests, logs, and checksums | Passed at historical S1 `fcb00e0d` in run `32580113632` with 750 tests and verified provenance/checksums; rerun when the R0 Behavior Set changes |
+| Packed BFV slot permutations match the logical rotation plan | P0a/R1 on `<experiment-sha>` | [`p0a-rotation-probe.yml`](../../.github/workflows/p0a-rotation-probe.yml): `r1-p0a-<experiment-sha>` plus `review-pack-R1-P0a-<experiment-sha>`, raw layouts, plan, build provenance, and checksums | Historical scoped PASS only; do not generalize |
+| Exact publication layout preserves global-column query semantics | S1 deterministic preflight inside R2 | [`day1-cost-model.yml`](../../.github/workflows/day1-cost-model.yml): `r2-day1-<experiment-sha>-<seed>` with `results/day1/SUITE_STATUS.json`, preflight PASS, replay receipts, and `SHA256SUMS` | Not run; workflow contract exists, but no R2 artifact exists |
+| Maintenance evaluation is causal across windows | R2 causal replay | Same `r2-day1-<experiment-sha>-<seed>`; status must declare persistent strategy snapshots and all separate deterministic replay receipts must verify | Not run; workflow contract exists, but no R2 artifact exists |
+| Predicted trade-offs for the complete admitted role-aware set | R2 causal replay with strict labeling | Same R2 artifact; every cell must prove 14 fixed records, 13 selectable references, one client-lane ablation, 13 tuning records, 16 total records including aliases, exact rotation inventories, and `complete_reference_set=true`; measured/full-cost/security/performance gates remain false | Not run; the repository catalog currently fails closed before output because the composite registration anchor is absent |
+| Opaque-identifier fixed-segment primitive executes correctly | Phase 1 pinned witness | [`strong-packed-coo-witness.yml`](../../.github/workflows/strong-packed-coo-witness.yml): `strong-packed-coo-witness-success-<experiment-sha>` with passing `RUN_STATUS.json`, witness, bindings, provenance, validation log, and checksums | Narrow primitive evidence only; no registration/security/performance/unlinkability claim |
+| Real CSSC base plus strong delta execute one bound query correctly | Phase 2 pinned whole-query witness | [`strong-whole-query-witness.yml`](../../.github/workflows/strong-whole-query-witness.yml): `strong-whole-query-witness-success-<experiment-sha>`; `RUN_STATUS.json` must be pass/evidence-valid and all witness, property-contract, binding, provenance, manifest, validation, and checksum files must verify | Passed at historical S1 `fcb00e0d` in run `32581653504`; artifact SHA-256 `c5f44b0c9475a66d49b48332e335cb58811cf4eec579ebff631123c4e4711afe`; scope remains narrow E4 |
 | Strong packed-COO is an admitted reference candidate | Registration gate after Phase 2 | Successful Phase 2 artifact **plus** independent trust anchor, SHA-bound builder/property contract, report/accounting schema update, registry entry, and tuning-prefix evidence for the frozen segment family | HOLD; witness success alone is insufficient |
-| Full fixed-reference comparison or full-baseline ranking | Complete-reference R2 rerun | A revised Day 1 contract and `r2-day1-<sha>-<seed>` that admit the registered strong candidate and state `complete_reference_set=true`; current workflow intentionally enforces false | HOLD; no current result may use this wording |
-| F1-M blinding works in encrypted whole-query execution | R4 minimal prototype | `review-pack-R4-<sha>` containing encrypted masks/dummies, ledger/batch-token trace, correct decryption/reconstruction vectors, leakage mode, communication/memory accounting, provenance, and checksums | HOLD; plaintext/domain design or Phase 2 witness is insufficient |
-| Measured unit costs calibrate the operation-count model | P0b/Day 2 plus frozen mixed-circuit correctness gate | [`day2-microbench.yml`](../../.github/workflows/day2-microbench.yml): `r3-day2-<sha>` and `review-pack-R3-Day2-<sha>` with raw repetitions, key plan, profiles, provenance, and checksums; additionally, a named mixed-circuit artifact | HOLD; the mixed-circuit workflow/artifact contract is not yet specified in the cited sources |
-| End-to-end correctness, communication, memory, or latency | R4 on manuscript `<sha>` | `review-pack-R4-<sha>` containing full OpenFHE execution, correctness vectors, raw accounting, all strong references, manifest, logs, provenance, and checksums | HOLD; no dedicated R4 workflow contract is specified here |
+| Historical synthetic fixed-reference predicted comparison | Complete-reference R2 run after registration | The role-aware synthetic Day 1 contract and `r2-day1-<experiment-sha>-<seed>` must admit the strong candidate, preserve the client-lane candidate only as an ablation, and state `complete_reference_set=true` after all 21 synthetic shards / 189 synthetic cells validate; this is not the publication Day1B corpus | HOLD; implementation exists, but the composite registration anchor and resulting R2 artifact do not |
+| Publication fixed-corpus comparison | Publication Day1B after all pre-dispatch gates | The publication producer must validate exactly 30 trace units / 540 cells / 14,580 physical records, with 13 tuning references and 14 held-out fixed candidates per cell; aliases are derived only by the analyzer | HOLD; a tested first-wave per-unit producer now closes 18 cells / 486 physical records, schedule-v2 streaming, serialization ledgers, and resource observations, but the frozen resource policy, repository execution adapter, trace/catalog/Day1A/Day2 authorities, 30-unit aggregation, and publication artifact do not yet exist |
+| F1-M blinding works in encrypted whole-query execution | R4 minimal prototype | `review-pack-R4-<experiment-sha>` containing encrypted masks/dummies, ledger/batch-token trace, correct decryption/reconstruction vectors, leakage mode, communication/memory accounting, provenance, and checksums | HOLD; plaintext/domain design or Phase 2 witness is insufficient |
+| Measured unit costs calibrate the operation-count model | P0b/Day 2 plus frozen mixed-circuit correctness gate | A replacement/extension of [`day2-microbench.yml`](../../.github/workflows/day2-microbench.yml): `r3-day2-<experiment-sha>` and `review-pack-R3-Day2-<experiment-sha>` with exactly 14 complete whole measurement blocks, the Day1A-derived exact key plan, all 14 profiles, provenance, checksums, and a named mixed-circuit artifact | HOLD; the current workflow is only a historical isolated probe (first caller-supplied rotation index, summaries only, incomplete vocabulary) and cannot emit the required publication artifact |
+| End-to-end correctness, communication, memory, or latency | R4 on `<experiment-sha>` plus S2/S3 compatibility | `review-pack-R4-<experiment-sha>` containing full OpenFHE execution, correctness vectors, raw accounting, all strong references, manifest, logs, provenance, and checksums, admitted at `<freeze-sha>` and analyzed at `<analysis-sha>` | HOLD; no dedicated R4 workflow contract is specified here |
 | Formal or simulation-based security | Separate proof and proof-review gate | A versioned proof artifact defining ideal functionality, leakage, simulator, and theorem assumptions; R0--R4 artifacts are not substitutes | Not claimed; no such gate/artifact is defined |
 
 Artifact names follow [review-checkpoints](../review-checkpoints.md) and the linked
@@ -349,8 +373,8 @@ or exact artifact schema, the matrix marks that gap instead of inventing evidenc
 Until the corresponding row in Section 6 passes, HOLD every strategy-win or ranking
 claim; every measured, calibrated, bandwidth, memory, latency, complete-reference,
 strong-registration, end-to-end, mask-effectiveness, mixed-circuit, parameter-safety,
-formal-security, or simulation-based-security claim. Also HOLD current-HEAD validation
-based only on the earlier R0/P0a receipts. “Implemented” must remain distinct from
+formal-security, or simulation-based-security claim. Current R0 and E4 evidence are
+commit-bound and do not upgrade the historical P0a scope. “Implemented” must remain distinct from
 “validated” and “measured.”
 
 Permanently exclude claims based on a chunk-local or modulo-slot `ColumnIndex`, one
@@ -364,8 +388,8 @@ state to CSSC, reproducing unlocated author code, or citing `2025/1935` as CSSC.
 | Threat | Required manuscript limitation |
 |---|---|
 | Construct | The common DAG aligns simulator and strong adapter at the abstract executable-DAG level, but an abstract rotation is not a measured primitive key switch; direct-key realization, primitive key-switch count, time, and noise remain unclosed. |
-| Internal | Causality requires strategy-local snapshots, state changes through excluded windows, decode-and-verify, and independent replay receipts. |
-| Comparison | Client-lane packed COO is not the strong cloud-segmented reference; the current reference set is partial. |
+| Internal | Causality requires strategy-local snapshots, state changes through excluded windows, decode-and-verify, and separate deterministic replay receipts. The replay detects artifact tampering and nondeterminism but reuses the production evaluator, so it is not an independent implementation oracle. |
+| Comparison | Client-lane packed COO is an ablation, not the strong cloud-segmented reference. The implemented role contract forbids partial-reference R2 artifacts; no comparison exists until registration and all 14 fixed records validate. |
 | External | Synthetic workloads, one seed, and one manifest do not establish robustness across matrices, update processes, freshness policies, platforms, or HE parameters. |
 | Protocol | Client B learns global indices and the full plan; the Cloud learns shapes, counts, schedules, IDs, timing, and the digest; F1-M does not hide all access or traffic patterns. |
 | Evidence | Historical receipts are commit/version-bound; private, superseded, or cross-run bundles need independent provenance checks. |
@@ -379,9 +403,9 @@ state to CSSC, reproducing unlocated author code, or citing `2025/1935` as CSSC.
 | CSSC does not freeze a unique key holder/result recipient. | Attribute Client B's key, plan, and reconstruction role to this project. |
 | Algorithms 1 and 2 expose inconsistent chunk/map interfaces. | Call ours an independently specified reconstruction, not a verified author API. |
 | Literal non-power reduction conflicts with cited `totalSum`; figure/table counts also do not close. The new audit derives `f(w)` from the loop while the older ZCode audit calls it heuristic. | The shared stored-power/prefix DAG now closes simulator/adapter schedule identity at the abstract level; still use “paper-intended corrected-totalSum abstract count,” never “exact author implementation or primitive-key cost.” |
-| ZCode at `e2b411e` says snapshots were documentation-only; current README/workflow contracts describe causal persistent snapshots. | Treat this as a temporal conflict; only a current-commit R2 artifact with replay receipts retires the finding. |
-| ADR 0007 lists whole-query integration as missing; ADR 0008/README later call it implemented. The Phase 2 witness passed at `fbd9712`, then manifest-bound changes were merged at `5bf0e51`. | Use “implemented; the prior witness was superseded, no successful witness covers the current implementation, and the candidate remains unregistered.” |
-| R0/P0a are bound to `eb15adf5da22f600a31d4b62897ed35c1ecde2e2`, earlier than current development. | Keep their scope historical; rerun for the manuscript commit. |
+| ZCode at `e2b411e` says snapshots were documentation-only; current README/workflow contracts describe causal persistent snapshots. | Treat this as a temporal conflict; only an exact-S1 R2 artifact with replay receipts and an ADR 0010 compatibility receipt retires the finding. |
+| ADR 0007 lists whole-query integration as missing; ADR 0008/README later call it implemented. A current exact-source Phase 2 witness now passes at `fcb00e0d`. | Use “implemented and witnessed for one frozen fixture; candidate registration, complete accounting, mixed-circuit safety, security, and performance remain unproven.” |
+| Historical P0a is bound to `eb15adf5da22f600a31d4b62897ed35c1ecde2e2`, while R0 and Phase 2 now pass at `fcb00e0d`. | Keep each scope bound to its exact S1 Behavior Set; rerun only when that role-specific set changes, and otherwise require the ADR 0010 S1/S2/S3 compatibility receipt. |
 | v2.1a/v2.1b artifacts have similar names and checkpoint history. | Admit only v2.1b evidence whose manifest, commit, run, and checksum agree. |
 | Mixed-circuit and R4 gates are named without dedicated workflow/schema contracts. | Keep the associated claims on HOLD until those contracts are specified and run. |
 

@@ -73,3 +73,26 @@ def test_noop_disappears_within_one_window() -> None:
     assert len(windows) == 1
     assert windows[0].query_count == 1
     assert windows[0].updates == ()
+
+
+def test_microbatch_boundary_does_not_split_same_timestamp_atomic_sets() -> None:
+    windows = list(
+        publication_windows(
+            [
+                Event.set(1.0, 0, 0, 0),
+                Event.set(1.0, 0, 1, 1),
+                Event.query(1.0),
+            ],
+            {(0, 0): 1},
+            max_seconds=10.0,
+            microbatch_max_updates=1,
+        )
+    )
+
+    assert len(windows) == 1
+    assert [(update.col, update.before, update.after) for update in windows[0].updates] == [
+        (0, 1, 0),
+        (1, 0, 1),
+    ]
+    assert windows[0].query_count == 1
+    assert windows[0].reason == "query"

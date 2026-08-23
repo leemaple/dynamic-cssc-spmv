@@ -53,6 +53,46 @@ A mutually exclusive OpenFHE estimator configuration for one isolated operation 
 The strongest claim directly supported by an artifact, independent of whether the generating workflow completed successfully.
 _Avoid_: Result status
 
+**Outcome-Blind Structure Pilot**:
+A feasibility run that must finish before the clean pre-anchor `S1`, over exactly the first `floor(V/10)` events of each canonical schema-valid real corpus, where `V` is that corpus's full schema-valid event count. It covers T1 and T2 for partitions 0 through 4, but may report only aggregate structure/cardinality, health, and resource facts. Its only files are `structure-pilot-report.json` and `checksums.sha256`; both are permanently non-admissible and cannot enter a Publication Evidence Lineage.
+_Avoid_: Day1B dry run, evidence run, promotable pilot
+
+**Publication Evidence Lineage**:
+The causally ordered history of one frozen publication behavior identity and its evidence. Once invalidated, it cannot be repaired in place.
+_Avoid_: Mutable evidence chain, working branch
+
+**Terminal Registration Freeze**:
+The boundary after all publication behavior and decision rules are fixed and Day-1 registration is anchored; only evidence may follow within that Publication Evidence Lineage.
+_Avoid_: Partial freeze, provisional registration
+
+**Experiment Source Snapshot**:
+The exact Git commit that executed an experiment, together with its repository-defined role-specific Behavior Set identity.
+_Avoid_: Current HEAD, evidence commit
+
+**Evidence-Freeze Snapshot**:
+A later clean Git commit that installs repository-owned trust anchors for already generated artifacts without changing the corresponding Experiment Source Snapshot's Behavior Set.
+_Avoid_: Experiment source, self-authenticating anchor
+
+**Analysis Source Snapshot**:
+The clean Git commit whose analyzer and evidence validators produce a publication verdict. It may follow the Experiment Source Snapshot only when an Evidence Compatibility Receipt validates the separation.
+_Avoid_: Experiment source when the commits differ
+
+**Behavior Set**:
+A repository-owned, exact, role-specific inventory of path, Git entry mode/type, and blob identity that determines an experiment, evidence stage, or analysis. An artifact cannot choose or omit its own Behavior Set members.
+_Avoid_: Source-file list supplied by a producer
+
+**Evidence Compatibility Receipt**:
+A repository-generated verification record that an older evidence source and a current execution or analysis snapshot have identical required Behavior Set entries, while any differences are confined to an exact allowlist of evidence-only paths. It is not an external signature or a self-authorizing proof; publication authority separately requires the frozen runtime-isolation receipt.
+_Avoid_: Equal commit SHA, ancestor check, caller-supplied compatibility Boolean
+
+**Runtime Execution Isolation Receipt**:
+A closed record that the analyzer ran from a fresh detached Analysis Source Snapshot under the frozen interpreter and invocation, without caller import paths, user-site hooks, `.pth` files, or shared bytecode state, and that source/import identities remained stable through output installation.
+_Avoid_: Clean-HEAD Boolean, virtual-environment name, dependency-lock presence alone
+
+**Final Runtime Admission Capability**:
+An ephemeral, non-Boolean in-process result minted only after central code rehashes the installed runtime receipt/checksum and all four statistics artifacts and repeats the frozen source, policy, import, lock, interpreter, and invocation checks. Its audit projection is descriptive and has no replayable success bit; the statistics artifacts are not rewritten.
+_Avoid_: Persisted `runtime_verified=true`, caller-loaded receipt Boolean, post-hoc mutation of a statistics verdict
+
 **Strategy Snapshot**:
 The complete persistent state of one maintenance strategy after a Publication Window, including logical state, Published Components, reusable capacity, and repack counters.
 _Avoid_: WindowShape, shared strategy state
@@ -64,3 +104,19 @@ _Avoid_: Hybrid, online selector
 **Best Fixed Offline Oracle**:
 A held-out hindsight diagnostic lower bound that is excluded from selector inputs and gate candidates.
 _Avoid_: Hybrid, selected policy
+
+**Registered Candidate**:
+A maintenance strategy admitted by the repository-owned, zero-argument evidence gate for one frozen identity and policy.
+_Avoid_: Implemented strategy, witnessed fixture
+
+**Reference Candidate**:
+A Registered Candidate eligible for tuning, selection, and the primary fixed-reference comparison.
+_Avoid_: Baseline when eligibility is unclear
+
+**Ablation Candidate**:
+A Registered Candidate emitted for diagnostic comparison but excluded from tuning, selection, and oracle ranking.
+_Avoid_: Weak reference, selectable baseline
+
+**Complete Reference Set**:
+The exact admitted role catalog required by an experiment contract, with every Reference Candidate and Ablation Candidate present and independently validated. It is not a caller-supplied Boolean.
+_Avoid_: Nonempty candidate list, partial baseline suite

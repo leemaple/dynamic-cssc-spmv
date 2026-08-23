@@ -29,3 +29,8 @@ This decision does not register the strong candidate. `complete_reference_set=fa
 remains mandatory, and no performance, security, end-to-end, or formal claim is enabled.
 Registration still requires a v2 pinned OpenFHE whole-query witness, the corresponding
 report/accounting update, and tuning-prefix evidence for the frozen `c=128` family.
+
+ADR 0009 supersedes the mandatory-false artifact policy without weakening this admission
+boundary. Before the composite anchor is installed, production fails before emitting R2;
+after admission, completeness is derived from the exact role catalog rather than accepted
+as input.

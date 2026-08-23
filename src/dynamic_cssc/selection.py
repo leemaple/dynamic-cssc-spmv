@@ -15,6 +15,7 @@ CandidateStrategy: TypeAlias = Literal[
     "ReservedSlack-CSSC",
     "Mini-CSSC-Delta",
     "Packed-COO-Client-Lane-Delta",
+    "Packed-COO-Cloud-Segmented-Delta",
     "Strict-LocalRepack",
     "PeriodicRepack",
 ]

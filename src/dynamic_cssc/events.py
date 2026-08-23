@@ -7,6 +7,7 @@ from enum import StrEnum
 
 class EventKind(StrEnum):
     SET = "set"
+    TICK = "tick"
     QUERY = "query"
     VERSION = "version"
 
@@ -22,6 +23,12 @@ class Event:
     @classmethod
     def set(cls, timestamp: float, row: int, col: int, value: int) -> Event:
         return cls(timestamp, EventKind.SET, row, col, value)
+
+    @classmethod
+    def tick(cls, timestamp: float) -> Event:
+        """Advance logical time without adding an update or query."""
+
+        return cls(timestamp, EventKind.TICK)
 
     @classmethod
     def query(cls, timestamp: float) -> Event:
@@ -80,14 +87,17 @@ def publication_windows(
     last_time: float | None = None
     index = 0
     update_events = 0
+    pending_microbatch = False
     pending_queries = 0
     pending_query_time: float | None = None
 
     def flush(end_time: float, reason: str) -> PublicationWindow | None:
-        nonlocal index, pending_queries, pending_query_time, start_time, update_events
+        nonlocal index, pending_microbatch, pending_queries, pending_query_time
+        nonlocal start_time, update_events
         if not touched and pending_queries == 0:
             start_time = None
             update_events = 0
+            pending_microbatch = False
             return None
         net = []
         for row, col in sorted(touched):
@@ -108,11 +118,13 @@ def publication_windows(
         first_before.clear()
         start_time = None
         update_events = 0
+        pending_microbatch = False
         pending_queries = 0
         pending_query_time = None
         return window
 
     for event in events:
+        previous_time = last_time
         if last_time is not None and event.timestamp < last_time:
             raise ValueError("events must be nondecreasing in timestamp")
         last_time = event.timestamp
@@ -120,10 +132,7 @@ def publication_windows(
         if (
             query_requires_latest
             and pending_queries
-            and (
-                event.kind != EventKind.QUERY
-                or event.timestamp != pending_query_time
-            )
+            and (event.kind != EventKind.QUERY or event.timestamp != pending_query_time)
         ):
             window = flush(
                 pending_query_time if pending_query_time is not None else event.timestamp,
@@ -132,11 +141,12 @@ def publication_windows(
             if window is not None:
                 yield window
 
-        if (
-            start_time is not None
-            and event.timestamp - start_time >= max_seconds
-            and touched
-        ):
+        if pending_microbatch and previous_time is not None and event.timestamp != previous_time:
+            window = flush(previous_time, "microbatch")
+            if window is not None:
+                yield window
+
+        if start_time is not None and event.timestamp - start_time >= max_seconds and touched:
             window = flush(start_time + max_seconds, "freshness")
             if window is not None:
                 yield window
@@ -156,9 +166,10 @@ def publication_windows(
                 state[coord] = event.value
             update_events += 1
             if update_events >= microbatch_max_updates:
-                window = flush(event.timestamp, "microbatch")
-                if window is not None:
-                    yield window
+                pending_microbatch = True
+        elif event.kind == EventKind.TICK:
+            if event.row is not None or event.col is not None or event.value is not None:
+                raise ValueError("tick event must not carry row, col, or value")
         elif event.kind == EventKind.QUERY:
             if start_time is None:
                 start_time = event.timestamp
@@ -171,7 +182,12 @@ def publication_windows(
 
     if touched or pending_queries:
         final_time = last_time if last_time is not None else 0.0
-        final_reason = "query" if query_requires_latest and pending_queries else "end-of-stream"
+        if query_requires_latest and pending_queries:
+            final_reason = "query"
+        elif pending_microbatch:
+            final_reason = "microbatch"
+        else:
+            final_reason = "end-of-stream"
         window = flush(final_time, final_reason)
         if window is not None:
             yield window

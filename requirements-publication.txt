@@ -1,0 +1,14 @@
+--only-binary=:all:
+
+# CPython 3.12 wheels for macOS 12 arm64/x86_64, manylinux 2.28
+# arm64/x86_64, and musllinux 1.2 arm64/x86_64. Unsupported platforms fail
+# closed instead of building an unreviewed source distribution.
+# PyPI Core Metadata for pyarrow 25.0.1 declares no Requires-Dist entries, so
+# this one pinned distribution is the complete publication-parser dependency graph.
+pyarrow==25.0.1 \
+    --hash=sha256:df961f2e7ae9cf496459259d798652c70625f6c080650d6952f8c04053c58ee9 \
+    --hash=sha256:cc4aa407fde9fc660be3939e49ea31f50f3e9fec17c0ec63159f7711edd3efc9 \
+    --hash=sha256:4340f0ba6c1d2e13f21658de1d7c662ca2545018568d0030a1e9afca159d87e3 \
+    --hash=sha256:5389cdf79447ed1515c9e31620e6e1e2302249564d603f2ad727d4f6d313e4c3 \
+    --hash=sha256:d51592cb7561e87877c506113e7adbf1342ab579e6c21f0ef44b8ba41cb74c80 \
+    --hash=sha256:6109c94d8b9f3b17a041daca16cacb2f651ad8f1ef70a4232c2c0f37a23da2a8

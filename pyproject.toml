@@ -17,6 +17,9 @@ dev = [
   "pytest>=8,<10",
   "ruff>=0.6,<1",
 ]
+publication = [
+  "pyarrow==25.0.1",
+]
 
 [project.scripts]
 dynamic-cssc = "dynamic_cssc.cli:main"

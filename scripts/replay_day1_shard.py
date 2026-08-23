@@ -12,15 +12,19 @@ from dataclasses import fields
 from fractions import Fraction
 from pathlib import Path
 
+from dynamic_cssc.day1_registry import repository_day1_candidate_catalog
 from dynamic_cssc.events import Event, EventKind, PublicationWindow, publication_windows
 from dynamic_cssc.manifest import load_manifest
 from dynamic_cssc.metrics import StrategyMetrics, UnitCosts
 from dynamic_cssc.report import (
     CAUSAL_ARTIFACT_FILENAMES,
+    CAUSAL_MEASUREMENT_KIND,
+    CAUSAL_SCHEMA,
+    CAUSAL_STATE_MODEL,
     render_causal_artifacts,
     validate_causal_payload,
 )
-from dynamic_cssc.simulator import SimulationConfig
+from dynamic_cssc.simulator import RotationInventory, SimulationConfig
 from dynamic_cssc.workloads import generate_event_stream, generate_initial_matrix
 
 if __package__:
@@ -57,8 +61,8 @@ else:
     )
 
 REPLAY_RECEIPT_SCHEMA = "day1-shard-replay-receipt-v1"
-VALIDATOR_SCHEMA = "day1-independent-replay-validator-v1"
-VALIDATOR_VERSION = "1"
+VALIDATOR_SCHEMA = "day1-separate-deterministic-replay-validator-v2"
+VALIDATOR_VERSION = "2"
 REPLAY_RECEIPT_FILENAME = "REPLAY_RECEIPT.json"
 DERIVED_ARTIFACT_FILENAMES = (
     "SUMMARY.md",
@@ -128,7 +132,7 @@ def _exact_keys(value: Mapping[str, object], expected: frozenset[str], field: st
 
 def _exact_value(actual: object, expected: object, field: str) -> None:
     if type(actual) is not type(expected) or actual != expected:
-        raise ValueError(f"{field} does not match independent replay")
+        raise ValueError(f"{field} does not match separate deterministic replay")
 
 
 def _load_json(path: Path, field: str) -> dict[str, object]:
@@ -190,6 +194,23 @@ def _assert_metrics(
         _exact_value(serialized.get(name), getattr(expected, name), f"{field}.{name}")
 
 
+def _assert_rotation_inventory(
+    serialized: Mapping[str, object],
+    expected: RotationInventory,
+    field: str,
+) -> None:
+    _exact_value(
+        serialized.get("rotation_inventory"),
+        {
+            "measured_counts_by_exact_index": [
+                [index, count] for index, count in expected.measured_counts_by_exact_index
+            ],
+            "required_indices": list(expected.required_indices),
+        },
+        f"{field}.rotation_inventory",
+    )
+
+
 def _expected_metadata(
     *,
     plan: ExperimentPlan,
@@ -235,10 +256,12 @@ def _expected_metadata(
         "warmup_windows": result.warmup_end,
         "tuning_windows": result.tuning_end - result.warmup_end,
         "held_out_windows": len(held_out),
-        "fixed_candidate_count": len(plan.candidates),
+        "fixed_candidate_count": len(result.fixed_results),
+        "reference_candidate_count": len(result.tuning_results),
+        "ablation_candidate_count": len(result.fixed_results) - len(result.tuning_results),
         "selected_candidate_id": result.selected_candidate_id,
         "oracle_candidate_id": result.oracle_candidate_id,
-        "span80_by_candidate": _candidate_span80(plan.rows, plan.candidates, result),
+        "span80_by_candidate": _candidate_span80(plan.rows, result),
         "experiment_plan_sha256": plan_sha256,
         "manifest_sha256": manifest_sha256,
         "initial_state_sha256": initial_state_sha256,
@@ -249,7 +272,9 @@ def _expected_metadata(
         "measurement_kind": "predicted-proxy",
         "gate_eligible": False,
         "complete_cost_claim_allowed": False,
-        "complete_reference_set": False,
+        "security_claim_allowed": False,
+        "formal_performance_claim": False,
+        "complete_reference_set": True,
     }
 
 
@@ -334,14 +359,22 @@ def _replay_cell(
         initial_state=initial_state,
         base_config=_base_config(plan, manifest_payload),
         split=plan.split,
-        candidates=plan.candidates,
         costs=UnitCosts(),
     )
     metrics_path = cell_dir / "metrics.json"
     payload = _load_json(metrics_path, "metrics.json")
-    candidate_ids = tuple(sorted(candidate.candidate_id for candidate in plan.candidates))
+    candidate_ids = tuple(sorted(result.fixed_results))
+    tuning_candidate_ids = tuple(sorted(result.tuning_results))
+    if len(candidate_ids) != 14 or len(tuning_candidate_ids) != 13:
+        raise ValueError(
+            "separate deterministic replay did not produce the canonical 14/13 candidate roles"
+        )
+    if not set(tuning_candidate_ids).issubset(candidate_ids):
+        raise ValueError(
+            "separate deterministic replay tuning references are not held-out fixed candidates"
+        )
     try:
-        validate_causal_payload(payload, expected_candidate_ids=candidate_ids)
+        validate_causal_payload(payload)
     except (TypeError, ValueError) as error:
         raise ValueError(
             f"metrics.json fails canonical causal validation: {cell_dir}: {error}"
@@ -364,15 +397,21 @@ def _replay_cell(
             fixed_by_id[record.get("candidate_id")] = record
         else:
             aliases[record.get("record_kind")] = record
-    for candidate_id in candidate_ids:
+    for candidate_id in tuning_candidate_ids:
         _assert_metrics(
             tuning_by_id[candidate_id],
             result.tuning_results[candidate_id].metrics,
             f"tuning replay metrics {candidate_id}",
         )
+    for candidate_id in candidate_ids:
         _assert_metrics(
             fixed_by_id[candidate_id],
             result.fixed_results[candidate_id].metrics,
+            f"held-out replay metrics {candidate_id}",
+        )
+        _assert_rotation_inventory(
+            fixed_by_id[candidate_id],
+            result.fixed_results[candidate_id].rotation_inventory,
             f"held-out replay metrics {candidate_id}",
         )
     _assert_metrics(
@@ -383,6 +422,16 @@ def _replay_cell(
     _assert_metrics(
         aliases["diagnostic-oracle"],
         result.offline_oracle,
+        "diagnostic-oracle replay alias",
+    )
+    _assert_rotation_inventory(
+        aliases["tuned-fixed-policy"],
+        result.fixed_results[result.selected_candidate_id].rotation_inventory,
+        "tuned-fixed-policy replay alias",
+    )
+    _assert_rotation_inventory(
+        aliases["diagnostic-oracle"],
+        result.fixed_results[result.oracle_candidate_id].rotation_inventory,
         "diagnostic-oracle replay alias",
     )
     _exact_value(
@@ -413,7 +462,9 @@ def _replay_cell(
         result=result,
     )
     if set(metadata) != set(expected_metadata):
-        raise ValueError(f"metrics.json metadata keys do not match independent replay: {cell_dir}")
+        raise ValueError(
+            f"metrics.json metadata keys do not match separate deterministic replay: {cell_dir}"
+        )
     for name, expected in expected_metadata.items():
         actual = metadata.get(name)
         if name == "span80_by_candidate":
@@ -425,7 +476,6 @@ def _replay_cell(
         rendered_digests = render_causal_artifacts(
             rendered_dir,
             payload,
-            expected_candidate_ids=candidate_ids,
         )
         if tuple(rendered_digests) != CAUSAL_ARTIFACT_FILENAMES:
             raise ValueError("canonical renderer returned an unexpected artifact set")
@@ -483,6 +533,16 @@ def replay_shard(
     if len(plan.ratio_grid) != 9:
         raise ValueError("a replayable Day-1 shard must contain exactly nine rho cells")
     manifest_payload = load_manifest(manifest)
+    candidate_catalog = repository_day1_candidate_catalog()
+    fixed_candidate_ids = sorted(
+        candidate.candidate_id for candidate in candidate_catalog.candidates
+    )
+    reference_candidate_ids = sorted(
+        candidate.candidate_id for candidate in candidate_catalog.selection_candidates
+    )
+    ablation_candidate_ids = sorted(
+        candidate.candidate_id for candidate in candidate_catalog.ablation_candidates
+    )
     plan_sha256 = _sha256(experiment_plan)
     manifest_sha256 = _sha256(manifest)
     status = _load_json(shard_dir / "SHARD_STATUS.json", "SHARD_STATUS")
@@ -492,6 +552,24 @@ def replay_shard(
         ("freshness_seconds_fraction", str(freshness)),
         ("experiment_plan_sha256", plan_sha256),
         ("manifest_sha256", manifest_sha256),
+        ("schema", CAUSAL_SCHEMA),
+        ("state_model", CAUSAL_STATE_MODEL),
+        ("measurement_kind", CAUSAL_MEASUREMENT_KIND),
+        ("gate_eligible", False),
+        ("complete_cost_claim_allowed", False),
+        ("security_claim_allowed", False),
+        ("formal_performance_claim", False),
+        ("complete_reference_set", True),
+        ("suite_complete", False),
+        ("deferred_reference_baselines", []),
+        ("candidate_ids", fixed_candidate_ids),
+        ("reference_candidate_ids", reference_candidate_ids),
+        ("ablation_candidate_ids", ablation_candidate_ids),
+        ("fixed_candidate_count", 14),
+        ("reference_candidate_count", 13),
+        ("ablation_candidate_count", 1),
+        ("cells_expected", 9),
+        ("cells_completed", 9),
     ):
         _exact_value(status.get(field), expected, f"SHARD_STATUS.{field}")
     expected_rho_ids = [rho_path_id(ratio) for ratio in plan.ratio_grid]

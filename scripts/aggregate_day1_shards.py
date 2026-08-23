@@ -11,12 +11,14 @@ from dataclasses import asdict, dataclass
 from fractions import Fraction
 from pathlib import Path
 
+from dynamic_cssc.day1_registry import Day1CandidateCatalog, repository_day1_candidate_catalog
 from dynamic_cssc.manifest import load_manifest
 from dynamic_cssc.preflight import run_day1_preflight
 from dynamic_cssc.report import (
     CAUSAL_MEASUREMENT_KIND,
     CAUSAL_SCHEMA,
     CAUSAL_STATE_MODEL,
+    validate_causal_payload,
 )
 from dynamic_cssc.workloads import generate_initial_matrix
 
@@ -74,6 +76,8 @@ SHARD_STATUS_KEYS = frozenset(
         "measurement_kind",
         "gate_eligible",
         "complete_cost_claim_allowed",
+        "security_claim_allowed",
+        "formal_performance_claim",
         "complete_reference_set",
         "suite_complete",
         "deferred_reference_baselines",
@@ -88,6 +92,11 @@ SHARD_STATUS_KEYS = frozenset(
         "cells_expected",
         "cells_completed",
         "candidate_ids",
+        "reference_candidate_ids",
+        "ablation_candidate_ids",
+        "fixed_candidate_count",
+        "reference_candidate_count",
+        "ablation_candidate_count",
         "effective_slots",
         "partition_rows",
         "layout_measurement_kind",
@@ -351,6 +360,7 @@ def _validate_cell(
     trace_sha256 = checksums["event-window-trace.jsonl"]
     if cell_payload.get("event_window_trace_sha256") != trace_sha256:
         raise ValueError(f"event_window_trace_sha256 is inconsistent: {cell_dir}")
+    validate_causal_payload(_load_json(cell_dir / "metrics.json", "metrics.json"))
     return CellEvidence(
         source=cell_dir,
         cell_id=expected_relative,
@@ -360,6 +370,7 @@ def _validate_cell(
 def _validate_shard(
     shard_dir: Path,
     *,
+    candidate_catalog: Day1CandidateCatalog,
     plan: ExperimentPlan,
     plan_sha256: str,
     manifest_sha256: str,
@@ -385,10 +396,16 @@ def _validate_shard(
     for field in (
         "gate_eligible",
         "complete_cost_claim_allowed",
-        "complete_reference_set",
+        "security_claim_allowed",
+        "formal_performance_claim",
         "suite_complete",
     ):
         _exact_false(status.get(field), f"SHARD_STATUS {field}")
+    _require_exact_json_value(
+        status.get("complete_reference_set"),
+        True,
+        "SHARD_STATUS complete_reference_set",
+    )
     try:
         _require_exact_json_value(
             status.get("deferred_reference_baselines"),
@@ -449,15 +466,27 @@ def _validate_shard(
         or status.get("cells_completed") != R2_RHO_COUNT
     ):
         raise ValueError(f"SHARD_STATUS must report 9/9 cells: {shard_dir}")
-    candidate_ids = sorted(candidate.candidate_id for candidate in plan.candidates)
-    try:
-        _require_exact_json_value(
-            status.get("candidate_ids"), candidate_ids, "SHARD_STATUS candidate_ids"
-        )
-    except ValueError as error:
-        raise ValueError(
-            f"SHARD_STATUS candidate_ids contradict the plan interface: {shard_dir}"
-        ) from error
+    candidate_ids = sorted(candidate.candidate_id for candidate in candidate_catalog.candidates)
+    reference_candidate_ids = sorted(
+        candidate.candidate_id for candidate in candidate_catalog.selection_candidates
+    )
+    ablation_candidate_ids = sorted(
+        candidate.candidate_id for candidate in candidate_catalog.ablation_candidates
+    )
+    for field, expected in (
+        ("candidate_ids", candidate_ids),
+        ("reference_candidate_ids", reference_candidate_ids),
+        ("ablation_candidate_ids", ablation_candidate_ids),
+        ("fixed_candidate_count", 14),
+        ("reference_candidate_count", 13),
+        ("ablation_candidate_count", 1),
+    ):
+        try:
+            _require_exact_json_value(status.get(field), expected, f"SHARD_STATUS {field}")
+        except ValueError as error:
+            raise ValueError(
+                f"SHARD_STATUS {field} contradicts the repository catalog: {shard_dir}"
+            ) from error
     cell_payloads = _list(status.get("cells"), "SHARD_STATUS cells")
     if len(cell_payloads) != R2_RHO_COUNT:
         raise ValueError(f"SHARD_STATUS must contain exactly nine cell entries: {shard_dir}")
@@ -529,6 +558,14 @@ def aggregate_shards(
         raise ValueError("seed must be a strict integer")
     if not isinstance(source_sha, str) or _SOURCE_GIT_SHA_RE.fullmatch(source_sha) is None:
         raise ValueError("source_sha must be an exact lowercase 40-hex commit SHA")
+    candidate_catalog = repository_day1_candidate_catalog()
+    candidate_ids = sorted(candidate.candidate_id for candidate in candidate_catalog.candidates)
+    reference_candidate_ids = sorted(
+        candidate.candidate_id for candidate in candidate_catalog.selection_candidates
+    )
+    ablation_candidate_ids = sorted(
+        candidate.candidate_id for candidate in candidate_catalog.ablation_candidates
+    )
     plan = load_experiment_plan(experiment_plan)
     _validate_plan_shape(plan)
     manifest_payload = load_manifest(manifest)
@@ -568,6 +605,7 @@ def aggregate_shards(
     for shard_dir in shard_dirs:
         shard = _validate_shard(
             shard_dir,
+            candidate_catalog=candidate_catalog,
             plan=plan,
             plan_sha256=plan_sha256,
             manifest_sha256=manifest_sha256,
@@ -632,7 +670,9 @@ def aggregate_shards(
         "measurement_kind": CAUSAL_MEASUREMENT_KIND,
         "gate_eligible": False,
         "complete_cost_claim_allowed": False,
-        "complete_reference_set": False,
+        "security_claim_allowed": False,
+        "formal_performance_claim": False,
+        "complete_reference_set": True,
         "suite_complete": True,
         "deferred_reference_baselines": list(DEFERRED_REFERENCE_BASELINES),
         "seed": seed,
@@ -642,7 +682,12 @@ def aggregate_shards(
         "experiment_plan_version": plan.plan_version,
         "event_window_trace_schema": EVENT_WINDOW_TRACE_SCHEMA,
         "initial_state_sha256": initial_state_sha256,
-        "candidate_ids": sorted(candidate.candidate_id for candidate in plan.candidates),
+        "candidate_ids": candidate_ids,
+        "reference_candidate_ids": reference_candidate_ids,
+        "ablation_candidate_ids": ablation_candidate_ids,
+        "fixed_candidate_count": len(candidate_ids),
+        "reference_candidate_count": len(reference_candidate_ids),
+        "ablation_candidate_count": len(ablation_candidate_ids),
         "effective_slots": plan.effective_slots,
         "partition_rows": plan.partition_rows,
         "layout_measurement_kind": plan.layout_measurement_kind,
