@@ -456,15 +456,17 @@ with `selective_candidate_retry_allowed=false`); it is not a measured resource
 choice and cannot activate the policy. Every empirical numeric limit and every
 measurement-method choice remains `null`.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v3` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v4` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface. A successful workflow validation is not a
 dispatch receipt or evidence artifact: the workflow has no semantic inputs,
 does not fetch traces or held-out data, does not invoke the producer, uploads
 nothing, and cannot install an anchor. It now builds pinned OpenFHE 1.5.1 and
 runs a private, non-authorizing smoke through the canonical request, arbitrary
-typed query DAG, real BFV encryption/evaluation/decryption, and retained binary
-object verifier. The smoke exercises multiplication without implicit
+typed query DAG, real BFV encryption/evaluation/decryption, controller-owned
+exclusive scratch, single-use ledger authorization, exact runner/source/compiler
+identity, bounded resource observations, and retained binary object verifier.
+The smoke exercises multiplication without implicit
 relinearization, explicit relinearization, exact-index rotation, plaintext
 selection, ciphertext addition, reconstruction, tail-slot zero checks, and
 SHA-256 verification of every serialized input, result, and one-time key bundle.
@@ -472,15 +474,18 @@ Its provisional depth-2/0/0 profile remains explicitly `HOLD` for mixed-circuit
 parameter authority.
 
 Held-out dispatch remains forbidden until an outcome-blind amendment freezes
-the measured limits and methods, and a repository-owned production OpenFHE worker,
-launcher isolation, build/runtime identity receipt, and admission seam connect
-that runner to the Day1B controller. The TRACE post-run and Day-1 registration
+the measured limits and methods, and a repository-owned production candidate-cell
+worker plus an admission seam connect the pre-admission OpenFHE launcher/runtime
+receipt to the Day1B controller. The TRACE post-run and Day-1 registration
 anchors must then be installed and revalidated. The ordinary lifecycle binds
 the common typed DAG to private global-column operands, fresh overlap-only F1-M
-masks, and a crash-persistent single-use commitment; the real OpenFHE smoke is
-execution-path evidence, not publication execution or dispatch authority.
-Introducing the remaining runtime facts requires a reviewed pre-`S1` policy
-path addition and a later DAY1B Behavior Set version bump; this preparatory
+masks, and a crash-persistent single-use commitment; the runtime consumes that
+commitment immediately before launch, verifies result and serialized-object
+bytes, records a non-authorizing receipt, and removes its private scratch tree.
+The real OpenFHE smoke is execution-path evidence, not publication execution or
+dispatch authority. Introducing the remaining measured policy and admission
+facts requires a reviewed pre-`S1` path addition and a later DAY1B Behavior Set
+version bump; this preparatory
 inventory cannot be upgraded in place after outcomes.
 
 For each of the three real datasets, define `V` as the event count of its closed,

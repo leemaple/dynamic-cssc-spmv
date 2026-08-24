@@ -8,6 +8,7 @@ WORKFLOW_PATH = ROOT / ".github/workflows/publication-day1b-preparatory.yml"
 EXPECTED_TEST_PATHS = (
     "tests/test_evidence_compatibility.py",
     "tests/test_openfhe_query_runner.py",
+    "tests/test_openfhe_query_runtime.py",
     "tests/test_ordinary_query_lifecycle.py",
     "tests/test_publication_day1b.py",
     "tests/test_publication_day1b_worker_protocol.py",
@@ -92,8 +93,8 @@ def test_day1b_workflow_declares_pre_s1_preparatory_hold_without_artifact_steps(
 
     assert "PRE-S1 preparatory validation only" in workflow
     assert "PENDING-FREEZE" in workflow
-    assert "generic OpenFHE query runner passed a non-authorizing smoke" in workflow
-    assert "production Day1B worker/runtime and admission receipt remain absent" in workflow
+    assert "generic OpenFHE query runtime passed a non-authorizing smoke" in workflow
+    assert "production Day1B candidate worker and admission receipt remain absent" in workflow
     assert "No publication execution or artifact production is permitted" in workflow
     assert "upload" not in workflow.lower()
 
@@ -106,12 +107,12 @@ def test_preregistration_and_roadmap_keep_preparatory_inventory_non_authorizing(
     combined = preregistration + roadmap
 
     for required in (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v3",
+        "dynamic-cssc-day1b-preparatory-behavior-set-v4",
         "publication-day1b-preparatory.yml",
         "Source inventory is not dispatch authority",
         "controlled-scratch high-water",
-        "OpenFHE worker",
-        "ordinary-candidate query-preparation",
+        "candidate-cell worker",
+        "single-use ordinary-query authorization",
         "TRACE post-run anchor",
         "Day-1 registration anchor",
         "Behavior Set version bump",

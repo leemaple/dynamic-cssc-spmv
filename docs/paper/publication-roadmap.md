@@ -353,12 +353,16 @@ The repository now also carries a PRE-S1 preparatory DAY1B source inventory,
 closed empirical-null/authority-false `PENDING-FREEZE` resource-policy document, and a
 manual no-input validation workflow. These freeze the current validator,
 protocol, scheduling, provenance, and artifact-installation source surface; they
-do not freeze empirical limits, admit a runtime, authorize dispatch, publish an
-artifact, or grant a claim. The production two-path seam verifies this source
+do not freeze empirical limits, authorize dispatch, publish an artifact, or
+grant a claim. A controller-owned pre-admission OpenFHE runtime now consumes the
+single-use ordinary-query authorization immediately before launch, owns and
+removes exclusive private scratch, binds the runner/source/compiler identity,
+verifies result and serialized-object bytes, and records resource observations
+with authority fields false. The production two-path seam verifies this source
 and then stops on the pending policy before catalog, trace, anchor, worker, or
-output access. The workflow performs only hash-locked source-contract tests and
-static validation; it neither invokes the producer nor fetches or uploads
-publication data.
+output access. The workflow performs only hash-locked source-contract tests,
+static validation, and a real non-authorizing runtime smoke; it neither invokes
+the producer nor fetches or uploads publication data.
 
 The sole numeric exception in that pending document is the already
 preregistered, non-empirical protocol invariant
@@ -368,10 +372,10 @@ resource limit or authorize execution; every empirical numeric and method
 choice remains `null`.
 
 The remaining Day1B `HOLD` set is explicit: an outcome-blind resource amendment,
-a controlled-scratch high-water and isolation method, a complete repository-owned
-OpenFHE runner/build/runtime identity and its integration with the now-canonical
-ordinary-candidate query-preparation/private-plan lifecycle, the TRACE post-run anchor,
-and the Day-1 registration anchor.
+a controlled-scratch high-water and isolation method, linked-library/build
+admission, a production candidate-cell worker adapter that composes the verified
+OpenFHE runtime with the Day1B controller, the TRACE post-run anchor, and the
+Day-1 registration anchor.
 Source inventory is not dispatch authority. Any
 future file containing actual runner identities or frozen policy values must be
 introduced by a reviewed pre-S1 path/schema and DAY1B Behavior Set version bump,

@@ -11,15 +11,18 @@ from dynamic_cssc.cssc import publish_component
 from dynamic_cssc.events import NetUpdate, PublicationWindow
 from dynamic_cssc.mask_ledger import SQLiteMaskBindingLedger
 from dynamic_cssc.ordinary_query_lifecycle import (
+    ORDINARY_EXECUTION_AUTHORIZATION_SCHEMA,
     ORDINARY_PRIVATE_PLAN_SCHEMA,
     ORDINARY_QUERY_PREPARATION_SCHEMA,
     OrdinaryExecutionBundle,
     OrdinaryQueryLifecycleError,
+    authorize_ordinary_execution,
     bind_ordinary_execution,
     canonical_ordinary_private_plan_bytes,
     canonical_ordinary_private_plan_payload,
     canonical_ordinary_query_preparation_bytes,
     canonical_ordinary_query_preparation_payload,
+    claim_ordinary_execution,
     execute_ordinary_plaintext,
     prepare_ordinary_query,
 )
@@ -110,6 +113,34 @@ def test_overlap_masks_are_bound_cancel_and_reconstruct_exactly(tmp_path: Path) 
         modulus=97,
         ledger=ledger,
     ) == (31, 44)
+
+
+def test_execution_authorization_consumes_ledger_and_is_single_use(tmp_path: Path) -> None:
+    bundle = _overlap_bundle()
+    ledger = SQLiteMaskBindingLedger(tmp_path / "ordinary-ledger.sqlite3")
+    prepared = prepare_ordinary_query(
+        bundle,
+        query_id="ordinary-authorized-query",
+        vector=(5, 7, 11, 13),
+        modulus=97,
+        ledger=ledger,
+    )
+
+    capability = authorize_ordinary_execution(bundle, prepared, ledger=ledger)
+    receipt = claim_ordinary_execution(capability, bundle, prepared)
+    document = receipt.to_document()
+
+    assert document["schema_version"] == ORDINARY_EXECUTION_AUTHORIZATION_SCHEMA
+    assert document["query_id"] == prepared.query_id
+    assert document["ledger_commitment_token"] == prepared.ledger_commitment_token
+    assert document["query_preparation_sha256"] == hashlib.sha256(
+        canonical_ordinary_query_preparation_bytes(bundle, prepared)
+    ).hexdigest()
+    assert len(document["authorization_transition_sha256"]) == 64
+    with pytest.raises(OrdinaryQueryLifecycleError, match="absent or consumed"):
+        claim_ordinary_execution(capability, bundle, prepared)
+    with pytest.raises(OrdinaryQueryLifecycleError, match="commitment consumption"):
+        authorize_ordinary_execution(bundle, prepared, ledger=ledger)
 
 
 def test_client_lane_candidate_uses_the_same_private_lifecycle(tmp_path: Path) -> None:

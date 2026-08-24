@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 from collections import Counter
 from dataclasses import dataclass
 from typing import Literal
@@ -31,6 +32,9 @@ from dynamic_cssc.query_compiler import (
 ORDINARY_PRIVATE_PLAN_SCHEMA = "dynamic-cssc-common-ordinary-private-plan-v1"
 ORDINARY_QUERY_PREPARATION_SCHEMA = (
     "dynamic-cssc-common-ordinary-query-preparation-v1"
+)
+ORDINARY_EXECUTION_AUTHORIZATION_SCHEMA = (
+    "dynamic-cssc-common-ordinary-execution-authorization-v1"
 )
 
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -93,6 +97,46 @@ class PreparedOrdinaryQuery:
     ledger_commitment_token: str
     query_operands: tuple[PreparedOrdinaryQueryOperand, ...]
     f1m_operands: tuple[PreparedOrdinaryF1MOperand, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class OrdinaryExecutionAuthorizationReceipt:
+    """Non-secret receipt for one durably consumed prepared-query batch."""
+
+    query_id: str
+    version_id: str
+    ledger_commitment_token: str
+    query_preparation_sha256: str
+    execution_binding_digest: str
+    authorization_transition_sha256: str
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "authorization_transition_sha256": self.authorization_transition_sha256,
+            "execution_binding_digest": self.execution_binding_digest,
+            "ledger_commitment_token": self.ledger_commitment_token,
+            "query_id": self.query_id,
+            "query_preparation_sha256": self.query_preparation_sha256,
+            "schema_version": ORDINARY_EXECUTION_AUTHORIZATION_SCHEMA,
+            "version_id": self.version_id,
+        }
+
+
+class OrdinaryExecutionCapability:
+    """Opaque single-use authorization minted only after ledger consumption."""
+
+    __slots__ = ("_binding", "_claimed", "_lock")
+
+    def __new__(cls) -> OrdinaryExecutionCapability:
+        raise TypeError("ordinary execution capabilities are lifecycle-minted")
+
+    def __bool__(self) -> bool:
+        raise TypeError("ordinary execution capability is not a caller boolean")
+
+
+@dataclass(frozen=True, slots=True)
+class _OrdinaryExecutionAuthorizationBinding:
+    receipt: OrdinaryExecutionAuthorizationReceipt
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -472,6 +516,100 @@ def canonical_ordinary_query_preparation_bytes(
     return _canonical_bytes(canonical_ordinary_query_preparation_payload(bundle, prepared))
 
 
+def authorize_ordinary_execution(
+    bundle: OrdinaryExecutionBundle,
+    prepared: PreparedOrdinaryQuery,
+    *,
+    ledger: PreparedF1MCommitmentLedger,
+) -> OrdinaryExecutionCapability:
+    """Consume one prepared batch and mint the exact launch authorization once."""
+
+    _validate_bundle(bundle)
+    _validate_prepared(bundle, prepared)
+    preparation_sha256 = hashlib.sha256(
+        canonical_ordinary_query_preparation_bytes(bundle, prepared)
+    ).hexdigest()
+    try:
+        ledger.verify_and_consume_prepared_f1m(
+            _prepared_f1m_commitments(prepared.f1m_operands),
+            commitment_token=prepared.ledger_commitment_token,
+            query_id=prepared.query_id,
+            version_id=prepared.version_id,
+            output_plan_digest=prepared.output_plan_digest,
+            private_plan_digest=prepared.private_plan_digest,
+            execution_binding_digest=prepared.execution_binding_digest,
+            modulus=prepared.modulus,
+        )
+    except (TypeError, ValueError, RuntimeError) as error:
+        raise OrdinaryQueryLifecycleError("ordinary F1-M commitment consumption failed") from error
+    transition = {
+        "execution_binding_digest": prepared.execution_binding_digest,
+        "ledger_commitment_token": prepared.ledger_commitment_token,
+        "query_id": prepared.query_id,
+        "query_preparation_sha256": preparation_sha256,
+        "schema_version": ORDINARY_EXECUTION_AUTHORIZATION_SCHEMA,
+        "transition": "prepared-to-consumed",
+        "version_id": prepared.version_id,
+    }
+    receipt = OrdinaryExecutionAuthorizationReceipt(
+        query_id=prepared.query_id,
+        version_id=prepared.version_id,
+        ledger_commitment_token=prepared.ledger_commitment_token,
+        query_preparation_sha256=preparation_sha256,
+        execution_binding_digest=prepared.execution_binding_digest,
+        authorization_transition_sha256=hashlib.sha256(
+            _canonical_bytes(transition)
+        ).hexdigest(),
+    )
+    capability = object.__new__(OrdinaryExecutionCapability)
+    object.__setattr__(
+        capability,
+        "_binding",
+        _OrdinaryExecutionAuthorizationBinding(receipt=receipt),
+    )
+    object.__setattr__(capability, "_claimed", False)
+    object.__setattr__(capability, "_lock", threading.Lock())
+    return capability
+
+
+def claim_ordinary_execution(
+    capability: OrdinaryExecutionCapability,
+    bundle: OrdinaryExecutionBundle,
+    prepared: PreparedOrdinaryQuery,
+) -> OrdinaryExecutionAuthorizationReceipt:
+    """Consume a lifecycle-minted capability at one exact execution boundary."""
+
+    if type(capability) is not OrdinaryExecutionCapability:
+        raise TypeError("capability must be an exact lifecycle-minted authorization")
+    lock = getattr(capability, "_lock", None)
+    if type(lock) is not type(threading.Lock()):
+        raise OrdinaryQueryLifecycleError("ordinary execution capability is not authoritative")
+    with lock:
+        if getattr(capability, "_claimed", None) is not False:
+            raise OrdinaryQueryLifecycleError("ordinary execution capability is absent or consumed")
+        object.__setattr__(capability, "_claimed", True)
+        binding = getattr(capability, "_binding", None)
+    if type(binding) is not _OrdinaryExecutionAuthorizationBinding:
+        raise OrdinaryQueryLifecycleError("ordinary execution capability is not authoritative")
+    _validate_bundle(bundle)
+    _validate_prepared(bundle, prepared)
+    receipt = binding.receipt
+    expected_preparation_sha256 = hashlib.sha256(
+        canonical_ordinary_query_preparation_bytes(bundle, prepared)
+    ).hexdigest()
+    if (
+        receipt.query_id != prepared.query_id
+        or receipt.version_id != prepared.version_id
+        or receipt.ledger_commitment_token != prepared.ledger_commitment_token
+        or receipt.query_preparation_sha256 != expected_preparation_sha256
+        or receipt.execution_binding_digest != prepared.execution_binding_digest
+    ):
+        raise OrdinaryQueryLifecycleError(
+            "ordinary execution capability differs from its prepared query"
+        )
+    return receipt
+
+
 def execute_ordinary_plaintext(
     bundle: OrdinaryExecutionBundle,
     prepared: PreparedOrdinaryQuery,
@@ -487,19 +625,8 @@ def execute_ordinary_plaintext(
         raise OrdinaryQueryLifecycleError(
             "execution modulus must match the prepared ordinary query"
         )
-    try:
-        ledger.verify_and_consume_prepared_f1m(
-            _prepared_f1m_commitments(prepared.f1m_operands),
-            commitment_token=prepared.ledger_commitment_token,
-            query_id=prepared.query_id,
-            version_id=prepared.version_id,
-            output_plan_digest=prepared.output_plan_digest,
-            private_plan_digest=prepared.private_plan_digest,
-            execution_binding_digest=prepared.execution_binding_digest,
-            modulus=prepared.modulus,
-        )
-    except (TypeError, ValueError, RuntimeError) as error:
-        raise OrdinaryQueryLifecycleError("ordinary F1-M commitment consumption failed") from error
+    authorization = authorize_ordinary_execution(bundle, prepared, ledger=ledger)
+    claim_ordinary_execution(authorization, bundle, prepared)
     compiled = bundle.compiled
     ciphertext_inputs = {
         spec.value_ciphertext_id: spec.values for spec in compiled.operand_specs
@@ -534,18 +661,23 @@ def execute_ordinary_plaintext(
 
 
 __all__ = (
+    "ORDINARY_EXECUTION_AUTHORIZATION_SCHEMA",
     "ORDINARY_PRIVATE_PLAN_SCHEMA",
     "ORDINARY_QUERY_PREPARATION_SCHEMA",
+    "OrdinaryExecutionAuthorizationReceipt",
     "OrdinaryExecutionBundle",
+    "OrdinaryExecutionCapability",
     "OrdinaryQueryLifecycleError",
     "PreparedOrdinaryF1MOperand",
     "PreparedOrdinaryQuery",
     "PreparedOrdinaryQueryOperand",
+    "authorize_ordinary_execution",
     "bind_ordinary_execution",
     "canonical_ordinary_private_plan_bytes",
     "canonical_ordinary_private_plan_payload",
     "canonical_ordinary_query_preparation_bytes",
     "canonical_ordinary_query_preparation_payload",
+    "claim_ordinary_execution",
     "execute_ordinary_plaintext",
     "prepare_ordinary_query",
 )
