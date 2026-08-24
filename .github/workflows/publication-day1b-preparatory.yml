@@ -36,14 +36,17 @@ jobs:
         run: |
           .venv/bin/python -m pytest -q \
             tests/test_evidence_compatibility.py \
+            tests/test_ordinary_query_lifecycle.py \
             tests/test_publication_day1b.py \
             tests/test_publication_day1b_worker_protocol.py \
             tests/test_publication_day1b_workflow_contract.py
           .venv/bin/python -m ruff check \
             scripts/run_publication_day1b.py \
             src/dynamic_cssc/evidence_compatibility.py \
+            src/dynamic_cssc/ordinary_query_lifecycle.py \
             src/dynamic_cssc/publication_day1b.py \
             tests/test_evidence_compatibility.py \
+            tests/test_ordinary_query_lifecycle.py \
             tests/test_publication_day1b.py \
             tests/test_publication_day1b_workflow_contract.py
           git diff --check

@@ -456,7 +456,7 @@ with `selective_candidate_retry_allowed=false`); it is not a measured resource
 choice and cannot activate the policy. Every empirical numeric limit and every
 measurement-method choice remains `null`.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v1` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v2` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface. A successful workflow validation is not a
 dispatch receipt or evidence artifact: the workflow has no semantic inputs,
@@ -464,11 +464,15 @@ does not fetch traces or held-out data, does not invoke the producer, uploads
 nothing, and cannot install an anchor. Held-out dispatch remains forbidden
 until an outcome-blind amendment freezes the measured limits and methods, a
 controller-owned scratch high-water/isolation contract and full repository-owned
-OpenFHE worker are installed, the ordinary-candidate query-preparation and
-private-plan lifecycle is canonical, and the TRACE post-run plus Day-1
-registration anchors are installed and revalidated. Introducing those facts
-requires a reviewed pre-`S1` policy schema/path and DAY1B Behavior Set version
-bump; this preparatory inventory cannot be upgraded in place after outcomes.
+OpenFHE worker integrate the now-canonical overlap-only ordinary-candidate
+query-preparation/private-plan lifecycle, and the TRACE post-run plus Day-1
+registration anchors are installed and revalidated. The lifecycle binds the
+common typed DAG to private global-column operands, fresh overlap-only F1-M
+masks, and a crash-persistent single-use commitment; its plaintext oracle tests
+are implementation evidence, not OpenFHE execution or dispatch authority.
+Introducing the remaining runtime facts requires a reviewed pre-`S1` policy
+schema/path and DAY1B Behavior Set version bump; this preparatory inventory
+cannot be upgraded in place after outcomes.
 
 For each of the three real datasets, define `V` as the event count of its closed,
 canonical, chronological schema-valid corpus. Execute exactly the 30 paths in

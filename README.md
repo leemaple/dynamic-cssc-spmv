@@ -44,10 +44,12 @@ Research repository for an update-aware maintenance layer around ciphertext–ci
   verified bundles are absent; no structure-pilot output currently exists.
 - Publication Day1B implementation status: a tested first-wave per-unit producer
   closes 18 cells / 486 physical records, schedule-v2 streaming, canonical
-  serialized-object ledgers, and per-cell resource observations. Its production
-  entry point still fails before writing because the Day1 catalog, trace authority,
-  resource policy, and repository execution adapter are intentionally uninstalled;
-  no publication result exists.
+  serialized-object ledgers, per-cell resource observations, and a canonical
+  overlap-only ordinary-query preparation/private-plan lifecycle with persistent
+  single-use F1-M commitments. Its production entry point still fails before
+  writing because the Day1 catalog, trace authority, resource policy, full OpenFHE
+  worker, and repository execution adapter are intentionally uninstalled; no
+  publication result exists.
 - Analysis isolation status: a standalone runner now exercises a fresh detached
   checkout under exact CPython 3.12.13 with `-I -S`, an isolated bytecode cache,
   an empty approved third-party import set, source/import/lock revalidation, and

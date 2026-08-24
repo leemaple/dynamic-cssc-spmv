@@ -369,9 +369,10 @@ choice remains `null`.
 
 The remaining Day1B `HOLD` set is explicit: an outcome-blind resource amendment,
 a controlled-scratch high-water and isolation method, a complete repository-owned
-OpenFHE runner/build/runtime identity, a common canonical ordinary-candidate
-query-preparation/private-plan lifecycle, the TRACE post-run anchor, and the
-Day-1 registration anchor. Source inventory is not dispatch authority. Any
+OpenFHE runner/build/runtime identity and its integration with the now-canonical
+ordinary-candidate query-preparation/private-plan lifecycle, the TRACE post-run anchor,
+and the Day-1 registration anchor.
+Source inventory is not dispatch authority. Any
 future file containing actual runner identities or frozen policy values must be
 introduced by a reviewed pre-S1 path/schema and DAY1B Behavior Set version bump,
 then re-frozen before the Terminal Registration Freeze; it cannot be spliced

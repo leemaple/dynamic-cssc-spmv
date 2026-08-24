@@ -83,6 +83,7 @@ DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/manifest.py",
     "src/dynamic_cssc/mask_ledger.py",
     "src/dynamic_cssc/metrics.py",
+    "src/dynamic_cssc/ordinary_query_lifecycle.py",
     "src/dynamic_cssc/output_plan.py",
     "src/dynamic_cssc/plaintext_oracle.py",
     "src/dynamic_cssc/publication_artifact_install.py",
@@ -98,6 +99,7 @@ DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/strong_packed_coo.py",
     "src/dynamic_cssc/strong_reference_receipt.py",
     "tests/test_evidence_compatibility.py",
+    "tests/test_ordinary_query_lifecycle.py",
     "tests/test_publication_day1b.py",
     "tests/test_publication_day1b_worker_protocol.py",
     "tests/test_publication_day1b_workflow_contract.py",
@@ -1618,7 +1620,7 @@ def test_day1b_preparatory_behavior_inventory_is_exact_but_non_authorizing(
         DAY1B_PREPARATORY_BEHAVIOR_PATHS
     )
     assert inventory["behavior_set_schema_version"] == (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v1"
+        "dynamic-cssc-day1b-preparatory-behavior-set-v2"
     )
     assert inventory["role"] == "day1b"
     assert inventory["source_git_sha"] == source_git_sha
