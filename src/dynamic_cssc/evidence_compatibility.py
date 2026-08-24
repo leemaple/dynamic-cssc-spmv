@@ -24,6 +24,7 @@ EVIDENCE_COMPATIBILITY_ANCHOR_PATH = "config/evidence-compatibility-anchors.json
 STRONG_REFERENCE_EVIDENCE_ANCHOR_PATH = "config/strong-reference-evidence-anchors.json"
 DAY1_REGISTRATION_ANCHOR_PATH = "config/day1-registration-anchors.json"
 _DAY2_POST_RUN_ANCHOR_PATH = "config/day2-calibration-anchors.json"
+_DAY2_PROFILE_ANCHOR_PATH = "config/day2-calibration-profile-anchors.json"
 BEHAVIOR_INVENTORY_SCHEMA = "dynamic-cssc-evidence-behavior-inventory-v1"
 RUNTIME_EXECUTION_ISOLATION_RECEIPT_SCHEMA = "dynamic-cssc-runtime-execution-isolation-receipt-v1"
 RUNTIME_EXECUTION_ISOLATION_HOLD = (
@@ -125,6 +126,9 @@ class RepositoryAnchorHistoryAttestation:
     artifact_sha256: str
     receipt_sha256: str
     _anchor_document: bytes
+    day1a_authority_receipt_sha256: str | None = None
+    day1a_evidence_anchor_git_sha: str | None = None
+    day2_profile_installation_git_sha: str | None = None
     compatibility_verified: bool = True
     runtime_execution_isolation_verified: bool = False
     formal_authority_granted: bool = False
@@ -179,7 +183,6 @@ _TRACE_BEHAVIOR_PATHS = (
 )
 
 _ANALYZER_BEHAVIOR_PATHS = (
-    "config/day2-calibration-profile-anchors.json",
     "config/publication-runtime-policy.json",
     "docs/paper/publication-preregistration-draft.md",
     "pyproject.toml",
@@ -198,7 +201,6 @@ _ANALYZER_BEHAVIOR_PATHS = (
 
 _DAY2_BEHAVIOR_PATHS = (
     ".github/workflows/day2-microbench.yml",
-    "config/day2-calibration-profile-anchors.json",
     "config/params_manifest.json",
     "cpp/CMakeLists.txt",
     "cpp/include/args.hpp",
@@ -378,6 +380,7 @@ _DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "docs/decisions/0008-strong-whole-query-execution-bundle.md",
     "docs/decisions/0009-fail-closed-role-aware-day1-catalog.md",
     "docs/decisions/0010-separate-experiment-and-evidence-freeze-snapshots.md",
+    "docs/decisions/0011-post-registration-day2-profile-anchor.md",
     "docs/paper/publication-preregistration-draft.md",
     "pyproject.toml",
     "requirements-ci.txt",
@@ -435,9 +438,9 @@ _ROLE_BEHAVIOR_PATHS: dict[EvidenceRole, tuple[str, ...] | None] = {
 _ROLE_BEHAVIOR_SCHEMAS = {
     EvidenceRole.ACQUISITION: "dynamic-cssc-acquisition-behavior-set-v2",
     EvidenceRole.TRACE: "dynamic-cssc-trace-behavior-set-v2",
-    EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v4",
-    EvidenceRole.DAY2: "dynamic-cssc-day2-behavior-set-v1",
-    EvidenceRole.ANALYZER: "dynamic-cssc-publication-analyzer-behavior-set-v1",
+    EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v5",
+    EvidenceRole.DAY2: "dynamic-cssc-day2-behavior-set-v2",
+    EvidenceRole.ANALYZER: "dynamic-cssc-publication-analyzer-behavior-set-v2",
     EvidenceRole.STRONG_CORRECTNESS: "dynamic-cssc-strong-correctness-behavior-set-v1",
     EvidenceRole.DAY1_REGISTRATION: "dynamic-cssc-day1-registration-behavior-set-v3",
 }
@@ -452,8 +455,8 @@ _ROLE_EVIDENCE_ONLY_PATHS = {
         if role is not EvidenceRole.DAY2
     },
     EvidenceRole.DAY2: (
-        "config/day2-calibration-anchors.json",
-        "config/day2-calibration-profile-anchors.json",
+        _DAY2_POST_RUN_ANCHOR_PATH,
+        _DAY2_PROFILE_ANCHOR_PATH,
         EVIDENCE_COMPATIBILITY_ANCHOR_PATH,
     ),
     EvidenceRole.STRONG_CORRECTNESS: (STRONG_REFERENCE_EVIDENCE_ANCHOR_PATH,),
@@ -461,6 +464,7 @@ _ROLE_EVIDENCE_ONLY_PATHS = {
 }
 _REPOSITORY_DATA_ONLY_ANCHOR_PATHS = (
     _DAY2_POST_RUN_ANCHOR_PATH,
+    _DAY2_PROFILE_ANCHOR_PATH,
     EVIDENCE_COMPATIBILITY_ANCHOR_PATH,
 )
 _ROLE_ANALYSIS_ONLY_PATHS = {
@@ -941,36 +945,90 @@ def _compatibility_anchor_records_at(
     )
 
 
-def _day2_post_run_anchor_records_at(
+def _singleton_data_anchor_records_at(
     repository_root: Path,
     source_git_sha: str,
     tree: dict[str, tuple[str, str, str]],
+    *,
+    relative_path: str,
+    label: str,
+    schema_version: str,
 ) -> tuple[bytes, ...]:
-    entry = tree.get(_DAY2_POST_RUN_ANCHOR_PATH)
+    entry = tree.get(relative_path)
     if entry is None:
         return ()
     mode, object_type, object_id = entry
     if mode != "100644" or object_type != "blob":
         raise EvidenceCompatibilityError(
-            "Day2 post-run anchor set must be a non-executable Git 100644 data blob"
+            f"{label} anchor set must be a non-executable Git 100644 data blob"
         )
     content = _git(repository_root, "cat-file", "blob", object_id)
     document = _decode_canonical_json(
         content,
-        f"{_DAY2_POST_RUN_ANCHOR_PATH}@{source_git_sha}",
+        f"{relative_path}@{source_git_sha}",
     )
     if set(document) != {"anchors", "schema_version"}:
-        raise EvidenceCompatibilityError("Day2 post-run anchor-set keys must be exact")
-    if document["schema_version"] != "dynamic-cssc-day2-calibration-post-run-anchor-set-v2":
-        raise EvidenceCompatibilityError("Day2 post-run anchor-set schema is not frozen")
+        raise EvidenceCompatibilityError(f"{label} anchor-set keys must be exact")
+    if document["schema_version"] != schema_version:
+        raise EvidenceCompatibilityError(f"{label} anchor-set schema is not frozen")
     anchors = document["anchors"]
     if type(anchors) is not list or len(anchors) > 1:
         raise EvidenceCompatibilityError(
-            "Day2 post-run anchor set must contain zero or one binding"
+            f"{label} anchor set must contain zero or one binding"
         )
     if any(type(anchor) is not dict for anchor in anchors):
-        raise EvidenceCompatibilityError("Day2 post-run binding must be a JSON object")
+        raise EvidenceCompatibilityError(f"{label} binding must be a JSON object")
     return tuple(_canonical_json_bytes(anchor) for anchor in anchors)
+
+
+def _day2_post_run_anchor_records_at(
+    repository_root: Path,
+    source_git_sha: str,
+    tree: dict[str, tuple[str, str, str]],
+) -> tuple[bytes, ...]:
+    return _singleton_data_anchor_records_at(
+        repository_root,
+        source_git_sha,
+        tree,
+        relative_path=_DAY2_POST_RUN_ANCHOR_PATH,
+        label="Day2 post-run",
+        schema_version="dynamic-cssc-day2-calibration-post-run-anchor-set-v3",
+    )
+
+
+def _day2_profile_anchor_records_at(
+    repository_root: Path,
+    source_git_sha: str,
+    tree: dict[str, tuple[str, str, str]],
+) -> tuple[bytes, ...]:
+    records = _singleton_data_anchor_records_at(
+        repository_root,
+        source_git_sha,
+        tree,
+        relative_path=_DAY2_PROFILE_ANCHOR_PATH,
+        label="Day2 profile",
+        schema_version="dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+    )
+    if _DAY2_PROFILE_ANCHOR_PATH not in tree:
+        return records
+    content = _git(
+        repository_root,
+        "cat-file",
+        "blob",
+        tree[_DAY2_PROFILE_ANCHOR_PATH][2],
+    )
+    from dynamic_cssc.day2_calibration_authority import (
+        Day2CalibrationAuthorityError,
+        validate_day2_calibration_profile_anchor_document,
+    )
+
+    try:
+        validate_day2_calibration_profile_anchor_document(content)
+    except Day2CalibrationAuthorityError as error:
+        raise EvidenceCompatibilityError(
+            f"Day2 profile anchor binding is malformed: {error}"
+        ) from error
+    return records
 
 
 def _day1_registration_anchors_at(
@@ -1240,6 +1298,7 @@ class _DataAnchorSnapshot:
     tree: dict[str, tuple[str, str, str]]
     compatibility_records: frozenset[bytes]
     day2_post_run_records: frozenset[bytes]
+    day2_profile_records: frozenset[bytes]
 
 
 def _commit_parents(repository_root: Path, source_git_sha: str) -> tuple[str, ...]:
@@ -1265,7 +1324,7 @@ def _verify_data_anchor_history(
     allowed_paths: tuple[str, ...],
     history_label: str,
     required_compatibility_record: bytes | None = None,
-) -> None:
+) -> str | None:
     cache: dict[str, _DataAnchorSnapshot] = {}
 
     def snapshot(commit: str) -> _DataAnchorSnapshot:
@@ -1280,6 +1339,9 @@ def _verify_data_anchor_history(
             ),
             day2_post_run_records=frozenset(
                 _day2_post_run_anchor_records_at(repository_root, commit, tree)
+            ),
+            day2_profile_records=frozenset(
+                _day2_profile_anchor_records_at(repository_root, commit, tree)
             ),
         )
         cache[commit] = observed
@@ -1299,6 +1361,7 @@ def _verify_data_anchor_history(
         raise EvidenceCompatibilityError(f"{history_label} does not reach its end snapshot")
     allowed = set(allowed_paths)
     start = snapshot(start_git_sha)
+    profile_addition_commits: set[str] = set()
     if (
         required_compatibility_record is not None
         and required_compatibility_record not in start.compatibility_records
@@ -1344,7 +1407,183 @@ def _verify_data_anchor_history(
                 raise EvidenceCompatibilityError(
                     f"{history_label} rejects Day2 post-run remove or retarget of a binding"
                 )
+            if not previous.day2_profile_records <= current.day2_profile_records:
+                raise EvidenceCompatibilityError(
+                    f"{history_label} rejects Day2 profile remove or retarget of a binding"
+                )
+            if not previous.day2_profile_records and current.day2_profile_records:
+                profile_addition_commits.add(commit)
+            if (
+                not previous.day2_profile_records
+                and current.day2_profile_records
+                and current.day2_post_run_records
+            ):
+                raise EvidenceCompatibilityError(
+                    f"{history_label} requires the Day2 profile before any post-run binding"
+                )
             _require_changed_data_blobs(changed_paths, current.tree, history_label)
+
+    profile_installation_git_sha: str | None = None
+    if not start.day2_profile_records:
+        first_appearances = tuple(
+            commit
+            for commit in profile_addition_commits
+            if not any(
+                other != commit and _is_ancestor(repository_root, other, commit)
+                for other in profile_addition_commits
+            )
+        )
+        if len(first_appearances) > 1:
+            raise EvidenceCompatibilityError(
+                f"{history_label} requires one unique first Day2 profile installation"
+            )
+        if first_appearances:
+            first = first_appearances[0]
+            profile_installation_git_sha = first
+            first_snapshot = snapshot(first)
+            if first_snapshot.day2_post_run_records:
+                raise EvidenceCompatibilityError(
+                    f"{history_label} requires the Day2 profile before any post-run binding"
+                )
+            internal_parents = tuple(
+                parent
+                for parent in _commit_parents(repository_root, first)
+                if parent == start_git_sha
+                or (
+                    _is_ancestor(repository_root, start_git_sha, parent)
+                    and _is_ancestor(repository_root, parent, end_git_sha)
+                )
+            )
+            if any(
+                _changed_paths(snapshot(parent).tree, first_snapshot.tree)
+                != (_DAY2_PROFILE_ANCHOR_PATH,)
+                for parent in internal_parents
+            ):
+                raise EvidenceCompatibilityError(
+                    f"{history_label} Day2 profile installation must change only its data path"
+                )
+    return profile_installation_git_sha
+
+
+def _unique_first_compatibility_record_installation(
+    repository_root: Path,
+    *,
+    start_git_sha: str,
+    end_git_sha: str,
+    required_record: bytes,
+) -> str:
+    cache: dict[str, frozenset[bytes]] = {}
+
+    def records(commit: str) -> frozenset[bytes]:
+        observed = cache.get(commit)
+        if observed is None:
+            tree = _full_tree(repository_root, commit)
+            observed = frozenset(
+                _compatibility_anchor_records_at(repository_root, commit, tree)
+            )
+            cache[commit] = observed
+        return observed
+
+    if required_record in records(start_git_sha):
+        raise EvidenceCompatibilityError(
+            "selected Day1A compatibility anchor must be installed after registration S2"
+        )
+    commits = (
+        start_git_sha,
+        *_revision_list(
+            repository_root,
+            "--reverse",
+            "--topo-order",
+            "--ancestry-path",
+            f"{start_git_sha}..{end_git_sha}",
+        ),
+    )
+    if commits[-1] != end_git_sha or required_record not in records(end_git_sha):
+        raise EvidenceCompatibilityError(
+            "selected Day1A compatibility anchor is absent before profile installation"
+        )
+    addition_commits: set[str] = set()
+    for commit in commits[1:]:
+        if required_record not in records(commit):
+            continue
+        internal_parents = tuple(
+            parent
+            for parent in _commit_parents(repository_root, commit)
+            if parent == start_git_sha
+            or (
+                _is_ancestor(repository_root, start_git_sha, parent)
+                and _is_ancestor(repository_root, parent, end_git_sha)
+            )
+        )
+        if internal_parents and all(
+            required_record not in records(parent) for parent in internal_parents
+        ):
+            addition_commits.add(commit)
+    if len(addition_commits) != 1:
+        raise EvidenceCompatibilityError(
+            "selected Day1A compatibility anchor must have one unique first installation"
+        )
+    return next(iter(addition_commits))
+
+
+def _require_day1a_anchor_before_profile(
+    repository_root: Path,
+    *,
+    evidence_freeze_git_sha: str,
+    profile_installation_git_sha: str,
+    analysis_source_git_sha: str,
+    behavior_set_sha256: str,
+) -> tuple[str, str]:
+    profile_tree = _full_tree(repository_root, profile_installation_git_sha)
+    profile_records = _day2_profile_anchor_records_at(
+        repository_root,
+        profile_installation_git_sha,
+        profile_tree,
+    )
+    if len(profile_records) != 1:
+        raise EvidenceCompatibilityError(
+            "Day2 profile installation must contain exactly one validated binding"
+        )
+    profile_binding = _decode_canonical_json(
+        profile_records[0],
+        "Day2 profile binding",
+    )
+    receipt_sha256 = profile_binding.get("day1a_authority_receipt_sha256")
+    if type(receipt_sha256) is not str or _LOWER_SHA256.fullmatch(receipt_sha256) is None:
+        raise EvidenceCompatibilityError(
+            "Day2 profile binding has no exact Day1A authority receipt digest"
+        )
+    expected = {
+        "artifact_sha256": receipt_sha256,
+        "behavior_set_schema_version": _ROLE_BEHAVIOR_SCHEMAS[
+            EvidenceRole.DAY1_REGISTRATION
+        ],
+        "behavior_set_sha256": behavior_set_sha256,
+        "experiment_source_git_sha": evidence_freeze_git_sha,
+        "role": EvidenceRole.DAY1_REGISTRATION.value,
+        "schema_version": "dynamic-cssc-evidence-compatibility-anchor-v1",
+    }
+    expected_record = _canonical_json_bytes(expected)
+    for label, commit in (
+        ("profile installation", profile_installation_git_sha),
+        ("current analysis", analysis_source_git_sha),
+    ):
+        selected_records = tuple(
+            anchor
+            for anchor in _anchor_set_at(repository_root, commit)
+            if anchor["role"] == EvidenceRole.DAY1_REGISTRATION.value
+        )
+        if selected_records != (expected,):
+            raise EvidenceCompatibilityError(
+                f"{label} must retain exactly the selected Day1A compatibility anchor"
+            )
+    anchor_git_sha = _unique_first_compatibility_record_installation(
+        repository_root,
+        start_git_sha=evidence_freeze_git_sha,
+        end_git_sha=profile_installation_git_sha,
+        required_record=expected_record,
+    )
+    return receipt_sha256, anchor_git_sha
 
 
 def _same_behavior_inventory(
@@ -1781,6 +2020,15 @@ def verify_repository_anchor_history(
             "Day1 registration anchor must have one unique first evidence-freeze commit"
         )
     evidence_freeze_sha = first_appearance[0]
+    for snapshot_label, snapshot_sha in (
+        ("registration S1", experiment_sha),
+        ("registration S2", evidence_freeze_sha),
+    ):
+        snapshot_tree = _full_tree(repository_root, snapshot_sha)
+        if _day2_profile_anchor_records_at(repository_root, snapshot_sha, snapshot_tree):
+            raise EvidenceCompatibilityError(
+                f"Day2 profile binding must be absent from {snapshot_label}"
+            )
     retained_commits = (
         evidence_freeze_sha,
         *_revision_list(
@@ -1857,13 +2105,26 @@ def verify_repository_anchor_history(
             raise EvidenceCompatibilityError(
                 f"Day1 post-freeze cross-role anchor must be a Git 100644 data blob: {path}"
             )
-    _verify_data_anchor_history(
+    profile_installation_git_sha = _verify_data_anchor_history(
         repository_root,
         start_git_sha=evidence_freeze_sha,
         end_git_sha=analysis_sha,
         allowed_paths=_DAY1_REGISTRATION_POST_FREEZE_DATA_PATHS,
         history_label="Day1 post-freeze history",
     )
+    day1a_authority_receipt_sha256: str | None = None
+    day1a_evidence_anchor_git_sha: str | None = None
+    if profile_installation_git_sha is not None:
+        (
+            day1a_authority_receipt_sha256,
+            day1a_evidence_anchor_git_sha,
+        ) = _require_day1a_anchor_before_profile(
+            repository_root,
+            evidence_freeze_git_sha=evidence_freeze_sha,
+            profile_installation_git_sha=profile_installation_git_sha,
+            analysis_source_git_sha=analysis_sha,
+            behavior_set_sha256=_behavior_set_digest(expected_inventory),
+        )
     if verify_current_role_source(role, repository_root) != analysis_attestation:
         raise EvidenceCompatibilityError(
             "Day1 registration source changed while verifying repository history"
@@ -1872,10 +2133,13 @@ def verify_repository_anchor_history(
         "analysis_source_git_sha": analysis_sha,
         "artifact_sha256": anchor["artifact_sha256"],
         "behavior_set_sha256": expected_inventory["behavior_set_sha256"],
+        "day1a_authority_receipt_sha256": day1a_authority_receipt_sha256,
+        "day1a_evidence_anchor_git_sha": day1a_evidence_anchor_git_sha,
+        "day2_profile_installation_git_sha": profile_installation_git_sha,
         "evidence_freeze_git_sha": evidence_freeze_sha,
         "experiment_source_git_sha": experiment_sha,
         "role": role.value,
-        "schema_version": "dynamic-cssc-repository-anchor-history-receipt-v1",
+        "schema_version": "dynamic-cssc-repository-anchor-history-receipt-v2",
     }
     return RepositoryAnchorHistoryAttestation(
         role=role,
@@ -1885,6 +2149,9 @@ def verify_repository_anchor_history(
         artifact_sha256=str(anchor["artifact_sha256"]),
         receipt_sha256=hashlib.sha256(_canonical_json_bytes(receipt_document)).hexdigest(),
         _anchor_document=anchor_bytes,
+        day1a_authority_receipt_sha256=day1a_authority_receipt_sha256,
+        day1a_evidence_anchor_git_sha=day1a_evidence_anchor_git_sha,
+        day2_profile_installation_git_sha=profile_installation_git_sha,
     )
 
 
@@ -1992,6 +2259,16 @@ def verify_evidence_compatibility(
     experiment_tree = _full_tree(repository_root, experiment_source_git_sha)
     evidence_tree = _full_tree(repository_root, evidence_freeze_git_sha)
     analysis_tree = _full_tree(repository_root, analysis_source_git_sha)
+    if role is EvidenceRole.DAY2 and len(
+        _day2_profile_anchor_records_at(
+            repository_root,
+            experiment_source_git_sha,
+            experiment_tree,
+        )
+    ) != 1:
+        raise EvidenceCompatibilityError(
+            "Day2 profile binding must already exist at the experiment source"
+        )
     experiment_to_evidence_changed_paths = _changed_paths(experiment_tree, evidence_tree)
     evidence_to_analysis_changed_paths = _changed_paths(evidence_tree, analysis_tree)
     evidence_only_paths = set(_REPOSITORY_DATA_ONLY_ANCHOR_PATHS)

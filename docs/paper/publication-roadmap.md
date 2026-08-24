@@ -25,10 +25,13 @@ policies, preregistration terms, sampling/decision rules, and analyzers are then
 frozen at a clean pre-anchor `S1`. The separate Day-1 registration-anchor change
 is the Terminal Registration Freeze and the lineage's last behavior-freeze
 action. Later commits may only append closed, repository-owned data-only anchors
-at the shared compatibility-anchor path and the Day-2 post-run calibration-anchor
-path, without deleting or changing any earlier anchor record. The Day-2
-pre-dispatch profile anchor, Day-1 registration anchor, and historical strong
-anchor are frozen before or at this boundary and are not post-freeze append paths.
+at the shared compatibility-anchor path, the one Day-2 pre-dispatch
+profile-anchor path authorized by ADR 0011, and the Day-2 post-run
+calibration-anchor path, without deleting or changing any earlier anchor record.
+The Day-1 registration anchor and historical strong anchor are frozen before or
+at this boundary. The profile schema and producer are frozen there, but its
+binding is installed in one data-only commit after formal Day1A and before any
+held-out or Day-2 outcome.
 
 ## 1. Current evidence boundary
 
@@ -129,15 +132,25 @@ preregistered per-block maximum per-operation time over the complete admitted
 case set; this is a conservative upper envelope, not a claim that all calls
 have the same realized latency.
 
-Before designating the clean pre-anchor `S1`, install the canonical profile-policy
-anchor for the exact profiles, three warm-up blocks, rotation plan, and Day1A
-receipt/inventory. That file belongs to both the Day-2 and analyzer Behavior Sets;
-it must not change after the Terminal Registration Freeze and must not contain a
-self-referential future source SHA. At dispatch, the zero-argument seam obtains
-the actual clean S1 identity and Day-2 Behavior Set digest from the hardened
-verifier. After the run, S2 adds the archive/raw/projection binding in the separate
-Day-2 post-run evidence anchor; installing it must not modify the profile anchor,
-validator source, or any other Day-2 behavior blob.
+Before designating the clean pre-anchor `S1`, freeze the exact profile schema,
+three-warm-up rule, rotation-plan derivation, producer, validator, and all Day-2
+and analyzer behavior. After `S1` registration evidence is installed as the
+Terminal Registration Freeze and the selected formal Day1A receipt/inventory is
+monotonically anchored in one shared compatibility record with
+`role=day1-registration`, experiment source equal to the Terminal Registration
+Freeze, and artifact digest equal to the selected receipt, install the canonical
+profile-policy binding in exactly one later reviewed data-only commit. It binds
+only already frozen artifact identities,
+contains no future source SHA, and must precede every formal Day1B held-out or
+Day-2 run. It is not a Day-2 or analyzer Behavior Set member and may never be
+removed or retargeted. At dispatch, the zero-argument seam obtains the actual
+clean profile-bearing source identity and frozen Day-2 Behavior Set digest from
+the hardened verifier, and rejects a nonempty Day-2 post-run anchor set. After
+the run, a later evidence-freeze commit adds the v3 archive/raw/profile/
+rotation-plan/contract-bindings/projection binding in the separate Day-2
+post-run anchor without modifying the profile, validator, or any behavior blob.
+Post-run compatibility rejects any Day-2 experiment source that did not already
+contain the unique profile.
 
 The existing `day2-microbench.yml` remains a historical isolated probe, not this
 publication contract. Its executable can exercise every caller-supplied exact
@@ -473,9 +486,14 @@ checkpoint in this order:
 4. generate the Day-1 registration evidence against that exact `S1`, then install
    its repository-owned registration anchor in one separate reviewed commit as
    the Terminal Registration Freeze; and
-5. only after the lineage history revalidates may later stages dispatch and
-   monotonically append their closed data-only anchors. They may neither delete
-   nor alter an earlier record.
+5. run formal publication-domain Day1A only after the registration history
+   revalidates, monotonically anchor the selected receipt in a distinct
+   `role=day1-registration` compatibility commit, and install the mechanically
+   derived Day-2 profile binding in one later profile-only commit;
+6. verify that unique profile installation and the still-empty Day-2 post-run
+   anchor before any formal Day1B held-out or Day-2 dispatch; and
+7. only then may later stages dispatch and monotonically append their closed
+   post-run data anchors. They may neither delete nor alter an earlier record.
 
 If anchor installation is wrong, an anchor must be withdrawn, or any behavior,
 workflow, policy, preregistration, or analysis rule must change, abandon that

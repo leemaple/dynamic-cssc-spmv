@@ -37,9 +37,13 @@ be deleted or changed.
   behavior code remain inside their role-specific Behavior Sets and cannot be
   excluded merely because they also read anchors.
 - Day-1 registration remains valid while later roles monotonically append only
-  the shared compatibility-anchor data and the Day-2 post-run calibration
-  anchor. The Day-2 pre-dispatch profile anchor belongs to the Day-2 and
-  analyzer Behavior Sets and must already be installed and frozen at `S1`.
+  the shared compatibility-anchor data, the one post-registration Day-2
+  profile binding authorized by ADR 0011, and the Day-2 post-run calibration
+  anchor. The profile schema and all code that derives or consumes it are
+  frozen at `S1`; its mechanically derived data binding is installed once only
+  after the Terminal Registration Freeze and after a distinct shared
+  `role=day1-registration` compatibility record anchors the selected formal
+  Day1A receipt. It must precede any formal held-out or Day-2 outcome access.
   Every earlier anchor record and identity must remain
   unchanged; a later role's valid addition does not invalidate an earlier
   role's receipt. The exact Behavior Set must still match `S1` at current HEAD;

@@ -491,7 +491,7 @@ def _trace() -> _Day1BTraceInput:
 
 def _source() -> _Day1BPreparatorySourceAttestation:
     inventory = {
-        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v4",
+        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v5",
         "behavior_set_sha256": "c" * 64,
         "entries": [],
         "role": "day1b",
@@ -1028,6 +1028,9 @@ def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
         "trace_bundle_dir",
         "output_dir",
     )
+    assert tuple(
+        signature(day1b_module._repository_day1b_profile_anchor_authority).parameters
+    ) == ()
     assert tuple(signature(day1b_module._repository_trace_anchor_authority).parameters) == ()
     assert tuple(signature(day1b_module._repository_day1b_resource_policy).parameters) == ()
     assert tuple(signature(day1b_module._repository_day1b_execution_adapter).parameters) == ()
@@ -1049,7 +1052,7 @@ def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v4"),
+            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v5"),
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -1066,6 +1069,11 @@ def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
         raise AssertionError("production touched a dependency after the pending-policy HOLD")
 
     monkeypatch.setattr(day1b_module, "_repository_day1b_resource_policy", pending_policy)
+    monkeypatch.setattr(
+        day1b_module,
+        "_repository_day1b_profile_anchor_authority",
+        forbidden_dependency,
+    )
     monkeypatch.setattr(day1b_module, "repository_day1_candidate_catalog", forbidden_dependency)
     monkeypatch.setattr(day1b_module, "_load_repository_trace_input", forbidden_dependency)
     monkeypatch.setattr(day1b_module, "_repository_trace_anchor_authority", forbidden_dependency)
@@ -1078,6 +1086,93 @@ def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
 
     assert calls == ["pending-policy"]
     assert not output_dir.exists()
+
+
+def test_repository_day1b_profile_gate_requires_complete_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        day1b_module,
+        "verify_current_role_source",
+        lambda role, repository_root: SimpleNamespace(git_sha="1" * 40),
+    )
+    valid_history = SimpleNamespace(
+        analysis_source_git_sha="1" * 40,
+        day1a_authority_receipt_sha256="2" * 64,
+        day1a_evidence_anchor_git_sha="3" * 40,
+        day2_profile_installation_git_sha="4" * 40,
+    )
+    monkeypatch.setattr(
+        day1b_module,
+        "verify_repository_anchor_history",
+        lambda role, repository_root: valid_history,
+    )
+
+    assert day1b_module._repository_day1b_profile_anchor_authority() == "1" * 40
+
+    missing_profile = SimpleNamespace(
+        analysis_source_git_sha="1" * 40,
+        day1a_authority_receipt_sha256="2" * 64,
+        day1a_evidence_anchor_git_sha="3" * 40,
+        day2_profile_installation_git_sha=None,
+    )
+    monkeypatch.setattr(
+        day1b_module,
+        "verify_repository_anchor_history",
+        lambda role, repository_root: missing_profile,
+    )
+    with pytest.raises(PublicationDay1BHold, match="Day1A anchor and Day2 profile"):
+        day1b_module._repository_day1b_profile_anchor_authority()
+
+
+def test_public_producer_checks_profile_before_catalog_trace_or_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        day1b_module,
+        "verify_current_role_source",
+        lambda role, repository_root: SimpleNamespace(
+            git_sha="1" * 40,
+            attestation="repository-clean-head",
+        ),
+    )
+    monkeypatch.setattr(
+        day1b_module,
+        "capture_behavior_inventory",
+        lambda role, source_git_sha, repository_root: {
+            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v5",
+            "behavior_set_sha256": "2" * 64,
+            "entries": [],
+            "role": "day1b",
+            "schema_version": "dynamic-cssc-evidence-behavior-inventory-v1",
+            "source_git_sha": source_git_sha,
+        },
+    )
+    monkeypatch.setattr(day1b_module, "_repository_day1b_resource_policy", _resource_policy)
+    calls: list[str] = []
+
+    def profile_hold() -> str:
+        calls.append("profile")
+        raise PublicationDay1BHold("HOLD: profile history missing")
+
+    def forbidden_dependency(*args: object, **kwargs: object) -> object:
+        raise AssertionError("production touched held-out input before profile admission")
+
+    monkeypatch.setattr(
+        day1b_module,
+        "_repository_day1b_profile_anchor_authority",
+        profile_hold,
+    )
+    monkeypatch.setattr(day1b_module, "repository_day1_candidate_catalog", forbidden_dependency)
+    monkeypatch.setattr(day1b_module, "_load_repository_trace_input", forbidden_dependency)
+    monkeypatch.setattr(day1b_module, "_repository_trace_anchor_authority", forbidden_dependency)
+    monkeypatch.setattr(day1b_module, "_repository_day1b_execution_adapter", forbidden_dependency)
+
+    with pytest.raises(PublicationDay1BHold, match="profile history missing"):
+        produce_publication_day1b_unit(tmp_path / "unread-trace", tmp_path / "output")
+
+    assert calls == ["profile"]
 
 
 def test_pending_resource_policy_file_is_one_canonical_closed_non_authority_document() -> None:

@@ -25,6 +25,7 @@ __all__ = (
     "inspect_day2_calibration_archive",
     "repository_day2_calibration_authority",
     "repository_day2_calibration_profile_authority",
+    "validate_day2_calibration_profile_anchor_document",
 )
 
 EVIDENCE_SCOPE = "isolated-14-primitive-fixed-host-calibration-only"
@@ -403,6 +404,7 @@ _POST_RUN_ANCHOR_KEYS = frozenset(
         "raw_measurement_blocks_sha256",
         "operation_profile_set_sha256",
         "rotation_key_plan_sha256",
+        "contract_bindings_sha256",
         "calibration_projection_sha256",
     }
 )
@@ -426,6 +428,7 @@ class Day2CalibrationInspection:
     raw_measurement_blocks_sha256: str
     operation_profile_set_sha256: str
     rotation_key_plan_sha256: str
+    contract_bindings_sha256: str
     calibration_projection_sha256: str
     artifact_behavior_inventory_sha256: str
     behavior_set_schema_version: str
@@ -626,6 +629,7 @@ class _Day2CalibrationBinding:
     raw_measurement_blocks_sha256: str
     operation_profile_set_sha256: str
     rotation_key_plan_sha256: str
+    contract_bindings_sha256: str
     calibration_projection_sha256: str
 
 
@@ -698,7 +702,7 @@ def _mint_repository_calibration_profile_authority(
         raise Day2CalibrationAuthorityError(
             "repository pre-dispatch warmup block count is not frozen"
         )
-    if experiment_behavior_set_schema_version != "dynamic-cssc-day2-behavior-set-v1":
+    if experiment_behavior_set_schema_version != "dynamic-cssc-day2-behavior-set-v2":
         raise Day2CalibrationAuthorityError(
             "repository pre-dispatch Behavior Set schema is not frozen"
         )
@@ -1021,10 +1025,16 @@ def _decode_profile_anchor_set(content: bytes) -> tuple[_Day2CalibrationProfileB
     return tuple(bindings)
 
 
+def validate_day2_calibration_profile_anchor_document(content: bytes) -> None:
+    """Validate the complete closed profile-anchor schema without granting authority."""
+
+    _decode_profile_anchor_set(content)
+
+
 def _decode_post_run_anchor_set(content: bytes) -> tuple[_Day2CalibrationBinding, ...]:
     payload = _decode_json(content, "Day 2 post-run anchor set")
     _require_exact_keys(payload, _POST_RUN_ANCHOR_SET_KEYS, "Day 2 post-run anchor set")
-    if payload["schema_version"] != "dynamic-cssc-day2-calibration-post-run-anchor-set-v2":
+    if payload["schema_version"] != "dynamic-cssc-day2-calibration-post-run-anchor-set-v3":
         raise Day2CalibrationAuthorityError("Day 2 post-run anchor-set schema is not frozen")
     anchors = payload["anchors"]
     if type(anchors) is not list or len(anchors) > 1:
@@ -1034,9 +1044,9 @@ def _decode_post_run_anchor_set(content: bytes) -> tuple[_Day2CalibrationBinding
     bindings: list[_Day2CalibrationBinding] = []
     for anchor in anchors:
         _require_exact_keys(anchor, _POST_RUN_ANCHOR_KEYS, "Day 2 post-run anchor")
-        if anchor["schema_version"] != "dynamic-cssc-day2-calibration-post-run-anchor-v2":
+        if anchor["schema_version"] != "dynamic-cssc-day2-calibration-post-run-anchor-v3":
             raise Day2CalibrationAuthorityError("Day 2 post-run anchor schema is not frozen")
-        if anchor["experiment_behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v1":
+        if anchor["experiment_behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v2":
             raise Day2CalibrationAuthorityError("Day 2 post-run Behavior Set schema is not frozen")
         experiment_source_git_sha = _require_lower_git_sha(
             anchor["experiment_source_git_sha"],
@@ -1091,6 +1101,10 @@ def _decode_post_run_anchor_set(content: bytes) -> tuple[_Day2CalibrationBinding
                 rotation_key_plan_sha256=_require_lower_sha256(
                     anchor["rotation_key_plan_sha256"],
                     "Day 2 post-run rotation key plan",
+                ),
+                contract_bindings_sha256=_require_lower_sha256(
+                    anchor["contract_bindings_sha256"],
+                    "Day 2 post-run contract bindings",
                 ),
                 calibration_projection_sha256=_require_lower_sha256(
                     anchor["calibration_projection_sha256"],
@@ -1303,7 +1317,7 @@ def _validate_artifact_behavior_inventory(
         raise Day2CalibrationAuthorityError(
             "artifact Behavior inventory source SHA does not match source provenance"
         )
-    if value["behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v1":
+    if value["behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v2":
         raise Day2CalibrationAuthorityError("artifact Day 2 Behavior Set schema is not frozen")
     entries = value["entries"]
     if type(entries) is not list or not entries:
@@ -2083,6 +2097,7 @@ def inspect_day2_calibration_archive(
         raw_measurement_blocks_sha256=_sha256(members["raw-measurement-blocks.json"]),
         operation_profile_set_sha256=_sha256(members["operation-profile-set.json"]),
         rotation_key_plan_sha256=_sha256(members["rotation-key-plan.json"]),
+        contract_bindings_sha256=_sha256(members["contract-bindings.json"]),
         calibration_projection_sha256=projection_sha256,
         artifact_behavior_inventory_sha256=_sha256(
             _canonical_json_bytes(artifact_behavior_inventory)
@@ -2102,22 +2117,46 @@ def repository_day2_calibration_profile_authority() -> Day2CalibrationProfileAut
             "no repository-approved pre-dispatch calibration profile anchor is installed"
         )
     binding = anchors[0]
+    post_anchor_document = _read_repository_anchor_set(_POST_RUN_ANCHOR_PATH)
+    if _decode_post_run_anchor_set(post_anchor_document):
+        raise Day2CalibrationAuthorityError(
+            "Day 2 pre-dispatch authority requires the post-run anchor set to remain empty"
+        )
     from dynamic_cssc.evidence_compatibility import (
         EvidenceCompatibilityError,
         EvidenceRole,
         verify_current_role_source,
+        verify_repository_anchor_history,
     )
 
     repository_root = Path(__file__).resolve().parents[2]
     try:
+        registration_history = verify_repository_anchor_history(
+            EvidenceRole.DAY1_REGISTRATION,
+            repository_root,
+        )
         attestation = verify_current_role_source(EvidenceRole.DAY2, repository_root)
     except EvidenceCompatibilityError as error:
         raise Day2CalibrationAuthorityError(
             f"current Day 2 source attestation failed: {error}"
         ) from error
-    if _read_repository_anchor_set(_PROFILE_ANCHOR_PATH) != anchor_document:
+    if registration_history.analysis_source_git_sha != attestation.git_sha:
         raise Day2CalibrationAuthorityError(
-            "Day 2 pre-dispatch anchor changed during source attestation"
+            "Day 2 source does not equal the history-verified registration/profile source"
+        )
+    if (
+        registration_history.day1a_authority_receipt_sha256
+        != binding.day1a_authority_receipt_sha256
+    ):
+        raise Day2CalibrationAuthorityError(
+            "Day 2 profile does not match the history-anchored Day1A authority receipt"
+        )
+    if (
+        _read_repository_anchor_set(_PROFILE_ANCHOR_PATH) != anchor_document
+        or _read_repository_anchor_set(_POST_RUN_ANCHOR_PATH) != post_anchor_document
+    ):
+        raise Day2CalibrationAuthorityError(
+            "Day 2 pre-dispatch repository anchor changed during source attestation"
         )
     if attestation.runtime_execution_isolation_verified is not True:
         raise Day2CalibrationAuthorityError(
@@ -2138,6 +2177,13 @@ def repository_day2_calibration_profile_authority() -> Day2CalibrationProfileAut
     if after != attestation:
         raise Day2CalibrationAuthorityError(
             "Day 2 source changed while binding pre-dispatch authority"
+        )
+    if (
+        _read_repository_anchor_set(_PROFILE_ANCHOR_PATH) != anchor_document
+        or _read_repository_anchor_set(_POST_RUN_ANCHOR_PATH) != post_anchor_document
+    ):
+        raise Day2CalibrationAuthorityError(
+            "Day 2 pre-dispatch repository anchor changed while binding authority"
         )
     return authority
 
@@ -2162,6 +2208,7 @@ def repository_day2_calibration_authority() -> Day2CalibrationAuthority:
     if (
         binding.operation_profile_set_sha256 != profile_binding.operation_profile_set_sha256
         or binding.rotation_key_plan_sha256 != profile_binding.rotation_key_plan_sha256
+        or binding.contract_bindings_sha256 != profile_binding.contract_bindings_sha256
     ):
         raise Day2CalibrationAuthorityError(
             "Day 2 calibration anchor does not match pre-dispatch profile authority"
@@ -2171,15 +2218,31 @@ def repository_day2_calibration_authority() -> Day2CalibrationAuthority:
         EvidenceRole,
         verify_current_role_source,
         verify_evidence_compatibility,
+        verify_repository_anchor_history,
     )
 
     repository_root = Path(__file__).resolve().parents[2]
     try:
+        registration_history = verify_repository_anchor_history(
+            EvidenceRole.DAY1_REGISTRATION,
+            repository_root,
+        )
         attestation = verify_current_role_source(EvidenceRole.DAY2, repository_root)
     except EvidenceCompatibilityError as error:
         raise Day2CalibrationAuthorityError(
             f"current Day 2 source attestation failed: {error}"
         ) from error
+    if registration_history.analysis_source_git_sha != attestation.git_sha:
+        raise Day2CalibrationAuthorityError(
+            "Day 2 post-run source does not equal the history-verified profile source"
+        )
+    if (
+        registration_history.day1a_authority_receipt_sha256
+        != profile_binding.day1a_authority_receipt_sha256
+    ):
+        raise Day2CalibrationAuthorityError(
+            "Day 2 post-run profile does not match the history-anchored Day1A receipt"
+        )
     if (
         _read_repository_anchor_set(_POST_RUN_ANCHOR_PATH) != post_anchor_document
         or _read_repository_anchor_set(_PROFILE_ANCHOR_PATH) != profile_anchor_document

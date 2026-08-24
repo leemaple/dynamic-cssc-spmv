@@ -464,7 +464,7 @@ with `selective_candidate_retry_allowed=false`); it is not a measured resource
 choice and cannot activate the policy. Every empirical numeric limit and every
 measurement-method choice remains `null`.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v4` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v5` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface. A successful workflow validation is not a
 dispatch receipt or evidence artifact: the workflow has no semantic inputs,
@@ -701,18 +701,29 @@ Any other primitive whose admitted ciphertext level/profile varies uses the
 same complete-case, per-block maximum rule; otherwise the accounting vocabulary
 must be expanded before measurement.
 
-Before the clean pre-anchor `S1` is designated, the canonical repository profile
-anchor freezes the exact profile set, three-warm-up rule, rotation plan, and
-Day-1A receipt/inventory identities. The profile anchor itself belongs to both
-the Day-2 and analyzer Behavior Sets; it may not be installed or changed after
-the Terminal Registration Freeze. It contains no future or self-referential
-source commit SHA. A zero-argument repository seam validates that frozen data
-and obtains the actual S1 identity and Day-2 Behavior Set digest from the
-hardened clean-source verifier at runtime.
-After measurement, S2 may add a separate canonical post-run evidence anchor
-binding that actual S1 and the archive/raw/projection digests. Neither anchor is
-embedded in validator Python code; the validator remains in the Day-2 Behavior
-Set, while only the post-run anchor data is evidence-only under ADR 0010.
+Before the clean pre-anchor `S1` is designated, the repository freezes the exact
+profile schema, three-warm-up rule, rotation-plan derivation, producer,
+validator, and all Day-2/analyzer behavior. After exact-`S1` registration is
+installed as the Terminal Registration Freeze and the selected formal Day1A
+receipt is monotonically anchored by one shared compatibility record with
+`role=day1-registration`, experiment source equal to that Terminal Registration
+Freeze, and artifact digest equal to the selected receipt, one later reviewed
+profile-only commit installs the canonical binding derived from those frozen
+artifacts. The profile anchor is data-only rather than a Day-2 or analyzer
+Behavior Set member; it may
+never be removed, retargeted, or independently reinstalled and must precede
+every formal Day1B held-out or Day-2 run. It contains no future or
+self-referential source commit SHA. A zero-argument repository seam validates
+the binding, requires the Day-2 post-run anchor set to remain empty, and obtains
+the actual clean profile-bearing source identity and frozen Day-2 Behavior Set
+digest at runtime. After measurement, a later canonical post-run evidence
+anchor v3 binds that actual source and the archive, raw blocks, profile,
+rotation-plan, contract-bindings, and projection digests. Final repository
+authority cross-checks the profile, rotation plan, and contract bindings against
+the pre-dispatch anchor, and generic Day-2 compatibility rejects an experiment
+source that did not already contain the profile. Neither anchor is embedded in
+validator Python code; all deriving and validating code remains frozen under
+ADR 0010 and ADR 0011.
 
 The accepted analysis input binds exactly 30 trace units and 540
 `(unit, freshness, rho)` cells. Every unit commits to the trace manifest,
@@ -727,8 +738,9 @@ before a verdict can enter the claim ledger. These identities need not be equal:
 the provider artifact digest necessarily appears after the experiment. Any
 difference is accepted only through a repository-generated ADR 0010 receipt
 that compares the exact, role-specific path/mode/type/blob Behavior Set and
-allows only monotonic additions at the shared compatibility-anchor path and the
-Day-2 post-run calibration-anchor path.
+allows only monotonic additions at the shared compatibility-anchor path, the
+unique ADR 0011 profile-anchor path, and the Day-2 post-run calibration-anchor
+path.
 An earlier role remains valid when a later role appends its own admitted record
 to a shared anchor, but every earlier record and identity must remain unchanged.
 The preregistration and analyzer decision Behavior Set must remain byte-for-byte
@@ -917,6 +929,9 @@ record:
 
 The outcome-blind pilot and its resource amendment occur before every item above
 is frozen into the pre-anchor `S1`. Only then may exact-`S1` Day-1 registration
-evidence be anchored as the Terminal Registration Freeze. Only that committed,
-reviewed, history-valid sequence may authorize the first held-out publication
-run.
+evidence be anchored as the Terminal Registration Freeze. Formal
+publication-domain Day1A then runs against that registered catalog, its selected
+receipt is monotonically anchored in a distinct `role=day1-registration`
+compatibility commit, and the unique later mechanical profile-only commit binds
+the pre-dispatch inputs. Only that complete, reviewed,
+history-valid sequence may authorize the first held-out publication run.

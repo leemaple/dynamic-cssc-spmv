@@ -36,6 +36,7 @@ from dynamic_cssc.evidence_compatibility import (
     EvidenceRole,
     capture_behavior_inventory,
     verify_current_role_source,
+    verify_repository_anchor_history,
 )
 from dynamic_cssc.publication_artifact_install import (
     PublicationArtifactDirectory,
@@ -1319,7 +1320,7 @@ def _validate_preparatory_source_attestation(
         inventory.get("role") != EvidenceRole.DAY1B.value
         or inventory.get("source_git_sha") != source.git_sha
         or inventory.get("behavior_set_schema_version")
-        != "dynamic-cssc-day1b-preparatory-behavior-set-v4"
+        != "dynamic-cssc-day1b-preparatory-behavior-set-v5"
     ):
         raise ValueError(
             "preparatory source inventory must bind the DAY1B role, schema, and exact S1"
@@ -4026,6 +4027,33 @@ def _repository_day1b_execution_adapter() -> _Day1BExecutionAdapter:
     )
 
 
+def _repository_day1b_profile_anchor_authority() -> str:
+    """Require the unique post-registration profile before any held-out input."""
+
+    repository_root = Path(__file__).resolve().parents[2]
+    try:
+        history = verify_repository_anchor_history(
+            EvidenceRole.DAY1_REGISTRATION,
+            repository_root,
+        )
+        source = verify_current_role_source(EvidenceRole.DAY1B, repository_root)
+    except EvidenceCompatibilityError as error:
+        raise PublicationDay1BHold(
+            f"HOLD: Day1B profile-anchor history is unavailable: {error}"
+        ) from error
+    if (
+        history.analysis_source_git_sha != source.git_sha
+        or history.day1a_authority_receipt_sha256 is None
+        or history.day1a_evidence_anchor_git_sha is None
+        or history.day2_profile_installation_git_sha is None
+    ):
+        raise PublicationDay1BHold(
+            "HOLD: Day1B requires the history-verified Day1A anchor and Day2 profile "
+            "installation at its exact clean source"
+        )
+    return source.git_sha
+
+
 def _repository_trace_anchor_authority() -> None:
     """Fail closed until the central TRACE post-run anchor is repository-installed."""
 
@@ -4171,6 +4199,10 @@ def produce_publication_day1b_unit(
         source_attestation=source_attestation.attestation,
     )
     resource_policy = _repository_day1b_resource_policy()
+    if _repository_day1b_profile_anchor_authority() != source_attestation.git_sha:
+        raise PublicationDay1BHold(
+            "HOLD: Day1B source changed across profile-anchor admission"
+        )
     try:
         catalog = repository_day1_candidate_catalog()
     except Day1CandidateRegistrationError as error:

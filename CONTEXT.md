@@ -63,6 +63,7 @@ _Avoid_: Mutable evidence chain, working branch
 
 **Terminal Registration Freeze**:
 The boundary after all publication behavior and decision rules are fixed and Day-1 registration is anchored; only evidence may follow within that Publication Evidence Lineage.
+The selected formal Day1A receipt is first installed as its own monotonic shared compatibility record; the single later ADR-0011 Day-2 profile binding is a distinct post-registration data-only evidence commitment, not a later behavior freeze, and must precede all formal held-out and Day-2 outcome access.
 _Avoid_: Partial freeze, provisional registration
 
 **Experiment Source Snapshot**:
