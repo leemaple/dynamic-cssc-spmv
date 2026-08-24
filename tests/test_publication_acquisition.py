@@ -7,6 +7,7 @@ import os
 import re
 import ssl
 import subprocess
+import sys
 import tomllib
 import urllib.request
 from contextlib import contextmanager
@@ -1177,7 +1178,7 @@ def test_private_fixture_seams_require_an_active_pytest_marker(
     environment["PYTHONPATH"] = str(repository_root / "src")
     result = subprocess.run(
         [
-            str(repository_root / ".venv/bin/python"),
+            sys.executable,
             "-c",
             (
                 "from dynamic_cssc.publication_acquisition import "

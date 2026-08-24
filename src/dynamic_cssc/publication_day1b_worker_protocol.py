@@ -1575,8 +1575,17 @@ class _ControlledScratch:
                 descriptor_path,
                 check_same_thread=False,
             )
+            # SQLite may normalize /dev/fd to a platform-specific filename.  The
+            # application-id round trip below proves the held-file byte binding.
             database_list = connection.execute("PRAGMA database_list").fetchall()
-            if database_list != [(0, "main", descriptor_path)]:
+            database_row = database_list[0] if len(database_list) == 1 else None
+            if (
+                type(database_row) is not tuple
+                or len(database_row) != 3
+                or database_row[:2] != (0, "main")
+                or type(database_row[2]) is not str
+                or not database_row[2]
+            ):
                 raise Day1BWorkerProtocolError(
                     "anonymous SQLite connection is not bound to its held descriptor"
                 )

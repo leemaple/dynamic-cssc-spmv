@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import sys
 from dataclasses import fields, replace
 from datetime import datetime
 from pathlib import Path
@@ -53,7 +54,7 @@ def test_local_source_fixture_seam_is_guarded_outside_pytest() -> None:
     repository_root = Path(__file__).resolve().parents[1]
     completed = subprocess.run(
         [
-            str(repository_root / ".venv" / "bin" / "python"),
+            sys.executable,
             "-c",
             (
                 "from dynamic_cssc.publication_traces import "

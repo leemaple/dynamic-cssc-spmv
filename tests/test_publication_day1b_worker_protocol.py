@@ -1525,6 +1525,43 @@ def test_sqlite_registry_is_bound_to_one_anonymous_descriptor_inode(
     _assert_no_live_controlled_scratch()
 
 
+def test_sqlite_registry_accepts_a_platform_normalized_descriptor_filename(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_connect = worker_protocol.sqlite3.connect
+
+    class _NormalizedDatabaseList:
+        def fetchall(self) -> list[tuple[int, str, str]]:
+            return [(0, "main", "/tmp/anonymous-sqlite (deleted)")]
+
+    class _NormalizedFilenameConnection:
+        def __init__(self, connection: sqlite3.Connection) -> None:
+            self.connection = connection
+
+        def execute(self, statement: str, *args: object, **kwargs: object) -> object:
+            cursor = self.connection.execute(statement, *args, **kwargs)
+            if statement == "PRAGMA database_list":
+                assert cursor.fetchall()[0][:2] == (0, "main")
+                return _NormalizedDatabaseList()
+            return cursor
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self.connection, name)
+
+    def normalized_connect(database: str, **kwargs: object) -> object:
+        return _NormalizedFilenameConnection(original_connect(database, **kwargs))
+
+    monkeypatch.setattr(worker_protocol.sqlite3, "connect", normalized_connect)
+    contract = _contract()
+    registry = _prepare_registry(
+        _expected_f1m_objects(contract.candidate.candidate_id),
+        contract=contract,
+    )
+
+    abandon_day1b_expected_f1m_registry(registry)
+    _assert_no_live_controlled_scratch()
+
+
 def test_sqlite_descriptor_is_independent_of_a_later_observation_root_splice(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

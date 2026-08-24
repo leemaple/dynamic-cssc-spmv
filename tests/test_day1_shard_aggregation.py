@@ -1522,7 +1522,11 @@ def test_aggregator_rejects_a_canonical_trace_that_diverges_from_the_generated_s
     ("phase", "metric_field", "message"),
     [
         ("held-out", "windows", "metrics_json_sha256"),
-        ("held-out", "queries", "predicted_query_time_per_query"),
+        (
+            "held-out",
+            "queries",
+            "predicted_query_time_per_query|replay receipt cell.metrics_json_sha256",
+        ),
         ("tuning", "windows", "metrics_json_sha256"),
         ("tuning", "queries", "metrics_json_sha256"),
     ],
