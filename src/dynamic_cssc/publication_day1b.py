@@ -474,6 +474,7 @@ _WORKER_RECEIPT_KEYS = frozenset(
         "controller_f1m_cardinality_derivation_root_sha256",
         "controller_expected_serialized_equivalence_class_count",
         "controller_registered_scratch_bytes_checkpoint_maximum",
+        "controller_observed_registered_scratch_peak_bytes",
         "anonymous_scratch_creation_isolation_verified",
         "input_binding_sha256",
         "object_receipt_byte_count",
@@ -2444,6 +2445,24 @@ def _verify_day1b_unit_view(
             ):
                 if candidate_receipt[field] is not False:
                     raise ValueError("Day1B worker receipt overstates fixture/runtime authority")
+            registered_scratch_cap = _strict_nonnegative_int(
+                candidate_receipt[
+                    "controller_registered_scratch_bytes_checkpoint_maximum"
+                ],
+                "worker controller-registered scratch cap",
+            )
+            registered_scratch_peak = _strict_nonnegative_int(
+                candidate_receipt["controller_observed_registered_scratch_peak_bytes"],
+                "worker controller-registered scratch peak",
+            )
+            if (
+                registered_scratch_cap <= 0
+                or registered_scratch_peak <= 0
+                or registered_scratch_peak > registered_scratch_cap
+            ):
+                raise ValueError(
+                    "Day1B worker controller-registered scratch peak exceeds its closed cap"
+                )
             input_binding = _require_sha256(
                 candidate_receipt["input_binding_sha256"],
                 "worker input binding digest",

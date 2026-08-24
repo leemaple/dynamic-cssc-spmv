@@ -316,6 +316,15 @@ controlled transient-scratch high-water, the amendment may not freeze a
 scratch cap from that field alone. It must add a separately reviewed
 controlled-scratch measurement or leave held-out dispatch on `HOLD`.
 
+The preparatory Day1B worker receipt v2 now preserves one such measurement for
+the controller's exact anonymous registry/spool pair: the maximum checkpointed
+sum of both inode sizes, updated before the cap comparison and retained on an
+over-cap failure. It is deliberately separate from candidate-execution
+scratch, which remains the launcher-owned `controller_observed_peak_scratch_bytes`
+observation. The controller measurement alone does not verify production
+scratch-root creation isolation, does not set either numeric limit, and does
+not authorize dispatch.
+
 The final selector is recomputed from measured compute costs plus serialized
 communication at the primary bandwidth. Day 1A's normalized proxy selector is
 not carried forward as the publication decision. The primary held-out contrast

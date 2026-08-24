@@ -514,6 +514,19 @@ payload artifact may be retained. A scratch limit remains `PENDING-FREEZE`
 unless the amendment adds a separately reviewed controlled-scratch high-water
 measurement.
 
+The Day1B worker candidate-cell receipt v2 separately records
+`controller_observed_registered_scratch_peak_bytes`. The controller updates
+that value before every existing cap check as the monotonic maximum of the sum
+of `st_size` for its exact two anonymous, inode-bound registry/spool members.
+The update occurs before an over-cap failure is raised, so a fail-closed path
+cannot erase the observed checkpoint peak. This field is governed by
+`controller_registered_scratch_bytes_checkpoint_maximum`; it is not the
+candidate-execution `controller_observed_peak_scratch_bytes` governed by
+`scratch_bytes_per_candidate_cell`, and neither field may be substituted for
+the other. The current pytest-only capability issuer still reports creation
+isolation as false, so this measurement does not authorize production or lift
+the resource-policy `HOLD`.
+
 Production execution additionally requires the manual workflow's fixed,
 pre-provisioned `PUBLICATION_STRUCTURE_PILOT_SCRATCH_ROOT`. The path must be
 absolute and canonical, owned by the worker identity, mode `0700`, writable,

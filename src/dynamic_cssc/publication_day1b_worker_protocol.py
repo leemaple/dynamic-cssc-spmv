@@ -27,7 +27,7 @@ from typing import BinaryIO
 
 DAY1B_WORKER_FRAME_SCHEMA = "dynamic-cssc-publication-day1b-worker-frame-v1"
 DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v1"
-DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v1"
+DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v2"
 DAY1B_WORKER_WINDOW_AUDIT_SCHEMA = "dynamic-cssc-publication-day1b-worker-window-audit-v1"
 DAY1B_WORKER_F1M_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-f1m-binding-receipt-v1"
 DAY1B_WORKER_F1M_WINDOW_CARDINALITY_SCHEMA = (
@@ -904,7 +904,12 @@ class Day1BWorkerPhaseAudit:
 
 @dataclass(frozen=True, slots=True)
 class _ControllerCandidateObservation:
-    """Launcher-owned process observations for one candidate/cell execution."""
+    """Launcher-owned process observations for one candidate/cell execution.
+
+    ``peak_scratch_bytes`` is candidate-execution scratch governed by
+    ``scratch_bytes_per_candidate_cell``.  It is not the registry/spool peak
+    maintained by :class:`_ControlledScratch`.
+    """
 
     candidate_id: str
     elapsed_ns: int
@@ -1272,6 +1277,7 @@ class Day1BWorkerCellReceipt:
     worker_observed_f1m_binding_count: int
     pre_dispatch_context_sha256: str
     controller_registered_scratch_bytes_checkpoint_maximum: int
+    controller_observed_registered_scratch_peak_bytes: int
     anonymous_scratch_creation_isolation_verified: bool
     pre_dispatch_ledger_identity_sha256: str
     pre_dispatch_ledger_root_before_sha256: str
@@ -1334,6 +1340,9 @@ class Day1BWorkerCellReceipt:
             ),
             "controller_registered_scratch_bytes_checkpoint_maximum": (
                 self.controller_registered_scratch_bytes_checkpoint_maximum
+            ),
+            "controller_observed_registered_scratch_peak_bytes": (
+                self.controller_observed_registered_scratch_peak_bytes
             ),
             "anonymous_scratch_creation_isolation_verified": (
                 self.anonymous_scratch_creation_isolation_verified
@@ -1526,6 +1535,7 @@ class _ControlledScratch:
         self.anonymous_scratch_creation_isolation_verified = (
             binding.anonymous_scratch_creation_isolation_verified
         )
+        self._peak_bytes = 0
         self._closed = False
         self._lock = threading.Lock()
 
@@ -1651,8 +1661,15 @@ class _ControlledScratch:
             ):
                 raise Day1BWorkerProtocolError("controlled anonymous scratch file identity changed")
             total += observed.st_size
+        self._peak_bytes = max(self._peak_bytes, total)
         if total > self._byte_limit:
             raise Day1BWorkerProtocolError("controlled scratch exceeds its explicit cap")
+
+    @property
+    def peak_bytes(self) -> int:
+        """Largest checkpointed sum of the two controller-owned member sizes."""
+
+        return self._peak_bytes
 
     def close(self) -> None:
         with self._lock:
@@ -3054,6 +3071,10 @@ class _ObjectReceiptSpool:
     def observed_f1m_count(self) -> int:
         return self._observed_f1m_count
 
+    @property
+    def controller_registered_scratch_peak_bytes(self) -> int:
+        return self._scratch.peak_bytes
+
     def copy_to(self, destination: BinaryIO) -> str:
         if not self._sealed or self._closed:
             raise Day1BWorkerProtocolError("worker object receipt spool is not sealed")
@@ -3930,6 +3951,9 @@ class _ReceiptBuilder:
             controller_registered_scratch_bytes_checkpoint_maximum=(
                 self.expected_registry_descriptor.controller_registered_scratch_bytes_checkpoint_maximum
             ),
+            controller_observed_registered_scratch_peak_bytes=(
+                self.spool.controller_registered_scratch_peak_bytes
+            ),
             anonymous_scratch_creation_isolation_verified=(
                 self.expected_registry_descriptor.anonymous_scratch_creation_isolation_verified
             ),
@@ -4075,6 +4099,9 @@ def _controller_terminal_receipt(
         pre_dispatch_context_sha256=(expected_registry_descriptor.pre_dispatch_context_sha256),
         controller_registered_scratch_bytes_checkpoint_maximum=(
             expected_registry_descriptor.controller_registered_scratch_bytes_checkpoint_maximum
+        ),
+        controller_observed_registered_scratch_peak_bytes=(
+            spool.controller_registered_scratch_peak_bytes
         ),
         anonymous_scratch_creation_isolation_verified=(
             expected_registry_descriptor.anonymous_scratch_creation_isolation_verified

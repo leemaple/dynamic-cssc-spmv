@@ -23,6 +23,7 @@ from dynamic_cssc.publication_day1b_worker_protocol import (
     DAY1B_WORKER_EXPECTED_F1M_REGISTRY_DESCRIPTOR_SCHEMA,
     DAY1B_WORKER_FRAME_SCHEMA,
     DAY1B_WORKER_MAX_HEADER_BYTES,
+    DAY1B_WORKER_RECEIPT_SCHEMA,
     DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES,
     Day1BAnonymousScratchCapability,
     Day1BControllerExpectedF1MObject,
@@ -2150,6 +2151,13 @@ def test_receipt_preserves_opaque_reservation_ledger_transition_facts() -> None:
     assert receipt.controller_registered_scratch_bytes_checkpoint_maximum == (
         descriptor.controller_registered_scratch_bytes_checkpoint_maximum
     )
+    assert DAY1B_WORKER_RECEIPT_SCHEMA == (
+        "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v2"
+    )
+    assert 0 < receipt.controller_observed_registered_scratch_peak_bytes <= (
+        receipt.controller_registered_scratch_bytes_checkpoint_maximum
+    )
+    assert receipt.candidate.peak_scratch_bytes == 8_000
     assert receipt.anonymous_scratch_creation_isolation_verified is False
     assert receipt.controller_f1m_cardinality_derivation_root_sha256 == (
         descriptor.cardinality_derivation_root_sha256
@@ -2167,6 +2175,9 @@ def test_receipt_preserves_opaque_reservation_ledger_transition_facts() -> None:
     assert receipt.common_query_preparation_verified is False
     assert receipt.production_execution_admissible is False
     document = receipt.to_document()
+    assert document["controller_observed_registered_scratch_peak_bytes"] == (
+        receipt.controller_observed_registered_scratch_peak_bytes
+    )
     assert document["anonymous_scratch_creation_isolation_verified"] is False
     assert "persistent_f1m_reservations_verified" not in document
     assert "reservation_ledger_transition_sha256" not in document
@@ -3429,6 +3440,48 @@ def test_controlled_scratch_cap_is_explicit_and_includes_indexes() -> None:
 
     with pytest.raises(Day1BWorkerProtocolError, match="controlled scratch.*cap"):
         _issue_invocation(contract)
+    _assert_no_live_controlled_scratch()
+
+
+def test_controlled_scratch_peak_sums_both_members_and_is_monotonic() -> None:
+    scratch = _claimed_scratch()
+    first = scratch._files["binding-index.sqlite3"]
+    second = scratch._files["object-receipts.jsonl"]
+
+    os.ftruncate(first.fileno(), 11)
+    os.ftruncate(second.fileno(), 17)
+    scratch.require_within_cap()
+    assert scratch.peak_bytes == 28
+
+    os.ftruncate(first.fileno(), 5)
+    os.ftruncate(second.fileno(), 7)
+    scratch.require_within_cap()
+    assert scratch.peak_bytes == 28
+
+    scratch.close()
+    _assert_no_live_controlled_scratch()
+
+
+def test_controlled_scratch_over_cap_records_the_observed_peak_before_failing() -> None:
+    base = _contract()
+    contract = replace(
+        base,
+        resource_limits=replace(
+            base.resource_limits,
+            controller_registered_scratch_bytes_checkpoint_maximum=10,
+        ),
+    )
+    scratch = _claimed_scratch(contract=contract)
+    first = scratch._files["binding-index.sqlite3"]
+    second = scratch._files["object-receipts.jsonl"]
+
+    os.ftruncate(first.fileno(), 7)
+    os.ftruncate(second.fileno(), 5)
+    with pytest.raises(Day1BWorkerProtocolError, match="controlled scratch.*cap"):
+        scratch.require_within_cap()
+    assert scratch.peak_bytes == 12
+
+    scratch.close()
     _assert_no_live_controlled_scratch()
 
 
