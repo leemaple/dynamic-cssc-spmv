@@ -392,6 +392,7 @@ _DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "docs/decisions/0009-fail-closed-role-aware-day1-catalog.md",
     "docs/decisions/0010-separate-experiment-and-evidence-freeze-snapshots.md",
     "docs/decisions/0011-post-registration-day2-profile-anchor.md",
+    "docs/decisions/0012-window-weighted-day1b-accounting.md",
     "docs/paper/publication-preregistration-draft.md",
     "pyproject.toml",
     "requirements-ci.txt",
@@ -449,7 +450,7 @@ _ROLE_BEHAVIOR_PATHS: dict[EvidenceRole, tuple[str, ...] | None] = {
 _ROLE_BEHAVIOR_SCHEMAS = {
     EvidenceRole.ACQUISITION: "dynamic-cssc-acquisition-behavior-set-v2",
     EvidenceRole.TRACE: "dynamic-cssc-trace-behavior-set-v2",
-    EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v5",
+    EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v6",
     EvidenceRole.DAY2: "dynamic-cssc-day2-behavior-set-v3",
     EvidenceRole.ANALYZER: "dynamic-cssc-publication-analyzer-behavior-set-v2",
     EvidenceRole.STRONG_CORRECTNESS: "dynamic-cssc-strong-correctness-behavior-set-v1",

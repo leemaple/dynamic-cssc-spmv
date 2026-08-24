@@ -469,7 +469,7 @@ with `selective_candidate_retry_allowed=false`); it is not a measured resource
 choice and cannot activate the policy. Every empirical numeric limit and every
 measurement-method choice remains `null`.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v5` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v6` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface. A successful workflow validation is not a
 dispatch receipt or evidence artifact: the workflow has no semantic inputs,
@@ -488,18 +488,25 @@ parameter authority.
 
 Held-out dispatch remains forbidden until an outcome-blind amendment freezes
 the measured limits and methods, and a repository-owned production candidate-cell
-worker plus an admission seam connect the pre-admission OpenFHE launcher/runtime
-receipt to the Day1B controller. The TRACE post-run and Day-1 registration
-anchors must then be installed and revalidated. The ordinary lifecycle binds
-the common typed DAG to private global-column operands, fresh overlap-only F1-M
-masks, and a crash-persistent single-use commitment; the runtime consumes that
-commitment immediately before launch, verifies result and serialized-object
-bytes, records a non-authorizing receipt, and removes its private scratch tree.
-The real OpenFHE smoke is execution-path evidence, not publication execution or
-dispatch authority. Introducing the remaining measured policy and admission
-facts requires a reviewed pre-`S1` path addition and a later DAY1B Behavior Set
-version bump; this preparatory
-inventory cannot be upgraded in place after outcomes.
+worker plus an admission seam implement ADR 0012's exact
+`window-weighted-equivalence-v1` basis. The TRACE post-run and Day-1 registration
+anchors must then be installed and revalidated. The worker advances each
+candidate layout once per publication window, derives the typed query plan and
+admitted OpenFHE protocol-object size classes once for each query-bearing layout,
+and multiplies primitive counts, logical F1-M route counts, and charged bytes by
+that window's exact integer query multiplicity. It must not launch a full
+OpenFHE query once per scheduled arrival.
+
+The ordinary lifecycle still binds the common typed DAG to private global-column
+operands, fresh overlap-only F1-M masks, and a crash-persistent single-use
+commitment. The real OpenFHE smoke verifies that execution path, and formal Day 2
+supplies the anchored primitive timings and serialized ciphertext/key sizes used
+by weighted Day1B accounting. A weighted F1-M equivalence-class receipt proves
+its size class, query range, and exact charged multiplicity; it does not claim
+that every fresh mask was materialized during the cost-model experiment. The
+execution basis is part of the worker input digest. Introducing the remaining
+measured policy, profile, and admission facts requires reviewed pre-`S1` source
+and the frozen DAY1B Behavior Set; none may be spliced in after outcomes.
 
 For each of the three real datasets, define `V` as the event count of its closed,
 canonical, chronological schema-valid corpus. Execute exactly the 30 paths in
@@ -545,7 +552,7 @@ payload artifact may be retained. A scratch limit remains `PENDING-FREEZE`
 unless the amendment adds a separately reviewed controlled-scratch high-water
 measurement.
 
-The Day1B worker candidate-cell receipt v2 separately records
+The Day1B worker candidate-cell receipt v3 separately records
 `controller_observed_registered_scratch_peak_bytes`. The controller updates
 that value before every existing cap check as the monotonic maximum of the sum
 of `st_size` for its exact two anonymous, inode-bound registry/spool members.
@@ -557,6 +564,17 @@ candidate-execution `controller_observed_peak_scratch_bytes` governed by
 the other. The current pytest-only capability issuer still reports creation
 isolation as false, so this measurement does not authorize production or lift
 the resource-policy `HOLD`.
+
+ADR 0012 corrects a pre-outcome feasibility error in that preparatory protocol.
+With 131,072 accepted groups, the frozen rho grid, two freshness settings, and
+14 physical candidates, literal per-arrival replay would request 530,097,064
+queries per trace unit and 15,902,911,920 over 30 units. Day1B is therefore
+frozen to window-weighted equivalence accounting. Controller-bound F1-M
+equivalence classes may carry positive multiplicity, but their query ranges
+must be contiguous, nonoverlapping, and exactly cover the OutputPlan-derived
+logical route cardinality. Materialized-frame limits apply to equivalence
+classes; charged communication and primitive counts include their full exact
+multiplicity.
 
 The reviewed next-path decoder schema is
 `dynamic-cssc-publication-day1b-resource-amendment-v1`. It is deliberately

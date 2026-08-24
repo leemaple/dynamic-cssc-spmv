@@ -71,6 +71,7 @@ DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "docs/decisions/0009-fail-closed-role-aware-day1-catalog.md",
     "docs/decisions/0010-separate-experiment-and-evidence-freeze-snapshots.md",
     "docs/decisions/0011-post-registration-day2-profile-anchor.md",
+    "docs/decisions/0012-window-weighted-day1b-accounting.md",
     "docs/paper/publication-preregistration-draft.md",
     "pyproject.toml",
     "requirements-ci.txt",
@@ -2103,7 +2104,7 @@ def test_day1b_preparatory_behavior_inventory_is_exact_but_non_authorizing(
         DAY1B_PREPARATORY_BEHAVIOR_PATHS
     )
     assert inventory["behavior_set_schema_version"] == (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v5"
+        "dynamic-cssc-day1b-preparatory-behavior-set-v6"
     )
     assert inventory["role"] == "day1b"
     assert inventory["source_git_sha"] == source_git_sha

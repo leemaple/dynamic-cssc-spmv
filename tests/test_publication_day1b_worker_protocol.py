@@ -20,6 +20,7 @@ import pytest
 
 import dynamic_cssc.publication_day1b_worker_protocol as worker_protocol
 from dynamic_cssc.publication_day1b_worker_protocol import (
+    DAY1B_WORKER_EXECUTION_BASIS,
     DAY1B_WORKER_EXPECTED_F1M_REGISTRY_DESCRIPTOR_SCHEMA,
     DAY1B_WORKER_FRAME_SCHEMA,
     DAY1B_WORKER_MAX_HEADER_BYTES,
@@ -185,6 +186,7 @@ def _contract(
         resource_policy_sha256="5" * 64,
         freshness="0.1",
         rho="1",
+        execution_basis=DAY1B_WORKER_EXECUTION_BASIS,
         candidate=selected_candidate,
         phase_ranges=(
             Day1BWorkerPhaseRange("warmup", 0, 10),
@@ -416,9 +418,15 @@ def _fixture_registry_inputs(
         phase_routes[phase] = routes
         audit = audit_by_phase[phase]
         query_count = audit.realized_query_count
-        random_count = sum(item.category == "query-f1m-random-mask-ciphertexts" for item in routes)
+        random_count = sum(
+            item.multiplicity
+            for item in routes
+            if item.category == "query-f1m-random-mask-ciphertexts"
+        )
         dummy_count = sum(
-            item.category == "query-f1m-encrypted-zero-dummy-ciphertexts" for item in routes
+            item.multiplicity
+            for item in routes
+            if item.category == "query-f1m-encrypted-zero-dummy-ciphertexts"
         )
         if query_count:
             assert random_count % query_count == 0
@@ -472,8 +480,9 @@ def _fixture_registry_inputs(
     batch_transitions: list[Day1BF1MBatchTransitionReceipt] = []
     for phase in candidate.retained_phases:
         cardinality = next(row for row in window_cardinalities if row.phase == phase)
-        for offset in range(cardinality.query_count):
-            global_ordinal = cardinality.first_global_query_ordinal + offset
+        global_ordinal = cardinality.first_global_query_ordinal
+        window_end = global_ordinal + cardinality.query_count
+        while global_ordinal < window_end:
             routes = tuple(
                 item for item in phase_routes[phase] if item.global_query_ordinal == global_ordinal
             )
@@ -481,6 +490,8 @@ def _fixture_registry_inputs(
                 binding = routes[0].f1m_binding
                 query_id = binding.query_id
                 token = binding.ledger_commitment_token
+                query_count = routes[0].multiplicity
+                assert all(item.multiplicity == query_count for item in routes)
             else:
                 query_id = canonical_day1b_f1m_query_id(
                     invocation_id="6" * 64,
@@ -489,6 +500,7 @@ def _fixture_registry_inputs(
                 token = hashlib.sha256(
                     f"commitment:{candidate.candidate_id}:{global_ordinal}".encode()
                 ).hexdigest()
+                query_count = 1
             random_keys = [
                 list(item.f1m_binding.no_reuse_key)
                 for item in routes
@@ -542,9 +554,11 @@ def _fixture_registry_inputs(
                     route_set_root_sha256=route_root,
                     random_reservation_transition_verified=False,
                     prepared_commitment_transition_verified=False,
+                    query_count=query_count,
                 )
             )
             prior_root = next_root
+            global_ordinal += query_count
     return tuple(window_cardinalities), tuple(batch_transitions)
 
 
@@ -590,7 +604,12 @@ def _prepare_registry(
     )
 
 
-def _complete_transcript(contract: Day1BWorkerProtocolContract) -> bytes:
+def _complete_transcript(
+    contract: Day1BWorkerProtocolContract,
+    *,
+    controller_phase_audits: tuple[Day1BWorkerPhaseAudit, ...] | None = None,
+    expected_f1m_objects: tuple[Day1BControllerExpectedF1MObject, ...] | None = None,
+) -> bytes:
     frames: list[bytes] = []
     sequence = 0
 
@@ -606,7 +625,11 @@ def _complete_transcript(contract: Day1BWorkerProtocolContract) -> bytes:
         candidate_id=candidate.candidate_id,
         candidate_role=candidate.candidate_role,
     )
-    for audit in _phase_audits():
+    selected_audits = controller_phase_audits or _phase_audits()
+    selected_expected = expected_f1m_objects or _expected_f1m_objects(
+        contract.candidate.candidate_id
+    )
+    for audit in selected_audits:
         phase = {
             "warmup": "warmup",
             "tuning": "tuning-prefix",
@@ -620,6 +643,18 @@ def _complete_transcript(contract: Day1BWorkerProtocolContract) -> bytes:
             f"{candidate.candidate_id}:{phase}:key".encode(),
         )
         if retained:
+            random_route = next(
+                item
+                for item in selected_expected
+                if item.phase == phase
+                and item.category == "query-f1m-random-mask-ciphertexts"
+            )
+            dummy_route = next(
+                item
+                for item in selected_expected
+                if item.phase == phase
+                and item.category == "query-f1m-encrypted-zero-dummy-ciphertexts"
+            )
             emit(
                 "serialized-object",
                 candidate_id=candidate.candidate_id,
@@ -636,13 +671,8 @@ def _complete_transcript(contract: Day1BWorkerProtocolContract) -> bytes:
                 phase=phase,
                 category="query-f1m-random-mask-ciphertexts",
                 object_ordinal=0,
-                multiplicity=1,
-                f1m_binding=_f1m_binding(
-                    candidate_id=candidate.candidate_id,
-                    phase=phase,
-                    category="query-f1m-random-mask-ciphertexts",
-                    ordinal=0,
-                ),
+                multiplicity=random_route.multiplicity,
+                f1m_binding=random_route.f1m_binding.to_document(),
                 payload=payloads[1],
             )
             emit(
@@ -651,13 +681,8 @@ def _complete_transcript(contract: Day1BWorkerProtocolContract) -> bytes:
                 phase=phase,
                 category="query-f1m-encrypted-zero-dummy-ciphertexts",
                 object_ordinal=0,
-                multiplicity=1,
-                f1m_binding=_f1m_binding(
-                    candidate_id=candidate.candidate_id,
-                    phase=phase,
-                    category="query-f1m-encrypted-zero-dummy-ciphertexts",
-                    ordinal=0,
-                ),
+                multiplicity=dummy_route.multiplicity,
+                f1m_binding=dummy_route.f1m_binding.to_document(),
                 payload=payloads[2],
             )
             if phase == candidate.retained_phases[0]:
@@ -2062,6 +2087,17 @@ def test_all_serialized_count_is_exact_bound_and_not_a_boolean() -> None:
     assert changed.input_binding_sha256 != base.input_binding_sha256
 
 
+def test_contract_rejects_full_query_replay_as_the_day1b_execution_basis() -> None:
+    base = _contract()
+
+    with pytest.raises(Day1BWorkerProtocolError, match="window-weighted"):
+        replace(base, execution_basis="full-query-arrival-replay")
+
+    assert base.input_binding_document()["execution_basis"] == (
+        DAY1B_WORKER_EXECUTION_BASIS
+    )
+
+
 def test_successful_transcript_must_match_all_serialized_count_exactly() -> None:
     base = _contract()
     contract = replace(
@@ -2152,7 +2188,7 @@ def test_receipt_preserves_opaque_reservation_ledger_transition_facts() -> None:
         descriptor.controller_registered_scratch_bytes_checkpoint_maximum
     )
     assert DAY1B_WORKER_RECEIPT_SCHEMA == (
-        "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v2"
+        "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v3"
     )
     assert 0 < receipt.controller_observed_registered_scratch_peak_bytes <= (
         receipt.controller_registered_scratch_bytes_checkpoint_maximum
@@ -2914,7 +2950,7 @@ def test_query_primitive_vector_must_match_controller_realized_query_presence() 
     _assert_no_live_controlled_scratch()
 
 
-def test_f1m_objects_require_multiplicity_one_and_unique_payload_digests() -> None:
+def test_f1m_objects_require_controller_bound_multiplicity_and_unique_payload_digests() -> None:
     contract = _contract()
     transcript = _complete_transcript(contract)
     multiplicity = _rewrite_first_frame(
@@ -2924,7 +2960,7 @@ def test_f1m_objects_require_multiplicity_one_and_unique_payload_digests() -> No
         predicate=lambda header: header["category"] == "query-f1m-random-mask-ciphertexts",
     )
 
-    with pytest.raises(Day1BWorkerProtocolError, match="F1-M.*multiplicity"):
+    with pytest.raises(Day1BWorkerProtocolError, match="expected ledger route"):
         _consume((multiplicity,), contract=contract)
 
     marker = b"reference-a:tuning-prefix:mask"
@@ -2961,6 +2997,72 @@ def test_f1m_payload_digest_uniqueness_is_invocation_global_across_categories() 
 
     with pytest.raises(Day1BWorkerProtocolError, match="F1-M.*payload digest"):
         _consume((duplicate_across_categories,), contract=contract)
+
+
+def test_f1m_window_equivalence_class_charges_exact_query_multiplicity() -> None:
+    audits = tuple(
+        replace(audit, realized_query_count=3)
+        for audit in _phase_audits()
+    )
+    expected = tuple(
+        replace(item, multiplicity=3)
+        for item in _expected_f1m_objects("reference-a")
+    )
+    contract = _contract(
+        expected_f1m_objects=expected,
+        expected_serialized_equivalence_class_count=len(expected) + 3,
+        controller_phase_audits=audits,
+    )
+    transcript = _complete_transcript(
+        contract,
+        controller_phase_audits=audits,
+        expected_f1m_objects=expected,
+    )
+
+    with claim_day1b_worker_evidence(
+        _consume(
+            (transcript,),
+            contract=contract,
+            expected_f1m_objects=expected,
+            controller_phase_audits=audits,
+        )
+    ) as evidence:
+        receipt = evidence.receipt
+        assert receipt.worker_observed_f1m_binding_count == len(expected)
+        assert receipt.controller_expected_f1m_phase_query_batch_counts == (0, 3, 3)
+        assert receipt.controller_expected_f1m_phase_random_route_counts == (0, 3, 3)
+        assert receipt.controller_expected_f1m_phase_dummy_route_counts == (0, 3, 3)
+        for phase in receipt.candidate.phases:
+            if not phase.retained_measurement:
+                continue
+            assert phase.serialized_categories is not None
+            f1m = {
+                category.category: category
+                for category in phase.serialized_categories
+                if category.category in DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES
+            }
+            assert {category.protocol_object_count for category in f1m.values()} == {3}
+            assert {
+                category.serialization_equivalence_class_count
+                for category in f1m.values()
+            } == {1}
+
+
+def test_weighted_f1m_batch_cannot_claim_materialized_ledger_transitions() -> None:
+    contract = _contract()
+    expected = _expected_f1m_objects(contract.candidate.candidate_id)
+    _windows, batches = _fixture_registry_inputs(
+        expected,
+        candidate=contract.candidate,
+        controller_phase_audits=_phase_audits(),
+    )
+
+    with pytest.raises(Day1BWorkerProtocolError, match="weighted.*materialized"):
+        replace(
+            batches[0],
+            query_count=2,
+            random_reservation_transition_verified=True,
+        )
 
 
 def test_f1m_no_reuse_is_keyed_by_the_closed_adr0005_binding() -> None:
@@ -3086,7 +3188,7 @@ def test_f1m_batch_pairing_uses_query_identity_not_category_local_ordinal() -> N
 def test_expected_f1m_set_hash_streams_the_exact_canonical_closed_document() -> None:
     expected = _expected_f1m_objects("reference-a")
     closed_document = {
-        "schema_version": ("dynamic-cssc-publication-day1b-controller-expected-f1m-binding-set-v1"),
+        "schema_version": ("dynamic-cssc-publication-day1b-controller-expected-f1m-binding-set-v2"),
         "objects": [item.to_document() for item in expected],
     }
     assert (

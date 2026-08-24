@@ -27,24 +27,25 @@ from typing import BinaryIO
 
 DAY1B_WORKER_FRAME_SCHEMA = "dynamic-cssc-publication-day1b-worker-frame-v1"
 DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v1"
-DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v2"
+DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v3"
 DAY1B_WORKER_WINDOW_AUDIT_SCHEMA = "dynamic-cssc-publication-day1b-worker-window-audit-v1"
 DAY1B_WORKER_F1M_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-f1m-binding-receipt-v1"
 DAY1B_WORKER_F1M_WINDOW_CARDINALITY_SCHEMA = (
     "dynamic-cssc-publication-day1b-f1m-window-cardinality-v1"
 )
-DAY1B_WORKER_F1M_BATCH_TRANSITION_SCHEMA = "dynamic-cssc-publication-day1b-f1m-batch-transition-v1"
+DAY1B_WORKER_F1M_BATCH_TRANSITION_SCHEMA = "dynamic-cssc-publication-day1b-f1m-batch-transition-v2"
 DAY1B_WORKER_EXPECTED_F1M_OBJECT_SCHEMA = (
-    "dynamic-cssc-publication-day1b-controller-expected-f1m-object-v1"
+    "dynamic-cssc-publication-day1b-controller-expected-f1m-object-v2"
 )
 DAY1B_WORKER_EXPECTED_F1M_BINDING_SET_SCHEMA = (
-    "dynamic-cssc-publication-day1b-controller-expected-f1m-binding-set-v1"
+    "dynamic-cssc-publication-day1b-controller-expected-f1m-binding-set-v2"
 )
 DAY1B_WORKER_EXPECTED_F1M_REGISTRY_DESCRIPTOR_SCHEMA = (
-    "dynamic-cssc-publication-day1b-expected-f1m-registry-descriptor-v1"
+    "dynamic-cssc-publication-day1b-expected-f1m-registry-descriptor-v2"
 )
+DAY1B_WORKER_EXECUTION_BASIS = "window-weighted-equivalence-v1"
 _DAY1B_WORKER_EXPECTED_F1M_ROUTE_SUBROOT_SCHEMA = (
-    "dynamic-cssc-publication-day1b-expected-f1m-route-subroot-v1"
+    "dynamic-cssc-publication-day1b-expected-f1m-route-subroot-v2"
 )
 DAY1B_WORKER_MAX_HEADER_BYTES = 16_384
 DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES = (
@@ -340,7 +341,7 @@ class Day1BWorkerCandidateSpec:
 
 @dataclass(frozen=True, slots=True)
 class Day1BF1MBindingReceipt:
-    """Worker-reported route bound to both prepared operand and random reservation facts."""
+    """One materialized route, or the representative route for one weighted size class."""
 
     query_id: str
     version_id: str
@@ -548,7 +549,7 @@ class Day1BF1MWindowCardinality:
 
 @dataclass(frozen=True, slots=True)
 class Day1BF1MBatchTransitionReceipt:
-    """Controller plan for distinct reserve then prepare transitions for one query."""
+    """Controller plan for one query or a contiguous weighted-equivalence range."""
 
     phase: str
     window_index: int
@@ -568,6 +569,7 @@ class Day1BF1MBatchTransitionReceipt:
     route_set_root_sha256: str
     random_reservation_transition_verified: bool
     prepared_commitment_transition_verified: bool
+    query_count: int = 1
 
     def __post_init__(self) -> None:
         if type(self.phase) is not str or self.phase not in _PHASE_NAMES:
@@ -577,6 +579,7 @@ class Day1BF1MBatchTransitionReceipt:
             self.global_query_ordinal,
             "F1-M batch global_query_ordinal",
         )
+        _strict_positive(self.query_count, "F1-M batch query_count")
         _strict_nonnegative(self.transition_ordinal, "F1-M batch transition_ordinal")
         for field in ("query_id", "version_id"):
             _nonempty_string(getattr(self, field), f"F1-M batch {field}")
@@ -599,6 +602,13 @@ class Day1BF1MBatchTransitionReceipt:
         ):
             if type(getattr(self, field)) is not bool:
                 raise Day1BWorkerProtocolError(f"F1-M batch {field} is not an exact boolean")
+        if self.query_count != 1 and (
+            self.random_reservation_transition_verified
+            or self.prepared_commitment_transition_verified
+        ):
+            raise Day1BWorkerProtocolError(
+                "weighted F1-M accounting cannot claim materialized ledger transitions"
+            )
 
     def to_document(self) -> dict[str, object]:
         return {
@@ -616,6 +626,7 @@ class Day1BF1MBatchTransitionReceipt:
             "phase": self.phase,
             "private_plan_digest": self.private_plan_digest,
             "query_id": self.query_id,
+            "query_count": self.query_count,
             "reservation_set_root_sha256": self.reservation_set_root_sha256,
             "random_reservation_transition_verified": (self.random_reservation_transition_verified),
             "route_set_root_sha256": self.route_set_root_sha256,
@@ -628,7 +639,7 @@ class Day1BF1MBatchTransitionReceipt:
 
 @dataclass(frozen=True, slots=True)
 class Day1BControllerExpectedF1MObject:
-    """One non-authoritative descriptor admitted by a launcher/ledger capability."""
+    """One non-authoritative materialized route or weighted size-class descriptor."""
 
     phase: str
     window_index: int
@@ -636,6 +647,7 @@ class Day1BControllerExpectedF1MObject:
     category: str
     object_ordinal: int
     f1m_binding: Day1BF1MBindingReceipt
+    multiplicity: int = 1
 
     def __post_init__(self) -> None:
         if type(self.phase) is not str or self.phase not in _PHASE_NAMES:
@@ -651,6 +663,7 @@ class Day1BControllerExpectedF1MObject:
             "expected F1-M global_query_ordinal",
         )
         _strict_nonnegative(self.object_ordinal, "expected F1-M object ordinal")
+        _strict_positive(self.multiplicity, "expected F1-M object multiplicity")
         if type(self.f1m_binding) is not Day1BF1MBindingReceipt:
             raise Day1BWorkerProtocolError("expected F1-M binding type is not exact")
         expected_kind = {
@@ -670,6 +683,7 @@ class Day1BControllerExpectedF1MObject:
             "category": self.category,
             "f1m_binding": self.f1m_binding.to_document(),
             "global_query_ordinal": self.global_query_ordinal,
+            "multiplicity": self.multiplicity,
             "object_ordinal": self.object_ordinal,
             "phase": self.phase,
             "window_index": self.window_index,
@@ -682,6 +696,7 @@ class Day1BControllerExpectedF1MObject:
             "category",
             "f1m_binding",
             "global_query_ordinal",
+            "multiplicity",
             "object_ordinal",
             "phase",
             "window_index",
@@ -695,6 +710,7 @@ class Day1BControllerExpectedF1MObject:
                 phase=value["phase"],
                 window_index=value["window_index"],
                 global_query_ordinal=value["global_query_ordinal"],
+                multiplicity=value["multiplicity"],
                 category=value["category"],
                 object_ordinal=value["object_ordinal"],
                 f1m_binding=Day1BF1MBindingReceipt.from_document(value["f1m_binding"]),
@@ -805,7 +821,7 @@ def canonical_day1b_f1m_cardinality_derivation_root_sha256(
             window_hasher.update(b",")
         window_hasher.update(_canonical_json_bytes(row.to_document())[:-1])
     window_hasher.update(
-        b'],"schema_version":"dynamic-cssc-day1b-f1m-window-cardinality-set-v1"}\n'
+        b'],"schema_version":"dynamic-cssc-day1b-f1m-window-cardinality-set-v2"}\n'
     )
 
     batch_hasher = hashlib.sha256()
@@ -814,7 +830,7 @@ def canonical_day1b_f1m_cardinality_derivation_root_sha256(
         if index:
             batch_hasher.update(b",")
         batch_hasher.update(_canonical_json_bytes(row.to_document())[:-1])
-    batch_hasher.update(b'],"schema_version":"dynamic-cssc-day1b-f1m-batch-transition-set-v1"}\n')
+    batch_hasher.update(b'],"schema_version":"dynamic-cssc-day1b-f1m-batch-transition-set-v2"}\n')
     return hashlib.sha256(
         _canonical_json_bytes(
             {
@@ -822,7 +838,7 @@ def canonical_day1b_f1m_cardinality_derivation_root_sha256(
                 "binding_set_sha256": (
                     canonical_day1b_expected_f1m_binding_set_sha256(expected_routes)
                 ),
-                "schema_version": "dynamic-cssc-day1b-f1m-cardinality-derivation-v1",
+                "schema_version": "dynamic-cssc-day1b-f1m-cardinality-derivation-v2",
                 "window_cardinality_stream_sha256": window_hasher.hexdigest(),
             }
         )
@@ -986,6 +1002,7 @@ class Day1BWorkerProtocolContract:
     resource_policy_sha256: str
     freshness: str
     rho: str
+    execution_basis: str
     candidate: Day1BWorkerCandidateSpec
     phase_ranges: tuple[Day1BWorkerPhaseRange, ...]
     primitive_names: tuple[str, ...]
@@ -1011,6 +1028,10 @@ class Day1BWorkerProtocolContract:
             _sha256(getattr(self, field), field)
         _nonempty_string(self.freshness, "freshness")
         _nonempty_string(self.rho, "rho")
+        if self.execution_basis != DAY1B_WORKER_EXECUTION_BASIS:
+            raise Day1BWorkerProtocolError(
+                "Day1B must use the frozen window-weighted execution basis"
+            )
         if type(self.candidate) is not Day1BWorkerCandidateSpec:
             raise Day1BWorkerProtocolError(
                 "candidate must be one exact typed candidate-cell identity"
@@ -1107,6 +1128,7 @@ class Day1BWorkerProtocolContract:
             "expected_serialized_equivalence_class_count": (
                 self.expected_serialized_equivalence_class_count
             ),
+            "execution_basis": self.execution_basis,
             "freshness": self.freshness,
             "f1m_binding_categories": list(self.f1m_binding_categories),
             "phase_ranges": [phase.to_document() for phase in self.phase_ranges],
@@ -1889,7 +1911,8 @@ def _create_expected_f1m_tables(connection: sqlite3.Connection) -> None:
         "global_query_ordinal INTEGER NOT NULL, category TEXT NOT NULL, "
         "category_order INTEGER NOT NULL CHECK(category_order IN (0,1)), "
         "object_ordinal INTEGER NOT NULL, binding_sha256 TEXT NOT NULL, "
-        "ledger_commitment_token TEXT NOT NULL, route_document BLOB NOT NULL, "
+        "ledger_commitment_token TEXT NOT NULL, multiplicity INTEGER NOT NULL "
+        "CHECK(multiplicity > 0), route_document BLOB NOT NULL, "
         "observed INTEGER NOT NULL CHECK(observed IN (0,1)), "
         "PRIMARY KEY(phase, category, object_ordinal)) WITHOUT ROWID"
     )
@@ -1918,6 +1941,7 @@ def _create_expected_f1m_tables(connection: sqlite3.Connection) -> None:
         "CREATE TABLE f1m_batch_transitions ("
         "ledger_commitment_token TEXT PRIMARY KEY NOT NULL, phase TEXT NOT NULL, "
         "window_index INTEGER NOT NULL, global_query_ordinal INTEGER NOT NULL, "
+        "query_count INTEGER NOT NULL CHECK(query_count > 0), "
         "query_id TEXT NOT NULL, version_id TEXT NOT NULL, "
         "output_plan_digest TEXT NOT NULL, private_plan_digest TEXT NOT NULL, "
         "execution_binding_digest TEXT NOT NULL, route_set_root_sha256 TEXT NOT NULL, "
@@ -2002,8 +2026,13 @@ def _insert_f1m_batch_transition(
             "F1-M batch transition is absent from controller window cardinality"
         )
     first_query, query_count, version_id, output_plan, private_plan, execution = window
-    if not first_query <= row.global_query_ordinal < first_query + query_count:
-        raise Day1BWorkerProtocolError("F1-M batch query ordinal is outside its controller window")
+    if not (
+        first_query <= row.global_query_ordinal
+        and row.global_query_ordinal + row.query_count <= first_query + query_count
+    ):
+        raise Day1BWorkerProtocolError(
+            "F1-M batch query range is outside its controller window"
+        )
     if (
         row.version_id,
         row.output_plan_digest,
@@ -2016,12 +2045,13 @@ def _insert_f1m_batch_transition(
     try:
         connection.execute(
             "INSERT INTO f1m_batch_transitions VALUES ("
-            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 row.ledger_commitment_token,
                 row.phase,
                 row.window_index,
                 row.global_query_ordinal,
+                row.query_count,
                 row.query_id,
                 row.version_id,
                 row.output_plan_digest,
@@ -2050,7 +2080,7 @@ def _insert_expected_f1m(
 ) -> None:
     try:
         connection.execute(
-            "INSERT INTO expected_f1m VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            "INSERT INTO expected_f1m VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
             (
                 item.phase,
                 item.window_index,
@@ -2060,6 +2090,7 @@ def _insert_expected_f1m(
                 item.object_ordinal,
                 hashlib.sha256(_canonical_json_bytes(item.f1m_binding.to_document())).hexdigest(),
                 item.f1m_binding.ledger_commitment_token,
+                item.multiplicity,
                 _canonical_json_bytes(item.to_document()),
             ),
         )
@@ -2074,7 +2105,7 @@ def _insert_expected_f1m(
         ) from error
     batch = item.f1m_binding
     admitted_batch = connection.execute(
-        "SELECT phase, window_index, global_query_ordinal, query_id, version_id, "
+        "SELECT phase, window_index, global_query_ordinal, query_count, query_id, version_id, "
         "output_plan_digest, private_plan_digest, execution_binding_digest "
         "FROM f1m_batch_transitions WHERE ledger_commitment_token=?",
         (batch.ledger_commitment_token,),
@@ -2083,6 +2114,7 @@ def _insert_expected_f1m(
         item.phase,
         item.window_index,
         item.global_query_ordinal,
+        item.multiplicity,
         batch.query_id,
         batch.version_id,
         batch.output_plan_digest,
@@ -2103,9 +2135,12 @@ def _insert_expected_f1m(
             "expected F1-M route is absent from controller window cardinality"
         )
     first_query, query_count, version_id, output_plan, private_plan, execution = window
-    if not first_query <= item.global_query_ordinal < first_query + query_count:
+    if not (
+        first_query <= item.global_query_ordinal
+        and item.global_query_ordinal + item.multiplicity <= first_query + query_count
+    ):
         raise Day1BWorkerProtocolError(
-            "expected F1-M route query ordinal is outside its controller window"
+            "expected F1-M route query range is outside its controller window"
         )
     if (
         batch.version_id,
@@ -2222,7 +2257,7 @@ class _ExpectedF1MRegistry:
             hasher.update(_canonical_json_bytes(row.to_document())[:-1])
             _insert_f1m_window_cardinality(self.connection, row)
             self._checkpoint(count)
-        hasher.update(b'],"schema_version":"dynamic-cssc-day1b-f1m-window-cardinality-set-v1"}\n')
+        hasher.update(b'],"schema_version":"dynamic-cssc-day1b-f1m-window-cardinality-set-v2"}\n')
         self.connection.commit()
         self.scratch.require_within_cap()
         return hasher.hexdigest()
@@ -2289,7 +2324,7 @@ class _ExpectedF1MRegistry:
             )
             count += 1
             self._checkpoint(count)
-        hasher.update(b'],"schema_version":"dynamic-cssc-day1b-f1m-batch-transition-set-v1"}\n')
+        hasher.update(b'],"schema_version":"dynamic-cssc-day1b-f1m-batch-transition-set-v2"}\n')
         self.connection.commit()
         self.scratch.require_within_cap()
         return hasher.hexdigest(), (
@@ -2321,7 +2356,8 @@ class _ExpectedF1MRegistry:
     def _validate_route_cardinality(self) -> None:
         for row in self.connection.execute(
             "SELECT phase, window_index, expected_random_route_count, "
-            "expected_dummy_route_count, expected_route_subroot_sha256, query_count "
+            "expected_dummy_route_count, expected_route_subroot_sha256, "
+            "first_global_query_ordinal, query_count "
             "FROM f1m_window_cardinality ORDER BY phase, window_index"
         ):
             (
@@ -2330,19 +2366,36 @@ class _ExpectedF1MRegistry:
                 expected_random,
                 expected_dummy,
                 expected_subroot,
+                first_query,
                 query_count,
             ) = row
             batch_count = self.connection.execute(
-                "SELECT COUNT(*) FROM f1m_batch_transitions WHERE phase=? AND window_index=?",
+                "SELECT COALESCE(SUM(query_count),0) FROM f1m_batch_transitions "
+                "WHERE phase=? AND window_index=?",
                 (phase, window_index),
             ).fetchone()
             if batch_count is None or batch_count[0] != query_count:
                 raise Day1BWorkerProtocolError(
                     "F1-M window batch transitions do not cover every realized query"
                 )
+            expected_next = first_query
+            for batch_start, batch_size in self.connection.execute(
+                "SELECT global_query_ordinal, query_count FROM f1m_batch_transitions "
+                "WHERE phase=? AND window_index=? ORDER BY global_query_ordinal",
+                (phase, window_index),
+            ):
+                if batch_start != expected_next:
+                    raise Day1BWorkerProtocolError(
+                        "F1-M window batch query ranges are not contiguous"
+                    )
+                expected_next += batch_size
+            if expected_next != first_query + query_count:
+                raise Day1BWorkerProtocolError(
+                    "F1-M window batch query ranges do not close exactly"
+                )
             observed = dict(
                 self.connection.execute(
-                    "SELECT category, COUNT(*) FROM expected_f1m "
+                    "SELECT category, SUM(multiplicity) FROM expected_f1m "
                     "WHERE phase=? AND window_index=? GROUP BY category",
                     (phase, window_index),
                 )
@@ -2441,9 +2494,9 @@ class _ExpectedF1MRegistry:
             phase_index = phase_order[item.phase]
             phase_binding_counts[phase_index] += 1
             if item.category == DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES[0]:
-                phase_random_counts[phase_index] += 1
+                phase_random_counts[phase_index] += item.multiplicity
             else:
-                phase_dummy_counts[phase_index] += 1
+                phase_dummy_counts[phase_index] += item.multiplicity
             count += 1
             self._checkpoint(count)
         hasher.update(
@@ -2457,7 +2510,8 @@ class _ExpectedF1MRegistry:
         phase_query_batch_counts = tuple(
             int(
                 self.connection.execute(
-                    "SELECT COUNT(*) FROM f1m_batch_transitions WHERE phase=?",
+                    "SELECT COALESCE(SUM(query_count),0) FROM f1m_batch_transitions "
+                    "WHERE phase=?",
                     (phase,),
                 ).fetchone()[0]
             )
@@ -2469,7 +2523,7 @@ class _ExpectedF1MRegistry:
                 {
                     "binding_set_sha256": binding_set_sha256,
                     "batch_transition_stream_sha256": batch_root,
-                    "schema_version": "dynamic-cssc-day1b-f1m-cardinality-derivation-v1",
+                    "schema_version": "dynamic-cssc-day1b-f1m-cardinality-derivation-v2",
                     "window_cardinality_stream_sha256": window_root,
                 }
             )
@@ -2992,8 +3046,14 @@ class _ObjectReceiptSpool:
             updated = self._digests.execute(
                 "UPDATE expected_f1m SET observed=1 "
                 "WHERE phase=? AND category=? AND object_ordinal=? "
-                "AND binding_sha256=? AND observed=0",
-                (phase, category, receipt.serialization_equivalence_class_ordinal, binding_sha256),
+                "AND binding_sha256=? AND multiplicity=? AND observed=0",
+                (
+                    phase,
+                    category,
+                    receipt.serialization_equivalence_class_ordinal,
+                    binding_sha256,
+                    receipt.multiplicity,
+                ),
             )
             if updated.rowcount != 1:
                 raise Day1BWorkerProtocolError(
@@ -3645,8 +3705,6 @@ class _ReceiptBuilder:
         if payload_sha256 is None:
             raise Day1BWorkerProtocolError("serialized-object payload digest is absent")
         f1m_binding_required = category in self.contract.f1m_binding_categories
-        if f1m_binding_required and multiplicity != 1:
-            raise Day1BWorkerProtocolError("F1-M binding categories require multiplicity one")
         raw_f1m_binding = header["f1m_binding"]
         if f1m_binding_required:
             f1m_binding = Day1BF1MBindingReceipt.from_document(raw_f1m_binding)
@@ -4317,6 +4375,7 @@ __all__ = (
     "DAY1B_WORKER_EXPECTED_F1M_BINDING_SET_SCHEMA",
     "DAY1B_WORKER_EXPECTED_F1M_OBJECT_SCHEMA",
     "DAY1B_WORKER_EXPECTED_F1M_REGISTRY_DESCRIPTOR_SCHEMA",
+    "DAY1B_WORKER_EXECUTION_BASIS",
     "DAY1B_WORKER_F1M_BATCH_TRANSITION_SCHEMA",
     "DAY1B_WORKER_INPUT_BINDING_SCHEMA",
     "DAY1B_WORKER_MAX_HEADER_BYTES",

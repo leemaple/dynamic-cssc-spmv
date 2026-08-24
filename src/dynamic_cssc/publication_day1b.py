@@ -44,6 +44,7 @@ from dynamic_cssc.publication_artifact_install import (
     quarantine_owned_directory,
 )
 from dynamic_cssc.publication_day1b_worker_protocol import (
+    DAY1B_WORKER_EXECUTION_BASIS,
     DAY1B_WORKER_F1M_BINDING_SCHEMA,
     DAY1B_WORKER_RECEIPT_SCHEMA,
     DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES,
@@ -1320,7 +1321,7 @@ def _validate_preparatory_source_attestation(
         inventory.get("role") != EvidenceRole.DAY1B.value
         or inventory.get("source_git_sha") != source.git_sha
         or inventory.get("behavior_set_schema_version")
-        != "dynamic-cssc-day1b-preparatory-behavior-set-v5"
+        != "dynamic-cssc-day1b-preparatory-behavior-set-v6"
     ):
         raise ValueError(
             "preparatory source inventory must bind the DAY1B role, schema, and exact S1"
@@ -3469,6 +3470,7 @@ class _Day1BWorkerContractSeed:
             resource_policy_sha256=self.resource_policy_sha256,
             freshness=self.freshness,
             rho=self.rho,
+            execution_basis=DAY1B_WORKER_EXECUTION_BASIS,
             candidate=self.candidate,
             phase_ranges=self.phase_ranges,
             primitive_names=PRIMITIVE_NAMES,

@@ -349,7 +349,7 @@ controlled transient-scratch high-water, the amendment may not freeze a
 scratch cap from that field alone. It must add a separately reviewed
 controlled-scratch measurement or leave held-out dispatch on `HOLD`.
 
-The preparatory Day1B worker receipt v2 now preserves one such measurement for
+The preparatory Day1B worker receipt v3 now preserves one such measurement for
 the controller's exact anonymous registry/spool pair: the maximum checkpointed
 sum of both inode sizes, updated before the cap comparison and retained on an
 over-cap failure. It is deliberately separate from candidate-execution
@@ -406,9 +406,13 @@ choice remains `null`.
 
 The remaining Day1B `HOLD` set is explicit: an outcome-blind resource amendment,
 a controlled-scratch high-water and isolation method, linked-library/build
-admission, a production candidate-cell worker adapter that composes the verified
-OpenFHE runtime with the Day1B controller, the TRACE post-run anchor, and the
-Day-1 registration anchor.
+admission, a production candidate-cell worker adapter that implements ADR 0012
+window-weighted equivalence accounting and consumes the anchored Day 2 OpenFHE
+timing/size profile, the TRACE post-run anchor, and the Day-1 registration
+anchor. Full per-query-arrival OpenFHE replay is forbidden: the frozen schedule
+would otherwise require 530,097,064 arrivals per trace unit and
+15,902,911,920 across all 30 units without adding independent layout states or
+measurements.
 Source inventory is not dispatch authority. Any
 future file containing actual runner identities or frozen policy values must be
 introduced by a reviewed pre-S1 path/schema and DAY1B Behavior Set version bump,
