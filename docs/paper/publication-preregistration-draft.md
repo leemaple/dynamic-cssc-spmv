@@ -408,23 +408,31 @@ publication run:
 ```
 
 The sole confirmatory freshness is 0.1 s, within the manifest maximum of one
-second. The 1.0 s case is a prespecified secondary robustness panel. A 10 s
-case is not currently authorized or required; it may be added only by a
-separately frozen, pre-execution out-of-manifest sensitivity protocol and can
-never enter the confirmatory gate.
+second. The 1.0 s case is a prespecified secondary robustness panel. The 10 s
+case is included only in the synthetic Day1A count grid as an explicitly
+non-confirmatory stress panel; it is not authorized for Day1B held-out evidence
+or the confirmatory gate. Promoting it beyond synthetic counts requires a
+separately frozen, pre-execution out-of-manifest sensitivity protocol.
 
 Primary bandwidth is frozen to 1000 Mbps. The 100 Mbps and 10000 Mbps profiles
-are not currently authorized or required; either may be added only by a
-separately frozen, pre-execution descriptive sensitivity protocol. Bytes must
-be derived from serialized protocol objects, not inferred from ciphertext
-counts alone.
+remain unpriced, deferred dimensions in Day1A and are not currently authorized
+for a performance claim; either may enter a measured sensitivity only through a
+separately frozen, pre-execution descriptive protocol. Bytes must be derived
+from serialized protocol objects, not inferred from ciphertext counts alone.
 
 Publication dimensions are frozen to the 4096-by-8193 manifest domain, a
 group-atomic microbatch threshold of 64 visible SETs (T1 at most 64; T2 at most
 65 when a two-SET group completes), maximum row nonzeros 4,096, coefficient bound 7, and the
-event-window transform above. The existing 512-by-512 Day 1 configuration is
-explicitly a scaled synthetic proxy and cannot serve as the publication-scale
-primary run. There is no smaller fallback tier. In particular, `N=65,536` is
+event-window transform above. The historical `config/experiment_plan.json`
+version 0.2.0 and `.github/workflows/day1-cost-model.yml` remain the
+512-by-512/2048-slot/128-row-partition scaled synthetic proxy and cannot serve
+as the publication-scale primary run. Formal Day1A instead uses the additive,
+separately named `config/experiment_plan_publication.json` version 0.3.0 and
+`.github/workflows/day1a-publication-cost-model.yml`, with rows 4096, columns
+8193, 4096 effective slots, and 4096-row partitions at every matrix, shard,
+replay, and aggregate stage. The two plans share every non-domain field exactly;
+neither workflow may consume the other plan or artifact namespace. There is no
+smaller fallback tier. In particular, `N=65,536` is
 forbidden because `floor(4N/10) < K=32,768`: tuning would observe no T2 expiry
 while held-out would switch mechanisms. If the target is infeasible in a
 prefix-only pilot, no held-out execution is authorized. A later, separately
@@ -825,10 +833,11 @@ withholds the headline.
 5. Day 1A emits replayable count evidence without inspecting a publication
    verdict. Its canonical count bundle and exact-index inventory may authorize
    a Day 2 key plan only when the receipt proves that the suite and publication
-   matrix, effective-slot, and row-partition domains are identical; the current
-   512-by-512/2048-slot/128-row-partition exploratory plan therefore remains
-   ineligible for the 4096-by-8193/4096-slot/4096-row-partition publication key
-   plan.
+   matrix, effective-slot, and row-partition domains are identical. Historical
+   plan 0.2.0 therefore remains ineligible; formal plan 0.3.0 is the sole
+   4096-by-8193/4096-slot/4096-row-partition route that may set
+   `day2_direct_key_plan_authorized=true`, while every cost, performance, paper,
+   and security claim flag remains false.
 6. P0b/Day 2 consumes Day 1A's exact key inventory, stores exactly 14 complete
    whole measurement blocks under the frozen order/stop rule, and passes
    operation-profile and provenance checks. The current historical

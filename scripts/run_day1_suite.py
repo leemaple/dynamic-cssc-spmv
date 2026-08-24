@@ -61,6 +61,10 @@ DEFERRED_REFERENCE_BASELINES: tuple[str, ...] = ()
 STRONG_REFERENCE_CANDIDATE_ID = "packed-coo-cloud-segmented-delta/segment-width=128"
 _CANONICAL_SEED = re.compile(r"(?:0|[1-9][0-9]*)")
 _MAX_SUITE_SEED = (1 << 63) - 1 - len(WORKLOADS)
+_FROZEN_PLAN_LAYOUTS = {
+    "0.2.0": (512, 512, 2048, 128),
+    "0.3.0": (4096, 8193, 4096, 4096),
+}
 
 PLAN_KEYS = frozenset(
     {
@@ -689,8 +693,11 @@ def parse_experiment_plan(payload: Mapping[str, object]) -> ExperimentPlan:
 
     _require_exact_keys(payload, PLAN_KEYS, "experiment plan")
     plan_version = payload["plan_version"]
-    if plan_version != "0.2.0":
-        raise ValueError("plan_version must equal the frozen value 0.2.0")
+    if plan_version not in _FROZEN_PLAN_LAYOUTS:
+        raise ValueError("plan_version must equal a frozen value: 0.2.0 or 0.3.0")
+    expected_rows, expected_cols, expected_effective_slots, expected_partition_rows = (
+        _FROZEN_PLAN_LAYOUTS[plan_version]
+    )
 
     split_payload = _mapping(payload["split"], "split")
     _require_exact_keys(split_payload, SPLIT_KEYS, "split")
@@ -699,7 +706,15 @@ def parse_experiment_plan(payload: Mapping[str, object]) -> ExperimentPlan:
     synthetic = _mapping(payload["synthetic"], "synthetic")
     _require_exact_keys(synthetic, SYNTHETIC_KEYS, "synthetic")
     rows = _strict_int(synthetic["rows"], "synthetic.rows", minimum=1)
+    if rows != expected_rows:
+        raise ValueError(
+            f"synthetic.rows must equal the frozen value {expected_rows} for plan {plan_version}"
+        )
     cols = _strict_int(synthetic["cols"], "synthetic.cols", minimum=1)
+    if cols != expected_cols:
+        raise ValueError(
+            f"synthetic.cols must equal the frozen value {expected_cols} for plan {plan_version}"
+        )
     initial_nnz_per_row = _strict_int(
         synthetic["initial_nnz_per_row"],
         "synthetic.initial_nnz_per_row",
@@ -711,11 +726,17 @@ def parse_experiment_plan(payload: Mapping[str, object]) -> ExperimentPlan:
     effective_slots = _strict_int(
         synthetic["effective_slots"], "synthetic.effective_slots", minimum=1
     )
-    if effective_slots != 2048:
-        raise ValueError("synthetic.effective_slots must equal the frozen value 2048")
+    if effective_slots != expected_effective_slots:
+        raise ValueError(
+            "synthetic.effective_slots must equal the frozen value "
+            f"{expected_effective_slots} for plan {plan_version}"
+        )
     partition_rows = _strict_int(synthetic["partition_rows"], "synthetic.partition_rows", minimum=1)
-    if partition_rows != 128:
-        raise ValueError("synthetic.partition_rows must equal the frozen value 128")
+    if partition_rows != expected_partition_rows:
+        raise ValueError(
+            "synthetic.partition_rows must equal the frozen value "
+            f"{expected_partition_rows} for plan {plan_version}"
+        )
     layout_measurement_kind = synthetic["layout_measurement_kind"]
     if layout_measurement_kind != LAYOUT_MEASUREMENT_KIND:
         raise ValueError(

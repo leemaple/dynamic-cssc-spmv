@@ -40,10 +40,22 @@ from scripts.run_day1_suite import (
     run_suite,
 )
 
+ROOT = Path(__file__).resolve().parents[1]
+_COMPACT_TEST_PLAN_VERSION = "test-only-compact-v1"
+
+
+@pytest.fixture(autouse=True)
+def _allow_compact_test_plan(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(
+        run_day1_suite._FROZEN_PLAN_LAYOUTS,  # noqa: SLF001
+        _COMPACT_TEST_PLAN_VERSION,
+        (2, 2, 2048, 128),
+    )
+
 
 def _small_experiment_plan() -> dict[str, object]:
     return {
-        "plan_version": "0.2.0",
+        "plan_version": _COMPACT_TEST_PLAN_VERSION,
         "split": {"warmup": 0.1, "tuning": 0.3, "held_out": 0.6},
         "synthetic": {
             "rows": 2,
@@ -61,6 +73,12 @@ def _small_experiment_plan() -> dict[str, object]:
         "freshness_seconds": [1.0],
         "bandwidth_profiles_mbps": [100],
     }
+
+
+def _small_publication_experiment_plan() -> dict[str, object]:
+    return json.loads(
+        (ROOT / "config" / "experiment_plan_publication.json").read_text(encoding="utf-8")
+    )
 
 
 def _registered_catalog() -> Day1CandidateCatalog:
@@ -86,11 +104,24 @@ def _unavailable_catalog() -> Day1CandidateCatalog:
 
 
 def test_plan_0_2_freezes_the_synthetic_layout_proxy() -> None:
-    plan = run_day1_suite.parse_experiment_plan(_small_experiment_plan())
+    plan = run_day1_suite.load_experiment_plan(ROOT / "config" / "experiment_plan.json")
 
     assert plan.plan_version == "0.2.0"
+    assert plan.rows == 512
+    assert plan.cols == 512
     assert plan.effective_slots == 2048
     assert plan.partition_rows == 128
+    assert plan.layout_measurement_kind == "synthetic-proxy"
+
+
+def test_plan_0_3_freezes_the_publication_layout_proxy() -> None:
+    plan = run_day1_suite.parse_experiment_plan(_small_publication_experiment_plan())
+
+    assert plan.plan_version == "0.3.0"
+    assert plan.rows == 4096
+    assert plan.cols == 8193
+    assert plan.effective_slots == 4096
+    assert plan.partition_rows == 4096
     assert plan.layout_measurement_kind == "synthetic-proxy"
 
 
@@ -98,6 +129,8 @@ def test_plan_0_2_freezes_the_synthetic_layout_proxy() -> None:
     ("field", "replacement", "message"),
     [
         ("plan_version", "0.1.0", "plan_version.*0.2.0"),
+        ("rows", 511, "rows.*512.*0.2.0"),
+        ("cols", 511, "cols.*512.*0.2.0"),
         ("effective_slots", 1024, "effective_slots.*2048"),
         ("partition_rows", 64, "partition_rows.*128"),
         ("layout_measurement_kind", "measured", "layout_measurement_kind.*synthetic-proxy"),
@@ -106,13 +139,36 @@ def test_plan_0_2_freezes_the_synthetic_layout_proxy() -> None:
 def test_plan_rejects_any_substitution_of_the_frozen_layout_proxy(
     field: str, replacement: object, message: str
 ) -> None:
-    payload = _small_experiment_plan()
+    payload = json.loads(
+        (ROOT / "config" / "experiment_plan.json").read_text(encoding="utf-8")
+    )
     if field == "plan_version":
         payload[field] = replacement
     else:
         synthetic = payload["synthetic"]
         assert isinstance(synthetic, dict)
         synthetic[field] = replacement
+
+    with pytest.raises(ValueError, match=message):
+        run_day1_suite.parse_experiment_plan(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement", "message"),
+    [
+        ("rows", 512, "rows.*4096.*0.3.0"),
+        ("cols", 512, "cols.*8193.*0.3.0"),
+        ("effective_slots", 2048, "effective_slots.*4096.*0.3.0"),
+        ("partition_rows", 128, "partition_rows.*4096.*0.3.0"),
+    ],
+)
+def test_publication_plan_rejects_exploratory_layout_substitution(
+    field: str, replacement: int, message: str
+) -> None:
+    payload = _small_publication_experiment_plan()
+    synthetic = payload["synthetic"]
+    assert isinstance(synthetic, dict)
+    synthetic[field] = replacement
 
     with pytest.raises(ValueError, match=message):
         run_day1_suite.parse_experiment_plan(payload)

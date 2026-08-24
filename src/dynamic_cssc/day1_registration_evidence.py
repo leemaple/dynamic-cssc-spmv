@@ -1210,7 +1210,7 @@ def _validate_inventory(
     if (
         inventory["schema_version"] != "dynamic-cssc-evidence-behavior-inventory-v1"
         or inventory["behavior_set_schema_version"]
-        != "dynamic-cssc-day1-registration-behavior-set-v2"
+        != "dynamic-cssc-day1-registration-behavior-set-v3"
         or inventory["role"] != "day1-registration"
         or inventory["source_git_sha"] != source_sha
     ):
