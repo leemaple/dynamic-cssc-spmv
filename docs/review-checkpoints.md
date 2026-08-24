@@ -76,6 +76,11 @@ anchors. The raw-block-capable historical `day2-microbench.yml` still lacks the
 registered key plan, fixed-host provenance, profile and post-run anchors, and
 canonical R3 archive, so it is not R3.
 
+Run `32712608022` at `f11e97d` is a retained, checksummed mechanism check only:
+it has 11 measurement blocks and explicitly fails the publication raw-block
+contract. Its historical `R3-Day2` package label does not confer R3 status;
+future exploratory packages use the unambiguous `Day2-exploratory` label.
+
 ## R4 — Minimal prototype
 
 Contains end-to-end OpenFHE results, correctness vectors, output-leakage mode, memory/communication accounting, and comparison against all strong reference implementations.
