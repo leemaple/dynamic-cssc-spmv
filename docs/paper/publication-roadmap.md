@@ -90,14 +90,16 @@ do not yet exist.
 
 The complete-suite aggregator emits a canonical fixed-record count bundle, an
 exact-index rotation inventory, and a narrowly scoped Day1A receipt. The receipt
-authorizes only synthetic causal count evidence. It independently compares the
-suite's slot domain with the publication manifest: the current exploratory plan
-uses a 512-by-512 matrix, 2048 effective slots, and 128-row partitions, while
-the publication domain uses 4096-by-8193, 4096 effective slots, and 4096-row
-partitions. Its receipt must therefore set
-`day2_direct_key_plan_authorized=false`. A later preregistered Day1A plan must
-close the full matrix/layout-domain mismatch before Day 2 can consume the
-inventory.
+authorizes only synthetic causal count evidence and independently compares the
+suite's slot domain with the publication manifest. Historical
+`config/experiment_plan.json` version 0.2.0 uses a 512-by-512 matrix, 2048
+effective slots, and 128-row partitions, so its receipt must set
+`day2_direct_key_plan_authorized=false`. The separately frozen formal
+`config/experiment_plan_publication.json` version 0.3.0 and
+`.github/workflows/day1a-publication-cost-model.yml` use the matching
+4096-by-8193, 4096-effective-slot, 4096-row-partition publication domain and are
+the sole route eligible to set `day2_direct_key_plan_authorized=true`. Neither
+route authorizes a complete cost, performance, paper-verdict, or security claim.
 
 ### Phase C — measured primitive and communication model (P0b / Day 2)
 

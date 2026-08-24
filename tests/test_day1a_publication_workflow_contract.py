@@ -13,6 +13,7 @@ PUBLICATION_WORKFLOW = ROOT / ".github/workflows/day1a-publication-cost-model.ym
 PUBLICATION_PLAN = ROOT / "config/experiment_plan_publication.json"
 HISTORICAL_WORKFLOW = ROOT / ".github/workflows/day1-cost-model.yml"
 HISTORICAL_PLAN = ROOT / "config/experiment_plan.json"
+ROADMAP = ROOT / "docs/paper/publication-roadmap.md"
 
 
 def _workflow(path: Path) -> str:
@@ -171,6 +172,21 @@ def test_historical_day1_contract_remains_exploratory_and_unauthorized_for_day2(
     assert "assert rotation_inventory['publication_domain_match'] is False" in workflow
     assert "assert rotation_inventory['day2_direct_key_plan_eligible'] is False" in workflow
     assert "assert day1a_receipt['day2_direct_key_plan_authorized'] is False" in workflow
+
+
+def test_roadmap_names_the_formal_plan_as_the_only_day2_authorized_domain() -> None:
+    roadmap = ROADMAP.read_text(encoding="utf-8")
+
+    for required in (
+        "config/experiment_plan.json",
+        "config/experiment_plan_publication.json",
+        ".github/workflows/day1a-publication-cost-model.yml",
+        "day2_direct_key_plan_authorized=false",
+        "day2_direct_key_plan_authorized=true",
+        "the sole route eligible",
+    ):
+        assert required in roadmap
+    assert "A later preregistered Day1A plan must" not in roadmap
 
 
 def test_publication_contract_is_in_its_own_ci_gate() -> None:

@@ -710,8 +710,8 @@ receipt is monotonically anchored by one shared compatibility record with
 Freeze, and artifact digest equal to the selected receipt, one later reviewed
 profile-only commit installs the canonical binding derived from those frozen
 artifacts. The profile anchor is data-only rather than a Day-2 or analyzer
-Behavior Set member; it may
-never be removed, retargeted, or independently reinstalled and must precede
+Behavior Set member; it may never be removed, retargeted, or independently
+reinstalled and must precede
 every formal Day1B held-out or Day-2 run. It contains no future or
 self-referential source commit SHA. A zero-argument repository seam validates
 the binding, requires the Day-2 post-run anchor set to remain empty, and obtains
