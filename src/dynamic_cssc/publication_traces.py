@@ -2171,8 +2171,13 @@ def _mapping_from_observed_ids(
         reasons.append("mapping-prefix-empty")
     if len(observed_row_ids) != config.rows:
         reasons.append(f"insufficient-mapped-rows:{len(observed_row_ids)}/{config.rows}")
-    if padding * 10 > config.cols:
-        reasons.append(f"reserved-column-padding-exceeds-10-percent:{padding}/{config.cols}")
+    # Reserved columns are semantic zero columns in the fixed publication
+    # domain.  They remain present in the query vector and therefore retain
+    # their full communication and cryptographic cost.  Their fraction is a
+    # reported corpus characteristic, not an eligibility threshold.  Refuse
+    # only a mapping with no observed target identity at all.
+    if not observed_column_ids:
+        reasons.append("no-observed-mapped-columns")
     row_index = {identity: index for index, identity in enumerate(observed_row_ids)}
     column_index = {identity: index for index, identity in enumerate(observed_column_ids)}
     return mapping, row_index, column_index, prefix_count, reasons

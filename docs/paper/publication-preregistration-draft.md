@@ -377,8 +377,13 @@ For each real dataset, let `V` be the event count of its closed, canonical,
 chronological schema-valid corpus. Use exactly event ordinals
 `[0, floor(V/10))` only to freeze the mapping: select 4,096 rows and up to 8,193
 observed columns by prefix event count with canonical-ID tie breaks, then
-deterministically pad remaining columns. Apply this mapping to the remaining
-stream. Target 131,072 accepted raw events per unit; require at least 65,536
+deterministically pad remaining columns. Reserved columns are semantic zero
+columns, remain explicit in the fixed 8,193-coordinate query vector, and incur
+the same full-domain communication and cryptographic accounting as observed
+columns. Their count and fraction are reported structural characteristics, not
+an eligibility threshold; a partition is ineligible only if it observes no
+mapped target identity at all. Apply this mapping to the remaining stream.
+Target 131,072 accepted raw events per unit; require at least 65,536
 emitted logical changes and a guaranteed
 lower bound of 1,000 complete publication windows. This lower bound is computed
 without rho/freshness assumptions as

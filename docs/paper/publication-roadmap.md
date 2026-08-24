@@ -247,7 +247,12 @@ freshness 0.1 s and 1.0 s, primary bandwidth 1000 Mb/s, and the nine frozen
 query/update ratios. Each paired unit also binds one deterministic length-8193
 ternary query vector generated from seed `2026082302`, with coordinates 0 and
 8192 forced to +1 and -1; it is reused across all cells and candidates in that
-unit. The sole confirmatory family is T2 at 0.1 s; T1 and the
+unit. Observed targets occupy the prefix-ranked column identities and every
+remaining coordinate is an explicit semantic-zero reserved column. Reserved
+columns remain in the length-8193 vector and in full-domain byte/cryptographic
+accounting; occupancy is reported but is not a pass threshold. A mapping with
+zero observed target identities remains ineligible. The sole confirmatory
+family is T2 at 0.1 s; T1 and the
 1.0 s panels are prespecified secondary robustness analyses and cannot
 authorize, replace, or rescue the headline. T2 uses a 32,768-event window. A common smaller trace tier
 is not authorized: 65,536 events would leave the entire tuning phase before the
