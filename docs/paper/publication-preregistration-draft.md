@@ -832,9 +832,10 @@ withholds the headline.
 6. P0b/Day 2 consumes Day 1A's exact key inventory, stores exactly 14 complete
    whole measurement blocks under the frozen order/stop rule, and passes
    operation-profile and provenance checks. The current historical
-   `day2-microbench.yml` does not satisfy this step: it lacks the raw-block
-   schema, full 14-primitive coverage, and registered exact-index key-plan
-   binding.
+   `day2-microbench.yml` does not satisfy this step: its probe can emit raw
+   blocks over the full 14-primitive vocabulary, but the workflow still uses
+   the legacy 11-repeat setting and lacks the registered exact-index key-plan,
+   fixed-host/toolchain provenance, canonical R3 archive, and evidence anchors.
 7. A mixed-circuit decryption/noise gate covers the worst admitted circuit.
 8. Day 1B replays the identical traces with frozen measured costs.
 9. R4 executes every grid point belonging to any qualifying adjacent pair, or
