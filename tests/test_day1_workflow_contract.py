@@ -48,6 +48,14 @@ def test_day1_workflow_installs_only_the_hashed_ci_lock() -> None:
     assert "\nenv:\n  PYTHONPATH: src:.\n\njobs:" in workflow
 
 
+def test_every_day1_job_checks_out_complete_history_without_credentials() -> None:
+    workflow = (ROOT / ".github/workflows/day1-cost-model.yml").read_text(encoding="utf-8")
+
+    assert workflow.count("uses: actions/checkout@v4") == 3
+    assert workflow.count("fetch-depth: 0") == 3
+    assert workflow.count("persist-credentials: false") == 3
+
+
 def test_day1_workflow_guards_the_causal_evidence_contract() -> None:
     workflow = (ROOT / ".github/workflows/day1-cost-model.yml").read_text(encoding="utf-8")
 

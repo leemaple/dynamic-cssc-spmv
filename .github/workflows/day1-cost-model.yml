@@ -22,6 +22,9 @@ jobs:
       normalized_seed: ${{ steps.normalize-seed.outputs.normalized_seed }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -143,6 +146,9 @@ jobs:
     name: Day 1 shard (${{ matrix.workload }}, ${{ matrix.freshness_seconds }}s)
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -300,6 +306,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
