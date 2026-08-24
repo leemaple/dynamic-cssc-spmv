@@ -51,6 +51,34 @@ def test_day2_probe_emits_the_frozen_raw_block_contract() -> None:
     assert "std::chrono::steady_clock" in source
 
 
+def test_formal_probe_exports_only_evaluation_key_material_for_post_run_inventory() -> None:
+    source = (ROOT / "cpp" / "microbench.cpp").read_text(encoding="utf-8")
+
+    assert '"rotation-keys-output"' in source
+    assert '"eval-mult-key-output"' in source
+    assert "writeEvaluationKeyMaterial" in source
+    assert "serializedRotationKeys_" in source
+    assert "serializedEvalMultKeys_" in source
+    assert "Serialize(keyPair_.secretKey" not in source
+
+
+def test_formal_probe_checks_exact_signed_rotation_not_merely_a_permutation() -> None:
+    source = (ROOT / "cpp" / "microbench.cpp").read_text(encoding="utf-8")
+
+    assert "IsExactFrozenLabelRotation" in source
+    assert "rotationIndex" in source
+    assert "values[slot] != expected" in source
+    assert "IsFrozenLabelPermutation" not in source
+
+
+def test_formal_probe_reports_affinity_observed_before_and_after_measurement() -> None:
+    source = (ROOT / "cpp" / "microbench.cpp").read_text(encoding="utf-8")
+
+    assert source.count("ProcessAffinityCpuList()") >= 2
+    assert "process affinity changed during calibration" in source
+    assert "process_affinity_cpu_list" in source
+
+
 def test_day2_probe_hardcoded_orders_match_every_frozen_sampler_answer() -> None:
     source = (ROOT / "cpp" / "microbench.cpp").read_text(encoding="utf-8")
     table_start = source.index(

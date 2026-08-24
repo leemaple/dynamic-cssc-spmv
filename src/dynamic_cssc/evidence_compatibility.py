@@ -200,7 +200,8 @@ _ANALYZER_BEHAVIOR_PATHS = (
 )
 
 _DAY2_BEHAVIOR_PATHS = (
-    ".github/workflows/day2-microbench.yml",
+    ".github/workflows/day2-publication-calibration.yml",
+    "config/experiment_plan_publication.json",
     "config/params_manifest.json",
     "cpp/CMakeLists.txt",
     "cpp/include/args.hpp",
@@ -211,13 +212,22 @@ _DAY2_BEHAVIOR_PATHS = (
     "scripts/apply_microbench.py",
     "scripts/bootstrap_openfhe.sh",
     "scripts/build_cpp.sh",
+    "scripts/capture_day2_github_metadata.py",
     "scripts/package_review_bundle.py",
+    "scripts/propose_day2_calibration_post_run_anchor.py",
+    "scripts/run_day2_calibration_isolated.py",
     "scripts/validate_manifest.py",
     "src/dynamic_cssc/__init__.py",
     "src/dynamic_cssc/cli.py",
     "src/dynamic_cssc/cloud_execution_plan.py",
     "src/dynamic_cssc/cssc.py",
+    "src/dynamic_cssc/day1a_export.py",
     "src/dynamic_cssc/day2_calibration_authority.py",
+    "src/dynamic_cssc/day2_calibration_github.py",
+    "src/dynamic_cssc/day2_calibration_postrun.py",
+    "src/dynamic_cssc/day2_calibration_profile.py",
+    "src/dynamic_cssc/day2_calibration_producer.py",
+    "src/dynamic_cssc/day2_calibration_runtime.py",
     "src/dynamic_cssc/day1_registry.py",
     "src/dynamic_cssc/evidence_compatibility.py",
     "src/dynamic_cssc/events.py",
@@ -226,6 +236,7 @@ _DAY2_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/metrics.py",
     "src/dynamic_cssc/output_plan.py",
     "src/dynamic_cssc/plaintext_oracle.py",
+    "src/dynamic_cssc/publication_artifact_install.py",
     "src/dynamic_cssc/query_compiler.py",
     "src/dynamic_cssc/report.py",
     "src/dynamic_cssc/selection.py",
@@ -439,7 +450,7 @@ _ROLE_BEHAVIOR_SCHEMAS = {
     EvidenceRole.ACQUISITION: "dynamic-cssc-acquisition-behavior-set-v2",
     EvidenceRole.TRACE: "dynamic-cssc-trace-behavior-set-v2",
     EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v5",
-    EvidenceRole.DAY2: "dynamic-cssc-day2-behavior-set-v2",
+    EvidenceRole.DAY2: "dynamic-cssc-day2-behavior-set-v3",
     EvidenceRole.ANALYZER: "dynamic-cssc-publication-analyzer-behavior-set-v2",
     EvidenceRole.STRONG_CORRECTNESS: "dynamic-cssc-strong-correctness-behavior-set-v1",
     EvidenceRole.DAY1_REGISTRATION: "dynamic-cssc-day1-registration-behavior-set-v3",
@@ -992,7 +1003,7 @@ def _day2_post_run_anchor_records_at(
         tree,
         relative_path=_DAY2_POST_RUN_ANCHOR_PATH,
         label="Day2 post-run",
-        schema_version="dynamic-cssc-day2-calibration-post-run-anchor-set-v3",
+        schema_version="dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
     )
 
 
@@ -1007,7 +1018,7 @@ def _day2_profile_anchor_records_at(
         tree,
         relative_path=_DAY2_PROFILE_ANCHOR_PATH,
         label="Day2 profile",
-        schema_version="dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+        schema_version="dynamic-cssc-day2-calibration-profile-anchor-set-v3",
     )
     if _DAY2_PROFILE_ANCHOR_PATH not in tree:
         return records

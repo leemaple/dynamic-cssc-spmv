@@ -25,6 +25,7 @@ __all__ = (
     "inspect_day2_calibration_archive",
     "repository_day2_calibration_authority",
     "repository_day2_calibration_profile_authority",
+    "validate_day2_calibration_post_run_anchor_document",
     "validate_day2_calibration_profile_anchor_document",
 )
 
@@ -37,6 +38,13 @@ CALIBRATION_MEASUREMENT_STOP_RULE = (
     "exactly-14-whole-blocks-outcome-independent-no-optional-stopping"
 )
 CALIBRATION_OPERATION_ORDER_METHOD = "domain-separated-shake256-counter-rejection-fisher-yates-v1"
+DAY2_RUNTIME_ISOLATION_CHECKS = (
+    "fresh-detached-exact-head-checkout",
+    "clean-caller-environment-without-python-or-git-injection",
+    "private-build-and-measurement-root-outside-source-checkout",
+    "pre-dispatch-profile-authority-consumed-once",
+    "source-attestation-stable-before-and-after-production",
+)
 PRIMITIVE_NAMES = (
     "client_merge",
     "client_reorder_element",
@@ -83,8 +91,10 @@ _PAYLOAD_FILENAMES = (
     "openfhe-build.json",
     "contract-bindings.json",
     "rotation-key-plan.json",
+    "generated-key-inventory.json",
     "operation-profile-set.json",
     "raw-measurement-blocks.json",
+    "runtime-isolation-receipt.json",
     "producer-validation.json",
 )
 _ARCHIVE_FILENAMES = frozenset((*_PAYLOAD_FILENAMES, "CALIBRATION-MANIFEST.json", "SHA256SUMS"))
@@ -112,6 +122,7 @@ _GITHUB_METADATA_KEYS = frozenset(
         "artifact_name",
         "artifact_id",
         "artifact_digest",
+        "inner_archive_sha256",
     }
 )
 _RUN_STATUS_KEYS = frozenset(
@@ -157,6 +168,7 @@ _BEHAVIOR_INVENTORY_ENTRY_KEYS = frozenset({"mode", "object_id", "object_type", 
 _WORKFLOW_PROVENANCE_KEYS = _GITHUB_METADATA_KEYS - {
     "artifact_id",
     "artifact_digest",
+    "inner_archive_sha256",
 }
 _ROTATION_PLAN_KEYS = frozenset(
     {
@@ -167,9 +179,16 @@ _ROTATION_PLAN_KEYS = frozenset(
         "effective_slots",
         "required_exact_indices",
         "key_plan_kind",
-        "generated_exact_indices",
+        "planned_exact_indices",
         "composite_decompositions",
         "eval_rotate_case_ids",
+    }
+)
+_GENERATED_KEY_INVENTORY_KEYS = frozenset(
+    {
+        "schema_version",
+        "rotation_key_plan_sha256",
+        "generated_exact_indices",
         "serialized_rotation_key_inventory_sha256",
         "serialized_rotation_key_bytes",
         "eval_mult_key_generated",
@@ -205,7 +224,23 @@ _PROFILE_KEYS = frozenset(
     }
 )
 _PROFILE_CASE_KEYS = frozenset(
-    {"case_id", "unit_definition", "input_fixture_sha256", "operation_count"}
+    {"case_id", "unit_definition", "input_fixture_contract_sha256", "operation_count"}
+)
+_RUNTIME_ISOLATION_RECEIPT_KEYS = frozenset(
+    {
+        "schema_version",
+        "authority_state",
+        "formal_authority_granted",
+        "source_git_sha",
+        "fresh_detached_checkout",
+        "clean_environment",
+        "isolated_build_root",
+        "caller_python_and_git_environment_removed",
+        "profile_authority_consumed_once",
+        "launcher_source_sha256",
+        "producer_source_sha256",
+        "isolation_checks",
+    }
 )
 _RAW_BLOCK_SET_KEYS = frozenset(
     {
@@ -264,28 +299,31 @@ _HOST_OS_KEYS = frozenset(
         "kernel_release",
         "kernel_cmdline_sha256",
         "glibc_version",
-        "container_image_digest",
+        "runner_image_identity_sha256",
     }
 )
 _HOST_COMPILER_KEYS = frozenset({"path", "vendor", "version", "target"})
 _HOST_AFFINITY_KEYS = frozenset(
     {
         "requested_cpu_list",
-        "effective_process_cpu_list",
+        "verified_probe_cpu_list",
+        "probe_affinity_observation_stage",
         "omp_num_threads",
         "omp_proc_bind",
         "omp_places",
-        "per_block_observed_cpu_sets",
+        "per_block_allowed_cpu_sets",
     }
 )
 _HOST_POWER_KEYS = frozenset(
     {
         "scaling_driver",
         "governor_by_cpu",
-        "turbo_enabled",
-        "ac_power",
-        "thermal_throttling_before",
-        "thermal_throttling_after",
+        "turbo_state",
+        "power_source",
+        "thermal_throttle_counters_observable",
+        "thermal_throttle_count_before",
+        "thermal_throttle_count_after",
+        "thermal_throttling_observed",
     }
 )
 _HOST_GOVERNOR_KEYS = frozenset(
@@ -326,6 +364,7 @@ _OPENFHE_CMAKE_FLAGS = {
     "CMAKE_BUILD_TYPE": "Release",
     "CMAKE_CXX_EXTENSIONS": "OFF",
     "CMAKE_CXX_STANDARD": "17",
+    "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
     "WITH_NATIVEOPT": "OFF",
     "WITH_OPENMP": "ON",
 }
@@ -346,7 +385,8 @@ _CONTRACT_BINDING_KEYS = frozenset(
         "primitive_accounting_mapping_sha256",
         "serialized_object_accounting_schema_version",
         "serialized_object_accounting_contract_sha256",
-        "rotation_inventory_sha256",
+        "day1a_rotation_inventory_sha256",
+        "rotation_key_plan_sha256",
     }
 )
 _PRODUCER_VALIDATION_KEYS = frozenset(
@@ -361,6 +401,8 @@ _PRODUCER_VALIDATION_KEYS = frozenset(
         "raw_measurement_blocks_sha256",
         "operation_profile_set_sha256",
         "rotation_key_plan_sha256",
+        "generated_key_inventory_sha256",
+        "runtime_isolation_receipt_sha256",
         "calibration_projection_sha256",
         "candidate_catalog_sha256",
         "accounting_contract_sha256",
@@ -389,6 +431,10 @@ _PROFILE_ANCHOR_KEYS = frozenset(
         "primitive_accounting_mapping_sha256",
         "serialized_object_accounting_schema_version",
         "serialized_object_accounting_contract_sha256",
+        "day1a_workflow_run_id",
+        "day1a_artifact_id",
+        "day1a_artifact_name",
+        "day1a_artifact_digest",
     }
 )
 _POST_RUN_ANCHOR_SET_KEYS = frozenset({"anchors", "schema_version"})
@@ -404,6 +450,8 @@ _POST_RUN_ANCHOR_KEYS = frozenset(
         "raw_measurement_blocks_sha256",
         "operation_profile_set_sha256",
         "rotation_key_plan_sha256",
+        "generated_key_inventory_sha256",
+        "runtime_isolation_receipt_sha256",
         "contract_bindings_sha256",
         "calibration_projection_sha256",
     }
@@ -428,6 +476,8 @@ class Day2CalibrationInspection:
     raw_measurement_blocks_sha256: str
     operation_profile_set_sha256: str
     rotation_key_plan_sha256: str
+    generated_key_inventory_sha256: str
+    runtime_isolation_receipt_sha256: str
     contract_bindings_sha256: str
     calibration_projection_sha256: str
     artifact_behavior_inventory_sha256: str
@@ -465,6 +515,10 @@ class _Day2CalibrationProfileBinding:
     primitive_accounting_mapping_sha256: str
     serialized_object_accounting_schema_version: str
     serialized_object_accounting_contract_sha256: str
+    day1a_workflow_run_id: int
+    day1a_artifact_id: int
+    day1a_artifact_name: str
+    day1a_artifact_digest: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -528,6 +582,22 @@ class Day2CalibrationProfileAuthority:
     @property
     def day1a_inventory_sha256(self) -> str:
         return self._binding.anchor.day1a_inventory_sha256
+
+    @property
+    def day1a_workflow_run_id(self) -> int:
+        return self._binding.anchor.day1a_workflow_run_id
+
+    @property
+    def day1a_artifact_id(self) -> int:
+        return self._binding.anchor.day1a_artifact_id
+
+    @property
+    def day1a_artifact_name(self) -> str:
+        return self._binding.anchor.day1a_artifact_name
+
+    @property
+    def day1a_artifact_digest(self) -> str:
+        return self._binding.anchor.day1a_artifact_digest
 
     def validate_pre_dispatch_contract(
         self,
@@ -629,6 +699,8 @@ class _Day2CalibrationBinding:
     raw_measurement_blocks_sha256: str
     operation_profile_set_sha256: str
     rotation_key_plan_sha256: str
+    generated_key_inventory_sha256: str
+    runtime_isolation_receipt_sha256: str
     contract_bindings_sha256: str
     calibration_projection_sha256: str
 
@@ -702,7 +774,7 @@ def _mint_repository_calibration_profile_authority(
         raise Day2CalibrationAuthorityError(
             "repository pre-dispatch warmup block count is not frozen"
         )
-    if experiment_behavior_set_schema_version != "dynamic-cssc-day2-behavior-set-v2":
+    if experiment_behavior_set_schema_version != "dynamic-cssc-day2-behavior-set-v3":
         raise Day2CalibrationAuthorityError(
             "repository pre-dispatch Behavior Set schema is not frozen"
         )
@@ -944,7 +1016,7 @@ def _require_safe_relative_path(value: object, field: str) -> str:
 def _decode_profile_anchor_set(content: bytes) -> tuple[_Day2CalibrationProfileBinding, ...]:
     payload = _decode_json(content, "Day 2 pre-dispatch anchor set")
     _require_exact_keys(payload, _PROFILE_ANCHOR_SET_KEYS, "Day 2 pre-dispatch anchor set")
-    if payload["schema_version"] != "dynamic-cssc-day2-calibration-profile-anchor-set-v2":
+    if payload["schema_version"] != "dynamic-cssc-day2-calibration-profile-anchor-set-v3":
         raise Day2CalibrationAuthorityError("Day 2 pre-dispatch anchor-set schema is not frozen")
     anchors = payload["anchors"]
     if type(anchors) is not list or len(anchors) > 1:
@@ -954,7 +1026,7 @@ def _decode_profile_anchor_set(content: bytes) -> tuple[_Day2CalibrationProfileB
     bindings: list[_Day2CalibrationProfileBinding] = []
     for anchor in anchors:
         _require_exact_keys(anchor, _PROFILE_ANCHOR_KEYS, "Day 2 pre-dispatch anchor")
-        if anchor["schema_version"] != "dynamic-cssc-day2-calibration-profile-anchor-v2":
+        if anchor["schema_version"] != "dynamic-cssc-day2-calibration-profile-anchor-v3":
             raise Day2CalibrationAuthorityError("Day 2 pre-dispatch anchor schema is not frozen")
         if (
             type(anchor["warmup_block_count"]) is not int
@@ -980,10 +1052,36 @@ def _decode_profile_anchor_set(content: bytes) -> tuple[_Day2CalibrationProfileB
         for field, expected in expected_schemas.items():
             if anchor[field] != expected:
                 raise Day2CalibrationAuthorityError(f"Day 2 pre-dispatch {field} is not frozen")
+        for field in ("day1a_workflow_run_id", "day1a_artifact_id"):
+            _require_positive_int(anchor[field], f"Day 2 pre-dispatch {field}")
+        artifact_name = _require_nonempty_str(
+            anchor["day1a_artifact_name"],
+            "Day 2 pre-dispatch day1a_artifact_name",
+        )
+        if not artifact_name.startswith("r2-day1a-publication-"):
+            raise Day2CalibrationAuthorityError(
+                "Day 2 pre-dispatch Day1A artifact name is not frozen"
+            )
+        artifact_digest = _require_nonempty_str(
+            anchor["day1a_artifact_digest"],
+            "Day 2 pre-dispatch day1a_artifact_digest",
+        )
+        if not artifact_digest.startswith("sha256:"):
+            raise Day2CalibrationAuthorityError(
+                "Day 2 pre-dispatch Day1A artifact digest is not a SHA-256"
+            )
+        _require_lower_sha256(
+            artifact_digest.removeprefix("sha256:"),
+            "Day 2 pre-dispatch Day1A artifact digest",
+        )
         digest_fields = _PROFILE_ANCHOR_KEYS - {
             "schema_version",
             "warmup_block_count",
             *expected_schemas,
+            "day1a_workflow_run_id",
+            "day1a_artifact_id",
+            "day1a_artifact_name",
+            "day1a_artifact_digest",
         }
         digests = {
             field: _require_lower_sha256(
@@ -1020,6 +1118,10 @@ def _decode_profile_anchor_set(content: bytes) -> tuple[_Day2CalibrationProfileB
                 serialized_object_accounting_contract_sha256=digests[
                     "serialized_object_accounting_contract_sha256"
                 ],
+                day1a_workflow_run_id=anchor["day1a_workflow_run_id"],
+                day1a_artifact_id=anchor["day1a_artifact_id"],
+                day1a_artifact_name=artifact_name,
+                day1a_artifact_digest=artifact_digest,
             )
         )
     return tuple(bindings)
@@ -1034,7 +1136,7 @@ def validate_day2_calibration_profile_anchor_document(content: bytes) -> None:
 def _decode_post_run_anchor_set(content: bytes) -> tuple[_Day2CalibrationBinding, ...]:
     payload = _decode_json(content, "Day 2 post-run anchor set")
     _require_exact_keys(payload, _POST_RUN_ANCHOR_SET_KEYS, "Day 2 post-run anchor set")
-    if payload["schema_version"] != "dynamic-cssc-day2-calibration-post-run-anchor-set-v3":
+    if payload["schema_version"] != "dynamic-cssc-day2-calibration-post-run-anchor-set-v4":
         raise Day2CalibrationAuthorityError("Day 2 post-run anchor-set schema is not frozen")
     anchors = payload["anchors"]
     if type(anchors) is not list or len(anchors) > 1:
@@ -1044,9 +1146,9 @@ def _decode_post_run_anchor_set(content: bytes) -> tuple[_Day2CalibrationBinding
     bindings: list[_Day2CalibrationBinding] = []
     for anchor in anchors:
         _require_exact_keys(anchor, _POST_RUN_ANCHOR_KEYS, "Day 2 post-run anchor")
-        if anchor["schema_version"] != "dynamic-cssc-day2-calibration-post-run-anchor-v3":
+        if anchor["schema_version"] != "dynamic-cssc-day2-calibration-post-run-anchor-v4":
             raise Day2CalibrationAuthorityError("Day 2 post-run anchor schema is not frozen")
-        if anchor["experiment_behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v2":
+        if anchor["experiment_behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v3":
             raise Day2CalibrationAuthorityError("Day 2 post-run Behavior Set schema is not frozen")
         experiment_source_git_sha = _require_lower_git_sha(
             anchor["experiment_source_git_sha"],
@@ -1102,6 +1204,14 @@ def _decode_post_run_anchor_set(content: bytes) -> tuple[_Day2CalibrationBinding
                     anchor["rotation_key_plan_sha256"],
                     "Day 2 post-run rotation key plan",
                 ),
+                generated_key_inventory_sha256=_require_lower_sha256(
+                    anchor["generated_key_inventory_sha256"],
+                    "Day 2 post-run generated key inventory",
+                ),
+                runtime_isolation_receipt_sha256=_require_lower_sha256(
+                    anchor["runtime_isolation_receipt_sha256"],
+                    "Day 2 post-run runtime isolation receipt",
+                ),
                 contract_bindings_sha256=_require_lower_sha256(
                     anchor["contract_bindings_sha256"],
                     "Day 2 post-run contract bindings",
@@ -1113,6 +1223,12 @@ def _decode_post_run_anchor_set(content: bytes) -> tuple[_Day2CalibrationBinding
             )
         )
     return tuple(bindings)
+
+
+def validate_day2_calibration_post_run_anchor_document(content: bytes) -> None:
+    """Validate the complete post-run anchor schema without granting authority."""
+
+    _decode_post_run_anchor_set(content)
 
 
 def _read_repository_anchor_set(relative_path: Path) -> bytes:
@@ -1261,7 +1377,7 @@ def _read_archive(path: Path) -> tuple[bytes, dict[str, bytes]]:
 def _validate_github_metadata(value: object, outer_sha256: str) -> dict[str, object]:
     if type(value) is not dict or set(value) != _GITHUB_METADATA_KEYS:
         raise Day2CalibrationAuthorityError("GitHub metadata keys must be exact")
-    if value["schema_version"] != "dynamic-cssc-publication-day2-github-artifact-metadata-v1":
+    if value["schema_version"] != "dynamic-cssc-publication-day2-github-artifact-metadata-v2":
         raise Day2CalibrationAuthorityError("GitHub metadata schema is not frozen")
     for field in ("repository", "artifact_name"):
         if type(value[field]) is not str or not value[field]:
@@ -1269,7 +1385,7 @@ def _validate_github_metadata(value: object, outer_sha256: str) -> dict[str, obj
     for field in ("repository_id", "run_id", "run_attempt", "artifact_id"):
         if type(value[field]) is not int or value[field] <= 0:
             raise Day2CalibrationAuthorityError(f"GitHub metadata {field} is invalid")
-    if value["workflow_path"] != ".github/workflows/day2-microbench.yml":
+    if value["workflow_path"] != ".github/workflows/day2-publication-calibration.yml":
         raise Day2CalibrationAuthorityError("GitHub metadata workflow_path is not frozen")
     _require_lower_sha256(value["workflow_file_sha256"], "github_metadata.workflow_file_sha256")
     if value["event_name"] != "workflow_dispatch":
@@ -1278,8 +1394,17 @@ def _validate_github_metadata(value: object, outer_sha256: str) -> dict[str, obj
         raise Day2CalibrationAuthorityError("GitHub metadata ref is invalid")
     if type(value["head_sha"]) is not str or _LOWER_GIT_SHA.fullmatch(value["head_sha"]) is None:
         raise Day2CalibrationAuthorityError("GitHub metadata head_sha is invalid")
-    if value["artifact_digest"] != f"sha256:{outer_sha256}":
-        raise Day2CalibrationAuthorityError("GitHub artifact digest does not match the archive")
+    artifact_digest = value["artifact_digest"]
+    if type(artifact_digest) is not str or not artifact_digest.startswith("sha256:"):
+        raise Day2CalibrationAuthorityError("GitHub artifact digest is invalid")
+    _require_lower_sha256(
+        artifact_digest.removeprefix("sha256:"),
+        "github_metadata.artifact_digest",
+    )
+    if value["inner_archive_sha256"] != outer_sha256:
+        raise Day2CalibrationAuthorityError(
+            "GitHub metadata inner archive digest does not match the archive"
+        )
     return value
 
 
@@ -1317,7 +1442,7 @@ def _validate_artifact_behavior_inventory(
         raise Day2CalibrationAuthorityError(
             "artifact Behavior inventory source SHA does not match source provenance"
         )
-    if value["behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v2":
+    if value["behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v3":
         raise Day2CalibrationAuthorityError("artifact Day 2 Behavior Set schema is not frozen")
     entries = value["entries"]
     if type(entries) is not list or not entries:
@@ -1400,7 +1525,7 @@ def _validate_workflow_provenance(
         raise Day2CalibrationAuthorityError("workflow event_name is not frozen")
     _require_nonempty_str(value["repository"], "workflow repository")
     _require_positive_int(value["repository_id"], "workflow repository_id")
-    if value["workflow_path"] != ".github/workflows/day2-microbench.yml":
+    if value["workflow_path"] != ".github/workflows/day2-publication-calibration.yml":
         raise Day2CalibrationAuthorityError("workflow path is not frozen")
     _require_lower_sha256(value["workflow_file_sha256"], "workflow file")
     _require_positive_int(value["run_id"], "workflow run_id")
@@ -1498,7 +1623,7 @@ def _validate_host_profile(
     openfhe: dict[str, object],
 ) -> None:
     _require_exact_keys(value, _HOST_PROFILE_KEYS, "host profile")
-    if value["schema_version"] != "dynamic-cssc-publication-day2-host-profile-v1":
+    if value["schema_version"] != "dynamic-cssc-publication-day2-host-profile-v2":
         raise Day2CalibrationAuthorityError("host profile schema is not frozen")
 
     hardware = value["hardware"]
@@ -1534,15 +1659,10 @@ def _validate_host_profile(
     ):
         _require_nonempty_str(os_profile[field], f"host OS {field}")
     _require_lower_sha256(os_profile["kernel_cmdline_sha256"], "host kernel cmdline")
-    container_digest = os_profile["container_image_digest"]
-    if (
-        type(container_digest) is not str
-        or not container_digest.startswith("sha256:")
-        or _LOWER_SHA256.fullmatch(container_digest.removeprefix("sha256:")) is None
-    ):
-        raise Day2CalibrationAuthorityError(
-            "host container image digest must be a lowercase SHA-256 digest"
-        )
+    _require_lower_sha256(
+        os_profile["runner_image_identity_sha256"],
+        "host runner image identity",
+    )
 
     compiler = value["compiler"]
     _require_exact_keys(compiler, _HOST_COMPILER_KEYS, "host compiler")
@@ -1560,46 +1680,48 @@ def _validate_host_profile(
     affinity = value["affinity"]
     _require_exact_keys(affinity, _HOST_AFFINITY_KEYS, "host affinity")
     requested = _canonical_cpu_list(affinity["requested_cpu_list"], "host requested CPU affinity")
-    effective = _canonical_cpu_list(
-        affinity["effective_process_cpu_list"], "host effective CPU affinity"
+    verified = _canonical_cpu_list(
+        affinity["verified_probe_cpu_list"], "host verified probe CPU affinity"
     )
-    if requested != effective:
+    if requested != verified:
         raise Day2CalibrationAuthorityError(
-            "host requested and effective CPU affinity must match exactly"
+            "host requested and verified probe CPU affinity must match exactly"
         )
-    if effective[-1] >= hardware["logical_cpu_count"]:
+    if verified[-1] >= hardware["logical_cpu_count"]:
         raise Day2CalibrationAuthorityError("host CPU affinity exceeds logical CPU count")
+    if affinity["probe_affinity_observation_stage"] != "pre-and-post-measurement-identical":
+        raise Day2CalibrationAuthorityError("host probe affinity observation is incomplete")
     if type(affinity["omp_num_threads"]) is not int or affinity["omp_num_threads"] != len(
-        effective
+        verified
     ):
         raise Day2CalibrationAuthorityError(
             "host OpenMP thread count must equal the effective CPU affinity"
         )
     if affinity["omp_proc_bind"] != "close" or affinity["omp_places"] != "cores":
         raise Day2CalibrationAuthorityError("host OpenMP affinity policy is not frozen")
-    observed_sets = affinity["per_block_observed_cpu_sets"]
-    if type(observed_sets) is not list or len(observed_sets) != CALIBRATION_MEASUREMENT_BLOCK_COUNT:
+    allowed_sets = affinity["per_block_allowed_cpu_sets"]
+    if type(allowed_sets) is not list or len(allowed_sets) != CALIBRATION_MEASUREMENT_BLOCK_COUNT:
         raise Day2CalibrationAuthorityError(
-            "host affinity must record exactly one CPU set per measurement block"
+            "host affinity must bind exactly one allowed CPU set per measurement block"
         )
-    for block_ordinal, observed in enumerate(observed_sets):
+    for block_ordinal, allowed in enumerate(allowed_sets):
         if (
-            _canonical_cpu_list(observed, f"host observed CPU set for block {block_ordinal}")
-            != effective
+            _canonical_cpu_list(allowed, f"host allowed CPU set for block {block_ordinal}")
+            != verified
         ):
             raise Day2CalibrationAuthorityError(
-                "host observed CPU sets must equal the effective CPU affinity"
+                "host allowed CPU sets must equal the verified probe CPU affinity"
             )
 
     power = value["power"]
     _require_exact_keys(power, _HOST_POWER_KEYS, "host power")
     _require_nonempty_str(power["scaling_driver"], "host power scaling_driver")
     governors = power["governor_by_cpu"]
-    if type(governors) is not list or len(governors) != len(effective):
+    if type(governors) is not list or len(governors) != len(verified):
         raise Day2CalibrationAuthorityError(
             "host power governor inventory must exactly cover effective CPUs"
         )
-    for index, (entry, expected_cpu) in enumerate(zip(governors, effective, strict=True)):
+    for index, (entry, expected_cpu) in enumerate(zip(governors, verified, strict=True)):
         _require_exact_keys(entry, _HOST_GOVERNOR_KEYS, f"host governor {index}")
         if type(entry["cpu"]) is not int or entry["cpu"] != expected_cpu:
             raise Day2CalibrationAuthorityError(
@@ -1616,16 +1738,42 @@ def _validate_host_profile(
             raise Day2CalibrationAuthorityError(
                 "host governor minimum frequency exceeds maximum frequency"
             )
-    if type(power["turbo_enabled"]) is not bool:
-        raise Day2CalibrationAuthorityError("host turbo state must be observable")
-    if power["ac_power"] is not True:
-        raise Day2CalibrationAuthorityError("host must run on observable AC power")
-    if (
-        power["thermal_throttling_before"] is not False
-        or power["thermal_throttling_after"] is not False
-    ):
+    if power["turbo_state"] not in {"enabled", "disabled", "unobservable"}:
+        raise Day2CalibrationAuthorityError("host turbo state is invalid")
+    if power["power_source"] not in {
+        "ac-observed-online",
+        "battery-or-disconnected-observed",
+        "server-or-vm-no-battery-interface",
+        "unobservable",
+    }:
+        raise Day2CalibrationAuthorityError("host power source is invalid")
+    counters_observable = power["thermal_throttle_counters_observable"]
+    if type(counters_observable) is not bool:
         raise Day2CalibrationAuthorityError(
-            "host thermal throttling must be absent before and after calibration"
+            "host thermal throttle observability must be Boolean"
+        )
+    before_count = power["thermal_throttle_count_before"]
+    after_count = power["thermal_throttle_count_after"]
+    throttling_observed = power["thermal_throttling_observed"]
+    if counters_observable:
+        if (
+            type(before_count) is not int
+            or before_count < 0
+            or type(after_count) is not int
+            or after_count < before_count
+            or type(throttling_observed) is not bool
+            or throttling_observed != (after_count > before_count)
+        ):
+            raise Day2CalibrationAuthorityError(
+                "host thermal throttle counters are inconsistent"
+            )
+    elif before_count is not None or after_count is not None or throttling_observed is not None:
+        raise Day2CalibrationAuthorityError(
+            "unobservable host thermal throttle fields must remain null"
+        )
+    if throttling_observed is True:
+        raise Day2CalibrationAuthorityError(
+            "host thermal throttling was observed during calibration"
         )
 
 
@@ -1643,7 +1791,8 @@ def _validate_contract_bindings(
         "day1a_count_bundle_sha256",
         "primitive_accounting_mapping_sha256",
         "serialized_object_accounting_contract_sha256",
-        "rotation_inventory_sha256",
+        "day1a_rotation_inventory_sha256",
+        "rotation_key_plan_sha256",
     ):
         _require_lower_sha256(value[field], f"contract binding {field}")
     if value["candidate_catalog_schema_version"] != "dynamic-cssc-day1-candidate-catalog-v1":
@@ -1666,9 +1815,14 @@ def _validate_contract_bindings(
         if value[field] != expected:
             label = field.removesuffix("_schema_version").replace("_", " ")
             raise Day2CalibrationAuthorityError(f"{label} schema is not frozen")
-    if value["rotation_inventory_sha256"] != _sha256(members["rotation-key-plan.json"]):
+    rotation_plan = _decode_json(members["rotation-key-plan.json"], "rotation-key-plan.json")
+    if value["day1a_rotation_inventory_sha256"] != rotation_plan["day1a_inventory_sha256"]:
         raise Day2CalibrationAuthorityError(
-            "rotation inventory binding does not match rotation-key-plan.json"
+            "Day1A rotation inventory binding does not match rotation-key-plan.json"
+        )
+    if value["rotation_key_plan_sha256"] != _sha256(members["rotation-key-plan.json"]):
+        raise Day2CalibrationAuthorityError(
+            "rotation key-plan binding does not match rotation-key-plan.json"
         )
 
 
@@ -1709,6 +1863,8 @@ def _validate_producer_validation(
         "raw_measurement_blocks_sha256": "raw-measurement-blocks.json",
         "operation_profile_set_sha256": "operation-profile-set.json",
         "rotation_key_plan_sha256": "rotation-key-plan.json",
+        "generated_key_inventory_sha256": "generated-key-inventory.json",
+        "runtime_isolation_receipt_sha256": "runtime-isolation-receipt.json",
     }
     for producer_field, filename in file_bindings.items():
         if value[producer_field] != _sha256(members[filename]):
@@ -1724,7 +1880,7 @@ def _validate_producer_validation(
 
 def _validate_rotation_key_plan(value: dict[str, object]) -> tuple[str, ...]:
     _require_exact_keys(value, _ROTATION_PLAN_KEYS, "rotation key plan")
-    if value["schema_version"] != "dynamic-cssc-publication-rotation-key-plan-v1":
+    if value["schema_version"] != "dynamic-cssc-publication-rotation-key-plan-v2":
         raise Day2CalibrationAuthorityError("rotation key plan schema is not frozen")
     _require_nonempty_str(
         value["inventory_source_schema_version"],
@@ -1745,10 +1901,10 @@ def _validate_rotation_key_plan(value: dict[str, object]) -> tuple[str, ...]:
         )
     if len({index % 4096 for index in required}) != len(required):
         raise Day2CalibrationAuthorityError("rotation inventory contains modulo-congruent aliases")
-    generated = _strict_int_list(value["generated_exact_indices"], "generated rotation indices")
-    if generated != required:
+    planned = _strict_int_list(value["planned_exact_indices"], "planned rotation indices")
+    if planned != required:
         raise Day2CalibrationAuthorityError(
-            "generated rotation indices must exactly match required indices"
+            "planned rotation indices must exactly match required indices"
         )
     if value["key_plan_kind"] != "direct-exact-index-v1":
         raise Day2CalibrationAuthorityError("rotation key plan kind is not frozen")
@@ -1759,6 +1915,27 @@ def _validate_rotation_key_plan(value: dict[str, object]) -> tuple[str, ...]:
     if type(case_ids) is not list or tuple(case_ids) != expected_case_ids:
         raise Day2CalibrationAuthorityError(
             "eval_rotate case IDs must exactly cover the required rotation indices"
+        )
+    return expected_case_ids
+
+
+def _validate_generated_key_inventory(
+    value: dict[str, object],
+    rotation_key_plan: dict[str, object],
+) -> None:
+    _require_exact_keys(value, _GENERATED_KEY_INVENTORY_KEYS, "generated key inventory")
+    if value["schema_version"] != "dynamic-cssc-publication-generated-key-inventory-v1":
+        raise Day2CalibrationAuthorityError("generated key inventory schema is not frozen")
+    if value["rotation_key_plan_sha256"] != _sha256(
+        _canonical_json_bytes(rotation_key_plan)
+    ):
+        raise Day2CalibrationAuthorityError(
+            "generated key inventory does not bind the rotation key plan"
+        )
+    generated = _strict_int_list(value["generated_exact_indices"], "generated rotation indices")
+    if generated != rotation_key_plan["required_exact_indices"]:
+        raise Day2CalibrationAuthorityError(
+            "generated rotation indices must exactly match the pre-dispatch plan"
         )
     _require_lower_sha256(
         value["serialized_rotation_key_inventory_sha256"],
@@ -1774,7 +1951,36 @@ def _validate_rotation_key_plan(value: dict[str, object]) -> tuple[str, ...]:
         value["serialized_eval_mult_key_bytes"],
         "serialized evaluation multiplication key bytes",
     )
-    return expected_case_ids
+
+
+def _validate_runtime_isolation_receipt(
+    value: dict[str, object],
+    source: dict[str, object],
+) -> None:
+    _require_exact_keys(value, _RUNTIME_ISOLATION_RECEIPT_KEYS, "runtime isolation receipt")
+    if value["schema_version"] != "dynamic-cssc-publication-day2-runtime-isolation-receipt-v1":
+        raise Day2CalibrationAuthorityError("runtime isolation receipt schema is not frozen")
+    if value["authority_state"] != "descriptive-live-capability-consumed-v1":
+        raise Day2CalibrationAuthorityError("runtime isolation authority state is not frozen")
+    if value["formal_authority_granted"] is not False:
+        raise Day2CalibrationAuthorityError("runtime isolation receipt cannot grant authority")
+    if value["source_git_sha"] != source["git_sha"]:
+        raise Day2CalibrationAuthorityError("runtime isolation source does not match provenance")
+    for field in (
+        "fresh_detached_checkout",
+        "clean_environment",
+        "isolated_build_root",
+        "caller_python_and_git_environment_removed",
+        "profile_authority_consumed_once",
+    ):
+        if value[field] is not True:
+            raise Day2CalibrationAuthorityError(
+                f"runtime isolation receipt {field} is not verified"
+            )
+    for field in ("launcher_source_sha256", "producer_source_sha256"):
+        _require_lower_sha256(value[field], f"runtime isolation receipt {field}")
+    if value["isolation_checks"] != list(DAY2_RUNTIME_ISOLATION_CHECKS):
+        raise Day2CalibrationAuthorityError("runtime isolation checks are not frozen")
 
 
 def _validate_operation_profiles(
@@ -1782,7 +1988,7 @@ def _validate_operation_profiles(
     rotation_case_ids: tuple[str, ...],
 ) -> tuple[int, int, dict[str, tuple[tuple[str, int], ...]]]:
     _require_exact_keys(value, _PROFILE_SET_KEYS, "operation profile set")
-    if value["schema_version"] != "dynamic-cssc-publication-operation-profile-set-v1":
+    if value["schema_version"] != "dynamic-cssc-publication-operation-profile-set-v2":
         raise Day2CalibrationAuthorityError("operation profile schema is not frozen")
     if value["primitive_names"] != list(PRIMITIVE_NAMES):
         raise Day2CalibrationAuthorityError(
@@ -1866,7 +2072,10 @@ def _validate_operation_profiles(
             )
             case_id = _require_nonempty_str(case["case_id"], f"{primitive_name} case_id")
             _require_nonempty_str(case["unit_definition"], f"{primitive_name} unit definition")
-            _require_lower_sha256(case["input_fixture_sha256"], f"{primitive_name} input fixture")
+            _require_lower_sha256(
+                case["input_fixture_contract_sha256"],
+                f"{primitive_name} input fixture contract",
+            )
             operation_count = _require_positive_int(
                 case["operation_count"], f"{primitive_name} operation_count"
             )
@@ -2057,13 +2266,16 @@ def inspect_day2_calibration_archive(
     host = payloads["host-profile.json"]
     openfhe = payloads["openfhe-build.json"]
     contract = payloads["contract-bindings.json"]
+    rotation_plan = payloads["rotation-key-plan.json"]
+    generated_keys = payloads["generated-key-inventory.json"]
     profiles = payloads["operation-profile-set.json"]
     raw = payloads["raw-measurement-blocks.json"]
     _validate_run_status(payloads["RUN_STATUS.json"])
     artifact_behavior_inventory = _validate_source_provenance(source)
     _validate_workflow_provenance(workflow, source, github)
     _validate_openfhe_build(openfhe)
-    rotation_case_ids = _validate_rotation_key_plan(payloads["rotation-key-plan.json"])
+    rotation_case_ids = _validate_rotation_key_plan(rotation_plan)
+    _validate_generated_key_inventory(generated_keys, rotation_plan)
     _validate_contract_bindings(contract, members)
     warmup_count, measurement_count, cases_by_primitive = _validate_operation_profiles(
         profiles,
@@ -2074,6 +2286,10 @@ def inspect_day2_calibration_archive(
         warmup_count=warmup_count,
         measurement_count=measurement_count,
         cases_by_primitive=cases_by_primitive,
+    )
+    _validate_runtime_isolation_receipt(
+        payloads["runtime-isolation-receipt.json"],
+        source,
     )
     _validate_host_profile(host, openfhe)
     projection_sha256 = _sha256(_canonical_json_bytes(_calibration_projection(raw)))
@@ -2097,6 +2313,8 @@ def inspect_day2_calibration_archive(
         raw_measurement_blocks_sha256=_sha256(members["raw-measurement-blocks.json"]),
         operation_profile_set_sha256=_sha256(members["operation-profile-set.json"]),
         rotation_key_plan_sha256=_sha256(members["rotation-key-plan.json"]),
+        generated_key_inventory_sha256=_sha256(members["generated-key-inventory.json"]),
+        runtime_isolation_receipt_sha256=_sha256(members["runtime-isolation-receipt.json"]),
         contract_bindings_sha256=_sha256(members["contract-bindings.json"]),
         calibration_projection_sha256=projection_sha256,
         artifact_behavior_inventory_sha256=_sha256(
@@ -2158,10 +2376,10 @@ def repository_day2_calibration_profile_authority() -> Day2CalibrationProfileAut
         raise Day2CalibrationAuthorityError(
             "Day 2 pre-dispatch repository anchor changed during source attestation"
         )
-    if attestation.runtime_execution_isolation_verified is not True:
-        raise Day2CalibrationAuthorityError(
-            "Day 2 pre-dispatch authority is HOLD until runtime execution isolation is verified"
-        )
+    # This capability binds immutable source/profile identities only.  Runtime
+    # isolation is necessarily established later, by the one-use launcher in
+    # the live worker process; requiring it on a static source attestation made
+    # this seam temporally impossible to satisfy.
     authority = _mint_repository_calibration_profile_authority(
         anchor=binding,
         experiment_source_git_sha=attestation.git_sha,
@@ -2257,10 +2475,10 @@ def repository_day2_calibration_authority() -> Day2CalibrationAuthority:
         raise Day2CalibrationAuthorityError(
             "current Day 2 Behavior Set does not match the experiment source anchor"
         )
-    if attestation.runtime_execution_isolation_verified is not True:
-        raise Day2CalibrationAuthorityError(
-            "Day 2 calibration authority is HOLD until runtime execution isolation is verified"
-        )
+    # Runtime isolation is reviewed through the archive-bound receipt whose
+    # digest is part of the post-run anchor.  The generic compatibility receipt
+    # intentionally remains runtime-authority-false and must not be treated as
+    # a second, impossible live launcher capability after the run.
     artifact_behavior_inventory = _decode_json(
         binding.artifact_behavior_inventory_document,
         "Day 2 post-run artifact Behavior inventory binding",
@@ -2283,7 +2501,6 @@ def repository_day2_calibration_authority() -> Day2CalibrationAuthority:
     required_receipt_state = (
         "compatibility_verified",
         "post_run_anchor_verified",
-        "runtime_execution_isolation_verified",
         "snapshot_compatibility_verified",
     )
     if type(document) is not dict or any(

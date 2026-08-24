@@ -1,0 +1,155 @@
+name: Day 2 formal publication calibration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: day2-publication-${{ github.repository_id }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  calibration:
+    name: Isolated 14-primitive OpenFHE calibration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      PYTHONPATH: src:.
+    steps:
+      - name: Check out the exact main-branch source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select the frozen Python interpreter
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12.13'
+
+      - name: Install native build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ninja-build libomp-dev util-linux
+
+      - name: Install the hash-pinned validation environment
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --require-hashes -r requirements-ci.txt
+
+      - name: Validate the exact formal producer surface
+        run: |
+          .venv/bin/python scripts/validate_manifest.py config/params_manifest.json
+          .venv/bin/python -m pytest -q \
+            tests/test_day2_calibration_authority.py \
+            tests/test_day2_calibration_github.py \
+            tests/test_day2_calibration_postrun.py \
+            tests/test_day2_calibration_profile.py \
+            tests/test_day2_calibration_runtime.py \
+            tests/test_day2_calibration_producer.py \
+            tests/test_day2_evidence_contract.py \
+            tests/test_day2_publication_workflow_contract.py \
+            tests/test_evidence_compatibility.py
+          .venv/bin/python -m ruff check \
+            scripts/capture_day2_github_metadata.py \
+            scripts/propose_day2_calibration_post_run_anchor.py \
+            scripts/run_day2_calibration_isolated.py \
+            src/dynamic_cssc/day2_calibration_authority.py \
+            src/dynamic_cssc/day2_calibration_github.py \
+            src/dynamic_cssc/day2_calibration_postrun.py \
+            src/dynamic_cssc/day2_calibration_profile.py \
+            src/dynamic_cssc/day2_calibration_producer.py \
+            src/dynamic_cssc/day2_calibration_runtime.py \
+            src/dynamic_cssc/evidence_compatibility.py \
+            tests/test_day2_calibration_authority.py \
+            tests/test_day2_calibration_github.py \
+            tests/test_day2_calibration_postrun.py \
+            tests/test_day2_calibration_profile.py \
+            tests/test_day2_calibration_producer.py \
+            tests/test_day2_calibration_runtime.py \
+            tests/test_day2_evidence_contract.py \
+            tests/test_day2_publication_workflow_contract.py \
+            tests/test_evidence_compatibility.py
+
+      - name: Read the sole reviewed Day 1A provider anchor
+        id: day1a-provider
+        run: |
+          .venv/bin/python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          from dynamic_cssc.day2_calibration_authority import (
+              validate_day2_calibration_profile_anchor_document,
+          )
+
+          path = Path('config/day2-calibration-profile-anchors.json')
+          content = path.read_bytes()
+          validate_day2_calibration_profile_anchor_document(content)
+          document = json.loads(content)
+          assert len(document['anchors']) == 1
+          anchor = document['anchors'][0]
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f"run_id={anchor['day1a_workflow_run_id']}\n")
+              output.write(f"artifact_id={anchor['day1a_artifact_id']}\n")
+          PY
+
+      - name: Download only the anchored Day 1A artifact by provider ID
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ steps.day1a-provider.outputs.artifact_id }}
+          run-id: ${{ steps.day1a-provider.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          path: ${{ runner.temp }}/day1a-artifact
+
+      - name: Corroborate Day 1A against the GitHub provider API
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          .venv/bin/python scripts/capture_day2_github_metadata.py day1a-input
+          --day1a-directory "${RUNNER_TEMP}/day1a-artifact/results/day1"
+          --output "${RUNNER_TEMP}/day1a-github-artifact-metadata.json"
+
+      - name: Run the one-use detached formal producer
+        run: |
+          mkdir --mode=700 "${RUNNER_TEMP}/day2-output"
+          .venv/bin/python scripts/run_day2_calibration_isolated.py \
+            --day1a-directory "${RUNNER_TEMP}/day1a-artifact/results/day1" \
+            --github-artifact-metadata \
+              "${RUNNER_TEMP}/day1a-github-artifact-metadata.json" \
+            --output-archive "${RUNNER_TEMP}/day2-output/day2-calibration.zip"
+
+      - name: Upload the immutable formal evidence ZIP
+        id: upload-evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r3-day2-calibration-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/day2-output/day2-calibration.zip
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 90
+
+      - name: Capture distinct provider-wrapper and inner-ZIP identities
+        env:
+          DAY2_UPLOADED_ARTIFACT_DIGEST: ${{ steps.upload-evidence.outputs.artifact-digest }}
+          DAY2_UPLOADED_ARTIFACT_ID: ${{ steps.upload-evidence.outputs.artifact-id }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          .venv/bin/python scripts/capture_day2_github_metadata.py day2-output
+          --archive "${RUNNER_TEMP}/day2-output/day2-calibration.zip"
+          --output "${RUNNER_TEMP}/day2-github-artifact-metadata.json"
+
+      - name: Upload the provider metadata sidecar
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: r3-day2-calibration-metadata-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/day2-github-artifact-metadata.json
+          compression-level: 0
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 90

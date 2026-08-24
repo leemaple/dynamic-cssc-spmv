@@ -228,7 +228,7 @@ def _write_day2_post_run_anchors(
         _canonical(
             {
                 "anchors": anchors,
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v3",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
             }
         ),
     )
@@ -244,7 +244,7 @@ def _write_day2_profile_anchors(
         _canonical(
             {
                 "anchors": anchors,
-                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
             }
         ),
     )
@@ -255,7 +255,7 @@ def _day2_profile_binding(
     day1a_authority_receipt_sha256: str = "4" * 64,
 ) -> dict[str, object]:
     return {
-        "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-v2",
+        "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-v3",
         "operation_profile_set_sha256": "1" * 64,
         "warmup_block_count": 3,
         "rotation_key_plan_sha256": "2" * 64,
@@ -280,6 +280,10 @@ def _day2_profile_binding(
             "dynamic-cssc-publication-serialized-object-accounting-v1"
         ),
         "serialized_object_accounting_contract_sha256": "c" * 64,
+        "day1a_workflow_run_id": 456,
+        "day1a_artifact_id": 789,
+        "day1a_artifact_name": "r2-day1a-publication-" + "a" * 40 + "-20260821",
+        "day1a_artifact_digest": "sha256:" + "d" * 64,
     }
 
 
@@ -1884,7 +1888,7 @@ def test_day2_post_run_binding_is_append_once_and_then_immutable(
         )
 
 
-def test_day2_post_run_anchor_set_uses_the_closed_v3_top_level_schema(
+def test_day2_post_run_anchor_set_rejects_an_obsolete_top_level_schema(
     trace_repository: tuple[Path, str, dict[str, object]],
 ) -> None:
     repository, experiment_sha, inventory = trace_repository
@@ -2187,15 +2191,24 @@ def test_role_sets_freeze_entrypoint_workflow_build_lock_runtime_and_transitive_
     assert set(TRACE_BEHAVIOR_PATHS) == trace_paths
     assert day1b_paths == set(DAY1B_PREPARATORY_BEHAVIOR_PATHS)
     assert {
-        ".github/workflows/day2-microbench.yml",
+        ".github/workflows/day2-publication-calibration.yml",
         "cpp/CMakeLists.txt",
         "cpp/include/args.hpp",
         "cpp/microbench.cpp",
         "requirements-ci.txt",
         "scripts/bootstrap_openfhe.sh",
         "scripts/build_cpp.sh",
+        "scripts/capture_day2_github_metadata.py",
+        "scripts/propose_day2_calibration_post_run_anchor.py",
+        "scripts/run_day2_calibration_isolated.py",
         "src/dynamic_cssc/day2_calibration_authority.py",
+        "src/dynamic_cssc/day2_calibration_github.py",
+        "src/dynamic_cssc/day2_calibration_postrun.py",
+        "src/dynamic_cssc/day2_calibration_profile.py",
+        "src/dynamic_cssc/day2_calibration_producer.py",
+        "src/dynamic_cssc/day2_calibration_runtime.py",
         "src/dynamic_cssc/plaintext_oracle.py",
+        "src/dynamic_cssc/publication_artifact_install.py",
         "src/dynamic_cssc/query_compiler.py",
         "src/dynamic_cssc/strategy_state.py",
         "src/dynamic_cssc/strong_execution.py",
