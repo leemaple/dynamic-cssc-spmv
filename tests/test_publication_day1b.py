@@ -490,7 +490,7 @@ def _trace() -> _Day1BTraceInput:
 
 def _source() -> _Day1BPreparatorySourceAttestation:
     inventory = {
-        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v9",
+        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v10",
         "behavior_set_sha256": "c" * 64,
         "entries": [],
         "role": "day1b",
@@ -996,7 +996,7 @@ def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v9"),
+            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v10"),
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -1085,7 +1085,7 @@ def test_public_producer_checks_profile_before_catalog_trace_or_worker(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v9",
+            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v10",
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -1138,6 +1138,65 @@ def test_pending_resource_policy_file_is_one_canonical_closed_non_authority_docu
         "candidate_retry_count": 0,
         "selective_candidate_retry_allowed": False,
     }
+
+
+def test_repository_resource_amendment_is_canonical_reviewed_and_non_authorizing() -> None:
+    root = Path(__file__).resolve().parents[1]
+    amendment_path = root / "config/publication-day1b-resource-amendment.json"
+    review_path = root / "docs/reviews/day1b-resource-amendment-review-2026-08-25.md"
+    content = amendment_path.read_bytes()
+
+    decoded = day1b_module._decode_day1b_resource_amendment(content)
+
+    assert content == _canonical_bytes(json.loads(content))
+    assert decoded.state == "RESOURCE-VALUES-FROZEN"
+    assert decoded.amendment_id == "day1b-resource-amendment-2026-08-25-001"
+    assert decoded.amendment_payload_sha256 == (
+        "ff3409d0a7e30a11b1cc28b1a8dede64652476b00e21baaf94751c823df4736c"
+    )
+    assert decoded.canonical_sha256 == hashlib.sha256(content).hexdigest()
+    assert decoded.schema_source_git_sha == "e4d5d63ddcc7cadf2d2efa870b9faf41ae573489"
+    assert decoded.schema_source_behavior_inventory_sha256 == (
+        "e23400d6c38245dec97928ff9766130be71c8e86365b06f440964ff97b2b23ec"
+    )
+    assert decoded.review_receipt_sha256 == hashlib.sha256(review_path.read_bytes()).hexdigest()
+    assert decoded.resource_policy.authority.startswith(
+        "non-authorizing-resource-amendment-binding:"
+    )
+    assert decoded.resource_policy.cells_per_shard == 18
+    assert decoded.resource_policy.max_concurrency == 1
+    assert decoded.resource_policy.candidate_retry_count == 0
+    assert decoded.resource_policy.output_bytes_per_unit == 8_000_000_000
+
+
+def test_repository_resource_policy_uses_reviewed_amendment_without_granting_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    pending = day1b_module._decode_pending_day1b_resource_policy(
+        (root / "config/publication-day1b-resource-policy.json").read_bytes()
+    )
+    amendment = day1b_module._decode_day1b_resource_amendment(
+        (root / "config/publication-day1b-resource-amendment.json").read_bytes()
+    )
+    monkeypatch.setattr(
+        day1b_module,
+        "_read_repository_day1b_pending_policy",
+        lambda _repository_root: pending,
+    )
+    monkeypatch.setattr(
+        day1b_module,
+        "_read_repository_day1b_resource_amendment",
+        lambda _repository_root: amendment,
+    )
+
+    policy = day1b_module._require_repository_day1b_resource_policy(Path("/unused"))
+
+    assert policy == amendment.resource_policy
+    assert policy.authority == (
+        "non-authorizing-resource-amendment-binding:"
+        f"{amendment.amendment_payload_sha256}"
+    )
 
 
 @pytest.mark.parametrize(

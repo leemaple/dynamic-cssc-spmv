@@ -59,7 +59,7 @@ def test_day1b_preparatory_workflow_uses_exact_pinned_runtime_and_lock() -> None
     assert "pip install -e" not in workflow
 
 
-def test_day1b_preparatory_workflow_only_validates_the_frozen_hold_contract() -> None:
+def test_day1b_preparatory_workflow_only_validates_the_frozen_non_authority_contract() -> None:
     workflow = _workflow()
     lowered = workflow.lower()
 
@@ -94,8 +94,9 @@ def test_day1b_preparatory_workflow_only_validates_the_frozen_hold_contract() ->
 def test_day1b_workflow_declares_pre_s1_preparatory_hold_without_artifact_steps() -> None:
     workflow = _workflow()
 
-    assert "PRE-S1 preparatory validation only" in workflow
+    assert "PRE-S1 resource-amendment validation only" in workflow
     assert "PENDING-FREEZE" in workflow
+    assert "reviewed amendment supplies administrative safety budgets only" in workflow
     assert "generic OpenFHE query runtime passed a non-authorizing smoke" in workflow
     assert "production Day1B candidate worker and admission receipt remain absent" in workflow
     assert "No publication execution or artifact production is permitted" in workflow
@@ -110,7 +111,7 @@ def test_preregistration_and_roadmap_keep_preparatory_inventory_non_authorizing(
     combined = preregistration + roadmap
 
     for required in (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v9",
+        "dynamic-cssc-day1b-preparatory-behavior-set-v10",
         "publication-day1b-preparatory.yml",
         "Source inventory is not dispatch authority",
         "controlled-scratch high-water",

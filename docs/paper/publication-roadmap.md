@@ -336,18 +336,22 @@ module, CLI, and workflow paths. This detects later drift in the mechanism that
 informed the resource amendment; it does not give the pilot a new
 `EvidenceRole`, attest its output, or make either output file admissible.
 
-After inspecting only those allowed fields, commit an outcome-independent
-amendment freezing the exact wall-clock, resident-memory, scratch/output-byte,
-shard, concurrency, preemption, and retry limits. The pilot and amendment occur
-before the clean pre-anchor `S1`, before the Terminal Registration Freeze, and
-before the Publication Evidence Lineage begins. Candidate failures receive no
-selective retry; a proven infrastructure preemption invalidates and permits at
-most one identical whole-shard rerun.
+Completed pre-`S1` checkpoint: after inspecting only those allowed fields, the
+reviewed outcome-independent amendment freezes the exact wall-clock,
+resident-memory, scratch/output-byte, shard, concurrency, preemption, and retry
+limits as administrative safety budgets. They are not candidate measurements
+or paper evidence. The pilot and amendment occur before the clean pre-anchor
+`S1`, before the Terminal Registration Freeze, and before the Publication
+Evidence Lineage begins. Candidate failures receive no selective retry; a
+proven infrastructure preemption invalidates and permits at most one identical
+whole-shard rerun.
 
-Because the current pilot reports a post-index store checkpoint rather than a
-controlled transient-scratch high-water, the amendment may not freeze a
-scratch cap from that field alone. It must add a separately reviewed
-controlled-scratch measurement or leave held-out dispatch on `HOLD`.
+Because the pilot reports a post-index store checkpoint rather than a
+controlled transient-scratch high-water, the amendment does not derive the
+candidate scratch cap from that field. Its 32,000,000,000-byte value is an
+administrative launcher-root ceiling. Held-out dispatch remains on `HOLD`
+until the production launcher implements and enforces the separately reviewed
+controlled-scratch high-water method.
 
 The preparatory Day1B worker receipt v3 now preserves one such measurement for
 the controller's exact anonymous registry/spool pair: the maximum checkpointed
@@ -363,9 +367,11 @@ now defined as a resource-only seam. It accepts only canonical frozen limits,
 measurement-method tokens, no-retry invariants, pilot/review digests, and a
 previously reviewed schema-source Git/Behavior-inventory binding; authority and
 worker/runtime identity are structurally absent. Its non-self-referential
-semantic digest and immutable decoded record do not install values or lift the
-repository `HOLD`. A real amendment file still requires its own reviewed
-pre-`S1` path plus a DAY1B Behavior Set version bump.
+semantic digest and immutable decoded record do not lift the repository
+`HOLD`. The real amendment and its outcome-blind review receipt are now frozen
+as pre-`S1` DAY1B Behavior Set v10 members. The resource loader can project its
+non-authorizing budget, after which the independent profile, trace, worker, and
+anchor gates still fail closed.
 
 The final selector is recomputed from measured compute costs plus serialized
 communication at the primary bandwidth. Day 1A's normalized proxy selector is
@@ -382,20 +388,22 @@ implementation evidence only. It cannot dispatch until the trace and catalog
 authorities, repository execution adapter, and outcome-blind resource policy
 are installed, and it is not a 30-unit publication artifact.
 
-The repository now also carries a PRE-S1 preparatory DAY1B source inventory,
-closed empirical-null/authority-false `PENDING-FREEZE` resource-policy document, and a
-manual no-input validation workflow. These freeze the current validator,
-protocol, scheduling, provenance, and artifact-installation source surface; they
-do not freeze empirical limits, authorize dispatch, publish an artifact, or
-grant a claim. A controller-owned pre-admission OpenFHE runtime now consumes the
+The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v10,
+the unchanged empirical-null/authority-false `PENDING-FREEZE` placeholder, the
+separate reviewed resource-only amendment, and a manual no-input validation
+workflow. These freeze the current validator, protocol, administrative safety
+budgets, scheduling, provenance, and artifact-installation source surface; they
+do not create empirical resource results, authorize dispatch, publish an
+artifact, or grant a claim. A controller-owned pre-admission OpenFHE runtime now consumes the
 single-use ordinary-query authorization immediately before launch, owns and
 removes exclusive private scratch, binds the runner/source/compiler identity,
 verifies result and serialized-object bytes, and records resource observations
-with authority fields false. The production two-path seam verifies this source
-and then stops on the pending policy before catalog, trace, anchor, worker, or
-output access. The workflow performs only hash-locked source-contract tests,
-static validation, and a real non-authorizing runtime smoke; it neither invokes
-the producer nor fetches or uploads publication data.
+with authority fields false. The production two-path seam verifies the pending
+placeholder and reviewed amendment, then stops on the next missing profile gate
+before catalog, trace, worker, or output access. The workflow performs only
+hash-locked source-contract tests, static validation, amendment validation, and
+a real non-authorizing runtime smoke; it neither invokes the producer nor
+fetches or uploads publication data.
 
 The sole numeric exception in that pending document is the already
 preregistered, non-empirical protocol invariant
@@ -404,8 +412,8 @@ preregistered, non-empirical protocol invariant
 resource limit or authorize execution; every empirical numeric and method
 choice remains `null`.
 
-The remaining Day1B `HOLD` set is explicit: an outcome-blind resource amendment,
-a controlled-scratch high-water and isolation method, linked-library/build
+The remaining Day1B `HOLD` set is explicit: a controlled-scratch high-water and
+isolation method, linked-library/build
 admission, a production candidate-cell worker adapter that implements ADR 0012
 window-weighted equivalence accounting and consumes the anchored Day 2 OpenFHE
 timing/size profile, the TRACE post-run anchor, and the Day-1 registration
@@ -414,10 +422,10 @@ would otherwise require 530,097,064 arrivals per trace unit and
 15,902,911,920 across all 30 units without adding independent layout states or
 measurements.
 Source inventory is not dispatch authority. Any
-future file containing actual runner identities or frozen policy values must be
-introduced by a reviewed pre-S1 path/schema and DAY1B Behavior Set version bump,
-then re-frozen before the Terminal Registration Freeze; it cannot be spliced
-into this preparatory schema after outcomes.
+future file containing actual runner identities must be introduced by a
+reviewed pre-S1 path/schema and DAY1B Behavior Set version bump, then re-frozen
+before the Terminal Registration Freeze; it cannot be spliced into this
+preparatory schema after outcomes.
 
 ### Phase F — statistics, mixed-circuit safety, and R4
 

@@ -445,33 +445,41 @@ reviewed preregistration amendment must choose one common outcome-independent
 tier satisfying `floor(N/10) <= K < floor(4N/10)`, rerun all structural pilots,
 and be committed before any candidate comparison.
 
-The execution resource envelope is `PENDING-FREEZE`. Before any held-out
-candidate execution, one outcome-blind amendment must commit the exact
-per-candidate/cell wall-clock limit, resident-memory limit, scratch/output-byte
-limit, shard/job limit, concurrency, preemption classification, and retry rule.
-Only the following closed structure-pilot protocol may inform those values.
+The numeric execution resource envelope is frozen by the reviewed,
+non-authorizing `config/publication-day1b-resource-amendment.json`. Its values
+are outcome-independent administrative safety budgets, not measured candidate
+resource results. Before any held-out candidate execution, the separately
+frozen production launcher must enforce the exact per-candidate/cell
+wall-clock, resident-memory, scratch/output-byte, shard/job, concurrency,
+preemption, and retry limits. Only the following closed structure-pilot
+protocol may inform the policy choice; it cannot turn a budget into an
+empirical claim.
 
 `config/publication-day1b-resource-policy.json` is currently the canonical
 closed pending placeholder, not an executable policy. Every empirical limit,
 measurement method, structure-pilot identity, amendment identity, worker/build/
 runtime identity, and ordinary-query private-plan identity is `null`; selective
 candidate retry is exactly zero; and every authority, dispatch, publication,
-and claim flag is exactly `false`. The production two-path Day1B entrypoint
-obtains the clean repository source internally, reads that exact Git-bound blob,
-and stops at `HOLD` before opening a trace, resolving a candidate catalog,
-launching a worker, or creating output. Filling any pending field or flipping a
-flag is invalid rather than an implicit promotion to an active policy.
+and claim flag is exactly `false`. Filling any pending field or flipping a flag
+is invalid rather than an implicit promotion to an active policy. The separate
+resource-only amendment leaves this placeholder unchanged, supplies no
+authority or worker/runtime identity, and cannot by itself open a trace,
+resolve a candidate catalog, launch a worker, or create output.
 
 The sole numeric exception in the pending document is
 `protocol_invariants.candidate_retry_count=0`. It records the already
 preregistered, non-empirical zero-selective-retry protocol invariant (paired
 with `selective_candidate_retry_allowed=false`); it is not a measured resource
-choice and cannot activate the policy. Every empirical numeric limit and every
-measurement-method choice remains `null`.
+choice and cannot activate the policy. Every empirical numeric-limit and
+measurement-method field in this placeholder remains `null`; the separate
+amendment is the sole reviewed source of administrative limits and
+measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v9` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v10` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
-the current pre-`S1` source surface. A successful workflow validation is not a
+the current pre-`S1` source surface, including the amendment and
+`docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
+workflow validation is not a
 dispatch receipt or evidence artifact: the workflow has no semantic inputs,
 does not fetch traces or held-out data, does not invoke the producer, uploads
 nothing, and cannot install an anchor. It now builds pinned OpenFHE 1.5.1 and
@@ -486,7 +494,7 @@ SHA-256 verification of every serialized input, result, and one-time key bundle.
 Its provisional depth-2/0/0 profile remains explicitly `HOLD` for mixed-circuit
 parameter authority.
 
-The v9 surface also contains a non-authorizing streaming accounting core. It
+The v10 surface also contains a non-authorizing streaming accounting core. It
 advances one candidate state exactly once per exact Publication Window, derives
 at most one typed query plan per query-bearing window, applies the window's
 integer query multiplicity before the fixed 14-primitive mapping, and retains
@@ -561,9 +569,11 @@ scratch high-water measurement and cannot alone freeze a scratch cap.
 `prefix_transition_serialized_bytes` is cumulative transient canonical byte
 volume checked by the sink, not retained output or scratch occupancy. Only
 aggregate serialization counts and bytes may enter the report; no transition
-payload artifact may be retained. A scratch limit remains `PENDING-FREEZE`
-unless the amendment adds a separately reviewed controlled-scratch high-water
-measurement.
+payload artifact may be retained. The amendment therefore does not derive its
+32,000,000,000-byte candidate scratch ceiling from either pilot field. That
+number is an administrative launcher-root budget; production remains on
+`HOLD` until the separately reviewed launcher-controlled-root high-water
+method exists and enforces it.
 
 The Day1B worker candidate-cell receipt v3 separately records
 `controller_observed_registered_scratch_peak_bytes`. The controller updates
@@ -598,10 +608,13 @@ previously reviewed schema-source Git SHA and DAY1B Behavior inventory. It has
 no authority or worker/runtime-identity field. Its semantic payload digest is
 computed after removing only that digest field; the eventual complete file is
 instead bound as an ordinary Git blob by the later DAY1B Behavior Set, avoiding
-a future-commit self-reference. The decoder's existence neither installs an
-amendment, supplies any measured value, reads a pilot report, nor changes the
-zero-argument production `HOLD`. Installing a real amendment remains a separate
-reviewed pre-`S1` path addition and DAY1B Behavior Set version bump.
+a future-commit self-reference. The reviewed amendment is now installed with
+semantic payload SHA-256
+`ff3409d0a7e30a11b1cc28b1a8dede64652476b00e21baaf94751c823df4736c`
+and canonical file SHA-256
+`c0a25acdb1cecc71ac83db69704121f59d419378988cd18faed9515d0f155d15`.
+It supplies administrative budgets only, reads no pilot file at production
+time, and does not change any independent production `HOLD`.
 
 Production execution additionally requires the manual workflow's fixed,
 pre-provisioned `PUBLICATION_STRUCTURE_PILOT_SCRATCH_ROOT`. The path must be
@@ -659,9 +672,10 @@ a new role nor attests or admits its output.
 
 Both output files are pre-freeze, permanently non-admissible, and
 non-promotable: they must never be copied into, cited as, or converted into a
-Publication Evidence Lineage artifact. Until their allowed fields have informed
-an outcome-independent resource amendment and that amendment is committed, all
-held-out execution is forbidden. The pilot, review, and amendment precede the
+Publication Evidence Lineage artifact. Their allowed fields have now informed
+the outcome-independent administrative policy review and the amendment is
+committed pre-`S1`; this satisfies only that resource-freeze prerequisite. The
+pilot, review, and amendment precede the
 clean pre-anchor `S1`; `S1`, the Terminal Registration Freeze, and the eventual
 Publication Evidence Lineage all occur afterward. The final policy applies
 identically to all candidates and cells. Candidate timeout, resource exhaustion,

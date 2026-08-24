@@ -33,8 +33,10 @@ from dynamic_cssc.day1_registry import (
 from dynamic_cssc.evidence_compatibility import (
     EvidenceCompatibilityError,
     EvidenceRole,
+    RoleSourceAttestation,
     capture_behavior_inventory,
     verify_current_role_source,
+    verify_day1b_resource_amendment_schema_source,
     verify_repository_anchor_history,
 )
 from dynamic_cssc.publication_artifact_install import (
@@ -114,8 +116,13 @@ DAY1B_REPLAY_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-trace-replay-recei
 DAY1B_ARTIFACT_VARIANT_SCHEMA = "dynamic-cssc-publication-day1b-artifact-variant-v1"
 
 _DAY1B_PENDING_RESOURCE_POLICY_PATH = "config/publication-day1b-resource-policy.json"
+_DAY1B_RESOURCE_AMENDMENT_PATH = "config/publication-day1b-resource-amendment.json"
+_DAY1B_RESOURCE_AMENDMENT_REVIEW_PATH = (
+    "docs/reviews/day1b-resource-amendment-review-2026-08-25.md"
+)
 _DAY1B_PENDING_RESOURCE_POLICY_BYTES_MAXIMUM = 32_768
 _DAY1B_RESOURCE_AMENDMENT_BYTES_MAXIMUM = 32_768
+_DAY1B_RESOURCE_AMENDMENT_REVIEW_BYTES_MAXIMUM = 64 * 1024
 _PENDING_RESOURCE_POLICY_KEYS = frozenset(
     {
         "amendment_identity",
@@ -1312,7 +1319,7 @@ def _validate_preparatory_source_attestation(
         inventory.get("role") != EvidenceRole.DAY1B.value
         or inventory.get("source_git_sha") != source.git_sha
         or inventory.get("behavior_set_schema_version")
-        != "dynamic-cssc-day1b-preparatory-behavior-set-v9"
+        != "dynamic-cssc-day1b-preparatory-behavior-set-v10"
     ):
         raise ValueError(
             "preparatory source inventory must bind the DAY1B role, schema, and exact S1"
@@ -3859,10 +3866,92 @@ def _produce_publication_day1b_unit_for_test(
     )
 
 
+def _read_day1b_behavior_member(
+    repository_root: Path,
+    *,
+    relative_path: str,
+    maximum_bytes: int,
+    field: str,
+    source_attestation: RoleSourceAttestation,
+    behavior_inventory: Mapping[str, object],
+) -> bytes:
+    """Read one current DAY1B 100644 member through its exact Git binding."""
+
+    if (
+        not isinstance(repository_root, Path)
+        or type(relative_path) is not str
+        or not relative_path
+        or type(maximum_bytes) is not int
+        or maximum_bytes <= 0
+        or type(field) is not str
+        or not field
+        or type(source_attestation) is not RoleSourceAttestation
+        or not isinstance(behavior_inventory, Mapping)
+    ):
+        raise TypeError("Day1B behavior-member read requires exact typed inputs")
+    if (
+        source_attestation.role is not EvidenceRole.DAY1B
+        or source_attestation.git_sha != behavior_inventory.get("source_git_sha")
+    ):
+        raise ValueError("Day1B behavior-member source binding is inconsistent")
+    entries = behavior_inventory.get("entries")
+    if type(entries) is not list:
+        raise ValueError(f"{field} Behavior inventory is malformed")
+    selected_entries = [
+        entry
+        for entry in entries
+        if type(entry) is dict and entry.get("path") == relative_path
+    ]
+    if len(selected_entries) != 1 or selected_entries[0].get("mode") != "100644":
+        raise ValueError(f"{field} must be one exact Git 100644 blob")
+    expected_sha256 = source_attestation.behavior_source_blob_sha256.get(relative_path)
+    if type(expected_sha256) is not str or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None:
+        raise ValueError(f"{field} Git digest is missing")
+
+    member_path = repository_root / relative_path
+    descriptor = os.open(
+        member_path,
+        os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or stat.S_IMODE(before.st_mode) != 0o644
+            or before.st_size <= 0
+            or before.st_size > maximum_bytes
+        ):
+            raise ValueError(f"{field} worktree member is not exact")
+        chunks: list[bytes] = []
+        remaining = before.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, 8192))
+            if not chunk:
+                raise OSError(f"{field} read ended early")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            raise OSError(f"{field} grew while being read")
+        after = os.fstat(descriptor)
+        if (after.st_dev, after.st_ino, after.st_mode, after.st_size) != (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+        ):
+            raise OSError(f"{field} changed while being read")
+    finally:
+        os.close(descriptor)
+    content = b"".join(chunks)
+    if hashlib.sha256(content).hexdigest() != expected_sha256:
+        raise ValueError(f"{field} differs from its exact Git blob")
+    return content
+
+
 def _read_repository_day1b_pending_policy(
     repository_root: Path,
 ) -> _PendingDay1BResourcePolicy:
-    """Read the one exact clean-Git pending policy without accepting caller facts."""
+    """Read the one exact clean-Git pending placeholder."""
 
     if not isinstance(repository_root, Path):
         raise TypeError("repository_root must be a pathlib.Path")
@@ -3872,80 +3961,81 @@ def _read_repository_day1b_pending_policy(
         source_git_sha=first_attestation.git_sha,
         repository_root=repository_root,
     )
-    entries = inventory.get("entries")
-    if type(entries) is not list:
-        raise ValueError("pending Day1B resource policy Behavior inventory is malformed")
-    policy_entries = [
-        entry
-        for entry in entries
-        if type(entry) is dict and entry.get("path") == _DAY1B_PENDING_RESOURCE_POLICY_PATH
-    ]
-    if len(policy_entries) != 1 or policy_entries[0].get("mode") != "100644":
-        raise ValueError("pending Day1B resource policy must be one exact Git 100644 blob")
-    expected_sha256 = first_attestation.behavior_source_blob_sha256.get(
-        _DAY1B_PENDING_RESOURCE_POLICY_PATH
+    content = _read_day1b_behavior_member(
+        repository_root,
+        relative_path=_DAY1B_PENDING_RESOURCE_POLICY_PATH,
+        maximum_bytes=_DAY1B_PENDING_RESOURCE_POLICY_BYTES_MAXIMUM,
+        field="pending Day1B resource policy",
+        source_attestation=first_attestation,
+        behavior_inventory=inventory,
     )
-    if type(expected_sha256) is not str or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None:
-        raise ValueError("pending Day1B resource policy Git digest is missing")
-
-    policy_path = repository_root / _DAY1B_PENDING_RESOURCE_POLICY_PATH
-    descriptor = os.open(
-        policy_path,
-        os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
-    )
-    try:
-        before = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(before.st_mode)
-            or stat.S_IMODE(before.st_mode) != 0o644
-            or before.st_size <= 0
-            or before.st_size > _DAY1B_PENDING_RESOURCE_POLICY_BYTES_MAXIMUM
-        ):
-            raise ValueError("pending Day1B resource policy worktree member is not exact")
-        chunks: list[bytes] = []
-        remaining = before.st_size
-        while remaining:
-            chunk = os.read(descriptor, min(remaining, 8192))
-            if not chunk:
-                raise OSError("pending Day1B resource policy read ended early")
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        if os.read(descriptor, 1):
-            raise OSError("pending Day1B resource policy grew while being read")
-        after = os.fstat(descriptor)
-        if (after.st_dev, after.st_ino, after.st_mode, after.st_size) != (
-            before.st_dev,
-            before.st_ino,
-            before.st_mode,
-            before.st_size,
-        ):
-            raise OSError("pending Day1B resource policy changed while being read")
-    finally:
-        os.close(descriptor)
-    content = b"".join(chunks)
-    if hashlib.sha256(content).hexdigest() != expected_sha256:
-        raise ValueError("pending Day1B resource policy differs from its exact Git blob")
     pending = _decode_pending_day1b_resource_policy(content)
     if verify_current_role_source(EvidenceRole.DAY1B, repository_root) != first_attestation:
         raise ValueError("DAY1B source changed while reading the pending resource policy")
     return pending
 
 
+def _read_repository_day1b_resource_amendment(
+    repository_root: Path,
+) -> _Day1BResourceAmendment:
+    """Read and bind the reviewed resource-only amendment without authority."""
+
+    if not isinstance(repository_root, Path):
+        raise TypeError("repository_root must be a pathlib.Path")
+    first_attestation = verify_current_role_source(EvidenceRole.DAY1B, repository_root)
+    inventory = capture_behavior_inventory(
+        EvidenceRole.DAY1B,
+        source_git_sha=first_attestation.git_sha,
+        repository_root=repository_root,
+    )
+    amendment_content = _read_day1b_behavior_member(
+        repository_root,
+        relative_path=_DAY1B_RESOURCE_AMENDMENT_PATH,
+        maximum_bytes=_DAY1B_RESOURCE_AMENDMENT_BYTES_MAXIMUM,
+        field="Day1B resource amendment",
+        source_attestation=first_attestation,
+        behavior_inventory=inventory,
+    )
+    review_content = _read_day1b_behavior_member(
+        repository_root,
+        relative_path=_DAY1B_RESOURCE_AMENDMENT_REVIEW_PATH,
+        maximum_bytes=_DAY1B_RESOURCE_AMENDMENT_REVIEW_BYTES_MAXIMUM,
+        field="Day1B resource-amendment review receipt",
+        source_attestation=first_attestation,
+        behavior_inventory=inventory,
+    )
+    amendment = _decode_day1b_resource_amendment(amendment_content)
+    if hashlib.sha256(review_content).hexdigest() != amendment.review_receipt_sha256:
+        raise ValueError("Day1B resource amendment does not bind its exact review receipt")
+    verify_day1b_resource_amendment_schema_source(
+        source_git_sha=amendment.schema_source_git_sha,
+        current_git_sha=first_attestation.git_sha,
+        expected_inventory_sha256=amendment.schema_source_behavior_inventory_sha256,
+        repository_root=repository_root,
+    )
+    if verify_current_role_source(EvidenceRole.DAY1B, repository_root) != first_attestation:
+        raise ValueError("DAY1B source changed while reading the resource amendment")
+    return amendment
+
+
 def _require_repository_day1b_resource_policy(
     repository_root: Path,
 ) -> PublicationDay1BResourcePolicy:
-    """Validate the pending source document and unconditionally retain HOLD."""
+    """Return the reviewed budget while retaining all independent HOLD gates."""
 
     try:
-        pending = _read_repository_day1b_pending_policy(repository_root)
+        _read_repository_day1b_pending_policy(repository_root)
     except (EvidenceCompatibilityError, OSError, TypeError, ValueError) as error:
         raise PublicationDay1BHold(
             f"HOLD: repository Day1B pending resource policy is invalid: {error}"
         ) from error
-    raise PublicationDay1BHold(
-        "HOLD: publication Day1B resource policy is PENDING-FREEZE; "
-        f"descriptive policy sha256={pending.canonical_sha256}"
-    )
+    try:
+        amendment = _read_repository_day1b_resource_amendment(repository_root)
+    except (EvidenceCompatibilityError, OSError, TypeError, ValueError) as error:
+        raise PublicationDay1BHold(
+            f"HOLD: repository Day1B resource amendment is invalid: {error}"
+        ) from error
+    return amendment.resource_policy
 
 
 def _repository_day1b_resource_policy() -> PublicationDay1BResourcePolicy:
