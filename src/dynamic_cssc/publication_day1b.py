@@ -105,8 +105,114 @@ DAY1B_SERIALIZATION_LEDGER_SCHEMA = (
     "dynamic-cssc-publication-day1b-serialized-protocol-object-ledger-v1"
 )
 DAY1B_RESOURCE_POLICY_SCHEMA = "dynamic-cssc-publication-day1b-resource-policy-v1"
+DAY1B_PENDING_RESOURCE_POLICY_SCHEMA = "dynamic-cssc-publication-day1b-resource-policy-pending-v1"
 DAY1B_REPLAY_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-trace-replay-receipt-v1"
 DAY1B_ARTIFACT_VARIANT_SCHEMA = "dynamic-cssc-publication-day1b-artifact-variant-v1"
+
+_DAY1B_PENDING_RESOURCE_POLICY_PATH = "config/publication-day1b-resource-policy.json"
+_DAY1B_PENDING_RESOURCE_POLICY_BYTES_MAXIMUM = 32_768
+_PENDING_RESOURCE_POLICY_KEYS = frozenset(
+    {
+        "amendment_identity",
+        "authority",
+        "limits",
+        "measurement_methods",
+        "pilot_evidence",
+        "protocol_invariants",
+        "schema_version",
+        "state",
+        "worker_runtime_identity",
+    }
+)
+_PENDING_PROTOCOL_INVARIANT_KEYS = frozenset(
+    {
+        "candidate_retry_count",
+        "selective_candidate_retry_allowed",
+    }
+)
+_PENDING_AMENDMENT_IDENTITY_KEYS = frozenset(
+    {
+        "resource_policy_amendment_git_sha",
+        "resource_policy_amendment_id",
+        "resource_policy_amendment_sha256",
+    }
+)
+_PENDING_AUTHORITY_KEYS = frozenset(
+    {
+        "artifact_publication_authorized",
+        "claims_authorized",
+        "common_ordinary_query_preparation_verified",
+        "controller_scratch_isolation_verified",
+        "day1_registration_anchor_verified",
+        "dispatch_authorized",
+        "formal_authority_granted",
+        "full_openfhe_runner_verified",
+        "outcome_blind_structure_pilot_reviewed",
+        "resource_policy_frozen",
+        "trace_post_run_anchor_verified",
+        "workflow_dispatch_authorized",
+    }
+)
+_PENDING_LIMIT_KEYS = frozenset(
+    {
+        "cells_per_shard",
+        "controller_registered_scratch_bytes_checkpoint_maximum",
+        "infrastructure_preemption_whole_shard_rerun_limit",
+        "job_cost_budget_usd_maximum",
+        "job_wall_clock_seconds_maximum",
+        "max_concurrency",
+        "output_bytes_per_unit",
+        "resident_memory_bytes_per_candidate_cell",
+        "scratch_bytes_per_candidate_cell",
+        "serialized_object_bytes_maximum",
+        "serialized_object_receipt_count_maximum",
+        "serialized_object_receipt_spool_bytes_maximum",
+        "serialized_payload_bytes_per_cell_maximum",
+        "shard_cost_budget_usd_maximum",
+        "shard_wall_clock_seconds_maximum",
+        "wall_clock_seconds_per_candidate_cell",
+        "worker_frame_count_maximum",
+    }
+)
+_PENDING_MEASUREMENT_METHOD_KEYS = frozenset(
+    {
+        "controlled_scratch_high_water_measurement_method",
+        "controlled_scratch_root_policy",
+        "controller_scratch_observation_method",
+        "infrastructure_preemption_classification_method",
+        "output_byte_observation_method",
+        "resident_memory_observation_method",
+        "scratch_observation_method",
+        "wall_clock_observation_method",
+    }
+)
+_PENDING_PILOT_EVIDENCE_KEYS = frozenset(
+    {
+        "review_receipt_sha256",
+        "structure_pilot_checksums_sha256",
+        "structure_pilot_report_sha256",
+        "structure_pilot_source_git_sha",
+    }
+)
+_PENDING_WORKER_RUNTIME_IDENTITY_KEYS = frozenset(
+    {
+        "common_ordinary_private_plan_schema_version",
+        "common_ordinary_query_preparation_schema_version",
+        "compiler_flags",
+        "compiler_identity",
+        "controller_scratch_capability_schema_version",
+        "cpu_affinity_policy",
+        "full_openfhe_runner_path",
+        "full_openfhe_runner_sha256",
+        "full_openfhe_runtime_receipt_schema_version",
+        "host_identity",
+        "openfhe_build_identity_sha256",
+        "openfhe_version",
+        "operating_system_identity",
+        "worker_adapter_schema_version",
+        "worker_build_receipt_sha256",
+    }
+)
 
 _PRODUCTION_TRACE_PROJECTION_TOKEN = object()
 _TEST_TRACE_PROJECTION_TOKEN = object()
@@ -463,6 +569,90 @@ class PublicationDay1BHold(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class _PendingDay1BResourcePolicy:
+    """Closed descriptive identity of a policy that cannot authorize execution."""
+
+    state: str
+    canonical_sha256: str
+
+
+def _decode_pending_day1b_resource_policy(content: bytes) -> _PendingDay1BResourcePolicy:
+    """Decode only the empirical-null, authority-false pre-S1 placeholder."""
+
+    if (
+        type(content) is not bytes
+        or not content
+        or len(content) > (_DAY1B_PENDING_RESOURCE_POLICY_BYTES_MAXIMUM)
+    ):
+        raise ValueError("pending Day1B resource policy bytes are outside the closed bound")
+
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        document: dict[str, object] = {}
+        for key, value in pairs:
+            if key in document:
+                raise ValueError("pending Day1B resource policy contains a duplicate key")
+            document[key] = value
+        return document
+
+    try:
+        document = json.loads(
+            content.decode("utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=lambda token: (_ for _ in ()).throw(
+                ValueError(f"pending Day1B resource policy contains {token}")
+            ),
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("pending Day1B resource policy is not canonical UTF-8 JSON") from error
+    if (
+        type(document) is not dict
+        or set(document) != _PENDING_RESOURCE_POLICY_KEYS
+        or canonical_json_bytes(document) != content
+    ):
+        raise ValueError("pending Day1B resource policy top-level document is not exact")
+
+    nested_contracts = (
+        ("amendment_identity", _PENDING_AMENDMENT_IDENTITY_KEYS, None),
+        ("authority", _PENDING_AUTHORITY_KEYS, False),
+        ("limits", _PENDING_LIMIT_KEYS, None),
+        ("measurement_methods", _PENDING_MEASUREMENT_METHOD_KEYS, None),
+        ("pilot_evidence", _PENDING_PILOT_EVIDENCE_KEYS, None),
+        ("worker_runtime_identity", _PENDING_WORKER_RUNTIME_IDENTITY_KEYS, None),
+    )
+    for field, expected_keys, expected_value in nested_contracts:
+        nested = document[field]
+        if (
+            type(nested) is not dict
+            or set(nested) != expected_keys
+            or any(value is not expected_value for value in nested.values())
+        ):
+            raise ValueError(
+                f"pending Day1B resource policy {field} must retain its exact placeholder state"
+            )
+    protocol_invariants = document["protocol_invariants"]
+    if (
+        type(protocol_invariants) is not dict
+        or set(protocol_invariants) != _PENDING_PROTOCOL_INVARIANT_KEYS
+        or type(protocol_invariants["candidate_retry_count"]) is not int
+        or protocol_invariants["candidate_retry_count"] != 0
+        or protocol_invariants["selective_candidate_retry_allowed"] is not False
+    ):
+        raise ValueError(
+            "pending Day1B resource policy must retain the preregistered no-retry "
+            "protocol invariant"
+        )
+    if (
+        document["schema_version"] != DAY1B_PENDING_RESOURCE_POLICY_SCHEMA
+        or document["state"] != "PENDING-FREEZE"
+    ):
+        raise ValueError("pending Day1B resource policy cannot be promoted or retargeted")
+    return _PendingDay1BResourcePolicy(
+        state="PENDING-FREEZE",
+        canonical_sha256=hashlib.sha256(content).hexdigest(),
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class PublicationDay1BResourcePolicy:
     """One outcome-blind resource envelope fixed before a unit is dispatched."""
 
@@ -603,7 +793,7 @@ class _Day1BTraceInput:
 
 
 @dataclass(frozen=True, slots=True)
-class _Day1BSourceAuthority:
+class _Day1BPreparatorySourceAttestation:
     git_sha: str
     behavior_inventory: Mapping[str, object]
     source_attestation: str
@@ -838,9 +1028,11 @@ def _phase_query_count(accepted_range: tuple[int, int], rho: Fraction) -> int:
     return (end * rho.numerator // rho.denominator) - (start * rho.numerator // rho.denominator)
 
 
-def _validate_source_authority(source: _Day1BSourceAuthority) -> None:
-    if type(source) is not _Day1BSourceAuthority:
-        raise TypeError("source_authority must be an exact typed authority")
+def _validate_preparatory_source_attestation(
+    source: _Day1BPreparatorySourceAttestation,
+) -> None:
+    if type(source) is not _Day1BPreparatorySourceAttestation:
+        raise TypeError("source_attestation must be an exact typed preparatory attestation")
     _require_git_sha(source.git_sha, "experiment source Git SHA")
     if type(source.behavior_inventory) is not dict:
         raise ValueError("experiment source behavior inventory must be an exact object")
@@ -848,11 +1040,15 @@ def _validate_source_authority(source: _Day1BSourceAuthority) -> None:
     if (
         inventory.get("role") != EvidenceRole.DAY1B.value
         or inventory.get("source_git_sha") != source.git_sha
+        or inventory.get("behavior_set_schema_version")
+        != "dynamic-cssc-day1b-preparatory-behavior-set-v1"
     ):
-        raise ValueError("experiment source inventory must bind the DAY1B role and exact S1")
+        raise ValueError(
+            "preparatory source inventory must bind the DAY1B role, schema, and exact S1"
+        )
     _require_sha256(inventory.get("behavior_set_sha256"), "Behavior Set digest")
     if type(source.source_attestation) is not str or not source.source_attestation:
-        raise ValueError("source authority attestation must be a nonempty string")
+        raise ValueError("preparatory source attestation must be a nonempty string")
 
 
 def _validate_trace(trace: _Day1BTraceInput) -> None:
@@ -946,7 +1142,7 @@ def _artifact_variant_contract(
     token: object,
     *,
     trace: _Day1BTraceInput,
-    source: _Day1BSourceAuthority,
+    source: _Day1BPreparatorySourceAttestation,
 ) -> tuple[Mapping[str, object], str, str]:
     """Select one closed artifact variant and reject crossed provenance facts."""
 
@@ -1050,7 +1246,7 @@ def _validate_program(
 
 def _trace_unit_document(
     trace: _Day1BTraceInput,
-    source: _Day1BSourceAuthority,
+    source: _Day1BPreparatorySourceAttestation,
 ) -> dict[str, object]:
     ranges = _expected_phase_ranges(trace.accepted_group_count)
     range_fields: dict[str, object] = {
@@ -1080,7 +1276,7 @@ def _trace_unit_document(
 def _cell_document(
     trace_unit: Mapping[str, object],
     trace: _Day1BTraceInput,
-    source: _Day1BSourceAuthority,
+    source: _Day1BPreparatorySourceAttestation,
     program: _PublicationScheduleAdapter,
     freshness: Fraction,
     audit: _CellAudit,
@@ -3095,7 +3291,7 @@ def _produce_publication_day1b_unit(
     *,
     trace: _Day1BTraceInput,
     output_dir: Path,
-    source_authority: _Day1BSourceAuthority,
+    source_attestation: _Day1BPreparatorySourceAttestation,
     candidate_catalog: Day1CandidateCatalog,
     resource_policy: PublicationDay1BResourcePolicy,
     execution_adapter: _Day1BExecutionAdapter,
@@ -3114,7 +3310,7 @@ def _produce_publication_day1b_unit(
     ):
         raise TypeError("Day1B artifact variant requires one exact producer capability")
     _validate_trace(trace)
-    _validate_source_authority(source_authority)
+    _validate_preparatory_source_attestation(source_attestation)
     candidates = _validate_catalog(candidate_catalog)
     if type(resource_policy) is not PublicationDay1BResourcePolicy:
         raise TypeError("resource_policy must be an exact fixed policy")
@@ -3123,14 +3319,14 @@ def _produce_publication_day1b_unit(
     artifact_variant, unit_schema, fragment_schema = _artifact_variant_contract(
         artifact_variant_token,
         trace=trace,
-        source=source_authority,
+        source=source_attestation,
     )
 
     programs = tuple(trace.compile_schedule(Fraction(rho)) for rho in RHO_VALUES)
     for program, rho in zip(programs, (Fraction(value) for value in RHO_VALUES), strict=True):
         _validate_program(program, trace=trace, rho=rho)
 
-    trace_unit = _trace_unit_document(trace, source_authority)
+    trace_unit = _trace_unit_document(trace, source_attestation)
     registration = asdict(candidate_catalog.registration)
     catalog_document = {
         "registration": registration,
@@ -3156,7 +3352,7 @@ def _produce_publication_day1b_unit(
                 cell = _cell_document(
                     trace_unit,
                     trace,
-                    source_authority,
+                    source_attestation,
                     program,
                     freshness,
                     audit,
@@ -3307,7 +3503,7 @@ def _produce_publication_day1b_unit(
 
         fragment = {
             "schema_version": fragment_schema,
-            "experiment_source_git_sha": source_authority.git_sha,
+            "experiment_source_git_sha": source_attestation.git_sha,
             "trace_units": [trace_unit],
             "cell_bindings": cells,
             "records": records,
@@ -3323,9 +3519,9 @@ def _produce_publication_day1b_unit(
                 "source_partition": trace.source_partition,
             },
             "experiment_source": {
-                "git_sha": source_authority.git_sha,
-                "source_attestation": source_authority.source_attestation,
-                "behavior_inventory": dict(source_authority.behavior_inventory),
+                "git_sha": source_attestation.git_sha,
+                "source_attestation": source_attestation.source_attestation,
+                "behavior_inventory": dict(source_attestation.behavior_inventory),
             },
             "trace_source": {
                 "trace_manifest_schema_version": PUBLICATION_TRACE_MANIFEST_SCHEMA,
@@ -3412,7 +3608,7 @@ def _produce_publication_day1b_unit_for_test(
     *,
     trace: _Day1BTraceInput,
     output_dir: Path,
-    source_authority: _Day1BSourceAuthority,
+    source_attestation: _Day1BPreparatorySourceAttestation,
     candidate_catalog: Day1CandidateCatalog,
     resource_policy: PublicationDay1BResourcePolicy,
     execution_adapter: _Day1BExecutionAdapter,
@@ -3425,7 +3621,7 @@ def _produce_publication_day1b_unit_for_test(
     return _produce_publication_day1b_unit(
         trace=trace,
         output_dir=output_dir,
-        source_authority=source_authority,
+        source_attestation=source_attestation,
         candidate_catalog=candidate_catalog,
         resource_policy=resource_policy,
         execution_adapter=execution_adapter,
@@ -3434,16 +3630,103 @@ def _produce_publication_day1b_unit_for_test(
     )
 
 
-def _repository_day1b_resource_policy() -> PublicationDay1BResourcePolicy:
-    raise PublicationDay1BHold(
-        "HOLD: publication Day1B resource policy is still PENDING-FREEZE after the "
-        "outcome-blind structure pilot"
+def _read_repository_day1b_pending_policy(
+    repository_root: Path,
+) -> _PendingDay1BResourcePolicy:
+    """Read the one exact clean-Git pending policy without accepting caller facts."""
+
+    if not isinstance(repository_root, Path):
+        raise TypeError("repository_root must be a pathlib.Path")
+    first_attestation = verify_current_role_source(EvidenceRole.DAY1B, repository_root)
+    inventory = capture_behavior_inventory(
+        EvidenceRole.DAY1B,
+        source_git_sha=first_attestation.git_sha,
+        repository_root=repository_root,
     )
+    entries = inventory.get("entries")
+    if type(entries) is not list:
+        raise ValueError("pending Day1B resource policy Behavior inventory is malformed")
+    policy_entries = [
+        entry
+        for entry in entries
+        if type(entry) is dict and entry.get("path") == _DAY1B_PENDING_RESOURCE_POLICY_PATH
+    ]
+    if len(policy_entries) != 1 or policy_entries[0].get("mode") != "100644":
+        raise ValueError("pending Day1B resource policy must be one exact Git 100644 blob")
+    expected_sha256 = first_attestation.behavior_source_blob_sha256.get(
+        _DAY1B_PENDING_RESOURCE_POLICY_PATH
+    )
+    if type(expected_sha256) is not str or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None:
+        raise ValueError("pending Day1B resource policy Git digest is missing")
+
+    policy_path = repository_root / _DAY1B_PENDING_RESOURCE_POLICY_PATH
+    descriptor = os.open(
+        policy_path,
+        os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or stat.S_IMODE(before.st_mode) != 0o644
+            or before.st_size <= 0
+            or before.st_size > _DAY1B_PENDING_RESOURCE_POLICY_BYTES_MAXIMUM
+        ):
+            raise ValueError("pending Day1B resource policy worktree member is not exact")
+        chunks: list[bytes] = []
+        remaining = before.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, 8192))
+            if not chunk:
+                raise OSError("pending Day1B resource policy read ended early")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if os.read(descriptor, 1):
+            raise OSError("pending Day1B resource policy grew while being read")
+        after = os.fstat(descriptor)
+        if (after.st_dev, after.st_ino, after.st_mode, after.st_size) != (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+        ):
+            raise OSError("pending Day1B resource policy changed while being read")
+    finally:
+        os.close(descriptor)
+    content = b"".join(chunks)
+    if hashlib.sha256(content).hexdigest() != expected_sha256:
+        raise ValueError("pending Day1B resource policy differs from its exact Git blob")
+    pending = _decode_pending_day1b_resource_policy(content)
+    if verify_current_role_source(EvidenceRole.DAY1B, repository_root) != first_attestation:
+        raise ValueError("DAY1B source changed while reading the pending resource policy")
+    return pending
+
+
+def _require_repository_day1b_resource_policy(
+    repository_root: Path,
+) -> PublicationDay1BResourcePolicy:
+    """Validate the pending source document and unconditionally retain HOLD."""
+
+    try:
+        pending = _read_repository_day1b_pending_policy(repository_root)
+    except (EvidenceCompatibilityError, OSError, TypeError, ValueError) as error:
+        raise PublicationDay1BHold(
+            f"HOLD: repository Day1B pending resource policy is invalid: {error}"
+        ) from error
+    raise PublicationDay1BHold(
+        "HOLD: publication Day1B resource policy is PENDING-FREEZE; "
+        f"descriptive policy sha256={pending.canonical_sha256}"
+    )
+
+
+def _repository_day1b_resource_policy() -> PublicationDay1BResourcePolicy:
+    return _require_repository_day1b_resource_policy(Path(__file__).resolve().parents[2])
 
 
 def _repository_day1b_execution_adapter() -> _Day1BExecutionAdapter:
     raise PublicationDay1BHold(
-        "HOLD: no repository-owned streaming Day1B serialization/execution producer is installed"
+        "HOLD: the full OpenFHE Day1B runner and repository-owned streaming execution "
+        "adapter are not installed"
     )
 
 
@@ -3584,13 +3867,14 @@ def produce_publication_day1b_unit(
         )
     except EvidenceCompatibilityError as error:
         raise PublicationDay1BHold(
-            f"HOLD: DAY1B Behavior Set/source authority is unavailable: {error}"
+            f"HOLD: DAY1B preparatory source inventory/identity is unavailable: {error}"
         ) from error
-    source_authority = _Day1BSourceAuthority(
+    preparatory_source_attestation = _Day1BPreparatorySourceAttestation(
         git_sha=source_attestation.git_sha,
         behavior_inventory=behavior_inventory,
         source_attestation=source_attestation.attestation,
     )
+    resource_policy = _repository_day1b_resource_policy()
     try:
         catalog = repository_day1_candidate_catalog()
     except Day1CandidateRegistrationError as error:
@@ -3599,12 +3883,11 @@ def produce_publication_day1b_unit(
         ) from error
     trace = _load_repository_trace_input(trace_bundle_dir)
     _repository_trace_anchor_authority()
-    resource_policy = _repository_day1b_resource_policy()
     execution_adapter = _repository_day1b_execution_adapter()
     return _produce_publication_day1b_unit(
         trace=trace,
         output_dir=output_dir,
-        source_authority=source_authority,
+        source_attestation=preparatory_source_attestation,
         candidate_catalog=catalog,
         resource_policy=resource_policy,
         execution_adapter=execution_adapter,

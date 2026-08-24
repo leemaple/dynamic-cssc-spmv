@@ -353,12 +353,60 @@ _DAY1_REGISTRATION_BEHAVIOR_PATHS = (
     "tests/test_strong_day1_simulator.py",
 )
 
+# This is deliberately a PRE-S1 preparatory source inventory.  It freezes the
+# closed validator/protocol/policy surface, but it cannot authorize dispatch or
+# substitute for the missing resource amendment, full OpenFHE worker, or anchors.
+_DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
+    ".github/workflows/publication-day1b-preparatory.yml",
+    "config/params_manifest.json",
+    "config/params_manifest.schema.json",
+    "config/publication-day1b-resource-policy.json",
+    "docs/decisions/0003-f1m-hidden-rowmap.md",
+    "docs/decisions/0005-output-plan-overlap-blinding.md",
+    "docs/decisions/0006-persistent-strategy-snapshots.md",
+    "docs/decisions/0007-anonymous-fixed-segment-primitive.md",
+    "docs/decisions/0008-strong-whole-query-execution-bundle.md",
+    "docs/decisions/0009-fail-closed-role-aware-day1-catalog.md",
+    "docs/decisions/0010-separate-experiment-and-evidence-freeze-snapshots.md",
+    "docs/paper/publication-preregistration-draft.md",
+    "pyproject.toml",
+    "requirements-ci.txt",
+    "requirements-publication.txt",
+    "scripts/run_publication_day1b.py",
+    "scripts/validate_manifest.py",
+    "src/dynamic_cssc/__init__.py",
+    "src/dynamic_cssc/cloud_execution_plan.py",
+    "src/dynamic_cssc/cssc.py",
+    "src/dynamic_cssc/day1_registry.py",
+    "src/dynamic_cssc/evidence_compatibility.py",
+    "src/dynamic_cssc/events.py",
+    "src/dynamic_cssc/manifest.py",
+    "src/dynamic_cssc/mask_ledger.py",
+    "src/dynamic_cssc/metrics.py",
+    "src/dynamic_cssc/output_plan.py",
+    "src/dynamic_cssc/plaintext_oracle.py",
+    "src/dynamic_cssc/publication_artifact_install.py",
+    "src/dynamic_cssc/publication_day1b.py",
+    "src/dynamic_cssc/publication_day1b_worker_protocol.py",
+    "src/dynamic_cssc/publication_schedule.py",
+    "src/dynamic_cssc/publication_statistics.py",
+    "src/dynamic_cssc/publication_traces.py",
+    "src/dynamic_cssc/query_compiler.py",
+    "src/dynamic_cssc/selection.py",
+    "src/dynamic_cssc/strategy_state.py",
+    "src/dynamic_cssc/strong_execution.py",
+    "src/dynamic_cssc/strong_packed_coo.py",
+    "src/dynamic_cssc/strong_reference_receipt.py",
+    "tests/test_evidence_compatibility.py",
+    "tests/test_publication_day1b.py",
+    "tests/test_publication_day1b_worker_protocol.py",
+    "tests/test_publication_day1b_workflow_contract.py",
+)
+
 _ROLE_BEHAVIOR_PATHS: dict[EvidenceRole, tuple[str, ...] | None] = {
     EvidenceRole.ACQUISITION: _ACQUISITION_BEHAVIOR_PATHS,
     EvidenceRole.TRACE: _TRACE_BEHAVIOR_PATHS,
-    # There is no publication Day1B producer/workflow yet.  The historical
-    # synthetic Day1 workflow is not silently promoted into this role.
-    EvidenceRole.DAY1B: None,
+    EvidenceRole.DAY1B: _DAY1B_PREPARATORY_BEHAVIOR_PATHS,
     EvidenceRole.DAY2: _DAY2_BEHAVIOR_PATHS,
     EvidenceRole.ANALYZER: _ANALYZER_BEHAVIOR_PATHS,
     EvidenceRole.STRONG_CORRECTNESS: _STRONG_CORRECTNESS_BEHAVIOR_PATHS,
@@ -368,7 +416,7 @@ _ROLE_BEHAVIOR_PATHS: dict[EvidenceRole, tuple[str, ...] | None] = {
 _ROLE_BEHAVIOR_SCHEMAS = {
     EvidenceRole.ACQUISITION: "dynamic-cssc-acquisition-behavior-set-v2",
     EvidenceRole.TRACE: "dynamic-cssc-trace-behavior-set-v2",
-    EvidenceRole.DAY1B: "dynamic-cssc-day1b-behavior-set-v1",
+    EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v1",
     EvidenceRole.DAY2: "dynamic-cssc-day2-behavior-set-v1",
     EvidenceRole.ANALYZER: "dynamic-cssc-publication-analyzer-behavior-set-v1",
     EvidenceRole.STRONG_CORRECTNESS: "dynamic-cssc-strong-correctness-behavior-set-v1",

@@ -1361,7 +1361,10 @@ def test_experiment_source_sha_cannot_be_retargeted_away_from_the_analysis_head(
     payload = _complete_payload()
     _retarget_experiment_source(payload, "2" * 40)
 
-    with pytest.raises(ValueError, match="HOLD.*Day1B"):
+    with pytest.raises(
+        ValueError,
+        match="different experiment/analysis snapshots require an exact evidence-freeze SHA",
+    ):
         analyze_publication_results(payload)
 
 
@@ -1375,7 +1378,10 @@ def test_caller_compatibility_document_cannot_bypass_the_repository_receipt() ->
             evidence_compatibility_receipt={"compatibility_verified": True},
         )
 
-    with pytest.raises(ValueError, match="HOLD.*Day1B"):
+    with pytest.raises(
+        ValueError,
+        match="repository evidence compatibility verification failed",
+    ):
         analyze_publication_results(
             payload,
             evidence_freeze_git_sha="3" * 40,

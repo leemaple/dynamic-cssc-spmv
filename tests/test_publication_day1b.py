@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from fractions import Fraction
 from inspect import signature
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -32,7 +33,7 @@ from dynamic_cssc.publication_day1b import (
     PublicationDay1BHold,
     PublicationDay1BResourcePolicy,
     PublicationDay1BUnitBundle,
-    _Day1BSourceAuthority,
+    _Day1BPreparatorySourceAttestation,
     _Day1BTraceInput,
     _Day1BWorkerContractSeed,
     _Day1BWorkerLaunch,
@@ -99,6 +100,88 @@ def _canonical_bytes(value: object) -> bytes:
 
 def _sha(value: object) -> str:
     return hashlib.sha256(_canonical_bytes(value)).hexdigest()
+
+
+def _pending_resource_policy_document() -> dict[str, object]:
+    return {
+        "amendment_identity": {
+            "resource_policy_amendment_git_sha": None,
+            "resource_policy_amendment_id": None,
+            "resource_policy_amendment_sha256": None,
+        },
+        "authority": {
+            "artifact_publication_authorized": False,
+            "claims_authorized": False,
+            "common_ordinary_query_preparation_verified": False,
+            "controller_scratch_isolation_verified": False,
+            "day1_registration_anchor_verified": False,
+            "dispatch_authorized": False,
+            "formal_authority_granted": False,
+            "full_openfhe_runner_verified": False,
+            "outcome_blind_structure_pilot_reviewed": False,
+            "resource_policy_frozen": False,
+            "trace_post_run_anchor_verified": False,
+            "workflow_dispatch_authorized": False,
+        },
+        "limits": {
+            "cells_per_shard": None,
+            "controller_registered_scratch_bytes_checkpoint_maximum": None,
+            "infrastructure_preemption_whole_shard_rerun_limit": None,
+            "job_cost_budget_usd_maximum": None,
+            "job_wall_clock_seconds_maximum": None,
+            "max_concurrency": None,
+            "output_bytes_per_unit": None,
+            "resident_memory_bytes_per_candidate_cell": None,
+            "scratch_bytes_per_candidate_cell": None,
+            "serialized_object_bytes_maximum": None,
+            "serialized_object_receipt_count_maximum": None,
+            "serialized_object_receipt_spool_bytes_maximum": None,
+            "serialized_payload_bytes_per_cell_maximum": None,
+            "shard_cost_budget_usd_maximum": None,
+            "shard_wall_clock_seconds_maximum": None,
+            "wall_clock_seconds_per_candidate_cell": None,
+            "worker_frame_count_maximum": None,
+        },
+        "measurement_methods": {
+            "controller_scratch_observation_method": None,
+            "controlled_scratch_high_water_measurement_method": None,
+            "controlled_scratch_root_policy": None,
+            "infrastructure_preemption_classification_method": None,
+            "output_byte_observation_method": None,
+            "resident_memory_observation_method": None,
+            "scratch_observation_method": None,
+            "wall_clock_observation_method": None,
+        },
+        "pilot_evidence": {
+            "review_receipt_sha256": None,
+            "structure_pilot_checksums_sha256": None,
+            "structure_pilot_report_sha256": None,
+            "structure_pilot_source_git_sha": None,
+        },
+        "protocol_invariants": {
+            "candidate_retry_count": 0,
+            "selective_candidate_retry_allowed": False,
+        },
+        "schema_version": "dynamic-cssc-publication-day1b-resource-policy-pending-v1",
+        "state": "PENDING-FREEZE",
+        "worker_runtime_identity": {
+            "common_ordinary_private_plan_schema_version": None,
+            "common_ordinary_query_preparation_schema_version": None,
+            "compiler_flags": None,
+            "compiler_identity": None,
+            "controller_scratch_capability_schema_version": None,
+            "cpu_affinity_policy": None,
+            "full_openfhe_runner_path": None,
+            "full_openfhe_runner_sha256": None,
+            "full_openfhe_runtime_receipt_schema_version": None,
+            "host_identity": None,
+            "openfhe_build_identity_sha256": None,
+            "openfhe_version": None,
+            "operating_system_identity": None,
+            "worker_adapter_schema_version": None,
+            "worker_build_receipt_sha256": None,
+        },
+    }
 
 
 def _trace_v6_history_row(*, timestamp: datetime, user_id: int) -> str:
@@ -341,16 +424,16 @@ def _trace() -> _Day1BTraceInput:
     )
 
 
-def _source() -> _Day1BSourceAuthority:
+def _source() -> _Day1BPreparatorySourceAttestation:
     inventory = {
-        "behavior_set_schema_version": "dynamic-cssc-day1b-behavior-set-v1",
+        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v1",
         "behavior_set_sha256": "c" * 64,
         "entries": [],
         "role": "day1b",
         "schema_version": "dynamic-cssc-evidence-behavior-inventory-v1",
         "source_git_sha": "1" * 40,
     }
-    return _Day1BSourceAuthority(
+    return _Day1BPreparatorySourceAttestation(
         git_sha="1" * 40,
         behavior_inventory=inventory,
         source_attestation="test-only-typed-day1b-source",
@@ -874,22 +957,127 @@ def test_repository_loader_consumes_one_descriptor_bound_trace_v7_snapshot(
 
 def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     assert tuple(signature(produce_publication_day1b_unit).parameters) == (
         "trace_bundle_dir",
         "output_dir",
     )
     assert tuple(signature(day1b_module._repository_trace_anchor_authority).parameters) == ()
+    assert tuple(signature(day1b_module._repository_day1b_resource_policy).parameters) == ()
+    assert tuple(signature(day1b_module._repository_day1b_execution_adapter).parameters) == ()
     with pytest.raises(PublicationDay1BHold, match="central TRACE post-run anchor"):
         day1b_module._repository_trace_anchor_authority()
-    trace_dir = tmp_path / "trace"
-    trace_dir.mkdir()
+    with pytest.raises(PublicationDay1BHold, match="full OpenFHE Day1B runner"):
+        day1b_module._repository_day1b_execution_adapter()
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        day1b_module,
+        "verify_current_role_source",
+        lambda role, root: SimpleNamespace(
+            git_sha="1" * 40,
+            attestation="repository-clean-head",
+        ),
+    )
+    monkeypatch.setattr(
+        day1b_module,
+        "capture_behavior_inventory",
+        lambda role, source_git_sha, repository_root: {
+            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v1"),
+            "behavior_set_sha256": "2" * 64,
+            "entries": [],
+            "role": "day1b",
+            "schema_version": "dynamic-cssc-evidence-behavior-inventory-v1",
+            "source_git_sha": source_git_sha,
+        },
+    )
+
+    def pending_policy() -> PublicationDay1BResourcePolicy:
+        calls.append("pending-policy")
+        raise PublicationDay1BHold("HOLD: Day1B resource policy is PENDING-FREEZE")
+
+    def forbidden_dependency(*args: object, **kwargs: object) -> object:
+        raise AssertionError("production touched a dependency after the pending-policy HOLD")
+
+    monkeypatch.setattr(day1b_module, "_repository_day1b_resource_policy", pending_policy)
+    monkeypatch.setattr(day1b_module, "repository_day1_candidate_catalog", forbidden_dependency)
+    monkeypatch.setattr(day1b_module, "_load_repository_trace_input", forbidden_dependency)
+    monkeypatch.setattr(day1b_module, "_repository_trace_anchor_authority", forbidden_dependency)
+    monkeypatch.setattr(day1b_module, "_repository_day1b_execution_adapter", forbidden_dependency)
+    trace_dir = tmp_path / "trace-that-must-not-be-read"
     output_dir = tmp_path / "unit"
 
-    with pytest.raises(PublicationDay1BHold, match="DAY1B.*Behavior Set|Behavior Set.*DAY1B"):
+    with pytest.raises(PublicationDay1BHold, match="PENDING-FREEZE"):
         produce_publication_day1b_unit(trace_dir, output_dir)
 
+    assert calls == ["pending-policy"]
     assert not output_dir.exists()
+
+
+def test_pending_resource_policy_file_is_one_canonical_closed_non_authority_document() -> None:
+    path = Path(__file__).resolve().parents[1] / "config/publication-day1b-resource-policy.json"
+    content = path.read_bytes()
+    expected = _pending_resource_policy_document()
+
+    assert content == _canonical_bytes(expected)
+    pending = day1b_module._decode_pending_day1b_resource_policy(content)
+    assert pending.state == "PENDING-FREEZE"
+    assert pending.canonical_sha256 == hashlib.sha256(content).hexdigest()
+    assert all(value is False for value in expected["authority"].values())
+    assert all(value is None for value in expected["limits"].values())
+    assert all(value is None for value in expected["measurement_methods"].values())
+    assert all(value is None for value in expected["pilot_evidence"].values())
+    assert all(value is None for value in expected["amendment_identity"].values())
+    assert all(value is None for value in expected["worker_runtime_identity"].values())
+    assert expected["protocol_invariants"] == {
+        "candidate_retry_count": 0,
+        "selective_candidate_retry_allowed": False,
+    }
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "extra-key",
+        "missing-key",
+        "active-state",
+        "boolean-retry",
+        "filled-limit",
+        "filled-method",
+        "filled-pilot",
+        "filled-amendment",
+        "filled-runner",
+        "authority-true",
+    ),
+)
+def test_pending_resource_policy_rejects_every_attempt_to_fill_or_promote_it(
+    mutation: str,
+) -> None:
+    document = _pending_resource_policy_document()
+    if mutation == "extra-key":
+        document["caller_override"] = False
+    elif mutation == "missing-key":
+        del document["pilot_evidence"]
+    elif mutation == "active-state":
+        document["state"] = "FROZEN"
+    elif mutation == "boolean-retry":
+        document["protocol_invariants"]["candidate_retry_count"] = False
+    elif mutation == "filled-limit":
+        document["limits"]["wall_clock_seconds_per_candidate_cell"] = 1
+    elif mutation == "filled-method":
+        document["measurement_methods"]["wall_clock_observation_method"] = "clock"
+    elif mutation == "filled-pilot":
+        document["pilot_evidence"]["structure_pilot_report_sha256"] = "3" * 64
+    elif mutation == "filled-amendment":
+        document["amendment_identity"]["resource_policy_amendment_id"] = "amendment-1"
+    elif mutation == "filled-runner":
+        document["worker_runtime_identity"]["full_openfhe_runner_path"] = "/runner"
+    else:
+        document["authority"]["dispatch_authorized"] = True
+
+    with pytest.raises(ValueError, match="pending Day1B resource policy"):
+        day1b_module._decode_pending_day1b_resource_policy(_canonical_bytes(document))
 
 
 @pytest.mark.parametrize(
@@ -966,7 +1154,7 @@ def _complete_unit_fixture(
     bundle = _produce_publication_day1b_unit_for_test(
         trace=_trace(),
         output_dir=root / "unit",
-        source_authority=_source(),
+        source_attestation=_source(),
         candidate_catalog=_catalog(),
         resource_policy=_resource_policy(),
         execution_adapter=executor,
@@ -1616,7 +1804,7 @@ def test_renderer_never_writes_into_a_same_name_foreign_staging_root(
         _produce_publication_day1b_unit_for_test(
             trace=_trace(),
             output_dir=output,
-            source_authority=_source(),
+            source_attestation=_source(),
             candidate_catalog=_catalog(),
             resource_policy=_resource_policy(),
             execution_adapter=executor,
@@ -1763,7 +1951,7 @@ def test_core_rejects_noncapability_artifact_variant_before_worker_or_output(
         day1b_module._produce_publication_day1b_unit(
             trace=_trace(),
             output_dir=output_dir,
-            source_authority=_source(),
+            source_attestation=_source(),
             candidate_catalog=_catalog(),
             resource_policy=_resource_policy(),
             execution_adapter=executor,
@@ -1799,7 +1987,7 @@ def test_artifact_variants_reject_crossed_source_and_trace_provenance_before_wor
             day1b_module._produce_publication_day1b_unit(
                 trace=trace,
                 output_dir=output_dir,
-                source_authority=source,
+                source_attestation=source,
                 candidate_catalog=_catalog(),
                 resource_policy=_resource_policy(),
                 execution_adapter=executor,
@@ -1877,7 +2065,7 @@ def test_private_core_rejects_a_query_vector_splice_before_output(tmp_path: Path
         _produce_publication_day1b_unit_for_test(
             trace=trace,
             output_dir=output_dir,
-            source_authority=_source(),
+            source_attestation=_source(),
             candidate_catalog=_catalog(),
             resource_policy=_resource_policy(),
             execution_adapter=_StreamingExecutor(tmp_path / "controlled-scratch"),
@@ -1901,7 +2089,7 @@ def test_controller_terminal_outcomes_are_null_records_and_later_candidates_cont
     bundle = _produce_publication_day1b_unit_for_test(
         trace=_trace(),
         output_dir=output_dir,
-        source_authority=_source(),
+        source_attestation=_source(),
         candidate_catalog=_catalog(),
         resource_policy=_resource_policy(),
         execution_adapter=executor,
@@ -1945,7 +2133,7 @@ def test_over_limit_controller_observation_without_matching_terminal_holds_unit(
         _produce_publication_day1b_unit_for_test(
             trace=_trace(),
             output_dir=output_dir,
-            source_authority=_source(),
+            source_attestation=_source(),
             candidate_catalog=_catalog(),
             resource_policy=_resource_policy(),
             execution_adapter=executor,
@@ -1968,7 +2156,7 @@ def test_private_core_holds_on_malformed_candidate_launch_without_output(
         _produce_publication_day1b_unit_for_test(
             trace=_trace(),
             output_dir=output_dir,
-            source_authority=_source(),
+            source_attestation=_source(),
             candidate_catalog=_catalog(),
             resource_policy=_resource_policy(),
             execution_adapter=MissingLaunchExecutor(),
@@ -1988,7 +2176,7 @@ def test_fixture_adapter_abandons_capability_if_launch_fails_before_return(
         _produce_publication_day1b_unit_for_test(
             trace=_trace(),
             output_dir=output_dir,
-            source_authority=_source(),
+            source_attestation=_source(),
             candidate_catalog=_catalog(),
             resource_policy=_resource_policy(),
             execution_adapter=executor,
@@ -2033,7 +2221,7 @@ def test_fixture_adapter_abandons_capability_if_mint_tracking_fails(
         _produce_publication_day1b_unit_for_test(
             trace=_trace(),
             output_dir=output_dir,
-            source_authority=_source(),
+            source_attestation=_source(),
             candidate_catalog=_catalog(),
             resource_policy=_resource_policy(),
             execution_adapter=executor,
@@ -2067,7 +2255,7 @@ def test_fixture_adapter_abandons_capability_if_final_bookkeeping_fails(
         _produce_publication_day1b_unit_for_test(
             trace=_trace(),
             output_dir=output_dir,
-            source_authority=_source(),
+            source_attestation=_source(),
             candidate_catalog=_catalog(),
             resource_policy=_resource_policy(),
             execution_adapter=executor,
@@ -2110,7 +2298,7 @@ def test_core_abandons_returned_launch_on_unexpected_validation_failure(
         _produce_publication_day1b_unit_for_test(
             trace=_trace(),
             output_dir=output_dir,
-            source_authority=_source(),
+            source_attestation=_source(),
             candidate_catalog=_catalog(),
             resource_policy=_resource_policy(),
             execution_adapter=executor,
@@ -2141,7 +2329,7 @@ def test_private_core_holds_on_retargeted_contract_without_output(tmp_path: Path
         _produce_publication_day1b_unit_for_test(
             trace=_trace(),
             output_dir=output_dir,
-            source_authority=_source(),
+            source_attestation=_source(),
             candidate_catalog=_catalog(),
             resource_policy=_resource_policy(),
             execution_adapter=RetargetingExecutor(tmp_path / "controlled-scratch"),
@@ -2161,7 +2349,7 @@ def test_private_core_holds_on_protocol_corruption_without_output(tmp_path: Path
         _produce_publication_day1b_unit_for_test(
             trace=_trace(),
             output_dir=output_dir,
-            source_authority=_source(),
+            source_attestation=_source(),
             candidate_catalog=_catalog(),
             resource_policy=_resource_policy(),
             execution_adapter=CorruptingExecutor(tmp_path / "controlled-scratch"),
@@ -2184,7 +2372,7 @@ def test_private_core_holds_on_cross_invocation_ledger_root_splice(
         _produce_publication_day1b_unit_for_test(
             trace=_trace(),
             output_dir=output_dir,
-            source_authority=_source(),
+            source_attestation=_source(),
             candidate_catalog=_catalog(),
             resource_policy=_resource_policy(),
             execution_adapter=SplicingExecutor(tmp_path / "controlled-scratch"),
@@ -2204,7 +2392,7 @@ def test_private_core_requires_one_time_key_in_first_retained_phase(
         _produce_publication_day1b_unit_for_test(
             trace=_trace(),
             output_dir=output_dir,
-            source_authority=_source(),
+            source_attestation=_source(),
             candidate_catalog=_catalog(),
             resource_policy=_resource_policy(),
             execution_adapter=executor,

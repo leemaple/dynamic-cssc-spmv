@@ -438,6 +438,38 @@ per-candidate/cell wall-clock limit, resident-memory limit, scratch/output-byte
 limit, shard/job limit, concurrency, preemption classification, and retry rule.
 Only the following closed structure-pilot protocol may inform those values.
 
+`config/publication-day1b-resource-policy.json` is currently the canonical
+closed pending placeholder, not an executable policy. Every empirical limit,
+measurement method, structure-pilot identity, amendment identity, worker/build/
+runtime identity, and ordinary-query private-plan identity is `null`; selective
+candidate retry is exactly zero; and every authority, dispatch, publication,
+and claim flag is exactly `false`. The production two-path Day1B entrypoint
+obtains the clean repository source internally, reads that exact Git-bound blob,
+and stops at `HOLD` before opening a trace, resolving a candidate catalog,
+launching a worker, or creating output. Filling any pending field or flipping a
+flag is invalid rather than an implicit promotion to an active policy.
+
+The sole numeric exception in the pending document is
+`protocol_invariants.candidate_retry_count=0`. It records the already
+preregistered, non-empirical zero-selective-retry protocol invariant (paired
+with `selective_candidate_retry_allowed=false`); it is not a measured resource
+choice and cannot activate the policy. Every empirical numeric limit and every
+measurement-method choice remains `null`.
+
+The `dynamic-cssc-day1b-preparatory-behavior-set-v1` inventory and manual
+`.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
+the current pre-`S1` source surface. A successful workflow validation is not a
+dispatch receipt or evidence artifact: the workflow has no semantic inputs,
+does not fetch traces or held-out data, does not invoke the producer, uploads
+nothing, and cannot install an anchor. Held-out dispatch remains forbidden
+until an outcome-blind amendment freezes the measured limits and methods, a
+controller-owned scratch high-water/isolation contract and full repository-owned
+OpenFHE worker are installed, the ordinary-candidate query-preparation and
+private-plan lifecycle is canonical, and the TRACE post-run plus Day-1
+registration anchors are installed and revalidated. Introducing those facts
+requires a reviewed pre-`S1` policy schema/path and DAY1B Behavior Set version
+bump; this preparatory inventory cannot be upgraded in place after outcomes.
+
 For each of the three real datasets, define `V` as the event count of its closed,
 canonical, chronological schema-valid corpus. Execute exactly the 30 paths in
 the Cartesian product of the three datasets, `{T1,T2}`, and source partitions

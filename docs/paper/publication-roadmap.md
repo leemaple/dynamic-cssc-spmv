@@ -1,6 +1,6 @@
 # Publication Roadmap
 
-> **Status date:** 2026-08-23 (Asia/Shanghai)
+> **Status date:** 2026-08-24 (Asia/Shanghai)
 >
 > **Target A:** *Journal of Cryptographic Engineering*
 >
@@ -330,6 +330,34 @@ ledgers, and per-candidate-by-cell controller resource observations. This is E1
 implementation evidence only. It cannot dispatch until the trace and catalog
 authorities, repository execution adapter, and outcome-blind resource policy
 are installed, and it is not a 30-unit publication artifact.
+
+The repository now also carries a PRE-S1 preparatory DAY1B source inventory,
+closed empirical-null/authority-false `PENDING-FREEZE` resource-policy document, and a
+manual no-input validation workflow. These freeze the current validator,
+protocol, scheduling, provenance, and artifact-installation source surface; they
+do not freeze empirical limits, admit a runtime, authorize dispatch, publish an
+artifact, or grant a claim. The production two-path seam verifies this source
+and then stops on the pending policy before catalog, trace, anchor, worker, or
+output access. The workflow performs only hash-locked source-contract tests and
+static validation; it neither invokes the producer nor fetches or uploads
+publication data.
+
+The sole numeric exception in that pending document is the already
+preregistered, non-empirical protocol invariant
+`protocol_invariants.candidate_retry_count=0`, paired with
+`selective_candidate_retry_allowed=false`. It does not fill an empirical
+resource limit or authorize execution; every empirical numeric and method
+choice remains `null`.
+
+The remaining Day1B `HOLD` set is explicit: an outcome-blind resource amendment,
+a controlled-scratch high-water and isolation method, a complete repository-owned
+OpenFHE runner/build/runtime identity, a common canonical ordinary-candidate
+query-preparation/private-plan lifecycle, the TRACE post-run anchor, and the
+Day-1 registration anchor. Source inventory is not dispatch authority. Any
+future file containing actual runner identities or frozen policy values must be
+introduced by a reviewed pre-S1 path/schema and DAY1B Behavior Set version bump,
+then re-frozen before the Terminal Registration Freeze; it cannot be spliced
+into this preparatory schema after outcomes.
 
 ### Phase F — statistics, mixed-circuit safety, and R4
 

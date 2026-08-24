@@ -8,16 +8,17 @@ from pathlib import Path
 
 import pytest
 
+import dynamic_cssc.publication_day1b as day1b_module
 from dynamic_cssc.evidence_compatibility import (
     DAY1_REGISTRATION_ANCHOR_PATH,
     EVIDENCE_COMPATIBILITY_ANCHOR_PATH,
     STRONG_REFERENCE_EVIDENCE_ANCHOR_PATH,
     EvidenceCompatibilityError,
-    EvidenceCompatibilityHold,
     EvidenceCompatibilityReceipt,
     EvidenceRole,
     capture_behavior_inventory,
     repository_behavior_paths,
+    verify_current_role_source,
     verify_evidence_compatibility,
     verify_repository_anchor_history,
 )
@@ -54,6 +55,52 @@ ANALYZER_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/publication_schedule.py",
     "src/dynamic_cssc/publication_statistics.py",
     "src/dynamic_cssc/publication_traces.py",
+)
+DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
+    ".github/workflows/publication-day1b-preparatory.yml",
+    "config/params_manifest.json",
+    "config/params_manifest.schema.json",
+    "config/publication-day1b-resource-policy.json",
+    "docs/decisions/0003-f1m-hidden-rowmap.md",
+    "docs/decisions/0005-output-plan-overlap-blinding.md",
+    "docs/decisions/0006-persistent-strategy-snapshots.md",
+    "docs/decisions/0007-anonymous-fixed-segment-primitive.md",
+    "docs/decisions/0008-strong-whole-query-execution-bundle.md",
+    "docs/decisions/0009-fail-closed-role-aware-day1-catalog.md",
+    "docs/decisions/0010-separate-experiment-and-evidence-freeze-snapshots.md",
+    "docs/paper/publication-preregistration-draft.md",
+    "pyproject.toml",
+    "requirements-ci.txt",
+    "requirements-publication.txt",
+    "scripts/run_publication_day1b.py",
+    "scripts/validate_manifest.py",
+    "src/dynamic_cssc/__init__.py",
+    "src/dynamic_cssc/cloud_execution_plan.py",
+    "src/dynamic_cssc/cssc.py",
+    "src/dynamic_cssc/day1_registry.py",
+    "src/dynamic_cssc/evidence_compatibility.py",
+    "src/dynamic_cssc/events.py",
+    "src/dynamic_cssc/manifest.py",
+    "src/dynamic_cssc/mask_ledger.py",
+    "src/dynamic_cssc/metrics.py",
+    "src/dynamic_cssc/output_plan.py",
+    "src/dynamic_cssc/plaintext_oracle.py",
+    "src/dynamic_cssc/publication_artifact_install.py",
+    "src/dynamic_cssc/publication_day1b.py",
+    "src/dynamic_cssc/publication_day1b_worker_protocol.py",
+    "src/dynamic_cssc/publication_schedule.py",
+    "src/dynamic_cssc/publication_statistics.py",
+    "src/dynamic_cssc/publication_traces.py",
+    "src/dynamic_cssc/query_compiler.py",
+    "src/dynamic_cssc/selection.py",
+    "src/dynamic_cssc/strategy_state.py",
+    "src/dynamic_cssc/strong_execution.py",
+    "src/dynamic_cssc/strong_packed_coo.py",
+    "src/dynamic_cssc/strong_reference_receipt.py",
+    "tests/test_evidence_compatibility.py",
+    "tests/test_publication_day1b.py",
+    "tests/test_publication_day1b_worker_protocol.py",
+    "tests/test_publication_day1b_workflow_contract.py",
 )
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
@@ -318,6 +365,33 @@ def day1_registration_repository(
         inventory,
         record,
     )
+
+
+@pytest.fixture
+def day1b_preparatory_repository(tmp_path: Path) -> tuple[Path, str, dict[str, object]]:
+    repository = tmp_path / "day1b-preparatory-repository"
+    repository.mkdir()
+    _git(repository, "init", "-q")
+    _git(repository, "config", "user.email", "day1b-preparatory-test@example.invalid")
+    _git(repository, "config", "user.name", "Day1B Preparatory Test")
+    _write(repository, ".gitignore", "*.pyc\n__pycache__/\n")
+    policy_bytes = (REPOSITORY_ROOT / "config/publication-day1b-resource-policy.json").read_text(
+        encoding="ascii"
+    )
+    for relative_path in DAY1B_PREPARATORY_BEHAVIOR_PATHS:
+        content = (
+            policy_bytes
+            if relative_path == "config/publication-day1b-resource-policy.json"
+            else f"fixture for {relative_path}\n"
+        )
+        _write(repository, relative_path, content)
+    source_git_sha = _commit(repository, "Day1B preparatory source")
+    inventory = capture_behavior_inventory(
+        EvidenceRole.DAY1B,
+        source_git_sha=source_git_sha,
+        repository_root=repository,
+    )
+    return repository, source_git_sha, inventory
 
 
 def test_repository_history_uniquely_locates_first_anchor_commit_without_caller_s2(
@@ -1533,22 +1607,82 @@ def test_post_outcome_decision_or_preregistration_change_is_never_analysis_only(
         )
 
 
-def test_day1b_is_explicitly_hold_until_a_repository_owned_producer_exists(
-    trace_repository: tuple[Path, str, dict[str, object]],
+def test_day1b_preparatory_behavior_inventory_is_exact_but_non_authorizing(
+    day1b_preparatory_repository: tuple[Path, str, dict[str, object]],
 ) -> None:
-    repository, experiment_sha, _inventory = trace_repository
+    repository, source_git_sha, inventory = day1b_preparatory_repository
 
-    with pytest.raises(EvidenceCompatibilityHold, match="HOLD.*Day1B"):
-        capture_behavior_inventory(
-            EvidenceRole.DAY1B,
-            source_git_sha=experiment_sha,
-            repository_root=repository,
-        )
+    attestation = verify_current_role_source(EvidenceRole.DAY1B, repository)
+
+    assert tuple(repository_behavior_paths(EvidenceRole.DAY1B)) == (
+        DAY1B_PREPARATORY_BEHAVIOR_PATHS
+    )
+    assert inventory["behavior_set_schema_version"] == (
+        "dynamic-cssc-day1b-preparatory-behavior-set-v1"
+    )
+    assert inventory["role"] == "day1b"
+    assert inventory["source_git_sha"] == source_git_sha
+    assert [entry["path"] for entry in inventory["entries"]] == list(
+        DAY1B_PREPARATORY_BEHAVIOR_PATHS
+    )
+    assert attestation.runtime_execution_isolation_verified is False
+    assert "dispatch_authorized" not in inventory
+    assert "formal_authority_granted" not in inventory
+    with pytest.raises(day1b_module.PublicationDay1BHold, match="PENDING-FREEZE"):
+        day1b_module._require_repository_day1b_resource_policy(repository)
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "mutation"),
+    (
+        ("src/dynamic_cssc/publication_day1b.py", "blob"),
+        ("src/dynamic_cssc/publication_day1b_worker_protocol.py", "mode"),
+        ("config/publication-day1b-resource-policy.json", "missing"),
+        ("untracked-extra.txt", "extra"),
+    ),
+)
+def test_day1b_preparatory_source_drift_is_rejected_before_dispatch(
+    day1b_preparatory_repository: tuple[Path, str, dict[str, object]],
+    relative_path: str,
+    mutation: str,
+) -> None:
+    repository, _source_git_sha, _inventory = day1b_preparatory_repository
+    path = repository / relative_path
+    if mutation == "blob":
+        path.write_text("changed Day1B behavior\n", encoding="utf-8")
+    elif mutation == "mode":
+        path.chmod(0o755)
+    elif mutation == "missing":
+        path.unlink()
+    else:
+        path.write_text("unexpected source\n", encoding="utf-8")
+
+    with pytest.raises(EvidenceCompatibilityError, match="clean|changed|missing|untracked"):
+        verify_current_role_source(EvidenceRole.DAY1B, repository)
+
+
+def test_clean_day1b_source_cannot_promote_the_pending_policy_in_place(
+    day1b_preparatory_repository: tuple[Path, str, dict[str, object]],
+) -> None:
+    repository, _source_git_sha, _inventory = day1b_preparatory_repository
+    policy_path = repository / "config/publication-day1b-resource-policy.json"
+    policy = json.loads(policy_path.read_bytes())
+    policy["limits"]["wall_clock_seconds_per_candidate_cell"] = 1
+    policy_path.write_text(_canonical(policy), encoding="ascii")
+    _commit(repository, "attempt in-place Day1B policy promotion")
+
+    assert verify_current_role_source(EvidenceRole.DAY1B, repository).role is EvidenceRole.DAY1B
+    with pytest.raises(
+        day1b_module.PublicationDay1BHold,
+        match="pending resource policy is invalid.*placeholder",
+    ):
+        day1b_module._require_repository_day1b_resource_policy(repository)
 
 
 def test_role_sets_freeze_entrypoint_workflow_build_lock_runtime_and_transitive_code() -> None:
     acquisition_paths = set(repository_behavior_paths(EvidenceRole.ACQUISITION))
     trace_paths = set(repository_behavior_paths(EvidenceRole.TRACE))
+    day1b_paths = set(repository_behavior_paths(EvidenceRole.DAY1B))
     day2_paths = set(repository_behavior_paths(EvidenceRole.DAY2))
     analyzer_paths = set(repository_behavior_paths(EvidenceRole.ANALYZER))
     strong_correctness_paths = set(repository_behavior_paths(EvidenceRole.STRONG_CORRECTNESS))
@@ -1570,6 +1704,7 @@ def test_role_sets_freeze_entrypoint_workflow_build_lock_runtime_and_transitive_
         "src/dynamic_cssc/publication_traces.py",
     } == acquisition_paths
     assert set(TRACE_BEHAVIOR_PATHS) == trace_paths
+    assert day1b_paths == set(DAY1B_PREPARATORY_BEHAVIOR_PATHS)
     assert {
         ".github/workflows/day2-microbench.yml",
         "cpp/CMakeLists.txt",
@@ -1643,6 +1778,7 @@ def test_role_sets_freeze_entrypoint_workflow_build_lock_runtime_and_transitive_
         for paths in (
             acquisition_paths,
             trace_paths,
+            day1b_paths,
             day2_paths,
             analyzer_paths,
             strong_correctness_paths,
