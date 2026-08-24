@@ -636,6 +636,55 @@ def test_urllib_transport_disables_ambient_proxy_and_uses_explicit_ca(
     assert https_handlers[0]._context.check_hostname is True
 
 
+def test_urllib_transport_records_configured_headers_before_opener_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frozen_ca = ssl.get_default_verify_paths().cafile
+    assert frozen_ca is not None
+    body = b"frozen-body"
+
+    class Handle:
+        status = 200
+        version = 11
+        headers = SimpleNamespace(
+            get_all=lambda name: {
+                "Content-Length": [str(len(body))],
+                "Content-Type": ["application/octet-stream"],
+            }.get(name)
+        )
+
+        def __init__(self) -> None:
+            self.remaining = body
+
+        def __enter__(self) -> Handle:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def geturl(self) -> str:
+            return "https://example.test/frozen-object"
+
+        def read(self, _size: int) -> bytes:
+            chunk, self.remaining = self.remaining, b""
+            return chunk
+
+    class MutatingOpener:
+        def open(self, request: urllib.request.Request, *, timeout: int) -> Handle:
+            assert timeout == 120
+            request.add_unredirected_header("Host", "example.test")
+            return Handle()
+
+    transport = _UrllibTransport(ca_bundle_path=frozen_ca)
+    monkeypatch.setattr(transport, "_opener", MutatingOpener())
+    with transport.open("https://example.test/frozen-object") as response:
+        assert response.configured_request_headers == (
+            ("accept-encoding", "identity"),
+            ("user-agent", "dynamic-cssc-publication-acquisition/1"),
+        )
+        assert tuple(response.chunks) == (body,)
+
+
 def test_curl_terms_adapter_uses_the_exact_frozen_one_shot_request_policy() -> None:
     url = "https://stackoverflow.com/help/licensing"
     factory = _FakeCurlSessionFactory(

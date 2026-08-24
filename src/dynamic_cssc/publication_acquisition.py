@@ -2047,6 +2047,10 @@ class _UrllibTransport:
                 "User-Agent": _URLLIB_USER_AGENT,
             },
         )
+        configured_request_headers = _header_pairs(
+            list(request.header_items()),
+            field="urllib configured request headers",
+        )
         try:
             handle = self._opener.open(request, timeout=120)
         except urllib.error.HTTPError as error:
@@ -2063,10 +2067,6 @@ class _UrllibTransport:
             media_type = _single_response_header(handle.headers, "Content-Type")
             if media_type is None:
                 media_type = ""
-            configured_request_headers = _header_pairs(
-                list(request.header_items()),
-                field="urllib configured request headers",
-            )
             content_encoding = _single_response_header(handle.headers, "Content-Encoding")
             content_range = _single_response_header(handle.headers, "Content-Range")
             http_etag = _single_response_header(handle.headers, "ETag")
