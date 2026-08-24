@@ -19,6 +19,7 @@ from dynamic_cssc.evidence_compatibility import (
     capture_behavior_inventory,
     repository_behavior_paths,
     verify_current_role_source,
+    verify_day1b_resource_amendment_schema_source,
     verify_evidence_compatibility,
     verify_repository_anchor_history,
 )
@@ -122,6 +123,8 @@ DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "tests/test_publication_primitive_accounting.py",
     "tests/test_query_accounting.py",
     "tests/test_strong_day1_simulator.py",
+    "config/publication-day1b-resource-amendment.json",
+    "docs/reviews/day1b-resource-amendment-review-2026-08-25.md",
 )
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
@@ -2112,7 +2115,7 @@ def test_day1b_preparatory_behavior_inventory_is_exact_but_non_authorizing(
         DAY1B_PREPARATORY_BEHAVIOR_PATHS
     )
     assert inventory["behavior_set_schema_version"] == (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v9"
+        "dynamic-cssc-day1b-preparatory-behavior-set-v10"
     )
     assert inventory["role"] == "day1b"
     assert inventory["source_git_sha"] == source_git_sha
@@ -2122,8 +2125,38 @@ def test_day1b_preparatory_behavior_inventory_is_exact_but_non_authorizing(
     assert attestation.runtime_execution_isolation_verified is False
     assert "dispatch_authorized" not in inventory
     assert "formal_authority_granted" not in inventory
-    with pytest.raises(day1b_module.PublicationDay1BHold, match="PENDING-FREEZE"):
+    with pytest.raises(
+        day1b_module.PublicationDay1BHold,
+        match="resource amendment is invalid",
+    ):
         day1b_module._require_repository_day1b_resource_policy(repository)
+
+
+def test_day1b_resource_amendment_reconstructs_exact_historical_v9_schema_source() -> None:
+    inventory = verify_day1b_resource_amendment_schema_source(
+        source_git_sha="e4d5d63ddcc7cadf2d2efa870b9faf41ae573489",
+        current_git_sha="e4d5d63ddcc7cadf2d2efa870b9faf41ae573489",
+        expected_inventory_sha256=(
+            "e23400d6c38245dec97928ff9766130be71c8e86365b06f440964ff97b2b23ec"
+        ),
+        repository_root=REPOSITORY_ROOT,
+    )
+
+    assert inventory["behavior_set_schema_version"] == (
+        "dynamic-cssc-day1b-preparatory-behavior-set-v9"
+    )
+    assert inventory["behavior_set_sha256"] == (
+        "0c7e6d24e687aa1705007342401037d33883e9dcbf99c84e5c887d7d9d9eef9a"
+    )
+    assert inventory["source_git_sha"] == "e4d5d63ddcc7cadf2d2efa870b9faf41ae573489"
+
+    with pytest.raises(EvidenceCompatibilityError, match="inventory digest changed"):
+        verify_day1b_resource_amendment_schema_source(
+            source_git_sha="e4d5d63ddcc7cadf2d2efa870b9faf41ae573489",
+            current_git_sha="e4d5d63ddcc7cadf2d2efa870b9faf41ae573489",
+            expected_inventory_sha256="0" * 64,
+            repository_root=REPOSITORY_ROOT,
+        )
 
 
 @pytest.mark.parametrize(

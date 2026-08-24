@@ -1,4 +1,4 @@
-name: Publication Day1B PRE-S1 preparatory validation only
+name: Publication Day1B PRE-S1 resource-amendment validation only
 
 on:
   workflow_dispatch: {}
@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  validate-pending-contract:
+  validate-resource-contract:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
@@ -46,6 +46,27 @@ jobs:
           .venv/bin/python scripts/run_openfhe_query_smoke.py
           --runner build/cpp/openfhe_query_runner
           --scratch-dir '${{ runner.temp }}/openfhe-query-smoke'
+      - name: Validate the reviewed non-authorizing resource amendment
+        env:
+          PYTHONPATH: src:.
+        run: |
+          .venv/bin/python - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          from dynamic_cssc.publication_day1b import _decode_day1b_resource_amendment
+
+          amendment = _decode_day1b_resource_amendment(
+              Path('config/publication-day1b-resource-amendment.json').read_bytes()
+          )
+          review = Path(
+              'docs/reviews/day1b-resource-amendment-review-2026-08-25.md'
+          ).read_bytes()
+          assert hashlib.sha256(review).hexdigest() == amendment.review_receipt_sha256
+          assert amendment.resource_policy.authority.startswith(
+              'non-authorizing-resource-amendment-binding:'
+          )
+          PY
       - name: Validate the closed PENDING-FREEZE source contract
         env:
           PYTHONPATH: src:.
@@ -83,7 +104,8 @@ jobs:
           git diff --check
       - name: Record the deliberate execution boundary
         run: |
-          echo 'PENDING-FREEZE resource policy remains non-executable.'
+          echo 'The PENDING-FREEZE placeholder remains immutable.'
+          echo 'The reviewed amendment supplies administrative safety budgets only.'
           echo 'The generic OpenFHE query runtime passed a non-authorizing smoke.'
           echo 'The production Day1B candidate worker and admission receipt remain absent.'
           echo 'No publication execution or artifact production is permitted.'

@@ -374,10 +374,10 @@ _DAY1_REGISTRATION_BEHAVIOR_PATHS = (
     "tests/test_strong_day1_simulator.py",
 )
 
-# This is deliberately a PRE-S1 preparatory source inventory.  It freezes the
-# closed validator/protocol/policy surface, but it cannot authorize dispatch or
-# substitute for the missing resource amendment, production worker/runtime, or anchors.
-_DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
+# This is the exact reviewed v9 schema-source inventory bound by the first
+# resource amendment.  Keep it immutable so later source can reconstruct that
+# historical inventory without treating the current path set as retroactive.
+_DAY1B_RESOURCE_AMENDMENT_SCHEMA_SOURCE_BEHAVIOR_PATHS = (
     ".github/workflows/publication-day1b-preparatory.yml",
     "config/params_manifest.json",
     "config/params_manifest.schema.json",
@@ -446,6 +446,16 @@ _DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "tests/test_strong_day1_simulator.py",
 )
 
+# This remains a PRE-S1 preparatory source inventory.  It now freezes the
+# reviewed non-authorizing resource amendment and its review receipt, but it
+# still cannot authorize dispatch or substitute for the production
+# worker/runtime, profile, or anchors.
+_DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
+    *_DAY1B_RESOURCE_AMENDMENT_SCHEMA_SOURCE_BEHAVIOR_PATHS,
+    "config/publication-day1b-resource-amendment.json",
+    "docs/reviews/day1b-resource-amendment-review-2026-08-25.md",
+)
+
 _ROLE_BEHAVIOR_PATHS: dict[EvidenceRole, tuple[str, ...] | None] = {
     EvidenceRole.ACQUISITION: _ACQUISITION_BEHAVIOR_PATHS,
     EvidenceRole.TRACE: _TRACE_BEHAVIOR_PATHS,
@@ -459,7 +469,7 @@ _ROLE_BEHAVIOR_PATHS: dict[EvidenceRole, tuple[str, ...] | None] = {
 _ROLE_BEHAVIOR_SCHEMAS = {
     EvidenceRole.ACQUISITION: "dynamic-cssc-acquisition-behavior-set-v2",
     EvidenceRole.TRACE: "dynamic-cssc-trace-behavior-set-v2",
-    EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v9",
+    EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v10",
     EvidenceRole.DAY2: "dynamic-cssc-day2-behavior-set-v4",
     EvidenceRole.ANALYZER: "dynamic-cssc-publication-analyzer-behavior-set-v2",
     EvidenceRole.STRONG_CORRECTNESS: "dynamic-cssc-strong-correctness-behavior-set-v1",
@@ -1672,6 +1682,74 @@ def capture_behavior_inventory(
     }
 
 
+def verify_day1b_resource_amendment_schema_source(
+    *,
+    source_git_sha: object,
+    current_git_sha: object,
+    expected_inventory_sha256: object,
+    repository_root: Path,
+) -> dict[str, object]:
+    """Reconstruct and verify the immutable v9 resource-schema source.
+
+    The current DAY1B inventory necessarily contains the later amendment and
+    review blobs.  Reusing it for the earlier schema source would make that
+    source self-referential, so this seam owns the sole historical v9 path set
+    and requires it to be an ancestor of the clean current source.
+    """
+
+    repository_root = _repository(repository_root)
+    source_git_sha = _exact_commit(
+        repository_root,
+        source_git_sha,
+        "Day1B resource-amendment schema source",
+    )
+    current_git_sha = _exact_commit(
+        repository_root,
+        current_git_sha,
+        "current Day1B resource-amendment source",
+    )
+    if not _is_ancestor(repository_root, source_git_sha, current_git_sha):
+        raise EvidenceCompatibilityError(
+            "Day1B resource-amendment schema source is not an ancestor of current source"
+        )
+    if (
+        type(expected_inventory_sha256) is not str
+        or _LOWER_SHA256.fullmatch(expected_inventory_sha256) is None
+    ):
+        raise EvidenceCompatibilityError(
+            "Day1B resource-amendment schema-source inventory digest is malformed"
+        )
+
+    entries = _tree_entries(
+        repository_root,
+        source_git_sha,
+        _DAY1B_RESOURCE_AMENDMENT_SCHEMA_SOURCE_BEHAVIOR_PATHS,
+    )
+    schema_version = "dynamic-cssc-day1b-preparatory-behavior-set-v9"
+    behavior_set = {
+        "behavior_set_schema_version": schema_version,
+        "entries": entries,
+        "role": EvidenceRole.DAY1B.value,
+    }
+    inventory = {
+        "behavior_set_schema_version": schema_version,
+        "behavior_set_sha256": hashlib.sha256(
+            _canonical_json_bytes(behavior_set)
+        ).hexdigest(),
+        "entries": entries,
+        "role": EvidenceRole.DAY1B.value,
+        "schema_version": BEHAVIOR_INVENTORY_SCHEMA,
+        "source_git_sha": source_git_sha,
+    }
+    if hashlib.sha256(_canonical_json_bytes(inventory)).hexdigest() != (
+        expected_inventory_sha256
+    ):
+        raise EvidenceCompatibilityError(
+            "Day1B resource-amendment schema-source inventory digest changed"
+        )
+    return inventory
+
+
 def verify_current_role_source(
     role: EvidenceRole,
     repository_root: Path,
@@ -2427,6 +2505,7 @@ __all__ = (
     "read_current_role_evidence_data",
     "verify_current_analysis_source",
     "verify_current_role_source",
+    "verify_day1b_resource_amendment_schema_source",
     "verify_evidence_compatibility",
     "verify_repository_anchor_history",
 )
