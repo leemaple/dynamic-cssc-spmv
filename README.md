@@ -73,7 +73,7 @@ the GitHub release
 | Phase 2 correctness witness | Bind and validate the real CSSC-base-plus-strong-delta query | `strong-whole-query-witness.yml` (manual; latest audited E4 PASS is bound to `fcb00e0d`, admission still pending) |
 | Structure pilot | Size the outcome-independent resource envelope from the exact `floor(V/10)` structure prefix; never produce publication evidence | `publication-structure-pilot.yml` (manual, pre-freeze, non-admissible) |
 | Day 1 | Produce complete role-aware causal artifacts only after repository admission; fail closed otherwise | `day1-cost-model.yml` |
-| Historical P0b probe | Run the original isolated OpenFHE microbenchmark; it measures only the first supplied rotation and summary values, so it is not publication-authoritative Day 2 evidence | `day2-microbench.yml` |
+| Historical P0b exploratory probe | Run the isolated OpenFHE raw-block mechanism over every supplied exact rotation; the workflow keeps the legacy 11-block setting and lacks the registered R3 bindings, so it is not publication-authoritative Day 2 evidence | `day2-microbench.yml` |
 | Review pack | Produce a SHA-256-addressed audit bundle for an external expert | `review-bundle.yml` |
 
 ## Local quick start

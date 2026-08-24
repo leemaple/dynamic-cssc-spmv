@@ -1,10 +1,10 @@
-name: P0b and Day 2 OpenFHE microbench
+name: P0b and Day 2 OpenFHE exploratory microbench
 
 on:
   workflow_dispatch:
     inputs:
       rotation_indices:
-        description: Required indices produced by Day 1/P0a, comma-separated
+        description: Exploratory exact indices, comma-separated; not a registered Day1A plan
         required: true
         default: '1,-1,2,-2,4,-4,8,-8'
       seed:
@@ -44,7 +44,7 @@ jobs:
         run: |
           scripts/bootstrap_openfhe.sh 2>&1 | tee results/day2-openfhe-build.log
           scripts/build_cpp.sh 2>&1 | tee results/day2-probe-build.log
-      - name: Run measured microbenchmarks
+      - name: Run exploratory measured microbenchmarks
         shell: bash
         run: |
           set -euo pipefail
@@ -77,21 +77,21 @@ jobs:
             --model-csv results/day2-model/metrics.csv \
             --microbench results/day2/openfhe_microbench.json \
             --output results/day2/model_counts_x_measured_unit_costs.json
-      - name: Create R3 audit bundle
+      - name: Create exploratory audit bundle
         if: always()
         run: >-
           python scripts/package_review_bundle.py
-          --stage R3-Day2
+          --stage Day2-exploratory
           --output-dir artifacts
           --include results/day2
           --include results/day2-model
           --include results/day2-openfhe-build.log
           --include results/day2-probe-build.log
-      - name: Upload Day 2 evidence
+      - name: Upload exploratory Day 2 output
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: r3-day2-${{ github.sha }}
+          name: day2-exploratory-${{ github.sha }}
           include-hidden-files: true
           path: |
             results/day2/

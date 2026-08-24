@@ -30,6 +30,11 @@ def test_day2_workflow_passes_the_isolated_multiplication_profile() -> None:
     )
 
     assert "--noise-budget-profile day2_mult_only" in workflow
+    assert "P0b and Day 2 OpenFHE exploratory microbench" in workflow
+    assert "--stage Day2-exploratory" in workflow
+    assert "name: day2-exploratory-${{ github.sha }}" in workflow
+    assert "R3-Day2" not in workflow
+    assert "r3-day2" not in workflow
 
 
 def test_day2_probe_emits_the_frozen_raw_block_contract() -> None:
