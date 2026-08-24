@@ -22,6 +22,12 @@ from dynamic_cssc.day1_registry import (
     RegistrationEvidence,
     _canonical_registered_candidates,
 )
+from dynamic_cssc.day1a_export import (
+    AUTHORITY_RECEIPT_FILENAME,
+    COUNT_BUNDLE_FILENAME,
+    ROTATION_INVENTORY_FILENAME,
+    export_day1a_evidence,
+)
 from dynamic_cssc.events import EventKind, PublicationWindow, publication_windows
 from dynamic_cssc.metrics import StrategyMetrics, UnitCosts
 from dynamic_cssc.report import (
@@ -910,6 +916,60 @@ def test_aggregator_accepts_only_the_complete_21_shard_189_cell_cartesian_produc
     assert status["deferred_reference_baselines"] == []
     assert status["preflight"] == PREFLIGHT
     assert (output_dir / "SUITE_STATUS.json").is_file()
+    count_bundle_path = output_dir / COUNT_BUNDLE_FILENAME
+    rotation_inventory_path = output_dir / ROTATION_INVENTORY_FILENAME
+    authority_receipt_path = output_dir / AUTHORITY_RECEIPT_FILENAME
+    assert count_bundle_path.is_file()
+    assert rotation_inventory_path.is_file()
+    assert authority_receipt_path.is_file()
+
+    count_bundle = json.loads(count_bundle_path.read_text(encoding="ascii"))
+    rotation_inventory = json.loads(rotation_inventory_path.read_text(encoding="ascii"))
+    authority_receipt = json.loads(authority_receipt_path.read_text(encoding="ascii"))
+    assert count_bundle["schema_version"] == "dynamic-cssc-day1a-count-bundle-v1"
+    assert count_bundle["cell_count"] == 189
+    assert count_bundle["fixed_record_count"] == 189 * 14
+    assert len(count_bundle["records"]) == 189 * 14
+    assert rotation_inventory["schema_version"] == (
+        "dynamic-cssc-day1a-rotation-inventory-v1"
+    )
+    assert rotation_inventory["rows"] == FIXTURE_ROWS
+    assert rotation_inventory["cols"] == FIXTURE_COLS
+    assert rotation_inventory["effective_slots"] == 2048
+    assert rotation_inventory["partition_rows"] == 128
+    assert rotation_inventory["publication_rows"] == 4096
+    assert rotation_inventory["publication_cols"] == 8193
+    assert rotation_inventory["publication_effective_slots"] == 4096
+    assert rotation_inventory["publication_partition_rows"] == 4096
+    assert rotation_inventory["publication_domain_match"] is False
+    assert rotation_inventory["day2_direct_key_plan_eligible"] is False
+    assert rotation_inventory["required_exact_indices"]
+    assert rotation_inventory["indices_in_range"] is True
+    assert rotation_inventory["modulo_alias_free"] is True
+    assert authority_receipt["schema_version"] == (
+        "dynamic-cssc-day1a-authority-receipt-v1"
+    )
+    assert authority_receipt["day1a_count_evidence_authorized"] is True
+    assert authority_receipt["day2_direct_key_plan_authorized"] is False
+    assert authority_receipt["publication_domain_match"] is False
+    assert authority_receipt["complete_cost_claim_allowed"] is False
+    assert authority_receipt["formal_performance_claim_allowed"] is False
+    assert authority_receipt["paper_verdict_allowed"] is False
+    assert authority_receipt["security_claim_allowed"] is False
+    assert authority_receipt["count_bundle_sha256"] == _sha256(count_bundle_path)
+    assert authority_receipt["rotation_inventory_sha256"] == _sha256(
+        rotation_inventory_path
+    )
+
+    with pytest.raises(ValueError, match="targets must be absent"):
+        export_day1a_evidence(
+            suite_dir=output_dir,
+            source_git_sha=SOURCE_SHA,
+            publication_rows=4096,
+            publication_cols=8193,
+            publication_effective_slots=4096,
+            publication_partition_rows=4096,
+        )
     assert (output_dir / "SHA256SUMS").is_file()
     assert not (output_dir / "SHARD_STATUS.json").exists()
     checksummed_paths = {
@@ -922,7 +982,7 @@ def test_aggregator_accepts_only_the_complete_21_shard_189_cell_cartesian_produc
         if path.is_file() and path != output_dir / "SHA256SUMS"
     }
     assert checksummed_paths == output_files
-    assert len(checksummed_paths) == 1 + 189 * 8 + 21
+    assert len(checksummed_paths) == 1 + 3 + 189 * 8 + 21
 
 
 def test_aggregator_cli_loads_when_executed_by_workflow_script_path() -> None:

@@ -61,12 +61,16 @@ _REQUIRED_PRODUCER_BEHAVIOR_PATHS = frozenset(
 )
 _VALIDATION_SOURCE_PATHS = (
     _DEDICATED_WORKFLOW_PATH,
+    "scripts/aggregate_day1_shards.py",
+    "src/dynamic_cssc/day1a_export.py",
     "src/dynamic_cssc/day1_registry.py",
     "src/dynamic_cssc/metrics.py",
     "src/dynamic_cssc/report.py",
     "src/dynamic_cssc/simulator.py",
     "src/dynamic_cssc/strong_reference_receipt.py",
     "tests/test_day1_registry.py",
+    "tests/test_day1_shard_aggregation.py",
+    "tests/test_day1_workflow_contract.py",
     "tests/test_query_accounting.py",
     "tests/test_report.py",
     "tests/test_strong_day1_simulator.py",

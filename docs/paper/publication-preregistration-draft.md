@@ -823,7 +823,12 @@ withholds the headline.
    after registration, `complete_reference_set=true` is derived only when every
    per-cell role, record, accounting, and rotation-inventory gate passes.
 5. Day 1A emits replayable count evidence without inspecting a publication
-   verdict.
+   verdict. Its canonical count bundle and exact-index inventory may authorize
+   a Day 2 key plan only when the receipt proves that the suite and publication
+   matrix, effective-slot, and row-partition domains are identical; the current
+   512-by-512/2048-slot/128-row-partition exploratory plan therefore remains
+   ineligible for the 4096-by-8193/4096-slot/4096-row-partition publication key
+   plan.
 6. P0b/Day 2 consumes Day 1A's exact key inventory, stores exactly 14 complete
    whole measurement blocks under the frozen order/stop rule, and passes
    operation-profile and provenance checks. The current historical
