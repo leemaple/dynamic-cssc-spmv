@@ -469,7 +469,7 @@ with `selective_candidate_retry_allowed=false`); it is not a measured resource
 choice and cannot activate the policy. Every empirical numeric limit and every
 measurement-method choice remains `null`.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v7` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v8` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface. A successful workflow validation is not a
 dispatch receipt or evidence artifact: the workflow has no semantic inputs,
@@ -486,11 +486,19 @@ SHA-256 verification of every serialized input, result, and one-time key bundle.
 Its provisional depth-2/0/0 profile remains explicitly `HOLD` for mixed-circuit
 parameter authority.
 
+The v8 surface also contains a non-authorizing streaming accounting core. It
+advances one candidate state exactly once per exact Publication Window, derives
+at most one typed query plan per query-bearing window, applies the window's
+integer query multiplicity before the fixed 14-primitive mapping, and retains
+only phase totals plus canonical window/plan/state hashes. It does not mint a
+worker invocation, materialize per-query masks or ledger transitions, measure
+serialized OpenFHE sizes, or relax any dispatch gate.
+
 Held-out dispatch remains forbidden until an outcome-blind amendment freezes
 the measured limits and methods, and a repository-owned production candidate-cell
-worker plus an admission seam implement ADR 0012's exact
-`window-weighted-equivalence-v1` basis. The TRACE post-run and Day-1 registration
-anchors must then be installed and revalidated. The worker advances each
+worker plus an admission seam connect that accounting core to ADR 0012's exact
+`window-weighted-equivalence-v1` protocol. The TRACE post-run and Day-1
+registration anchors must then be installed and revalidated. The worker advances each
 candidate layout once per publication window, derives the typed query plan and
 admitted OpenFHE protocol-object size classes once for each query-bearing layout,
 and multiplies primitive counts, logical F1-M route counts, and charged bytes by

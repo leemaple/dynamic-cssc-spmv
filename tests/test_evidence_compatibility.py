@@ -98,6 +98,7 @@ DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/plaintext_oracle.py",
     "src/dynamic_cssc/publication_artifact_install.py",
     "src/dynamic_cssc/publication_day1b.py",
+    "src/dynamic_cssc/publication_day1b_accounting.py",
     "src/dynamic_cssc/publication_day1b_worker_protocol.py",
     "src/dynamic_cssc/publication_primitive_accounting.py",
     "src/dynamic_cssc/publication_schedule.py",
@@ -105,6 +106,7 @@ DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/publication_traces.py",
     "src/dynamic_cssc/query_compiler.py",
     "src/dynamic_cssc/selection.py",
+    "src/dynamic_cssc/simulator.py",
     "src/dynamic_cssc/strategy_state.py",
     "src/dynamic_cssc/strong_execution.py",
     "src/dynamic_cssc/strong_packed_coo.py",
@@ -114,9 +116,12 @@ DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "tests/test_openfhe_query_runtime.py",
     "tests/test_ordinary_query_lifecycle.py",
     "tests/test_publication_day1b.py",
+    "tests/test_publication_day1b_accounting.py",
     "tests/test_publication_day1b_worker_protocol.py",
     "tests/test_publication_day1b_workflow_contract.py",
     "tests/test_publication_primitive_accounting.py",
+    "tests/test_query_accounting.py",
+    "tests/test_strong_day1_simulator.py",
 )
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
@@ -2107,7 +2112,7 @@ def test_day1b_preparatory_behavior_inventory_is_exact_but_non_authorizing(
         DAY1B_PREPARATORY_BEHAVIOR_PATHS
     )
     assert inventory["behavior_set_schema_version"] == (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v7"
+        "dynamic-cssc-day1b-preparatory-behavior-set-v8"
     )
     assert inventory["role"] == "day1b"
     assert inventory["source_git_sha"] == source_git_sha

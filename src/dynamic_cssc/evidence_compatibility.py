@@ -420,6 +420,7 @@ _DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/plaintext_oracle.py",
     "src/dynamic_cssc/publication_artifact_install.py",
     "src/dynamic_cssc/publication_day1b.py",
+    "src/dynamic_cssc/publication_day1b_accounting.py",
     "src/dynamic_cssc/publication_day1b_worker_protocol.py",
     "src/dynamic_cssc/publication_primitive_accounting.py",
     "src/dynamic_cssc/publication_schedule.py",
@@ -427,6 +428,7 @@ _DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/publication_traces.py",
     "src/dynamic_cssc/query_compiler.py",
     "src/dynamic_cssc/selection.py",
+    "src/dynamic_cssc/simulator.py",
     "src/dynamic_cssc/strategy_state.py",
     "src/dynamic_cssc/strong_execution.py",
     "src/dynamic_cssc/strong_packed_coo.py",
@@ -436,9 +438,12 @@ _DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "tests/test_openfhe_query_runtime.py",
     "tests/test_ordinary_query_lifecycle.py",
     "tests/test_publication_day1b.py",
+    "tests/test_publication_day1b_accounting.py",
     "tests/test_publication_day1b_worker_protocol.py",
     "tests/test_publication_day1b_workflow_contract.py",
     "tests/test_publication_primitive_accounting.py",
+    "tests/test_query_accounting.py",
+    "tests/test_strong_day1_simulator.py",
 )
 
 _ROLE_BEHAVIOR_PATHS: dict[EvidenceRole, tuple[str, ...] | None] = {
@@ -454,7 +459,7 @@ _ROLE_BEHAVIOR_PATHS: dict[EvidenceRole, tuple[str, ...] | None] = {
 _ROLE_BEHAVIOR_SCHEMAS = {
     EvidenceRole.ACQUISITION: "dynamic-cssc-acquisition-behavior-set-v2",
     EvidenceRole.TRACE: "dynamic-cssc-trace-behavior-set-v2",
-    EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v7",
+    EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v8",
     EvidenceRole.DAY2: "dynamic-cssc-day2-behavior-set-v4",
     EvidenceRole.ANALYZER: "dynamic-cssc-publication-analyzer-behavior-set-v2",
     EvidenceRole.STRONG_CORRECTNESS: "dynamic-cssc-strong-correctness-behavior-set-v1",
