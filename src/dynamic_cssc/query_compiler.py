@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from typing import Literal, TypeAlias, TypeGuard
 
@@ -49,6 +51,7 @@ from dynamic_cssc.strong_packed_coo import (
 )
 
 CLIENT_LANE_COMPONENT_ID = "packed-coo-delta"
+QUERY_PRIVATE_PLAN_FORMAT = "dynamic-cssc-common-ordinary-private-plan-v1"
 
 F1MPolicy: TypeAlias = Literal["overlap-only", "uniform-random-or-zero"]
 OperandSourceKind: TypeAlias = Literal[
@@ -107,6 +110,90 @@ class CompiledQuery:
     execution_binding_digest: str
     cloud_counts: CloudPlanCounts
     output_analysis: OutputPlanAnalysis
+
+    @property
+    def private_plan_digest(self) -> str:
+        payload = _query_private_plan_payload(
+            version_id=self.cloud_plan.binding.version_id,
+            cloud_program_digest_value=self.cloud_program_digest,
+            output_plan_digest_value=self.output_plan_digest,
+            execution_binding_digest_value=self.execution_binding_digest,
+            f1m_policy=self.f1m_policy,
+            operand_specs=self.operand_specs,
+            result_routes=self.result_routes,
+        )
+        return _query_private_plan_digest(payload)
+
+
+def _query_private_plan_payload(
+    *,
+    version_id: str,
+    cloud_program_digest_value: str,
+    output_plan_digest_value: str,
+    execution_binding_digest_value: str,
+    f1m_policy: F1MPolicy,
+    operand_specs: tuple[OperandSpec, ...],
+    result_routes: tuple[ResultRoute, ...],
+) -> dict[str, object]:
+    return {
+        "bindings": {
+            "cloud_program_digest": cloud_program_digest_value,
+            "execution_binding_digest": execution_binding_digest_value,
+            "output_plan_digest": output_plan_digest_value,
+            "version_id": version_id,
+        },
+        "f1m_policy": f1m_policy,
+        "format": QUERY_PRIVATE_PLAN_FORMAT,
+        "operands": [
+            {
+                "global_column_indices": list(spec.global_column_indices),
+                "query_ciphertext_id": spec.query_ciphertext_id,
+                "result_id": spec.result_id,
+                "source_kind": spec.source_kind,
+                "source_ordinal": spec.source_ordinal,
+                "value_ciphertext_id": spec.value_ciphertext_id,
+                "values": list(spec.values),
+            }
+            for spec in operand_specs
+        ],
+        "routes": [
+            {
+                "component_id": route.component_id,
+                "f1m_ciphertext_id": route.f1m_ciphertext_id,
+                "output_block_id": route.output_block_id,
+                "result_id": route.result_id,
+            }
+            for route in result_routes
+        ],
+    }
+
+
+def _query_private_plan_digest(payload: dict[str, object]) -> str:
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def canonical_query_private_plan_payload(compiled: CompiledQuery) -> dict[str, object]:
+    """Return the private operand/route plan already bound by the compiler."""
+
+    if type(compiled) is not CompiledQuery:
+        raise QueryCompilerError("compiled must be an exact CompiledQuery")
+    payload = _query_private_plan_payload(
+        version_id=compiled.cloud_plan.binding.version_id,
+        cloud_program_digest_value=compiled.cloud_program_digest,
+        output_plan_digest_value=compiled.output_plan_digest,
+        execution_binding_digest_value=compiled.execution_binding_digest,
+        f1m_policy=compiled.f1m_policy,
+        operand_specs=compiled.operand_specs,
+        result_routes=compiled.result_routes,
+    )
+    return payload
 
 
 def _is_strict_int(value: object) -> bool:
@@ -823,6 +910,9 @@ def compile_query(
         ),
     )
     cloud_counts = analyze_cloud_plan(cloud_plan)
+    operand_specs_tuple = tuple(operand_specs)
+    result_routes_tuple = tuple(routes)
+    binding_digest = execution_binding_digest(cloud_plan.binding)
     compiled = CompiledQuery(
         components=components,
         segmented_delta=segmented_delta,
@@ -830,11 +920,11 @@ def compile_query(
         f1m_policy=f1m_policy,
         cloud_plan=cloud_plan,
         output_plan=output_plan,
-        operand_specs=tuple(operand_specs),
-        result_routes=tuple(routes),
+        operand_specs=operand_specs_tuple,
+        result_routes=result_routes_tuple,
         cloud_program_digest=program_digest,
         output_plan_digest=output_analysis.output_plan_digest,
-        execution_binding_digest=execution_binding_digest(cloud_plan.binding),
+        execution_binding_digest=binding_digest,
         cloud_counts=cloud_counts,
         output_analysis=output_analysis,
     )

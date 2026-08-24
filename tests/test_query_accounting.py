@@ -9,9 +9,11 @@ from dynamic_cssc.metrics import StrategyMetrics, UnitCosts
 from dynamic_cssc.simulator import (
     SimulationConfig,
     SimulationTarget,
+    account_transition,
     simulate,
     simulate_targets,
 )
+from dynamic_cssc.strategy_state import advance_publication, initialize_strategy
 
 QUERY_SIDE_FIELDS = (
     "query_ciphertexts",
@@ -384,6 +386,76 @@ def test_delta_masks_only_output_blocks_that_overlap_logical_rows() -> None:
     assert mini.client_reorder_elements == 5
     assert mini.client_merges == 1
     assert metrics["PaddingReuse-CSSC"].blinding_mask_ciphertexts == 0
+
+
+def test_window_accounting_exposes_one_compact_typed_query_plan() -> None:
+    initial = {(row, 0): 1 for row in range(4)}
+    window = PublicationWindow(
+        index=0,
+        start_time=0.0,
+        end_time=0.0,
+        updates=(NetUpdate(row=0, col=1, before=0, after=1),),
+        query_count=3,
+        reason="query",
+    )
+    state = initialize_strategy(
+        "Mini-CSSC-Delta",
+        initial,
+        rows=4,
+        cols=4,
+        effective_slots=4,
+        partition_rows=2,
+        matrix_value_bound=7,
+        max_row_nnz=4,
+        reserved_slack_beta=0.0,
+        periodic_repack_windows=4,
+        packed_coo_segment_capacity=4,
+    )
+
+    accounting = account_transition(advance_publication(state, window))
+    plan = accounting.query_plan
+
+    assert plan is not None
+    assert plan.version_id == "v00000001"
+    assert plan.returned_share_count == 3
+    assert plan.random_route_count == 2
+    assert plan.dummy_route_count == 0
+    assert {route.kind for route in plan.f1m_routes} == {"random-zero-sum"}
+    assert len({(route.component_id, route.output_block_id) for route in plan.f1m_routes}) == 2
+    assert accounting.metrics.blinding_mask_ciphertexts == 3 * plan.random_route_count
+    assert set(plan.to_document()) == {
+        "cloud_program_digest",
+        "dummy_route_count_per_query",
+        "execution_binding_digest",
+        "f1m_routes",
+        "output_plan_digest",
+        "private_plan_digest",
+        "random_route_count_per_query",
+        "returned_share_count_per_query",
+        "schema_version",
+        "version_id",
+    }
+
+
+def test_zero_query_window_accounting_does_not_create_a_query_plan() -> None:
+    state = initialize_strategy(
+        "PaddingReuse-CSSC",
+        {(0, 0): 1},
+        rows=1,
+        cols=2,
+        effective_slots=2,
+        partition_rows=1,
+        matrix_value_bound=7,
+        max_row_nnz=2,
+        reserved_slack_beta=0.0,
+        periodic_repack_windows=4,
+        packed_coo_segment_capacity=2,
+    )
+
+    accounting = account_transition(advance_publication(state, _query_window(0, 0)))
+
+    assert accounting.query_plan is None
+    assert accounting.rotations_per_query == ()
 
 
 def test_client_lane_uses_one_unaggregated_query_pipeline_per_active_segment() -> None:

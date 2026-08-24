@@ -7,11 +7,16 @@ from dynamic_cssc.simulator import (
     STRONG_REFERENCE_STRATEGY,
     SimulationConfig,
     SimulationTarget,
+    account_strong_transition,
     simulate,
     simulate_strong_reference,
     simulate_targets,
 )
-from dynamic_cssc.strategy_state import STRATEGIES
+from dynamic_cssc.strategy_state import (
+    STRATEGIES,
+    advance_strong_publication,
+    initialize_strong_strategy,
+)
 
 
 def _config(**overrides: object) -> SimulationConfig:
@@ -139,6 +144,41 @@ def test_strong_delta_accounts_update_dag_mixed_f1m_and_exact_c128_rotations() -
         (64, 1),
     )
     assert result.rotation_inventory.required_indices == (1, 2, 4, 8, 16, 32, 64)
+
+
+def test_strong_window_accounting_classifies_random_and_dummy_routes() -> None:
+    initial = {(0, 0): 1, (1, 0): 2}
+    window = PublicationWindow(
+        index=0,
+        start_time=0.0,
+        end_time=0.0,
+        updates=(NetUpdate(row=0, col=1, before=0, after=3),),
+        query_count=5,
+        reason="query",
+    )
+    state = initialize_strong_strategy(
+        initial,
+        rows=2,
+        cols=4,
+        effective_slots=128,
+        partition_rows=1,
+        matrix_value_bound=7,
+        max_row_nnz=4,
+        reserved_slack_beta=0.0,
+        segment_width=128,
+    )
+
+    accounting = account_strong_transition(advance_strong_publication(state, window))
+    plan = accounting.query_plan
+
+    assert plan is not None
+    assert plan.returned_share_count == 3
+    assert plan.random_route_count == 2
+    assert plan.dummy_route_count == 1
+    assert accounting.metrics.blinding_mask_ciphertexts == 5 * plan.random_route_count
+    assert accounting.metrics.blinding_dummy_ciphertexts == 5 * plan.dummy_route_count
+    assert [route.kind for route in plan.f1m_routes].count("random-zero-sum") == 2
+    assert [route.kind for route in plan.f1m_routes].count("encrypted-zero-dummy") == 1
 
 
 def test_strong_update_only_window_has_no_query_or_rotation_accounting() -> None:
