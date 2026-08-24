@@ -1803,11 +1803,12 @@ def test_day1_workflow_does_not_run_unfrozen_repository_wide_gates() -> None:
         assert test_path in workflow
 
 
-def test_repository_ci_uses_the_frozen_runtime_and_complete_history() -> None:
+def test_repository_ci_uses_the_frozen_runtime_complete_history_and_budget() -> None:
     workflow = (REPOSITORY_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
     assert "fetch-depth: 0" in workflow
     assert "python-version: '3.12.13'" in workflow
+    assert "timeout-minutes: 30" in workflow
 
 
 @pytest.mark.parametrize(
