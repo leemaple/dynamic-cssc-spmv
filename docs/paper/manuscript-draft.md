@@ -366,6 +366,15 @@ contract, replay receipts, trace checksums, and rotation inventory verify.]**
 
 ### 7.3 Measured calibration and end-to-end validation
 
+**Exploratory mechanism check only:** GitHub run `32712608022` at `f11e97d`
+completed all 14 primitive profiles over eight caller-supplied exact rotation
+indices. The independently rehashed probe document has SHA-256
+`8b7db293687484bdf27e5f703bfb9e237fdaba3e3f6c8d736b33ce4c4e068207`.
+It contains three warm-up blocks but only 11 measurement blocks and explicitly
+sets `publication_raw_block_contract_satisfied=false`; the historically named
+`R3-Day2` package is therefore permanently non-R3 and supplies no manuscript
+estimate or claim.
+
 **[Populate only from accepted Day 2, calibrated replay, mixed-circuit, and R4
 artifacts. Include all 14 whole raw measurement blocks, their exact
 index/profile cases, and uncertainty, not only medians.]**
