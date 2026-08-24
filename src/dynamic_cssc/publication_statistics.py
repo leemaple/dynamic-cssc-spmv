@@ -26,6 +26,7 @@ from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
 
+from dynamic_cssc.day2_calibration_authority import PRIMITIVE_NAMES
 from dynamic_cssc.evidence_compatibility import (
     RUNTIME_EXECUTION_ISOLATION_HOLD,
     RUNTIME_EXECUTION_ISOLATION_RECEIPT_SCHEMA,
@@ -95,23 +96,6 @@ FIXED_CANDIDATE_IDS = (
     ABLATION_CANDIDATE_ID,
     *REFERENCE_CANDIDATE_IDS[2:],
 )
-PRIMITIVE_NAMES = (
-    "client_merge",
-    "client_reorder_element",
-    "decrypt",
-    "deserialize_ciphertext",
-    "encode",
-    "encrypt",
-    "eval_add_ciphertext",
-    "eval_mult_plaintext_mask",
-    "eval_mult_with_relinearization",
-    "eval_rotate",
-    "mask_map_element",
-    "mask_random_element",
-    "query_vector_pack",
-    "serialize_ciphertext",
-)
-
 _ANALYSIS_BEHAVIOR_PATHS = repository_behavior_paths(EvidenceRole.ANALYZER)
 _TEST_ANALYSIS_SOURCE_SHA = "1" * 40
 PUBLICATION_ARTIFACT_FILENAMES = (

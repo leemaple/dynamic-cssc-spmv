@@ -25,10 +25,13 @@ policies, preregistration terms, sampling/decision rules, and analyzers are then
 frozen at a clean pre-anchor `S1`. The separate Day-1 registration-anchor change
 is the Terminal Registration Freeze and the lineage's last behavior-freeze
 action. Later commits may only append closed, repository-owned data-only anchors
-at the shared compatibility-anchor path and the Day-2 post-run calibration-anchor
-path, without deleting or changing any earlier anchor record. The Day-2
-pre-dispatch profile anchor, Day-1 registration anchor, and historical strong
-anchor are frozen before or at this boundary and are not post-freeze append paths.
+at the shared compatibility-anchor path, the one Day-2 pre-dispatch
+profile-anchor path authorized by ADR 0011, and the Day-2 post-run
+calibration-anchor path, without deleting or changing any earlier anchor record.
+The Day-1 registration anchor and historical strong anchor are frozen before or
+at this boundary. The profile schema and producer are frozen there, but its
+binding is installed in one data-only commit after formal Day1A and before any
+held-out or Day-2 outcome.
 
 ## 1. Current evidence boundary
 
@@ -87,14 +90,16 @@ do not yet exist.
 
 The complete-suite aggregator emits a canonical fixed-record count bundle, an
 exact-index rotation inventory, and a narrowly scoped Day1A receipt. The receipt
-authorizes only synthetic causal count evidence. It independently compares the
-suite's slot domain with the publication manifest: the current exploratory plan
-uses a 512-by-512 matrix, 2048 effective slots, and 128-row partitions, while
-the publication domain uses 4096-by-8193, 4096 effective slots, and 4096-row
-partitions. Its receipt must therefore set
-`day2_direct_key_plan_authorized=false`. A later preregistered Day1A plan must
-close the full matrix/layout-domain mismatch before Day 2 can consume the
-inventory.
+authorizes only synthetic causal count evidence and independently compares the
+suite's slot domain with the publication manifest. Historical
+`config/experiment_plan.json` version 0.2.0 uses a 512-by-512 matrix, 2048
+effective slots, and 128-row partitions, so its receipt must set
+`day2_direct_key_plan_authorized=false`. The separately frozen formal
+`config/experiment_plan_publication.json` version 0.3.0 and
+`.github/workflows/day1a-publication-cost-model.yml` use the matching
+4096-by-8193, 4096-effective-slot, 4096-row-partition publication domain and are
+the sole route eligible to set `day2_direct_key_plan_authorized=true`. Neither
+route authorizes a complete cost, performance, paper-verdict, or security claim.
 
 ### Phase C — measured primitive and communication model (P0b / Day 2)
 
@@ -129,15 +134,25 @@ preregistered per-block maximum per-operation time over the complete admitted
 case set; this is a conservative upper envelope, not a claim that all calls
 have the same realized latency.
 
-Before designating the clean pre-anchor `S1`, install the canonical profile-policy
-anchor for the exact profiles, three warm-up blocks, rotation plan, and Day1A
-receipt/inventory. That file belongs to both the Day-2 and analyzer Behavior Sets;
-it must not change after the Terminal Registration Freeze and must not contain a
-self-referential future source SHA. At dispatch, the zero-argument seam obtains
-the actual clean S1 identity and Day-2 Behavior Set digest from the hardened
-verifier. After the run, S2 adds the archive/raw/projection binding in the separate
-Day-2 post-run evidence anchor; installing it must not modify the profile anchor,
-validator source, or any other Day-2 behavior blob.
+Before designating the clean pre-anchor `S1`, freeze the exact profile schema,
+three-warm-up rule, rotation-plan derivation, producer, validator, and all Day-2
+and analyzer behavior. After `S1` registration evidence is installed as the
+Terminal Registration Freeze and the selected formal Day1A receipt/inventory is
+monotonically anchored in one shared compatibility record with
+`role=day1-registration`, experiment source equal to the Terminal Registration
+Freeze, and artifact digest equal to the selected receipt, install the canonical
+profile-policy binding in exactly one later reviewed data-only commit. It binds
+only already frozen artifact identities,
+contains no future source SHA, and must precede every formal Day1B held-out or
+Day-2 run. It is not a Day-2 or analyzer Behavior Set member and may never be
+removed or retargeted. At dispatch, the zero-argument seam obtains the actual
+clean profile-bearing source identity and frozen Day-2 Behavior Set digest from
+the hardened verifier, and rejects a nonempty Day-2 post-run anchor set. After
+the run, a later evidence-freeze commit adds the v3 archive/raw/profile/
+rotation-plan/contract-bindings/projection binding in the separate Day-2
+post-run anchor without modifying the profile, validator, or any behavior blob.
+Post-run compatibility rejects any Day-2 experiment source that did not already
+contain the unique profile.
 
 The existing `day2-microbench.yml` remains a historical isolated probe, not this
 publication contract. Its executable can exercise every caller-supplied exact
@@ -232,7 +247,12 @@ freshness 0.1 s and 1.0 s, primary bandwidth 1000 Mb/s, and the nine frozen
 query/update ratios. Each paired unit also binds one deterministic length-8193
 ternary query vector generated from seed `2026082302`, with coordinates 0 and
 8192 forced to +1 and -1; it is reused across all cells and candidates in that
-unit. The sole confirmatory family is T2 at 0.1 s; T1 and the
+unit. Observed targets occupy the prefix-ranked column identities and every
+remaining coordinate is an explicit semantic-zero reserved column. Reserved
+columns remain in the length-8193 vector and in full-domain byte/cryptographic
+accounting; occupancy is reported but is not a pass threshold. A mapping with
+zero observed target identities remains ineligible. The sole confirmatory
+family is T2 at 0.1 s; T1 and the
 1.0 s panels are prespecified secondary robustness analyses and cannot
 authorize, replace, or rescue the headline. T2 uses a 32,768-event window. A common smaller trace tier
 is not authorized: 65,536 events would leave the entire tuning phase before the
@@ -329,7 +349,7 @@ controlled transient-scratch high-water, the amendment may not freeze a
 scratch cap from that field alone. It must add a separately reviewed
 controlled-scratch measurement or leave held-out dispatch on `HOLD`.
 
-The preparatory Day1B worker receipt v2 now preserves one such measurement for
+The preparatory Day1B worker receipt v3 now preserves one such measurement for
 the controller's exact anonymous registry/spool pair: the maximum checkpointed
 sum of both inode sizes, updated before the cap comparison and retained on an
 over-cap failure. It is deliberately separate from candidate-execution
@@ -386,9 +406,13 @@ choice remains `null`.
 
 The remaining Day1B `HOLD` set is explicit: an outcome-blind resource amendment,
 a controlled-scratch high-water and isolation method, linked-library/build
-admission, a production candidate-cell worker adapter that composes the verified
-OpenFHE runtime with the Day1B controller, the TRACE post-run anchor, and the
-Day-1 registration anchor.
+admission, a production candidate-cell worker adapter that implements ADR 0012
+window-weighted equivalence accounting and consumes the anchored Day 2 OpenFHE
+timing/size profile, the TRACE post-run anchor, and the Day-1 registration
+anchor. Full per-query-arrival OpenFHE replay is forbidden: the frozen schedule
+would otherwise require 530,097,064 arrivals per trace unit and
+15,902,911,920 across all 30 units without adding independent layout states or
+measurements.
 Source inventory is not dispatch authority. Any
 future file containing actual runner identities or frozen policy values must be
 introduced by a reviewed pre-S1 path/schema and DAY1B Behavior Set version bump,
@@ -473,9 +497,14 @@ checkpoint in this order:
 4. generate the Day-1 registration evidence against that exact `S1`, then install
    its repository-owned registration anchor in one separate reviewed commit as
    the Terminal Registration Freeze; and
-5. only after the lineage history revalidates may later stages dispatch and
-   monotonically append their closed data-only anchors. They may neither delete
-   nor alter an earlier record.
+5. run formal publication-domain Day1A only after the registration history
+   revalidates, monotonically anchor the selected receipt in a distinct
+   `role=day1-registration` compatibility commit, and install the mechanically
+   derived Day-2 profile binding in one later profile-only commit;
+6. verify that unique profile installation and the still-empty Day-2 post-run
+   anchor before any formal Day1B held-out or Day-2 dispatch; and
+7. only then may later stages dispatch and monotonically append their closed
+   post-run data anchors. They may neither delete nor alter an earlier record.
 
 If anchor installation is wrong, an anchor must be withdrawn, or any behavior,
 workflow, policy, preregistration, or analysis rule must change, abandon that

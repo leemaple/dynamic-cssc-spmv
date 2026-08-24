@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from typing import Literal
 
 from .cloud_execution_plan import CloudProgram, Rotate
 from .events import PublicationWindow
 from .metrics import StrategyMetrics
-from .output_plan import canonical_output_plan_payload
+from .output_plan import OutputPlan, canonical_output_plan_payload
 from .query_compiler import compile_query
 from .strategy_state import (
     STRATEGIES,
@@ -81,9 +82,63 @@ class SimulationResult:
 
 
 @dataclass(frozen=True, slots=True)
-class _WindowAccounting:
+class F1MRouteAccounting:
+    """One per-query F1-M route class derived from the typed OutputPlan."""
+
+    component_id: str
+    output_block_id: str
+    kind: Literal["random-zero-sum", "encrypted-zero-dummy"]
+
+    def to_document(self) -> dict[str, str]:
+        return {
+            "component_id": self.component_id,
+            "f1m_kind": self.kind,
+            "output_block_id": self.output_block_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class QueryPlanAccounting:
+    """Compact deterministic identity and F1-M cardinality of one query DAG."""
+
+    version_id: str
+    cloud_program_digest: str
+    output_plan_digest: str
+    execution_binding_digest: str
+    private_plan_digest: str
+    returned_share_count: int
+    f1m_routes: tuple[F1MRouteAccounting, ...]
+
+    @property
+    def random_route_count(self) -> int:
+        return sum(route.kind == "random-zero-sum" for route in self.f1m_routes)
+
+    @property
+    def dummy_route_count(self) -> int:
+        return sum(route.kind == "encrypted-zero-dummy" for route in self.f1m_routes)
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "cloud_program_digest": self.cloud_program_digest,
+            "dummy_route_count_per_query": self.dummy_route_count,
+            "execution_binding_digest": self.execution_binding_digest,
+            "f1m_routes": [route.to_document() for route in self.f1m_routes],
+            "output_plan_digest": self.output_plan_digest,
+            "private_plan_digest": self.private_plan_digest,
+            "random_route_count_per_query": self.random_route_count,
+            "returned_share_count_per_query": self.returned_share_count,
+            "schema_version": "dynamic-cssc-window-query-plan-accounting-v1",
+            "version_id": self.version_id,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class WindowAccounting:
+    """Exact work and query-plan cardinality for one persistent transition."""
+
     metrics: StrategyMetrics
     rotations_per_query: tuple[tuple[int, int], ...]
+    query_plan: QueryPlanAccounting | None
 
 
 def _is_strict_int(value: object) -> bool:
@@ -117,7 +172,19 @@ def _rotation_inventory(
     return RotationInventory(measured_items, tuple(sorted(required)))
 
 
-def _metrics_for(transition: Transition) -> _WindowAccounting:
+def _masked_output_share_ids(output_plan: OutputPlan) -> frozenset[tuple[str, str]]:
+    multiplicity: Counter[int] = Counter()
+    for share in output_plan.shares:
+        for _slot, logical_coordinate in share.slot_to_logical:
+            multiplicity[logical_coordinate] += 1
+    return frozenset(
+        (share.component_id, share.output_block_id)
+        for share in output_plan.shares
+        if any(multiplicity[logical] > 1 for _slot, logical in share.slot_to_logical)
+    )
+
+
+def account_transition(transition: Transition) -> WindowAccounting:
     """Adapt one successful persistent transition to the fixed accounting schema."""
 
     state = transition.state
@@ -145,7 +212,7 @@ def _metrics_for(transition: Transition) -> _WindowAccounting:
     )
     queries = facts.query_count
     if queries == 0:
-        return _WindowAccounting(metrics, ())
+        return WindowAccounting(metrics, (), None)
 
     components = (state.base,) if state.delta is None else (state.base, state.delta)
     compiled = compile_query(
@@ -185,10 +252,33 @@ def _metrics_for(transition: Transition) -> _WindowAccounting:
     rotations = _rotation_counts_for_program(compiled.cloud_plan.program)
     if sum(rotations.values()) != counts.rotations:
         raise AssertionError("exact rotation counts must reconcile with the query DAG")
-    return _WindowAccounting(metrics, tuple(sorted(rotations.items())))
+    routes = tuple(
+        F1MRouteAccounting(
+            component_id=route.component_id,
+            output_block_id=route.output_block_id,
+            kind="random-zero-sum",
+        )
+        for route in compiled.result_routes
+        if route.f1m_ciphertext_id is not None
+    )
+    if len(routes) * queries != metrics.blinding_mask_ciphertexts:
+        raise AssertionError("ordinary F1-M route classes must reconcile with metrics")
+    return WindowAccounting(
+        metrics,
+        tuple(sorted(rotations.items())),
+        QueryPlanAccounting(
+            version_id=compiled.cloud_plan.binding.version_id,
+            cloud_program_digest=compiled.cloud_program_digest,
+            output_plan_digest=compiled.output_plan_digest,
+            execution_binding_digest=compiled.execution_binding_digest,
+            private_plan_digest=compiled.private_plan_digest,
+            returned_share_count=len(compiled.result_routes),
+            f1m_routes=routes,
+        ),
+    )
 
 
-def _strong_metrics_for(transition: StrongTransition) -> _WindowAccounting:
+def account_strong_transition(transition: StrongTransition) -> WindowAccounting:
     """Adapt one strong transition and its actual query DAG to accounting metrics."""
 
     facts = transition.facts
@@ -214,7 +304,7 @@ def _strong_metrics_for(transition: StrongTransition) -> _WindowAccounting:
     )
     queries = facts.query_count
     if queries == 0:
-        return _WindowAccounting(metrics, ())
+        return WindowAccounting(metrics, (), None)
 
     counts = transition.execution_bundle.cloud_counts
     analysis = transition.execution_bundle.output_analysis
@@ -252,7 +342,39 @@ def _strong_metrics_for(transition: StrongTransition) -> _WindowAccounting:
     rotations = _rotation_counts_for_program(transition.execution_bundle.cloud_plan.program)
     if sum(rotations.values()) != counts.rotations:
         raise AssertionError("exact rotation counts must reconcile with the query DAG")
-    return _WindowAccounting(metrics, tuple(sorted(rotations.items())))
+    masked_share_ids = _masked_output_share_ids(transition.execution_bundle.output_plan)
+    routes = tuple(
+        F1MRouteAccounting(
+            component_id=route.component_id,
+            output_block_id=route.output_block_id,
+            kind=(
+                "random-zero-sum"
+                if route.output_share_id in masked_share_ids
+                else "encrypted-zero-dummy"
+            ),
+        )
+        for route in transition.execution_bundle.result_routes
+    )
+    if (
+        sum(route.kind == "random-zero-sum" for route in routes) * queries
+        != metrics.blinding_mask_ciphertexts
+        or sum(route.kind == "encrypted-zero-dummy" for route in routes) * queries
+        != metrics.blinding_dummy_ciphertexts
+    ):
+        raise AssertionError("strong F1-M route classes must reconcile with metrics")
+    return WindowAccounting(
+        metrics,
+        tuple(sorted(rotations.items())),
+        QueryPlanAccounting(
+            version_id=transition.state.version_id,
+            cloud_program_digest=transition.execution_bundle.cloud_program_digest,
+            output_plan_digest=transition.execution_bundle.output_plan_digest,
+            execution_binding_digest=(transition.execution_bundle.execution_binding_digest),
+            private_plan_digest=transition.execution_bundle.private_plan_digest,
+            returned_share_count=len(transition.execution_bundle.result_routes),
+            f1m_routes=routes,
+        ),
+    )
 
 
 def simulate_strong_reference(
@@ -296,7 +418,7 @@ def simulate_strong_reference(
     required_indices: set[int] = set()
     for position, window in enumerate(windows):
         transition = advance_strong_publication(state, window)
-        accounting = _strong_metrics_for(transition)
+        accounting = account_strong_transition(transition)
         if window.query_count:
             per_query_rotations = Counter(dict(accounting.rotations_per_query))
             required_indices.update(per_query_rotations)
@@ -384,7 +506,7 @@ def simulate_targets(
         if any(logical != logical_states[0] for logical in logical_states[1:]):
             raise AssertionError("all targets must publish the same logical state per window")
         for run_id, transition in transitions.items():
-            accounting = _metrics_for(transition)
+            accounting = account_transition(transition)
             if transition.facts.query_count:
                 per_query_rotations = Counter(dict(accounting.rotations_per_query))
                 required_indices_by_run[run_id].update(per_query_rotations)

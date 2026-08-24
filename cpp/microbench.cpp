@@ -21,6 +21,7 @@
 #include <vector>
 
 #if defined(__linux__)
+#include <sched.h>
 #include <sys/random.h>
 #elif defined(__APPLE__)
 #include <stdlib.h>
@@ -235,16 +236,46 @@ void WriteIntArray(std::ostream& output, const std::vector<int32_t>& values) {
     output << ']';
 }
 
-bool IsFrozenLabelPermutation(const std::vector<int64_t>& values, std::size_t batchSize) {
+std::vector<int32_t> ProcessAffinityCpuList() {
+#if defined(__linux__)
+    cpu_set_t affinity;
+    CPU_ZERO(&affinity);
+    if (::sched_getaffinity(0, sizeof(affinity), &affinity) != 0) {
+        throw std::runtime_error(
+            std::string("sched_getaffinity failed: ") + std::strerror(errno));
+    }
+    std::vector<int32_t> cpus;
+    for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
+        if (CPU_ISSET(cpu, &affinity)) {
+            cpus.push_back(cpu);
+        }
+    }
+    if (cpus.empty()) {
+        throw std::runtime_error("process affinity CPU list is empty");
+    }
+    return cpus;
+#else
+    throw std::runtime_error("publication affinity capture requires Linux");
+#endif
+}
+
+bool IsExactFrozenLabelRotation(
+    const std::vector<int64_t>& values,
+    std::size_t batchSize,
+    int32_t rotationIndex) {
     if (values.size() != batchSize) {
         return false;
     }
-    std::vector<bool> seen(batchSize, false);
-    for (const auto value : values) {
-        if (value < 0 || static_cast<std::size_t>(value) >= batchSize || seen[value]) {
+    const auto signedBatchSize = static_cast<std::int64_t>(batchSize);
+    const auto normalized =
+        (static_cast<std::int64_t>(rotationIndex) % signedBatchSize + signedBatchSize) %
+        signedBatchSize;
+    for (std::size_t slot = 0; slot < batchSize; ++slot) {
+        const auto expected = static_cast<std::int64_t>(
+            (static_cast<std::int64_t>(slot) + normalized) % signedBatchSize);
+        if (values[slot] != expected) {
             return false;
         }
-        seen[value] = true;
     }
     return true;
 }
@@ -294,12 +325,12 @@ class BenchmarkFixture {
         if (!context_->SerializeEvalAutomorphismKey(rotationKeyStream, SerType::BINARY)) {
             throw std::runtime_error("rotation-key serialization failed");
         }
-        rotationKeyBytes_ = rotationKeyStream.str().size();
+        serializedRotationKeys_ = rotationKeyStream.str();
         std::stringstream evalMultKeyStream;
         if (!context_->SerializeEvalMultKey(evalMultKeyStream, SerType::BINARY)) {
             throw std::runtime_error("evaluation-multiplication-key serialization failed");
         }
-        evalMultKeyBytes_ = evalMultKeyStream.str().size();
+        serializedEvalMultKeys_ = evalMultKeyStream.str();
 
         clientLeft_.resize(clientOperationCount_);
         clientRight_.resize(clientOperationCount_);
@@ -318,11 +349,36 @@ class BenchmarkFixture {
     }
 
     std::size_t rotationKeyBytes() const {
-        return rotationKeyBytes_;
+        return serializedRotationKeys_.size();
     }
 
     std::size_t evalMultKeyBytes() const {
-        return evalMultKeyBytes_;
+        return serializedEvalMultKeys_.size();
+    }
+
+    void writeEvaluationKeyMaterial(
+        const std::string& rotationKeysOutput,
+        const std::string& evalMultKeyOutput) const {
+        if (rotationKeysOutput.empty() != evalMultKeyOutput.empty()) {
+            throw std::runtime_error(
+                "rotation and evaluation-multiplication key outputs must be supplied together");
+        }
+        if (rotationKeysOutput.empty()) {
+            return;
+        }
+        const auto writeBinary = [](const std::string& path, const std::string& content) {
+            std::ofstream output(path, std::ios::out | std::ios::binary | std::ios::trunc);
+            if (!output) {
+                throw std::runtime_error("cannot open evaluation-key output: " + path);
+            }
+            output.write(content.data(), static_cast<std::streamsize>(content.size()));
+            output.flush();
+            if (!output) {
+                throw std::runtime_error("evaluation-key output write failed: " + path);
+            }
+        };
+        writeBinary(rotationKeysOutput, serializedRotationKeys_);
+        writeBinary(evalMultKeyOutput, serializedEvalMultKeys_);
     }
 
     PrimitiveSample measure(
@@ -439,7 +495,8 @@ class BenchmarkFixture {
                 Plaintext rotated;
                 const auto result = context_->Decrypt(keyPair_.secretKey, sink_, &rotated);
                 if (!result.isValid ||
-                    !IsFrozenLabelPermutation(rotated->GetPackedValue(), batchSize_)) {
+                    !IsExactFrozenLabelRotation(
+                        rotated->GetPackedValue(), batchSize_, rotationIndex)) {
                     throw std::runtime_error("eval_rotate correctness check failed");
                 }
                 sample.cases.push_back(
@@ -526,8 +583,8 @@ class BenchmarkFixture {
     Plaintext decrypted_;
     DecryptResult decryptResult_;
     std::string serializedCiphertext_;
-    std::size_t rotationKeyBytes_ = 0;
-    std::size_t evalMultKeyBytes_ = 0;
+    std::string serializedRotationKeys_;
+    std::string serializedEvalMultKeys_;
     std::vector<std::uint64_t> clientLeft_;
     std::vector<std::uint64_t> clientRight_;
     std::vector<std::size_t> clientPermutation_;
@@ -638,6 +695,10 @@ int main(int argc, char** argv) {
     try {
         const auto args = dynamic_cssc::ParseArgs(argc, argv);
         const auto outputPath = dynamic_cssc::GetString(args, "output", "microbench.json");
+        const auto rotationKeysOutput =
+            dynamic_cssc::GetString(args, "rotation-keys-output", "");
+        const auto evalMultKeyOutput =
+            dynamic_cssc::GetString(args, "eval-mult-key-output", "");
         const auto ringDim = dynamic_cssc::GetUInt(args, "ring-dim", 8192);
         const auto plaintextModulus = dynamic_cssc::GetUInt(args, "plaintext-modulus", 65537);
         const auto batchSize = dynamic_cssc::GetUInt(args, "batch-size", ringDim);
@@ -673,15 +734,20 @@ int main(int argc, char** argv) {
             return 6;
         }
 
+        const auto processAffinityCpuList = ProcessAffinityCpuList();
         BenchmarkFixture fixture(
             ringDim,
             plaintextModulus,
             batchSize,
             multiplicativeDepth,
             rotationIndices);
+        fixture.writeEvaluationKeyMaterial(rotationKeysOutput, evalMultKeyOutput);
         const auto warmupBlocks = RunBlocks(fixture, warmups, rotationIndices);
         const auto measurementBlocks = RunBlocks(fixture, repetitions, rotationIndices);
         const auto summaries = Summaries(measurementBlocks);
+        if (ProcessAffinityCpuList() != processAffinityCpuList) {
+            throw std::runtime_error("process affinity changed during calibration");
+        }
 
         std::ofstream output(outputPath, std::ios::out | std::ios::trunc);
         if (!output) {
@@ -702,6 +768,9 @@ int main(int argc, char** argv) {
         output << "  \"measured_rotation_index\": " << rotationIndices.front() << ",\n";
         output << "  \"required_exact_rotation_indices\": ";
         WriteIntArray(output, rotationIndices);
+        output << ",\n";
+        output << "  \"process_affinity_cpu_list\": ";
+        WriteIntArray(output, processAffinityCpuList);
         output << ",\n";
         output << "  \"ciphertext_bytes\": " << fixture.ciphertextBytes() << ",\n";
         output << "  \"rotation_key_bytes\": " << fixture.rotationKeyBytes() << ",\n";

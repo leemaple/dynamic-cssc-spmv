@@ -377,8 +377,13 @@ For each real dataset, let `V` be the event count of its closed, canonical,
 chronological schema-valid corpus. Use exactly event ordinals
 `[0, floor(V/10))` only to freeze the mapping: select 4,096 rows and up to 8,193
 observed columns by prefix event count with canonical-ID tie breaks, then
-deterministically pad remaining columns. Apply this mapping to the remaining
-stream. Target 131,072 accepted raw events per unit; require at least 65,536
+deterministically pad remaining columns. Reserved columns are semantic zero
+columns, remain explicit in the fixed 8,193-coordinate query vector, and incur
+the same full-domain communication and cryptographic accounting as observed
+columns. Their count and fraction are reported structural characteristics, not
+an eligibility threshold; a partition is ineligible only if it observes no
+mapped target identity at all. Apply this mapping to the remaining stream.
+Target 131,072 accepted raw events per unit; require at least 65,536
 emitted logical changes and a guaranteed
 lower bound of 1,000 complete publication windows. This lower bound is computed
 without rho/freshness assumptions as
@@ -408,23 +413,31 @@ publication run:
 ```
 
 The sole confirmatory freshness is 0.1 s, within the manifest maximum of one
-second. The 1.0 s case is a prespecified secondary robustness panel. A 10 s
-case is not currently authorized or required; it may be added only by a
-separately frozen, pre-execution out-of-manifest sensitivity protocol and can
-never enter the confirmatory gate.
+second. The 1.0 s case is a prespecified secondary robustness panel. The 10 s
+case is included only in the synthetic Day1A count grid as an explicitly
+non-confirmatory stress panel; it is not authorized for Day1B held-out evidence
+or the confirmatory gate. Promoting it beyond synthetic counts requires a
+separately frozen, pre-execution out-of-manifest sensitivity protocol.
 
 Primary bandwidth is frozen to 1000 Mbps. The 100 Mbps and 10000 Mbps profiles
-are not currently authorized or required; either may be added only by a
-separately frozen, pre-execution descriptive sensitivity protocol. Bytes must
-be derived from serialized protocol objects, not inferred from ciphertext
-counts alone.
+remain unpriced, deferred dimensions in Day1A and are not currently authorized
+for a performance claim; either may enter a measured sensitivity only through a
+separately frozen, pre-execution descriptive protocol. Bytes must be derived
+from serialized protocol objects, not inferred from ciphertext counts alone.
 
 Publication dimensions are frozen to the 4096-by-8193 manifest domain, a
 group-atomic microbatch threshold of 64 visible SETs (T1 at most 64; T2 at most
 65 when a two-SET group completes), maximum row nonzeros 4,096, coefficient bound 7, and the
-event-window transform above. The existing 512-by-512 Day 1 configuration is
-explicitly a scaled synthetic proxy and cannot serve as the publication-scale
-primary run. There is no smaller fallback tier. In particular, `N=65,536` is
+event-window transform above. The historical `config/experiment_plan.json`
+version 0.2.0 and `.github/workflows/day1-cost-model.yml` remain the
+512-by-512/2048-slot/128-row-partition scaled synthetic proxy and cannot serve
+as the publication-scale primary run. Formal Day1A instead uses the additive,
+separately named `config/experiment_plan_publication.json` version 0.3.0 and
+`.github/workflows/day1a-publication-cost-model.yml`, with rows 4096, columns
+8193, 4096 effective slots, and 4096-row partitions at every matrix, shard,
+replay, and aggregate stage. The two plans share every non-domain field exactly;
+neither workflow may consume the other plan or artifact namespace. There is no
+smaller fallback tier. In particular, `N=65,536` is
 forbidden because `floor(4N/10) < K=32,768`: tuning would observe no T2 expiry
 while held-out would switch mechanisms. If the target is infeasible in a
 prefix-only pilot, no held-out execution is authorized. A later, separately
@@ -456,7 +469,7 @@ with `selective_candidate_retry_allowed=false`); it is not a measured resource
 choice and cannot activate the policy. Every empirical numeric limit and every
 measurement-method choice remains `null`.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v4` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v9` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface. A successful workflow validation is not a
 dispatch receipt or evidence artifact: the workflow has no semantic inputs,
@@ -473,20 +486,40 @@ SHA-256 verification of every serialized input, result, and one-time key bundle.
 Its provisional depth-2/0/0 profile remains explicitly `HOLD` for mixed-circuit
 parameter authority.
 
+The v9 surface also contains a non-authorizing streaming accounting core. It
+advances one candidate state exactly once per exact Publication Window, derives
+at most one typed query plan per query-bearing window, applies the window's
+integer query multiplicity before the fixed 14-primitive mapping, and retains
+only phase totals plus canonical window/plan/state hashes. Its weighted F1-M
+evidence contains one exact query-range batch per query-bearing window and
+serialized size-class descriptors with positive exact multiplicity. Those
+weighted artifacts deliberately contain no per-query identifier, ledger token,
+reservation, or transition claim; the ordinary single-query lifecycle smoke is
+the separate evidence path for real no-reuse enforcement. The accounting core
+does not mint a worker invocation, materialize per-query masks or ledger
+transitions, measure serialized OpenFHE sizes, or relax any dispatch gate.
+
 Held-out dispatch remains forbidden until an outcome-blind amendment freezes
 the measured limits and methods, and a repository-owned production candidate-cell
-worker plus an admission seam connect the pre-admission OpenFHE launcher/runtime
-receipt to the Day1B controller. The TRACE post-run and Day-1 registration
-anchors must then be installed and revalidated. The ordinary lifecycle binds
-the common typed DAG to private global-column operands, fresh overlap-only F1-M
-masks, and a crash-persistent single-use commitment; the runtime consumes that
-commitment immediately before launch, verifies result and serialized-object
-bytes, records a non-authorizing receipt, and removes its private scratch tree.
-The real OpenFHE smoke is execution-path evidence, not publication execution or
-dispatch authority. Introducing the remaining measured policy and admission
-facts requires a reviewed pre-`S1` path addition and a later DAY1B Behavior Set
-version bump; this preparatory
-inventory cannot be upgraded in place after outcomes.
+worker plus an admission seam connect that accounting core to ADR 0012's exact
+`window-weighted-equivalence-v1` protocol. The TRACE post-run and Day-1
+registration anchors must then be installed and revalidated. The worker advances each
+candidate layout once per publication window, derives the typed query plan and
+admitted OpenFHE protocol-object size classes once for each query-bearing layout,
+and multiplies primitive counts, logical F1-M route counts, and charged bytes by
+that window's exact integer query multiplicity. It must not launch a full
+OpenFHE query once per scheduled arrival.
+
+The ordinary lifecycle still binds the common typed DAG to private global-column
+operands, fresh overlap-only F1-M masks, and a crash-persistent single-use
+commitment. The real OpenFHE smoke verifies that execution path, and formal Day 2
+supplies the anchored primitive timings and serialized ciphertext/key sizes used
+by weighted Day1B accounting. A weighted F1-M equivalence-class receipt proves
+its size class, query range, and exact charged multiplicity; it does not claim
+that every fresh mask was materialized during the cost-model experiment. The
+execution basis is part of the worker input digest. Introducing the remaining
+measured policy, profile, and admission facts requires reviewed pre-`S1` source
+and the frozen DAY1B Behavior Set; none may be spliced in after outcomes.
 
 For each of the three real datasets, define `V` as the event count of its closed,
 canonical, chronological schema-valid corpus. Execute exactly the 30 paths in
@@ -532,7 +565,7 @@ payload artifact may be retained. A scratch limit remains `PENDING-FREEZE`
 unless the amendment adds a separately reviewed controlled-scratch high-water
 measurement.
 
-The Day1B worker candidate-cell receipt v2 separately records
+The Day1B worker candidate-cell receipt v3 separately records
 `controller_observed_registered_scratch_peak_bytes`. The controller updates
 that value before every existing cap check as the monotonic maximum of the sum
 of `st_size` for its exact two anonymous, inode-bound registry/spool members.
@@ -544,6 +577,17 @@ candidate-execution `controller_observed_peak_scratch_bytes` governed by
 the other. The current pytest-only capability issuer still reports creation
 isolation as false, so this measurement does not authorize production or lift
 the resource-policy `HOLD`.
+
+ADR 0012 corrects a pre-outcome feasibility error in that preparatory protocol.
+With 131,072 accepted groups, the frozen rho grid, two freshness settings, and
+14 physical candidates, literal per-arrival replay would request 530,097,064
+queries per trace unit and 15,902,911,920 over 30 units. Day1B is therefore
+frozen to window-weighted equivalence accounting. Controller-bound F1-M
+equivalence classes may carry positive multiplicity, but their query ranges
+must be contiguous, nonoverlapping, and exactly cover the OutputPlan-derived
+logical route cardinality. Materialized-frame limits apply to equivalence
+classes; charged communication and primitive counts include their full exact
+multiplicity.
 
 The reviewed next-path decoder schema is
 `dynamic-cssc-publication-day1b-resource-amendment-v1`. It is deliberately
@@ -685,6 +729,17 @@ a unique canonical exact-rational encoding: a minimal terminating decimal when
 possible, otherwise a reduced positive `numerator/denominator` string. This
 keeps every positive integer operation count representable without rounding.
 
+The Day1B-to-Day2 mapping is the machine-readable
+`dynamic-cssc-publication-primitive-accounting-v2` contract generated from the
+same closed formula table used for execution. Each transmitted ciphertext is
+charged exactly once for serialization and once for deserialization; query
+packing is charged per effective-slot element of every query ciphertext; F1-M
+mask and dummy ciphertexts are charged as encode/encrypt/query inputs; and
+returned ciphertexts are charged as serialized/deserialized/decrypted outputs.
+The contract rejects nonclosed encryption, relinearization, result, F1-M, and
+metadata inventories before a vector can be priced. Its canonical digest is
+carried by both the Day 2 profile anchor and every later Day1B binding.
+
 For `eval_rotate`, every block measures every exact index/profile in the
 Day-1A-authorized direct-key inventory. Its scalar block value is the maximum
 per-operation time over that complete admitted case set, a preregistered
@@ -693,18 +748,29 @@ Any other primitive whose admitted ciphertext level/profile varies uses the
 same complete-case, per-block maximum rule; otherwise the accounting vocabulary
 must be expanded before measurement.
 
-Before the clean pre-anchor `S1` is designated, the canonical repository profile
-anchor freezes the exact profile set, three-warm-up rule, rotation plan, and
-Day-1A receipt/inventory identities. The profile anchor itself belongs to both
-the Day-2 and analyzer Behavior Sets; it may not be installed or changed after
-the Terminal Registration Freeze. It contains no future or self-referential
-source commit SHA. A zero-argument repository seam validates that frozen data
-and obtains the actual S1 identity and Day-2 Behavior Set digest from the
-hardened clean-source verifier at runtime.
-After measurement, S2 may add a separate canonical post-run evidence anchor
-binding that actual S1 and the archive/raw/projection digests. Neither anchor is
-embedded in validator Python code; the validator remains in the Day-2 Behavior
-Set, while only the post-run anchor data is evidence-only under ADR 0010.
+Before the clean pre-anchor `S1` is designated, the repository freezes the exact
+profile schema, three-warm-up rule, rotation-plan derivation, producer,
+validator, and all Day-2/analyzer behavior. After exact-`S1` registration is
+installed as the Terminal Registration Freeze and the selected formal Day1A
+receipt is monotonically anchored by one shared compatibility record with
+`role=day1-registration`, experiment source equal to that Terminal Registration
+Freeze, and artifact digest equal to the selected receipt, one later reviewed
+profile-only commit installs the canonical binding derived from those frozen
+artifacts. The profile anchor is data-only rather than a Day-2 or analyzer
+Behavior Set member; it may never be removed, retargeted, or independently
+reinstalled and must precede
+every formal Day1B held-out or Day-2 run. It contains no future or
+self-referential source commit SHA. A zero-argument repository seam validates
+the binding, requires the Day-2 post-run anchor set to remain empty, and obtains
+the actual clean profile-bearing source identity and frozen Day-2 Behavior Set
+digest at runtime. After measurement, a later canonical post-run evidence
+anchor v3 binds that actual source and the archive, raw blocks, profile,
+rotation-plan, contract-bindings, and projection digests. Final repository
+authority cross-checks the profile, rotation plan, and contract bindings against
+the pre-dispatch anchor, and generic Day-2 compatibility rejects an experiment
+source that did not already contain the profile. Neither anchor is embedded in
+validator Python code; all deriving and validating code remains frozen under
+ADR 0010 and ADR 0011.
 
 The accepted analysis input binds exactly 30 trace units and 540
 `(unit, freshness, rho)` cells. Every unit commits to the trace manifest,
@@ -719,8 +785,9 @@ before a verdict can enter the claim ledger. These identities need not be equal:
 the provider artifact digest necessarily appears after the experiment. Any
 difference is accepted only through a repository-generated ADR 0010 receipt
 that compares the exact, role-specific path/mode/type/blob Behavior Set and
-allows only monotonic additions at the shared compatibility-anchor path and the
-Day-2 post-run calibration-anchor path.
+allows only monotonic additions at the shared compatibility-anchor path, the
+unique ADR 0011 profile-anchor path, and the Day-2 post-run calibration-anchor
+path.
 An earlier role remains valid when a later role appends its own admitted record
 to a shared anchor, but every earlier record and identity must remain unchanged.
 The preregistration and analyzer decision Behavior Set must remain byte-for-byte
@@ -825,10 +892,11 @@ withholds the headline.
 5. Day 1A emits replayable count evidence without inspecting a publication
    verdict. Its canonical count bundle and exact-index inventory may authorize
    a Day 2 key plan only when the receipt proves that the suite and publication
-   matrix, effective-slot, and row-partition domains are identical; the current
-   512-by-512/2048-slot/128-row-partition exploratory plan therefore remains
-   ineligible for the 4096-by-8193/4096-slot/4096-row-partition publication key
-   plan.
+   matrix, effective-slot, and row-partition domains are identical. Historical
+   plan 0.2.0 therefore remains ineligible; formal plan 0.3.0 is the sole
+   4096-by-8193/4096-slot/4096-row-partition route that may set
+   `day2_direct_key_plan_authorized=true`, while every cost, performance, paper,
+   and security claim flag remains false.
 6. P0b/Day 2 consumes Day 1A's exact key inventory, stores exactly 14 complete
    whole measurement blocks under the frozen order/stop rule, and passes
    operation-profile and provenance checks. The current historical
@@ -908,6 +976,9 @@ record:
 
 The outcome-blind pilot and its resource amendment occur before every item above
 is frozen into the pre-anchor `S1`. Only then may exact-`S1` Day-1 registration
-evidence be anchored as the Terminal Registration Freeze. Only that committed,
-reviewed, history-valid sequence may authorize the first held-out publication
-run.
+evidence be anchored as the Terminal Registration Freeze. Formal
+publication-domain Day1A then runs against that registered catalog, its selected
+receipt is monotonically anchored in a distinct `role=day1-registration`
+compatibility commit, and the unique later mechanical profile-only commit binds
+the pre-dispatch inputs. Only that complete, reviewed,
+history-valid sequence may authorize the first held-out publication run.

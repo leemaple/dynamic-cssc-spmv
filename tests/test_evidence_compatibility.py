@@ -40,7 +40,6 @@ TRACE_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/publication_traces.py",
 )
 ANALYZER_BEHAVIOR_PATHS = (
-    "config/day2-calibration-profile-anchors.json",
     "config/publication-runtime-policy.json",
     "docs/paper/publication-preregistration-draft.md",
     "pyproject.toml",
@@ -71,6 +70,8 @@ DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "docs/decisions/0008-strong-whole-query-execution-bundle.md",
     "docs/decisions/0009-fail-closed-role-aware-day1-catalog.md",
     "docs/decisions/0010-separate-experiment-and-evidence-freeze-snapshots.md",
+    "docs/decisions/0011-post-registration-day2-profile-anchor.md",
+    "docs/decisions/0012-window-weighted-day1b-accounting.md",
     "docs/paper/publication-preregistration-draft.md",
     "pyproject.toml",
     "requirements-ci.txt",
@@ -83,6 +84,7 @@ DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/__init__.py",
     "src/dynamic_cssc/cloud_execution_plan.py",
     "src/dynamic_cssc/cssc.py",
+    "src/dynamic_cssc/day2_calibration_authority.py",
     "src/dynamic_cssc/day1_registry.py",
     "src/dynamic_cssc/evidence_compatibility.py",
     "src/dynamic_cssc/events.py",
@@ -96,12 +98,15 @@ DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/plaintext_oracle.py",
     "src/dynamic_cssc/publication_artifact_install.py",
     "src/dynamic_cssc/publication_day1b.py",
+    "src/dynamic_cssc/publication_day1b_accounting.py",
     "src/dynamic_cssc/publication_day1b_worker_protocol.py",
+    "src/dynamic_cssc/publication_primitive_accounting.py",
     "src/dynamic_cssc/publication_schedule.py",
     "src/dynamic_cssc/publication_statistics.py",
     "src/dynamic_cssc/publication_traces.py",
     "src/dynamic_cssc/query_compiler.py",
     "src/dynamic_cssc/selection.py",
+    "src/dynamic_cssc/simulator.py",
     "src/dynamic_cssc/strategy_state.py",
     "src/dynamic_cssc/strong_execution.py",
     "src/dynamic_cssc/strong_packed_coo.py",
@@ -111,8 +116,12 @@ DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "tests/test_openfhe_query_runtime.py",
     "tests/test_ordinary_query_lifecycle.py",
     "tests/test_publication_day1b.py",
+    "tests/test_publication_day1b_accounting.py",
     "tests/test_publication_day1b_worker_protocol.py",
     "tests/test_publication_day1b_workflow_contract.py",
+    "tests/test_publication_primitive_accounting.py",
+    "tests/test_query_accounting.py",
+    "tests/test_strong_day1_simulator.py",
 )
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
@@ -228,10 +237,105 @@ def _write_day2_post_run_anchors(
         _canonical(
             {
                 "anchors": anchors,
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
             }
         ),
     )
+
+
+def _write_day2_profile_anchors(
+    repository: Path,
+    anchors: list[dict[str, object]],
+) -> None:
+    _write(
+        repository,
+        "config/day2-calibration-profile-anchors.json",
+        _canonical(
+            {
+                "anchors": anchors,
+                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
+            }
+        ),
+    )
+
+
+def _day2_profile_binding(
+    *,
+    day1a_authority_receipt_sha256: str = "4" * 64,
+) -> dict[str, object]:
+    return {
+        "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-v3",
+        "operation_profile_set_sha256": "1" * 64,
+        "warmup_block_count": 3,
+        "rotation_key_plan_sha256": "2" * 64,
+        "rotation_inventory_source_schema_version": (
+            "dynamic-cssc-day1a-rotation-inventory-v1"
+        ),
+        "day1a_authority_receipt_sha256": day1a_authority_receipt_sha256,
+        "day1a_inventory_sha256": "5" * 64,
+        "contract_bindings_sha256": "6" * 64,
+        "experiment_contract_sha256": "7" * 64,
+        "day1_candidate_registration_receipt_sha256": "8" * 64,
+        "candidate_catalog_schema_version": "dynamic-cssc-day1-candidate-catalog-v1",
+        "candidate_catalog_sha256": "9" * 64,
+        "day1a_count_bundle_schema_version": "dynamic-cssc-day1a-count-bundle-v1",
+        "day1a_count_bundle_sha256": "a" * 64,
+        "heldout_record_schema_version": "dynamic-cssc-publication-heldout-record-v4",
+        "primitive_accounting_schema_version": (
+            "dynamic-cssc-publication-primitive-accounting-v2"
+        ),
+        "primitive_accounting_mapping_sha256": "b" * 64,
+        "serialized_object_accounting_schema_version": (
+            "dynamic-cssc-publication-serialized-object-accounting-v1"
+        ),
+        "serialized_object_accounting_contract_sha256": "c" * 64,
+        "day1a_workflow_run_id": 456,
+        "day1a_artifact_id": 789,
+        "day1a_artifact_name": "r2-day1a-publication-" + "a" * 40 + "-20260821",
+        "day1a_artifact_digest": "sha256:" + "d" * 64,
+    }
+
+
+def _day1a_compatibility_record(
+    *,
+    experiment_sha: str,
+    inventory: dict[str, object],
+    artifact_sha256: str,
+) -> dict[str, object]:
+    return {
+        "artifact_sha256": artifact_sha256,
+        "behavior_set_schema_version": inventory["behavior_set_schema_version"],
+        "behavior_set_sha256": inventory["behavior_set_sha256"],
+        "experiment_source_git_sha": experiment_sha,
+        "role": EvidenceRole.DAY1_REGISTRATION.value,
+        "schema_version": "dynamic-cssc-evidence-compatibility-anchor-v1",
+    }
+
+
+def _install_day1a_anchor_and_profile(
+    repository: Path,
+    *,
+    evidence_freeze_sha: str,
+    inventory: dict[str, object],
+    binding: dict[str, object] | None = None,
+) -> tuple[str, str, dict[str, object]]:
+    profile_binding = _day2_profile_binding() if binding is None else binding
+    receipt_sha256 = profile_binding["day1a_authority_receipt_sha256"]
+    assert isinstance(receipt_sha256, str)
+    _write_compatibility_anchors(
+        repository,
+        [
+            _day1a_compatibility_record(
+                experiment_sha=evidence_freeze_sha,
+                inventory=inventory,
+                artifact_sha256=receipt_sha256,
+            )
+        ],
+    )
+    day1a_anchor_sha = _commit(repository, "anchor the selected formal Day1A receipt")
+    _write_day2_profile_anchors(repository, [profile_binding])
+    profile_sha = _commit(repository, "install the one Day2 pre-dispatch profile anchor")
+    return day1a_anchor_sha, profile_sha, profile_binding
 
 
 def _write_trace_anchor(
@@ -812,7 +916,295 @@ def test_repository_history_allows_the_day2_post_run_data_anchor_after_s2(
     assert attestation.analysis_source_git_sha == current_sha
 
 
-def test_repository_history_rejects_predispatch_day2_profile_anchor_after_s2(
+def test_repository_history_allows_one_profile_anchor_only_after_registration_s2(
+    day1_registration_repository: tuple[
+        Path,
+        str,
+        str,
+        str,
+        dict[str, object],
+        dict[str, object],
+    ],
+) -> None:
+    repository, _experiment_sha, evidence_sha, _analysis_sha, inventory, _record = (
+        day1_registration_repository
+    )
+    day1a_anchor_sha, profile_sha, binding = _install_day1a_anchor_and_profile(
+        repository,
+        evidence_freeze_sha=evidence_sha,
+        inventory=inventory,
+    )
+
+    attestation = verify_repository_anchor_history(
+        EvidenceRole.DAY1_REGISTRATION,
+        repository,
+    )
+
+    assert attestation.evidence_freeze_git_sha == evidence_sha
+    assert attestation.analysis_source_git_sha == profile_sha
+    assert day1a_anchor_sha != profile_sha
+    assert (
+        attestation.day1a_authority_receipt_sha256
+        == binding["day1a_authority_receipt_sha256"]
+    )
+
+
+def test_repository_history_rejects_profile_without_prior_day1a_receipt_anchor(
+    day1_registration_repository: tuple[
+        Path,
+        str,
+        str,
+        str,
+        dict[str, object],
+        dict[str, object],
+    ],
+) -> None:
+    repository, *_rest = day1_registration_repository
+    _write_compatibility_anchors(repository, [])
+    _commit(repository, "materialize the still-empty compatibility anchor set")
+    _write_day2_profile_anchors(repository, [_day2_profile_binding()])
+    _commit(repository, "install profile without first anchoring Day1A")
+
+    with pytest.raises(EvidenceCompatibilityError, match="Day1A.*anchor"):
+        verify_repository_anchor_history(EvidenceRole.DAY1_REGISTRATION, repository)
+
+
+def test_repository_history_rejects_profile_already_present_at_registration_s1(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "premature-profile-registration"
+    repository.mkdir()
+    _git(repository, "init", "-q")
+    _git(repository, "config", "user.email", "premature-profile@example.invalid")
+    _git(repository, "config", "user.name", "Premature Profile Test")
+    _write(repository, ".gitignore", "*.pyc\n__pycache__/\n")
+    for relative_path in repository_behavior_paths(EvidenceRole.DAY1_REGISTRATION):
+        _write(repository, relative_path, f"fixture for {relative_path}\n")
+    _write(
+        repository,
+        DAY1_REGISTRATION_ANCHOR_PATH,
+        _canonical(
+            {
+                "anchors": [],
+                "schema_version": "dynamic-cssc-day1-registration-anchor-set-v1",
+            }
+        ),
+    )
+    _write_day2_profile_anchors(repository, [_day2_profile_binding()])
+    experiment_sha = _commit(repository, "registration S1 with a premature profile")
+    inventory = capture_behavior_inventory(
+        EvidenceRole.DAY1_REGISTRATION,
+        source_git_sha=experiment_sha,
+        repository_root=repository,
+    )
+    _write_day1_registration_anchor(
+        repository,
+        _day1_registration_record(experiment_sha=experiment_sha, inventory=inventory),
+    )
+    _commit(repository, "install registration anchor")
+
+    with pytest.raises(EvidenceCompatibilityError, match="profile.*absent.*S1|S1.*profile"):
+        verify_repository_anchor_history(EvidenceRole.DAY1_REGISTRATION, repository)
+
+
+def test_repository_history_rejects_profile_installed_with_registration_s2(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "profile-at-registration-s2"
+    repository.mkdir()
+    _git(repository, "init", "-q")
+    _git(repository, "config", "user.email", "profile-at-s2@example.invalid")
+    _git(repository, "config", "user.name", "Profile At S2 Test")
+    _write(repository, ".gitignore", "*.pyc\n__pycache__/\n")
+    for relative_path in repository_behavior_paths(EvidenceRole.DAY1_REGISTRATION):
+        _write(repository, relative_path, f"fixture for {relative_path}\n")
+    _write(
+        repository,
+        DAY1_REGISTRATION_ANCHOR_PATH,
+        _canonical(
+            {
+                "anchors": [],
+                "schema_version": "dynamic-cssc-day1-registration-anchor-set-v1",
+            }
+        ),
+    )
+    _write_day2_profile_anchors(repository, [])
+    experiment_sha = _commit(repository, "registration S1 with an empty profile set")
+    inventory = capture_behavior_inventory(
+        EvidenceRole.DAY1_REGISTRATION,
+        source_git_sha=experiment_sha,
+        repository_root=repository,
+    )
+    _write_day1_registration_anchor(
+        repository,
+        _day1_registration_record(experiment_sha=experiment_sha, inventory=inventory),
+    )
+    _write_day2_profile_anchors(repository, [_day2_profile_binding()])
+    _commit(repository, "incorrectly install registration and profile together")
+
+    with pytest.raises(EvidenceCompatibilityError, match="profile.*absent.*S2|S2.*profile"):
+        verify_repository_anchor_history(EvidenceRole.DAY1_REGISTRATION, repository)
+
+
+@pytest.mark.parametrize("mutation", ("removed", "retargeted", "remove-and-readd"))
+def test_repository_history_rejects_profile_anchor_mutation_after_installation(
+    day1_registration_repository: tuple[
+        Path,
+        str,
+        str,
+        str,
+        dict[str, object],
+        dict[str, object],
+    ],
+    mutation: str,
+) -> None:
+    repository, _experiment_sha, evidence_sha, _analysis_sha, inventory, _record = (
+        day1_registration_repository
+    )
+    _day1a_sha, _profile_sha, binding = _install_day1a_anchor_and_profile(
+        repository,
+        evidence_freeze_sha=evidence_sha,
+        inventory=inventory,
+    )
+    if mutation == "removed":
+        _write_day2_profile_anchors(repository, [])
+        _commit(repository, "remove the Day2 profile anchor")
+    elif mutation == "retargeted":
+        _write_day2_profile_anchors(
+            repository,
+            [_day2_profile_binding(day1a_authority_receipt_sha256="d" * 64)],
+        )
+        _commit(repository, "retarget the Day2 profile anchor")
+    else:
+        _write_day2_profile_anchors(repository, [])
+        _commit(repository, "temporarily remove the Day2 profile anchor")
+        _write_day2_profile_anchors(repository, [binding])
+        _commit(repository, "re-add the Day2 profile anchor")
+
+    with pytest.raises(EvidenceCompatibilityError, match="profile.*remove or retarget"):
+        verify_repository_anchor_history(EvidenceRole.DAY1_REGISTRATION, repository)
+
+
+def test_repository_history_rejects_profile_anchor_after_day2_post_run_evidence(
+    day1_registration_repository: tuple[
+        Path,
+        str,
+        str,
+        str,
+        dict[str, object],
+        dict[str, object],
+    ],
+) -> None:
+    repository, _experiment_sha, evidence_sha, _analysis_sha, inventory, _record = (
+        day1_registration_repository
+    )
+    binding = _day2_profile_binding()
+    receipt_sha256 = binding["day1a_authority_receipt_sha256"]
+    assert isinstance(receipt_sha256, str)
+    _write_compatibility_anchors(
+        repository,
+        [
+            _day1a_compatibility_record(
+                experiment_sha=evidence_sha,
+                inventory=inventory,
+                artifact_sha256=receipt_sha256,
+            )
+        ],
+    )
+    _commit(repository, "anchor Day1A before any Day2 outcome")
+    _write_day2_post_run_anchors(repository, [{"binding": "day2-evidence"}])
+    _commit(repository, "install Day2 post-run evidence first")
+    _write_day2_profile_anchors(repository, [binding])
+    _commit(repository, "attempt late Day2 profile installation")
+
+    with pytest.raises(EvidenceCompatibilityError, match="profile.*before.*post-run"):
+        verify_repository_anchor_history(EvidenceRole.DAY1_REGISTRATION, repository)
+
+
+def test_repository_history_rejects_profile_installation_mixed_with_other_anchor_data(
+    day1_registration_repository: tuple[
+        Path,
+        str,
+        str,
+        str,
+        dict[str, object],
+        dict[str, object],
+    ],
+) -> None:
+    repository, experiment_sha, evidence_sha, _analysis_sha, inventory, _record = (
+        day1_registration_repository
+    )
+    binding = _day2_profile_binding()
+    receipt_sha256 = binding["day1a_authority_receipt_sha256"]
+    assert isinstance(receipt_sha256, str)
+    day1a_anchor = _day1a_compatibility_record(
+        experiment_sha=evidence_sha,
+        inventory=inventory,
+        artifact_sha256=receipt_sha256,
+    )
+    _write_compatibility_anchors(repository, [day1a_anchor])
+    _commit(repository, "anchor Day1A before the profile")
+    _write_day2_profile_anchors(repository, [binding])
+    _write_compatibility_anchors(
+        repository,
+        [
+            _acquisition_anchor_record(experiment_sha=experiment_sha),
+            day1a_anchor,
+        ],
+    )
+    _commit(repository, "mix profile installation with another anchor")
+
+    with pytest.raises(EvidenceCompatibilityError, match="profile.*only.*data path"):
+        verify_repository_anchor_history(EvidenceRole.DAY1_REGISTRATION, repository)
+
+
+def test_repository_history_rejects_two_independent_first_profile_installations(
+    day1_registration_repository: tuple[
+        Path,
+        str,
+        str,
+        str,
+        dict[str, object],
+        dict[str, object],
+    ],
+) -> None:
+    repository, _experiment_sha, evidence_sha, _analysis_sha, inventory, _record = (
+        day1_registration_repository
+    )
+    binding = _day2_profile_binding()
+    receipt_sha256 = binding["day1a_authority_receipt_sha256"]
+    assert isinstance(receipt_sha256, str)
+    _write_compatibility_anchors(
+        repository,
+        [
+            _day1a_compatibility_record(
+                experiment_sha=evidence_sha,
+                inventory=inventory,
+                artifact_sha256=receipt_sha256,
+            )
+        ],
+    )
+    _commit(repository, "anchor Day1A before branching profile installations")
+    base_sha = _git(repository, "rev-parse", "HEAD")
+    primary_branch = _git(repository, "branch", "--show-current")
+
+    _git(repository, "checkout", "-qb", "profile-install-a", base_sha)
+    _write_day2_profile_anchors(repository, [binding])
+    _commit(repository, "first independent profile installation")
+
+    _git(repository, "checkout", "-qb", "profile-install-b", base_sha)
+    _write_day2_profile_anchors(repository, [binding])
+    _commit(repository, "second independent profile installation")
+
+    _git(repository, "checkout", "-q", primary_branch)
+    _git(repository, "merge", "-q", "--no-ff", "-m", "merge profile A", "profile-install-a")
+    _git(repository, "merge", "-q", "--no-ff", "-m", "merge profile B", "profile-install-b")
+
+    with pytest.raises(EvidenceCompatibilityError, match="unique first Day2 profile"):
+        verify_repository_anchor_history(EvidenceRole.DAY1_REGISTRATION, repository)
+
+
+def test_repository_history_rejects_obsolete_profile_anchor_set_schema(
     day1_registration_repository: tuple[
         Path,
         str,
@@ -828,15 +1220,105 @@ def test_repository_history_rejects_predispatch_day2_profile_anchor_after_s2(
         "config/day2-calibration-profile-anchors.json",
         _canonical(
             {
-                "anchors": [],
+                "anchors": [{"binding": "day2-profile"}],
                 "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v1",
             }
         ),
     )
-    _commit(repository, "attempt late Day2 pre-dispatch profile anchor")
+    _commit(repository, "install obsolete Day2 profile schema")
 
-    with pytest.raises(EvidenceCompatibilityError, match="post-registration drift"):
+    with pytest.raises(EvidenceCompatibilityError, match="Day2 profile.*schema"):
         verify_repository_anchor_history(EvidenceRole.DAY1_REGISTRATION, repository)
+
+
+def test_repository_history_applies_the_complete_profile_binding_validator(
+    day1_registration_repository: tuple[
+        Path,
+        str,
+        str,
+        str,
+        dict[str, object],
+        dict[str, object],
+    ],
+) -> None:
+    repository, _experiment_sha, evidence_sha, _analysis_sha, inventory, _record = (
+        day1_registration_repository
+    )
+    binding = _day2_profile_binding()
+    receipt_sha256 = binding["day1a_authority_receipt_sha256"]
+    assert isinstance(receipt_sha256, str)
+    _write_compatibility_anchors(
+        repository,
+        [
+            _day1a_compatibility_record(
+                experiment_sha=evidence_sha,
+                inventory=inventory,
+                artifact_sha256=receipt_sha256,
+            )
+        ],
+    )
+    _commit(repository, "anchor Day1A before the malformed profile attempt")
+    binding.pop("contract_bindings_sha256")
+    _write_day2_profile_anchors(repository, [binding])
+    _commit(repository, "attempt a profile missing one frozen binding")
+
+    with pytest.raises(EvidenceCompatibilityError, match="profile anchor binding is malformed"):
+        verify_repository_anchor_history(EvidenceRole.DAY1_REGISTRATION, repository)
+
+
+def test_day2_compatibility_rejects_experiment_source_before_profile_installation(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "day2-source-before-profile"
+    repository.mkdir()
+    _git(repository, "init", "-q")
+    _git(repository, "config", "user.email", "day2-ordering@example.invalid")
+    _git(repository, "config", "user.name", "Day2 Ordering Test")
+    _write(repository, ".gitignore", "*.pyc\n__pycache__/\n")
+    behavior_paths = set(repository_behavior_paths(EvidenceRole.DAY2)) | set(
+        repository_behavior_paths(EvidenceRole.ANALYZER)
+    )
+    for relative_path in sorted(behavior_paths):
+        _write(repository, relative_path, f"fixture for {relative_path}\n")
+    _write_compatibility_anchors(repository, [])
+    _write_day2_profile_anchors(repository, [])
+    _write_day2_post_run_anchors(repository, [])
+    experiment_sha = _commit(repository, "Day2 experiment source without a profile")
+    inventory = capture_behavior_inventory(
+        EvidenceRole.DAY2,
+        source_git_sha=experiment_sha,
+        repository_root=repository,
+    )
+
+    _write_day2_profile_anchors(repository, [_day2_profile_binding()])
+    _commit(repository, "install profile after the experiment already ran")
+    artifact_sha256 = "d" * 64
+    _write_day2_post_run_anchors(repository, [{"binding": "Day2 post-run evidence"}])
+    _write_compatibility_anchors(
+        repository,
+        [
+            {
+                "artifact_sha256": artifact_sha256,
+                "behavior_set_schema_version": inventory["behavior_set_schema_version"],
+                "behavior_set_sha256": inventory["behavior_set_sha256"],
+                "experiment_source_git_sha": experiment_sha,
+                "role": EvidenceRole.DAY2.value,
+                "schema_version": "dynamic-cssc-evidence-compatibility-anchor-v1",
+            }
+        ],
+    )
+    evidence_freeze_sha = _commit(repository, "anchor the late-profile Day2 artifact")
+
+    with pytest.raises(EvidenceCompatibilityError, match="Day2.*profile.*experiment"):
+        verify_evidence_compatibility(
+            role=EvidenceRole.DAY2,
+            experiment_source_git_sha=experiment_sha,
+            evidence_freeze_git_sha=evidence_freeze_sha,
+            analysis_source_git_sha=evidence_freeze_sha,
+            artifact_sha256=artifact_sha256,
+            artifact_behavior_inventory=inventory,
+            repository_root=repository,
+        )
 
 
 def test_repository_history_rejects_executable_cross_role_anchor_data(
@@ -1357,6 +1839,7 @@ def test_cross_role_data_anchors_may_accrue_in_both_snapshot_windows(
     ]
     allowed_data_paths = [
         "config/day2-calibration-anchors.json",
+        "config/day2-calibration-profile-anchors.json",
         EVIDENCE_COMPATIBILITY_ANCHOR_PATH,
     ]
     allowlist_sha256 = hashlib.sha256(_canonical(allowed_data_paths).encode("ascii")).hexdigest()
@@ -1414,7 +1897,7 @@ def test_day2_post_run_binding_is_append_once_and_then_immutable(
         )
 
 
-def test_day2_post_run_anchor_set_uses_the_closed_v2_top_level_schema(
+def test_day2_post_run_anchor_set_rejects_an_obsolete_top_level_schema(
     trace_repository: tuple[Path, str, dict[str, object]],
 ) -> None:
     repository, experiment_sha, inventory = trace_repository
@@ -1431,7 +1914,7 @@ def test_day2_post_run_anchor_set_uses_the_closed_v2_top_level_schema(
         _canonical(
             {
                 "anchors": [],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v1",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v2",
             }
         ),
     )
@@ -1452,7 +1935,6 @@ def test_day2_post_run_anchor_set_uses_the_closed_v2_top_level_schema(
 @pytest.mark.parametrize(
     "relative_path",
     (
-        "config/day2-calibration-profile-anchors.json",
         DAY1_REGISTRATION_ANCHOR_PATH,
         STRONG_REFERENCE_EVIDENCE_ANCHOR_PATH,
     ),
@@ -1630,7 +2112,7 @@ def test_day1b_preparatory_behavior_inventory_is_exact_but_non_authorizing(
         DAY1B_PREPARATORY_BEHAVIOR_PATHS
     )
     assert inventory["behavior_set_schema_version"] == (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v4"
+        "dynamic-cssc-day1b-preparatory-behavior-set-v9"
     )
     assert inventory["role"] == "day1b"
     assert inventory["source_git_sha"] == source_git_sha
@@ -1718,22 +2200,31 @@ def test_role_sets_freeze_entrypoint_workflow_build_lock_runtime_and_transitive_
     assert set(TRACE_BEHAVIOR_PATHS) == trace_paths
     assert day1b_paths == set(DAY1B_PREPARATORY_BEHAVIOR_PATHS)
     assert {
-        ".github/workflows/day2-microbench.yml",
+        ".github/workflows/day2-publication-calibration.yml",
         "cpp/CMakeLists.txt",
-        "config/day2-calibration-profile-anchors.json",
         "cpp/include/args.hpp",
         "cpp/microbench.cpp",
         "requirements-ci.txt",
         "scripts/bootstrap_openfhe.sh",
         "scripts/build_cpp.sh",
+        "scripts/capture_day2_github_metadata.py",
+        "scripts/propose_day2_calibration_post_run_anchor.py",
+        "scripts/run_day2_calibration_isolated.py",
         "src/dynamic_cssc/day2_calibration_authority.py",
+        "src/dynamic_cssc/day2_calibration_github.py",
+        "src/dynamic_cssc/day2_calibration_postrun.py",
+        "src/dynamic_cssc/day2_calibration_profile.py",
+        "src/dynamic_cssc/day2_calibration_producer.py",
+        "src/dynamic_cssc/day2_calibration_runtime.py",
         "src/dynamic_cssc/plaintext_oracle.py",
+        "src/dynamic_cssc/publication_artifact_install.py",
+        "src/dynamic_cssc/publication_primitive_accounting.py",
         "src/dynamic_cssc/query_compiler.py",
         "src/dynamic_cssc/strategy_state.py",
         "src/dynamic_cssc/strong_execution.py",
     } <= day2_paths
+    assert "config/day2-calibration-profile-anchors.json" not in day2_paths
     assert {
-        "config/day2-calibration-profile-anchors.json",
         "config/publication-runtime-policy.json",
         "scripts/analyze_publication_results.py",
         "scripts/run_publication_analysis_isolated.py",
@@ -1745,6 +2236,7 @@ def test_role_sets_freeze_entrypoint_workflow_build_lock_runtime_and_transitive_
         "src/dynamic_cssc/publication_statistics.py",
         "src/dynamic_cssc/publication_traces.py",
     } <= analyzer_paths
+    assert "config/day2-calibration-profile-anchors.json" not in analyzer_paths
     assert {
         ".github/workflows/strong-whole-query-witness.yml",
         "config/params_manifest.json",
@@ -1765,7 +2257,9 @@ def test_role_sets_freeze_entrypoint_workflow_build_lock_runtime_and_transitive_
     } <= strong_correctness_paths
     assert {
         ".github/workflows/day1-cost-model.yml",
+        ".github/workflows/day1a-publication-cost-model.yml",
         ".github/workflows/day1-registration-evidence.yml",
+        "config/experiment_plan_publication.json",
         "config/params_manifest.json",
         "requirements-ci.txt",
         "scripts/aggregate_day1_shards.py",
@@ -1782,6 +2276,8 @@ def test_role_sets_freeze_entrypoint_workflow_build_lock_runtime_and_transitive_
         "src/dynamic_cssc/report.py",
         "src/dynamic_cssc/selection.py",
         "src/dynamic_cssc/strong_reference_receipt.py",
+        "tests/test_day1a_publication_workflow_contract.py",
+        "tests/test_day1_causal_runner.py",
         "tests/test_day1_registration_evidence.py",
         "tests/test_day1_shard_aggregation.py",
         "tests/test_day1_workflow_contract.py",

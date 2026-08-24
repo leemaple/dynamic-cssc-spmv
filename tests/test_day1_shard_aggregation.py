@@ -56,9 +56,11 @@ from scripts.run_day1_suite import (
 
 ROOT = Path(__file__).resolve().parents[1]
 PLAN_PATH = ROOT / "config" / "experiment_plan.json"
+PUBLICATION_PLAN_PATH = ROOT / "config" / "experiment_plan_publication.json"
 MANIFEST_PATH = ROOT / "config" / "params_manifest.json"
 SEED = 20260821
 SOURCE_SHA = "a" * 40
+FIXTURE_PLAN_VERSION = "test-only-aggregation-v1"
 FIXTURE_ROWS = 8
 FIXTURE_COLS = 8
 FIXTURE_INITIAL_NNZ_PER_ROW = 1
@@ -112,6 +114,11 @@ def _unavailable_catalog() -> Day1CandidateCatalog:
 
 @pytest.fixture(autouse=True)
 def _authorized_day1_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(
+        run_day1_suite._FROZEN_PLAN_LAYOUTS,  # noqa: SLF001
+        FIXTURE_PLAN_VERSION,
+        (FIXTURE_ROWS, FIXTURE_COLS, 2048, 128),
+    )
     catalog = _registered_catalog()
     monkeypatch.setattr(report_module, "repository_day1_candidate_catalog", lambda: catalog)
     monkeypatch.setattr(run_day1_suite, "repository_day1_candidate_catalog", lambda: catalog)
@@ -157,6 +164,7 @@ def _fixture_plan_path(download_dir: Path) -> Path:
     if path.exists():
         return path
     payload = json.loads(PLAN_PATH.read_text(encoding="utf-8"))
+    payload["plan_version"] = FIXTURE_PLAN_VERSION
     payload["synthetic"].update(
         {
             "rows": FIXTURE_ROWS,
@@ -410,8 +418,13 @@ def _write_root_checksums(shard_dir: Path) -> None:
     (shard_dir / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _create_download_layout(download_dir: Path) -> list[Path]:
-    plan_path = _fixture_plan_path(download_dir)
+def _create_download_layout(
+    download_dir: Path,
+    *,
+    plan_path: Path | None = None,
+) -> list[Path]:
+    if plan_path is None:
+        plan_path = _fixture_plan_path(download_dir)
     plan = load_experiment_plan(plan_path)
     assert (len(plan.workloads), len(plan.freshness_seconds), len(plan.ratio_grid)) == (7, 3, 9)
     plan_sha256 = _sha256(plan_path)
@@ -983,6 +996,120 @@ def test_aggregator_accepts_only_the_complete_21_shard_189_cell_cartesian_produc
     }
     assert checksummed_paths == output_files
     assert len(checksummed_paths) == 1 + 3 + 189 * 8 + 21
+
+
+def test_day1a_export_executes_the_publication_domain_day2_authorization_path(
+    tmp_path: Path,
+) -> None:
+    suite_dir = tmp_path / "day1-publication"
+    suite_dir.mkdir()
+    plan_path = _fixture_plan_path(suite_dir)
+    plan = load_experiment_plan(plan_path)
+    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    initial_state = generate_initial_matrix(
+        plan.rows,
+        plan.cols,
+        plan.initial_nnz_per_row,
+        seed=SEED,
+        matrix_entry_abs_bound=manifest["integer_correctness"]["matrix_entry_abs_bound"],
+    )
+    cell = _write_cell(
+        suite_dir,
+        workload=plan.workloads[0],
+        workload_seed=SEED + 1,
+        freshness=plan.freshness_seconds[0],
+        ratio=plan.ratio_grid[-1],
+        plan=plan,
+        plan_sha256=_sha256(PUBLICATION_PLAN_PATH),
+        manifest_sha256=_sha256(MANIFEST_PATH),
+        initial_state_sha256=_initial_state_sha256(initial_state),
+        microbatch_max_updates=manifest["freshness"]["microbatch_max_updates"],
+        query_requires_latest=manifest["freshness"]["query_requires_latest"],
+        matrix_entry_abs_bound=manifest["integer_correctness"]["matrix_entry_abs_bound"],
+        max_row_nnz=manifest["matrix"]["max_nnz_per_row"],
+    )
+    metrics_path = suite_dir / str(cell["relative_path"]) / "metrics.json"
+    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+    # This isolates the exporter's already-accepted-layout branch. Full
+    # publication-domain simulation remains the 21-shard workflow's job; doing
+    # 189 Python simulation cells here would turn one unit test into hours.
+    metrics["metadata"].update(
+        {
+            "rows": 4096,
+            "cols": 8193,
+            "effective_slots": 4096,
+            "partition_rows": 4096,
+        }
+    )
+    metrics_path.write_text(json.dumps(metrics, sort_keys=True), encoding="utf-8")
+
+    catalog = _registered_catalog()
+    candidate_ids = sorted(candidate.candidate_id for candidate in catalog.candidates)
+    reference_ids = sorted(
+        candidate.candidate_id for candidate in catalog.selection_candidates
+    )
+    ablation_ids = sorted(candidate.candidate_id for candidate in catalog.ablation_candidates)
+    status = {
+        "schema": "day1-causal-predicted-v2",
+        "state_model": "persistent-strategy-snapshots",
+        "measurement_kind": "predicted-proxy",
+        "suite_complete": True,
+        "complete_reference_set": True,
+        "gate_eligible": False,
+        "complete_cost_claim_allowed": False,
+        "security_claim_allowed": False,
+        "formal_performance_claim": False,
+        "source_git_sha": SOURCE_SHA,
+        "candidate_ids": candidate_ids,
+        "reference_candidate_ids": reference_ids,
+        "ablation_candidate_ids": ablation_ids,
+        "fixed_candidate_count": 14,
+        "reference_candidate_count": 13,
+        "ablation_candidate_count": 1,
+        "effective_slots": 4096,
+        "partition_rows": 4096,
+        "cell_ids": [cell["relative_path"]],
+        "cells_completed": 1,
+        "experiment_plan_sha256": _sha256(PUBLICATION_PLAN_PATH),
+        "manifest_sha256": _sha256(MANIFEST_PATH),
+    }
+    (suite_dir / "SUITE_STATUS.json").write_text(
+        json.dumps(status, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    receipt = export_day1a_evidence(
+        suite_dir=suite_dir,
+        source_git_sha=SOURCE_SHA,
+        publication_rows=4096,
+        publication_cols=8193,
+        publication_effective_slots=4096,
+        publication_partition_rows=4096,
+    )
+
+    rotation_inventory = json.loads(
+        (suite_dir / ROTATION_INVENTORY_FILENAME).read_text(encoding="ascii")
+    )
+    authority_receipt = json.loads(
+        (suite_dir / AUTHORITY_RECEIPT_FILENAME).read_text(encoding="ascii")
+    )
+    assert receipt == authority_receipt
+    assert rotation_inventory["rows"] == 4096
+    assert rotation_inventory["cols"] == 8193
+    assert rotation_inventory["effective_slots"] == 4096
+    assert rotation_inventory["partition_rows"] == 4096
+    assert rotation_inventory["publication_domain_match"] is True
+    assert rotation_inventory["indices_in_range"] is True
+    assert rotation_inventory["modulo_alias_free"] is True
+    assert rotation_inventory["day2_direct_key_plan_eligible"] is True
+    assert rotation_inventory["required_exact_indices"]
+    assert authority_receipt["day1a_count_evidence_authorized"] is True
+    assert authority_receipt["day2_direct_key_plan_authorized"] is True
+    assert authority_receipt["publication_domain_match"] is True
+    assert authority_receipt["complete_cost_claim_allowed"] is False
+    assert authority_receipt["formal_performance_claim_allowed"] is False
+    assert authority_receipt["paper_verdict_allowed"] is False
+    assert authority_receipt["security_claim_allowed"] is False
 
 
 def test_aggregator_cli_loads_when_executed_by_workflow_script_path() -> None:

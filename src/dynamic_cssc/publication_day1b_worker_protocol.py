@@ -25,29 +25,31 @@ from fractions import Fraction
 from pathlib import Path
 from typing import BinaryIO
 
-DAY1B_WORKER_FRAME_SCHEMA = "dynamic-cssc-publication-day1b-worker-frame-v1"
-DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v1"
-DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v2"
+DAY1B_WORKER_FRAME_SCHEMA = "dynamic-cssc-publication-day1b-worker-frame-v2"
+DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v3"
+DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v5"
 DAY1B_WORKER_WINDOW_AUDIT_SCHEMA = "dynamic-cssc-publication-day1b-worker-window-audit-v1"
 DAY1B_WORKER_F1M_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-f1m-binding-receipt-v1"
+DAY1B_WORKER_F1M_SIZE_CLASS_SCHEMA = "dynamic-cssc-publication-day1b-f1m-size-class-v1"
 DAY1B_WORKER_F1M_WINDOW_CARDINALITY_SCHEMA = (
-    "dynamic-cssc-publication-day1b-f1m-window-cardinality-v1"
+    "dynamic-cssc-publication-day1b-f1m-window-cardinality-v2"
 )
-DAY1B_WORKER_F1M_BATCH_TRANSITION_SCHEMA = "dynamic-cssc-publication-day1b-f1m-batch-transition-v1"
+DAY1B_WORKER_F1M_WINDOW_BATCH_SCHEMA = "dynamic-cssc-publication-day1b-f1m-window-batch-v1"
 DAY1B_WORKER_EXPECTED_F1M_OBJECT_SCHEMA = (
-    "dynamic-cssc-publication-day1b-controller-expected-f1m-object-v1"
+    "dynamic-cssc-publication-day1b-controller-expected-f1m-size-class-v3"
 )
-DAY1B_WORKER_EXPECTED_F1M_BINDING_SET_SCHEMA = (
-    "dynamic-cssc-publication-day1b-controller-expected-f1m-binding-set-v1"
+DAY1B_WORKER_EXPECTED_F1M_SIZE_CLASS_SET_SCHEMA = (
+    "dynamic-cssc-publication-day1b-controller-expected-f1m-size-class-set-v3"
 )
 DAY1B_WORKER_EXPECTED_F1M_REGISTRY_DESCRIPTOR_SCHEMA = (
-    "dynamic-cssc-publication-day1b-expected-f1m-registry-descriptor-v1"
+    "dynamic-cssc-publication-day1b-expected-f1m-size-class-registry-descriptor-v4"
 )
-_DAY1B_WORKER_EXPECTED_F1M_ROUTE_SUBROOT_SCHEMA = (
-    "dynamic-cssc-publication-day1b-expected-f1m-route-subroot-v1"
+DAY1B_WORKER_EXECUTION_BASIS = "window-weighted-equivalence-v1"
+_DAY1B_WORKER_EXPECTED_F1M_SIZE_CLASS_SUBROOT_SCHEMA = (
+    "dynamic-cssc-publication-day1b-expected-f1m-size-class-subroot-v3"
 )
 DAY1B_WORKER_MAX_HEADER_BYTES = 16_384
-DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES = (
+DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES = (
     "query-f1m-random-mask-ciphertexts",
     "query-f1m-encrypted-zero-dummy-ciphertexts",
 )
@@ -77,12 +79,6 @@ _OUTCOME_BY_FAILURE_CODE = {
 }
 _EVIDENCE_TOKEN = object()
 _EXPECTED_REGISTRY_INGEST_BATCH_SIZE = 256
-_TEST_ONLY_RESERVATION_LEDGER_IDENTITY_SHA256 = hashlib.sha256(
-    b"dynamic-cssc-publication-day1b-private-fixture-ledger-v1\n"
-).hexdigest()
-_EMPTY_RESERVATION_LEDGER_ROOT_SHA256 = hashlib.sha256(
-    b'{"reservations":[],"schema_version":"day1b-ledger-root-v1"}\n'
-).hexdigest()
 _ISSUED_EVIDENCE: dict[int, tuple[weakref.ReferenceType[object], object]] = {}
 _ISSUED_INVOCATIONS: dict[int, tuple[weakref.ReferenceType[object], object]] = {}
 _ISSUED_EXPECTED_REGISTRIES: dict[int, tuple[weakref.ReferenceType[object], object]] = {}
@@ -99,7 +95,7 @@ _FRAME_KEYS = {
     | {
         "candidate_id",
         "category",
-        "f1m_binding",
+        "f1m_size_class",
         "multiplicity",
         "object_ordinal",
         "phase",
@@ -340,7 +336,7 @@ class Day1BWorkerCandidateSpec:
 
 @dataclass(frozen=True, slots=True)
 class Day1BF1MBindingReceipt:
-    """Worker-reported route bound to both prepared operand and random reservation facts."""
+    """One actually materialized single-query route for the no-reuse smoke path."""
 
     query_id: str
     version_id: str
@@ -418,6 +414,70 @@ class Day1BF1MBindingReceipt:
         return cls(**{key: value[key] for key in keys - {"schema_version"}})
 
 
+@dataclass(frozen=True, slots=True)
+class Day1BF1MSizeClass:
+    """Query-independent identity of one weighted serialized F1-M representative.
+
+    The descriptor deliberately cannot name a query, ledger token, random reservation,
+    or state transition.  Its multiplicity is carried by the enclosing expected-object
+    descriptor and means only how many logical protocol objects have this serialized
+    size in the exact controller-derived query range.
+    """
+
+    version_id: str
+    output_plan_digest: str
+    component_id: str
+    output_block_id: str
+    f1m_kind: str
+    private_plan_digest: str
+    execution_binding_digest: str
+
+    def __post_init__(self) -> None:
+        for field in ("version_id", "component_id", "output_block_id"):
+            _nonempty_string(getattr(self, field), f"f1m_size_class.{field}")
+        for field in (
+            "output_plan_digest",
+            "private_plan_digest",
+            "execution_binding_digest",
+        ):
+            _sha256(getattr(self, field), f"f1m_size_class.{field}")
+        if type(self.f1m_kind) is not str or self.f1m_kind not in {
+            "random-zero-sum",
+            "encrypted-zero-dummy",
+        }:
+            raise Day1BWorkerProtocolError("f1m_size_class kind is not frozen")
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "schema_version": DAY1B_WORKER_F1M_SIZE_CLASS_SCHEMA,
+            "component_id": self.component_id,
+            "execution_binding_digest": self.execution_binding_digest,
+            "f1m_kind": self.f1m_kind,
+            "output_block_id": self.output_block_id,
+            "output_plan_digest": self.output_plan_digest,
+            "private_plan_digest": self.private_plan_digest,
+            "version_id": self.version_id,
+        }
+
+    @classmethod
+    def from_document(cls, value: object) -> Day1BF1MSizeClass:
+        keys = {
+            "schema_version",
+            "component_id",
+            "execution_binding_digest",
+            "f1m_kind",
+            "output_block_id",
+            "output_plan_digest",
+            "private_plan_digest",
+            "version_id",
+        }
+        if type(value) is not dict or set(value) != keys:
+            raise Day1BWorkerProtocolError("F1-M size-class keys are not exact")
+        if value["schema_version"] != DAY1B_WORKER_F1M_SIZE_CLASS_SCHEMA:
+            raise Day1BWorkerProtocolError("F1-M size-class schema is not frozen")
+        return cls(**{key: value[key] for key in keys - {"schema_version"}})
+
+
 def canonical_day1b_f1m_query_id(
     *,
     invocation_id: str,
@@ -458,7 +518,7 @@ class Day1BF1MWindowCardinality:
     overlap_masked_share_count: int
     expected_random_route_count: int
     expected_dummy_route_count: int
-    expected_route_subroot_sha256: str
+    expected_size_class_subroot_sha256: str
 
     def __post_init__(self) -> None:
         if type(self.phase) is not str or self.phase not in _PHASE_NAMES:
@@ -484,7 +544,7 @@ class Day1BF1MWindowCardinality:
             "output_plan_digest",
             "private_plan_digest",
             "execution_binding_digest",
-            "expected_route_subroot_sha256",
+            "expected_size_class_subroot_sha256",
         ):
             _sha256(getattr(self, field), f"F1-M cardinality {field}")
         if type(self.f1m_policy) is not str or self.f1m_policy not in {
@@ -531,7 +591,7 @@ class Day1BF1MWindowCardinality:
             "execution_binding_digest": self.execution_binding_digest,
             "expected_dummy_route_count": self.expected_dummy_route_count,
             "expected_random_route_count": self.expected_random_route_count,
-            "expected_route_subroot_sha256": self.expected_route_subroot_sha256,
+            "expected_size_class_subroot_sha256": self.expected_size_class_subroot_sha256,
             "f1m_policy": self.f1m_policy,
             "first_global_query_ordinal": self.first_global_query_ordinal,
             "output_plan_digest": self.output_plan_digest,
@@ -547,80 +607,47 @@ class Day1BF1MWindowCardinality:
 
 
 @dataclass(frozen=True, slots=True)
-class Day1BF1MBatchTransitionReceipt:
-    """Controller plan for distinct reserve then prepare transitions for one query."""
+class Day1BF1MWindowBatch:
+    """One query-bearing window range paired with its weighted size classes."""
 
     phase: str
     window_index: int
-    global_query_ordinal: int
-    query_id: str
+    first_global_query_ordinal: int
+    query_count: int
     version_id: str
     output_plan_digest: str
     private_plan_digest: str
     execution_binding_digest: str
-    ledger_commitment_token: str
-    ledger_identity_sha256: str
-    transition_ordinal: int
-    ledger_root_before_sha256: str
-    reservation_set_root_sha256: str
-    ledger_root_after_reservation_sha256: str
-    ledger_root_after_preparation_sha256: str
-    route_set_root_sha256: str
-    random_reservation_transition_verified: bool
-    prepared_commitment_transition_verified: bool
+    size_class_subroot_sha256: str
 
     def __post_init__(self) -> None:
         if type(self.phase) is not str or self.phase not in _PHASE_NAMES:
-            raise Day1BWorkerProtocolError("F1-M batch phase is not frozen")
-        _strict_nonnegative(self.window_index, "F1-M batch window_index")
+            raise Day1BWorkerProtocolError("F1-M window batch phase is not frozen")
+        _strict_nonnegative(self.window_index, "F1-M window batch window_index")
         _strict_nonnegative(
-            self.global_query_ordinal,
-            "F1-M batch global_query_ordinal",
+            self.first_global_query_ordinal,
+            "F1-M window batch first_global_query_ordinal",
         )
-        _strict_nonnegative(self.transition_ordinal, "F1-M batch transition_ordinal")
-        for field in ("query_id", "version_id"):
-            _nonempty_string(getattr(self, field), f"F1-M batch {field}")
+        _strict_positive(self.query_count, "F1-M window batch query_count")
+        _nonempty_string(self.version_id, "F1-M window batch version_id")
         for field in (
             "output_plan_digest",
             "private_plan_digest",
             "execution_binding_digest",
-            "ledger_commitment_token",
-            "ledger_identity_sha256",
-            "ledger_root_before_sha256",
-            "reservation_set_root_sha256",
-            "ledger_root_after_reservation_sha256",
-            "ledger_root_after_preparation_sha256",
-            "route_set_root_sha256",
+            "size_class_subroot_sha256",
         ):
-            _sha256(getattr(self, field), f"F1-M batch {field}")
-        for field in (
-            "random_reservation_transition_verified",
-            "prepared_commitment_transition_verified",
-        ):
-            if type(getattr(self, field)) is not bool:
-                raise Day1BWorkerProtocolError(f"F1-M batch {field} is not an exact boolean")
+            _sha256(getattr(self, field), f"F1-M window batch {field}")
 
     def to_document(self) -> dict[str, object]:
         return {
             "execution_binding_digest": self.execution_binding_digest,
-            "global_query_ordinal": self.global_query_ordinal,
-            "ledger_commitment_token": self.ledger_commitment_token,
-            "ledger_identity_sha256": self.ledger_identity_sha256,
-            "ledger_root_after_preparation_sha256": (self.ledger_root_after_preparation_sha256),
-            "ledger_root_after_reservation_sha256": (self.ledger_root_after_reservation_sha256),
-            "ledger_root_before_sha256": self.ledger_root_before_sha256,
+            "first_global_query_ordinal": self.first_global_query_ordinal,
             "output_plan_digest": self.output_plan_digest,
-            "prepared_commitment_transition_verified": (
-                self.prepared_commitment_transition_verified
-            ),
             "phase": self.phase,
             "private_plan_digest": self.private_plan_digest,
-            "query_id": self.query_id,
-            "reservation_set_root_sha256": self.reservation_set_root_sha256,
-            "random_reservation_transition_verified": (self.random_reservation_transition_verified),
-            "route_set_root_sha256": self.route_set_root_sha256,
-            "schema_version": DAY1B_WORKER_F1M_BATCH_TRANSITION_SCHEMA,
-            "transition_ordinal": self.transition_ordinal,
+            "query_count": self.query_count,
+            "schema_version": DAY1B_WORKER_F1M_WINDOW_BATCH_SCHEMA,
+            "size_class_subroot_sha256": self.size_class_subroot_sha256,
             "version_id": self.version_id,
             "window_index": self.window_index,
         }
@@ -628,48 +655,51 @@ class Day1BF1MBatchTransitionReceipt:
 
 @dataclass(frozen=True, slots=True)
 class Day1BControllerExpectedF1MObject:
-    """One non-authoritative descriptor admitted by a launcher/ledger capability."""
+    """One controller-derived weighted F1-M serialized size class."""
 
     phase: str
     window_index: int
-    global_query_ordinal: int
+    first_global_query_ordinal: int
     category: str
     object_ordinal: int
-    f1m_binding: Day1BF1MBindingReceipt
+    f1m_size_class: Day1BF1MSizeClass
+    multiplicity: int = 1
 
     def __post_init__(self) -> None:
         if type(self.phase) is not str or self.phase not in _PHASE_NAMES:
             raise Day1BWorkerProtocolError("expected F1-M phase is not frozen")
         if (
             type(self.category) is not str
-            or self.category not in DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES
+            or self.category not in DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
         ):
             raise Day1BWorkerProtocolError("expected F1-M category is not frozen")
         _strict_nonnegative(self.window_index, "expected F1-M window_index")
         _strict_nonnegative(
-            self.global_query_ordinal,
-            "expected F1-M global_query_ordinal",
+            self.first_global_query_ordinal,
+            "expected F1-M first_global_query_ordinal",
         )
         _strict_nonnegative(self.object_ordinal, "expected F1-M object ordinal")
-        if type(self.f1m_binding) is not Day1BF1MBindingReceipt:
-            raise Day1BWorkerProtocolError("expected F1-M binding type is not exact")
+        _strict_positive(self.multiplicity, "expected F1-M object multiplicity")
+        if type(self.f1m_size_class) is not Day1BF1MSizeClass:
+            raise Day1BWorkerProtocolError("expected F1-M size-class type is not exact")
         expected_kind = {
             "query-f1m-random-mask-ciphertexts": "random-zero-sum",
             "query-f1m-encrypted-zero-dummy-ciphertexts": "encrypted-zero-dummy",
         }[self.category]
-        if self.f1m_binding.f1m_kind != expected_kind:
-            raise Day1BWorkerProtocolError("expected F1-M category/kind route changed")
+        if self.f1m_size_class.f1m_kind != expected_kind:
+            raise Day1BWorkerProtocolError("expected F1-M category/kind size class changed")
 
     @property
-    def route_key(self) -> tuple[str, int, str, int]:
+    def size_class_key(self) -> tuple[str, int, str, int]:
         return self.phase, self.window_index, self.category, self.object_ordinal
 
     def to_document(self) -> dict[str, object]:
         return {
             "schema_version": DAY1B_WORKER_EXPECTED_F1M_OBJECT_SCHEMA,
             "category": self.category,
-            "f1m_binding": self.f1m_binding.to_document(),
-            "global_query_ordinal": self.global_query_ordinal,
+            "f1m_size_class": self.f1m_size_class.to_document(),
+            "first_global_query_ordinal": self.first_global_query_ordinal,
+            "multiplicity": self.multiplicity,
             "object_ordinal": self.object_ordinal,
             "phase": self.phase,
             "window_index": self.window_index,
@@ -680,8 +710,9 @@ class Day1BControllerExpectedF1MObject:
         keys = {
             "schema_version",
             "category",
-            "f1m_binding",
-            "global_query_ordinal",
+            "f1m_size_class",
+            "first_global_query_ordinal",
+            "multiplicity",
             "object_ordinal",
             "phase",
             "window_index",
@@ -694,10 +725,11 @@ class Day1BControllerExpectedF1MObject:
             return cls(
                 phase=value["phase"],
                 window_index=value["window_index"],
-                global_query_ordinal=value["global_query_ordinal"],
+                first_global_query_ordinal=value["first_global_query_ordinal"],
+                multiplicity=value["multiplicity"],
                 category=value["category"],
                 object_ordinal=value["object_ordinal"],
-                f1m_binding=Day1BF1MBindingReceipt.from_document(value["f1m_binding"]),
+                f1m_size_class=Day1BF1MSizeClass.from_document(value["f1m_size_class"]),
             )
         except (KeyError, TypeError) as error:  # pragma: no cover - closed keys above
             raise Day1BWorkerProtocolError("expected F1-M object is malformed") from error
@@ -713,14 +745,14 @@ def _validate_expected_f1m_objects(
     phase_order = {phase: index for index, phase in enumerate(_PHASE_NAMES)}
     category_order = {
         category: index
-        for index, category in enumerate(DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES)
+        for index, category in enumerate(DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES)
     }
     previous_order: tuple[int, int, int, int] | None = None
     for item in value:
         order = _expected_f1m_order(item, phase_order, category_order)
         if previous_order is not None and order <= previous_order:
             raise Day1BWorkerProtocolError(
-                "expected F1-M routes must be unique and in canonical order"
+                "expected F1-M size classes must be unique and in canonical order"
             )
         previous_order = order
 
@@ -740,10 +772,10 @@ def _expected_f1m_order(
     )
 
 
-def canonical_day1b_expected_f1m_binding_set_sha256(
+def canonical_day1b_expected_f1m_size_class_set_sha256(
     expected: tuple[Day1BControllerExpectedF1MObject, ...],
 ) -> str:
-    """Hash the exact controller/ledger expected route set in canonical order."""
+    """Hash the exact controller expected weighted size-class set."""
 
     _validate_expected_f1m_objects(expected)
     hasher = hashlib.sha256()
@@ -754,16 +786,16 @@ def canonical_day1b_expected_f1m_binding_set_sha256(
         hasher.update(_canonical_json_bytes(item.to_document())[:-1])
     hasher.update(
         b'],"schema_version":'
-        + json.dumps(DAY1B_WORKER_EXPECTED_F1M_BINDING_SET_SCHEMA).encode("ascii")
+        + json.dumps(DAY1B_WORKER_EXPECTED_F1M_SIZE_CLASS_SET_SCHEMA).encode("ascii")
         + b"}\n"
     )
     return hasher.hexdigest()
 
 
-def canonical_day1b_expected_f1m_route_subroot_sha256(
+def canonical_day1b_expected_f1m_size_class_subroot_sha256(
     routes: tuple[Day1BControllerExpectedF1MObject, ...],
 ) -> str:
-    """Hash one canonical route subset used by a window or prepared batch."""
+    """Hash one canonical size-class subset used by a retained window."""
 
     _validate_expected_f1m_objects(routes)
     hasher = hashlib.sha256()
@@ -774,7 +806,7 @@ def canonical_day1b_expected_f1m_route_subroot_sha256(
         hasher.update(_canonical_json_bytes(item.to_document())[:-1])
     hasher.update(
         b'],"schema_version":'
-        + json.dumps(_DAY1B_WORKER_EXPECTED_F1M_ROUTE_SUBROOT_SCHEMA).encode("ascii")
+        + json.dumps(_DAY1B_WORKER_EXPECTED_F1M_SIZE_CLASS_SUBROOT_SCHEMA).encode("ascii")
         + b"}\n"
     )
     return hasher.hexdigest()
@@ -783,20 +815,20 @@ def canonical_day1b_expected_f1m_route_subroot_sha256(
 def canonical_day1b_f1m_cardinality_derivation_root_sha256(
     *,
     window_cardinalities: tuple[Day1BF1MWindowCardinality, ...],
-    batch_transitions: tuple[Day1BF1MBatchTransitionReceipt, ...],
-    expected_routes: tuple[Day1BControllerExpectedF1MObject, ...],
+    window_batches: tuple[Day1BF1MWindowBatch, ...],
+    expected_size_classes: tuple[Day1BControllerExpectedF1MObject, ...],
 ) -> str:
-    """Hash the closed window/batch/route derivation without claiming its authority."""
+    """Hash the closed window/range/size-class derivation."""
 
     if type(window_cardinalities) is not tuple or any(
         type(row) is not Day1BF1MWindowCardinality for row in window_cardinalities
     ):
         raise Day1BWorkerProtocolError("window cardinalities must be an exact tuple")
-    if type(batch_transitions) is not tuple or any(
-        type(row) is not Day1BF1MBatchTransitionReceipt for row in batch_transitions
+    if type(window_batches) is not tuple or any(
+        type(row) is not Day1BF1MWindowBatch for row in window_batches
     ):
-        raise Day1BWorkerProtocolError("batch transitions must be an exact tuple")
-    _validate_expected_f1m_objects(expected_routes)
+        raise Day1BWorkerProtocolError("window batches must be an exact tuple")
+    _validate_expected_f1m_objects(expected_size_classes)
 
     window_hasher = hashlib.sha256()
     window_hasher.update(b'{"windows":[')
@@ -805,24 +837,28 @@ def canonical_day1b_f1m_cardinality_derivation_root_sha256(
             window_hasher.update(b",")
         window_hasher.update(_canonical_json_bytes(row.to_document())[:-1])
     window_hasher.update(
-        b'],"schema_version":"dynamic-cssc-day1b-f1m-window-cardinality-set-v1"}\n'
+        b'],"schema_version":"dynamic-cssc-day1b-f1m-window-cardinality-set-v3"}\n'
     )
 
-    batch_hasher = hashlib.sha256()
-    batch_hasher.update(b'{"batch_transitions":[')
-    for index, row in enumerate(batch_transitions):
+    window_batch_hasher = hashlib.sha256()
+    window_batch_hasher.update(b'{"window_batches":[')
+    for index, row in enumerate(window_batches):
         if index:
-            batch_hasher.update(b",")
-        batch_hasher.update(_canonical_json_bytes(row.to_document())[:-1])
-    batch_hasher.update(b'],"schema_version":"dynamic-cssc-day1b-f1m-batch-transition-set-v1"}\n')
+            window_batch_hasher.update(b",")
+        window_batch_hasher.update(_canonical_json_bytes(row.to_document())[:-1])
+    window_batch_hasher.update(
+        b'],"schema_version":"dynamic-cssc-day1b-f1m-window-batch-set-v1"}\n'
+    )
     return hashlib.sha256(
         _canonical_json_bytes(
             {
-                "batch_transition_stream_sha256": batch_hasher.hexdigest(),
-                "binding_set_sha256": (
-                    canonical_day1b_expected_f1m_binding_set_sha256(expected_routes)
+                "window_batch_stream_sha256": window_batch_hasher.hexdigest(),
+                "size_class_set_sha256": (
+                    canonical_day1b_expected_f1m_size_class_set_sha256(
+                        expected_size_classes
+                    )
                 ),
-                "schema_version": "dynamic-cssc-day1b-f1m-cardinality-derivation-v1",
+                "schema_version": "dynamic-cssc-day1b-f1m-cardinality-derivation-v4",
                 "window_cardinality_stream_sha256": window_hasher.hexdigest(),
             }
         )
@@ -916,8 +952,6 @@ class _ControllerCandidateObservation:
     peak_resident_memory_bytes: int
     peak_scratch_bytes: int
     terminal_failure_code: str | None
-    prepared_commitment_consumption_verified: bool
-    prepared_commitment_consumption_transition_sha256: str | None
 
     def __post_init__(self) -> None:
         _nonempty_string(self.candidate_id, "controller observation candidate_id")
@@ -936,23 +970,6 @@ class _ControllerCandidateObservation:
         ):
             raise Day1BWorkerProtocolError(
                 "controller observation terminal failure code is not frozen"
-            )
-        if type(self.prepared_commitment_consumption_verified) is not bool:
-            raise Day1BWorkerProtocolError(
-                "controller prepared-commitment consumption verification is not exact"
-            )
-        if self.prepared_commitment_consumption_verified:
-            if self.prepared_commitment_consumption_transition_sha256 is None:
-                raise Day1BWorkerProtocolError(
-                    "verified prepared-commitment consumption lacks a transition digest"
-                )
-            _sha256(
-                self.prepared_commitment_consumption_transition_sha256,
-                "prepared_commitment_consumption_transition_sha256",
-            )
-        elif self.prepared_commitment_consumption_transition_sha256 is not None:
-            raise Day1BWorkerProtocolError(
-                "unverified prepared-commitment consumption cannot carry a transition digest"
             )
 
 
@@ -986,13 +1003,14 @@ class Day1BWorkerProtocolContract:
     resource_policy_sha256: str
     freshness: str
     rho: str
+    execution_basis: str
     candidate: Day1BWorkerCandidateSpec
     phase_ranges: tuple[Day1BWorkerPhaseRange, ...]
     primitive_names: tuple[str, ...]
     serialized_categories: tuple[tuple[str, str], ...]
-    f1m_binding_categories: tuple[str, ...]
-    expected_f1m_binding_set_sha256: str
-    expected_f1m_binding_count: int
+    f1m_size_class_categories: tuple[str, ...]
+    expected_f1m_size_class_set_sha256: str
+    expected_f1m_size_class_count: int
     expected_serialized_equivalence_class_count: int
     expected_f1m_cardinality_derivation_root_sha256: str
     resource_limits: Day1BWorkerResourceLimits
@@ -1005,12 +1023,16 @@ class Day1BWorkerProtocolContract:
             "candidate_catalog_sha256",
             "resource_policy_sha256",
             "invocation_id",
-            "expected_f1m_binding_set_sha256",
+            "expected_f1m_size_class_set_sha256",
             "expected_f1m_cardinality_derivation_root_sha256",
         ):
             _sha256(getattr(self, field), field)
         _nonempty_string(self.freshness, "freshness")
         _nonempty_string(self.rho, "rho")
+        if self.execution_basis != DAY1B_WORKER_EXECUTION_BASIS:
+            raise Day1BWorkerProtocolError(
+                "Day1B must use the frozen window-weighted execution basis"
+            )
         if type(self.candidate) is not Day1BWorkerCandidateSpec:
             raise Day1BWorkerProtocolError(
                 "candidate must be one exact typed candidate-cell identity"
@@ -1051,36 +1073,38 @@ class Day1BWorkerProtocolContract:
         if len(category_names) != len(set(category_names)):
             raise Day1BWorkerProtocolError("serialized category names must be unique")
         if (
-            type(self.f1m_binding_categories) is not tuple
-            or any(type(category) is not str for category in self.f1m_binding_categories)
-            or len(self.f1m_binding_categories) != len(set(self.f1m_binding_categories))
-            or not set(self.f1m_binding_categories) <= set(category_names)
+            type(self.f1m_size_class_categories) is not tuple
+            or any(type(category) is not str for category in self.f1m_size_class_categories)
+            or len(self.f1m_size_class_categories) != len(set(self.f1m_size_class_categories))
+            or not set(self.f1m_size_class_categories) <= set(category_names)
         ):
             raise Day1BWorkerProtocolError(
-                "F1-M binding categories must be an exact serialized-category subset"
+                "F1-M size-class categories must be an exact serialized-category subset"
             )
         if (
             tuple(
-                category for category in category_names if category in self.f1m_binding_categories
+                category
+                for category in category_names
+                if category in self.f1m_size_class_categories
             )
-            != self.f1m_binding_categories
+            != self.f1m_size_class_categories
         ):
             raise Day1BWorkerProtocolError(
-                "F1-M binding categories must follow serialized category order"
+                "F1-M size-class categories must follow serialized category order"
             )
-        if not set(DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES) <= set(category_names):
+        if not set(DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES) <= set(category_names):
             raise Day1BWorkerProtocolError(
                 "required F1-M ciphertext category set is absent from the contract"
             )
-        if not set(DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES) <= set(
-            self.f1m_binding_categories
+        if not set(DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES) <= set(
+            self.f1m_size_class_categories
         ):
             raise Day1BWorkerProtocolError(
-                "required F1-M ciphertext categories must carry binding receipts"
+                "required F1-M ciphertext categories must carry size-class descriptors"
             )
         expected_f1m_count = _strict_nonnegative(
-            self.expected_f1m_binding_count,
-            "expected_f1m_binding_count",
+            self.expected_f1m_size_class_count,
+            "expected_f1m_size_class_count",
         )
         expected_all_count = _strict_nonnegative(
             self.expected_serialized_equivalence_class_count,
@@ -1088,7 +1112,7 @@ class Day1BWorkerProtocolContract:
         )
         if expected_all_count < expected_f1m_count:
             raise Day1BWorkerProtocolError(
-                "all serialized equivalence classes cannot be fewer than F1-M bindings"
+                "all serialized equivalence classes cannot be fewer than F1-M size classes"
             )
         if type(self.resource_limits) is not Day1BWorkerResourceLimits:
             raise Day1BWorkerProtocolError("resource_limits must be exact typed limits")
@@ -1099,16 +1123,17 @@ class Day1BWorkerProtocolContract:
             "candidate_catalog_sha256": self.candidate_catalog_sha256,
             "candidate": self.candidate.to_document(),
             "event_schedule_sha256": self.event_schedule_sha256,
-            "expected_f1m_binding_count": self.expected_f1m_binding_count,
-            "expected_f1m_binding_set_sha256": (self.expected_f1m_binding_set_sha256),
+            "expected_f1m_size_class_count": self.expected_f1m_size_class_count,
+            "expected_f1m_size_class_set_sha256": (self.expected_f1m_size_class_set_sha256),
             "expected_f1m_cardinality_derivation_root_sha256": (
                 self.expected_f1m_cardinality_derivation_root_sha256
             ),
             "expected_serialized_equivalence_class_count": (
                 self.expected_serialized_equivalence_class_count
             ),
+            "execution_basis": self.execution_basis,
             "freshness": self.freshness,
-            "f1m_binding_categories": list(self.f1m_binding_categories),
+            "f1m_size_class_categories": list(self.f1m_size_class_categories),
             "phase_ranges": [phase.to_document() for phase in self.phase_ranges],
             "primitive_names": list(self.primitive_names),
             "query_vector_sha256": self.query_vector_sha256,
@@ -1154,12 +1179,14 @@ class _Day1BWorkerSerializedObjectReceipt:
     serialized_sha256: str
     multiplicity: int
     charged_byte_count: int
-    f1m_binding: Day1BF1MBindingReceipt | None
+    f1m_size_class: Day1BF1MSizeClass | None
 
     def to_document(self) -> dict[str, object]:
         return {
             "charged_byte_count": self.charged_byte_count,
-            "f1m_binding": (None if self.f1m_binding is None else self.f1m_binding.to_document()),
+            "f1m_size_class": (
+                None if self.f1m_size_class is None else self.f1m_size_class.to_document()
+            ),
             "multiplicity": self.multiplicity,
             "serialization_equivalence_class_ordinal": (
                 self.serialization_equivalence_class_ordinal
@@ -1266,32 +1293,46 @@ class Day1BWorkerCellReceipt:
     controller_schedule_phase_audits: tuple[Day1BWorkerPhaseAudit, ...]
     worker_declared_phase_audits_match_controller_schedule_audits: bool
     runtime_state_continuity_verified: bool
-    controller_expected_f1m_binding_set_sha256: str
-    controller_expected_f1m_binding_count: int
-    controller_expected_f1m_phase_binding_counts: tuple[int, int, int]
-    controller_expected_f1m_phase_query_batch_counts: tuple[int, int, int]
+    controller_expected_f1m_size_class_set_sha256: str
+    controller_expected_f1m_size_class_count: int
+    controller_expected_f1m_phase_size_class_counts: tuple[int, int, int]
+    controller_expected_f1m_phase_query_counts: tuple[int, int, int]
     controller_expected_f1m_phase_random_route_counts: tuple[int, int, int]
     controller_expected_f1m_phase_dummy_route_counts: tuple[int, int, int]
     controller_f1m_cardinality_derivation_root_sha256: str
     controller_expected_serialized_equivalence_class_count: int
-    worker_observed_f1m_binding_count: int
+    worker_observed_f1m_size_class_count: int
+    worker_observed_f1m_materialized_binding_count: int
     pre_dispatch_context_sha256: str
     controller_registered_scratch_bytes_checkpoint_maximum: int
     controller_observed_registered_scratch_peak_bytes: int
     anonymous_scratch_creation_isolation_verified: bool
-    pre_dispatch_ledger_identity_sha256: str
-    pre_dispatch_ledger_root_before_sha256: str
-    pre_dispatch_ledger_root_after_preparation_sha256: str
-    pre_dispatch_batch_plan_sha256: str
-    persistent_random_reservations_verified: bool
-    prepared_commitment_batches_verified: bool
-    prepared_commitment_consumption_verified: bool
-    prepared_commitment_consumption_transition_sha256: str | None
-    common_query_preparation_verified: bool
+    controller_f1m_window_batch_stream_sha256: str
+    weighted_query_range_coverage_verified: bool
     production_execution_admissible: bool
     object_receipt_spool_sha256: str
     object_receipt_line_count: int
     object_receipt_byte_count: int
+
+    def __post_init__(self) -> None:
+        if _strict_nonnegative(
+            self.worker_observed_f1m_materialized_binding_count,
+            "worker_observed_f1m_materialized_binding_count",
+        ) != 0:
+            raise Day1BWorkerProtocolError(
+                "weighted Day1B cannot report materialized per-query F1-M bindings"
+            )
+        if type(self.weighted_query_range_coverage_verified) is not bool:
+            raise Day1BWorkerProtocolError(
+                "weighted query-range coverage must be an exact boolean"
+            )
+        if self.production_execution_admissible and not (
+            self.anonymous_scratch_creation_isolation_verified
+            and self.weighted_query_range_coverage_verified
+        ):
+            raise Day1BWorkerProtocolError(
+                "weighted production admission requires isolation and range verification"
+            )
 
     def to_document(self) -> dict[str, object]:
         document: dict[str, object] = {
@@ -1300,21 +1341,23 @@ class Day1BWorkerCellReceipt:
             "controller_schedule_phase_audits": [
                 audit.to_document() for audit in self.controller_schedule_phase_audits
             ],
-            "controller_expected_f1m_binding_count": (self.controller_expected_f1m_binding_count),
-            "controller_expected_f1m_binding_set_sha256": (
-                self.controller_expected_f1m_binding_set_sha256
+            "controller_expected_f1m_size_class_count": (
+                self.controller_expected_f1m_size_class_count
             ),
-            "controller_expected_f1m_phase_binding_counts": dict(
+            "controller_expected_f1m_size_class_set_sha256": (
+                self.controller_expected_f1m_size_class_set_sha256
+            ),
+            "controller_expected_f1m_phase_size_class_counts": dict(
                 zip(
                     _PHASE_NAMES,
-                    self.controller_expected_f1m_phase_binding_counts,
+                    self.controller_expected_f1m_phase_size_class_counts,
                     strict=True,
                 )
             ),
-            "controller_expected_f1m_phase_query_batch_counts": dict(
+            "controller_expected_f1m_phase_query_counts": dict(
                 zip(
                     _PHASE_NAMES,
-                    self.controller_expected_f1m_phase_query_batch_counts,
+                    self.controller_expected_f1m_phase_query_counts,
                     strict=True,
                 )
             ),
@@ -1352,30 +1395,22 @@ class Day1BWorkerCellReceipt:
             "object_receipt_line_count": self.object_receipt_line_count,
             "object_receipt_spool_sha256": self.object_receipt_spool_sha256,
             "raw_protocol_object_bytes_retained": False,
-            "common_query_preparation_verified": self.common_query_preparation_verified,
-            "persistent_random_reservations_verified": (
-                self.persistent_random_reservations_verified
+            "controller_f1m_window_batch_stream_sha256": (
+                self.controller_f1m_window_batch_stream_sha256
             ),
-            "pre_dispatch_batch_plan_sha256": self.pre_dispatch_batch_plan_sha256,
             "pre_dispatch_context_sha256": self.pre_dispatch_context_sha256,
-            "pre_dispatch_ledger_identity_sha256": self.pre_dispatch_ledger_identity_sha256,
-            "pre_dispatch_ledger_root_after_preparation_sha256": (
-                self.pre_dispatch_ledger_root_after_preparation_sha256
-            ),
-            "pre_dispatch_ledger_root_before_sha256": (self.pre_dispatch_ledger_root_before_sha256),
-            "prepared_commitment_batches_verified": (self.prepared_commitment_batches_verified),
-            "prepared_commitment_consumption_transition_sha256": (
-                self.prepared_commitment_consumption_transition_sha256
-            ),
-            "prepared_commitment_consumption_verified": (
-                self.prepared_commitment_consumption_verified
-            ),
             "production_execution_admissible": self.production_execution_admissible,
             "runtime_state_continuity_verified": self.runtime_state_continuity_verified,
             "worker_declared_phase_audits_match_controller_schedule_audits": (
                 self.worker_declared_phase_audits_match_controller_schedule_audits
             ),
-            "worker_observed_f1m_binding_count": (self.worker_observed_f1m_binding_count),
+            "worker_observed_f1m_size_class_count": (self.worker_observed_f1m_size_class_count),
+            "worker_observed_f1m_materialized_binding_count": (
+                self.worker_observed_f1m_materialized_binding_count
+            ),
+            "weighted_query_range_coverage_verified": (
+                self.weighted_query_range_coverage_verified
+            ),
         }
         document["worker_candidate_cell_receipt_sha256"] = hashlib.sha256(
             _canonical_json_bytes(document)
@@ -1697,33 +1732,28 @@ class _ControlledScratch:
 
 @dataclass(frozen=True, slots=True)
 class Day1BExpectedF1MRegistryDescriptor:
-    """Descriptive facts bound to an opaque controller/ledger registry capability."""
+    """Descriptive facts bound to an opaque controller size-class registry."""
 
-    binding_set_sha256: str
-    binding_count: int
-    phase_binding_counts: tuple[int, int, int]
-    phase_query_batch_counts: tuple[int, int, int]
+    size_class_set_sha256: str
+    size_class_count: int
+    phase_size_class_counts: tuple[int, int, int]
+    phase_query_counts: tuple[int, int, int]
     phase_random_route_counts: tuple[int, int, int]
     phase_dummy_route_counts: tuple[int, int, int]
     cardinality_derivation_root_sha256: str
     pre_dispatch_context_sha256: str
     controller_registered_scratch_bytes_checkpoint_maximum: int
     anonymous_scratch_creation_isolation_verified: bool
-    pre_dispatch_ledger_identity_sha256: str
-    pre_dispatch_ledger_root_before_sha256: str
-    pre_dispatch_ledger_root_after_preparation_sha256: str
-    pre_dispatch_batch_plan_sha256: str
-    persistent_random_reservations_verified: bool
-    prepared_commitment_batches_verified: bool
-    common_query_preparation_verified: bool
+    controller_f1m_window_batch_stream_sha256: str
+    weighted_query_range_coverage_verified: bool
     pre_dispatch_execution_admissible: bool
 
     def __post_init__(self) -> None:
-        _sha256(self.binding_set_sha256, "registry binding_set_sha256")
-        _strict_nonnegative(self.binding_count, "registry binding_count")
+        _sha256(self.size_class_set_sha256, "registry size_class_set_sha256")
+        _strict_nonnegative(self.size_class_count, "registry size_class_count")
         for field in (
-            "phase_binding_counts",
-            "phase_query_batch_counts",
+            "phase_size_class_counts",
+            "phase_query_counts",
             "phase_random_route_counts",
             "phase_dummy_route_counts",
         ):
@@ -1732,15 +1762,12 @@ class Day1BExpectedF1MRegistryDescriptor:
                 raise Day1BWorkerProtocolError(f"registry {field} is not an exact phase tuple")
             for count in value:
                 _strict_nonnegative(count, f"registry {field}")
-        if sum(self.phase_binding_counts) != self.binding_count:
-            raise Day1BWorkerProtocolError("registry phase binding counts do not sum exactly")
+        if sum(self.phase_size_class_counts) != self.size_class_count:
+            raise Day1BWorkerProtocolError("registry phase size-class counts do not sum exactly")
         for field in (
             "cardinality_derivation_root_sha256",
             "pre_dispatch_context_sha256",
-            "pre_dispatch_ledger_identity_sha256",
-            "pre_dispatch_ledger_root_before_sha256",
-            "pre_dispatch_ledger_root_after_preparation_sha256",
-            "pre_dispatch_batch_plan_sha256",
+            "controller_f1m_window_batch_stream_sha256",
         ):
             _sha256(getattr(self, field), f"registry {field}")
         _strict_positive(
@@ -1749,21 +1776,17 @@ class Day1BExpectedF1MRegistryDescriptor:
         )
         for field in (
             "anonymous_scratch_creation_isolation_verified",
-            "persistent_random_reservations_verified",
-            "prepared_commitment_batches_verified",
-            "common_query_preparation_verified",
+            "weighted_query_range_coverage_verified",
             "pre_dispatch_execution_admissible",
         ):
             if type(getattr(self, field)) is not bool:
                 raise Day1BWorkerProtocolError(f"registry {field} must be an exact boolean")
         if self.pre_dispatch_execution_admissible and not (
             self.anonymous_scratch_creation_isolation_verified
-            and self.persistent_random_reservations_verified
-            and self.prepared_commitment_batches_verified
-            and self.common_query_preparation_verified
+            and self.weighted_query_range_coverage_verified
         ):
             raise Day1BWorkerProtocolError(
-                "registry production admission requires ledger and preparation verification"
+                "registry production admission requires isolation and range verification"
             )
 
     def to_document(self) -> dict[str, object]:
@@ -1772,19 +1795,17 @@ class Day1BExpectedF1MRegistryDescriptor:
             "anonymous_scratch_creation_isolation_verified": (
                 self.anonymous_scratch_creation_isolation_verified
             ),
-            "binding_count": self.binding_count,
-            "binding_set_sha256": self.binding_set_sha256,
+            "size_class_count": self.size_class_count,
+            "size_class_set_sha256": self.size_class_set_sha256,
             "cardinality_derivation_root_sha256": self.cardinality_derivation_root_sha256,
             "controller_registered_scratch_bytes_checkpoint_maximum": (
                 self.controller_registered_scratch_bytes_checkpoint_maximum
             ),
-            "common_query_preparation_verified": self.common_query_preparation_verified,
-            "persistent_random_reservations_verified": (
-                self.persistent_random_reservations_verified
+            "phase_size_class_counts": dict(
+                zip(_PHASE_NAMES, self.phase_size_class_counts, strict=True)
             ),
-            "phase_binding_counts": dict(zip(_PHASE_NAMES, self.phase_binding_counts, strict=True)),
-            "phase_query_batch_counts": dict(
-                zip(_PHASE_NAMES, self.phase_query_batch_counts, strict=True)
+            "phase_query_counts": dict(
+                zip(_PHASE_NAMES, self.phase_query_counts, strict=True)
             ),
             "phase_dummy_route_counts": dict(
                 zip(_PHASE_NAMES, self.phase_dummy_route_counts, strict=True)
@@ -1792,15 +1813,14 @@ class Day1BExpectedF1MRegistryDescriptor:
             "phase_random_route_counts": dict(
                 zip(_PHASE_NAMES, self.phase_random_route_counts, strict=True)
             ),
-            "pre_dispatch_batch_plan_sha256": self.pre_dispatch_batch_plan_sha256,
+            "controller_f1m_window_batch_stream_sha256": (
+                self.controller_f1m_window_batch_stream_sha256
+            ),
             "pre_dispatch_context_sha256": self.pre_dispatch_context_sha256,
             "pre_dispatch_execution_admissible": self.pre_dispatch_execution_admissible,
-            "pre_dispatch_ledger_identity_sha256": self.pre_dispatch_ledger_identity_sha256,
-            "pre_dispatch_ledger_root_after_preparation_sha256": (
-                self.pre_dispatch_ledger_root_after_preparation_sha256
+            "weighted_query_range_coverage_verified": (
+                self.weighted_query_range_coverage_verified
             ),
-            "pre_dispatch_ledger_root_before_sha256": (self.pre_dispatch_ledger_root_before_sha256),
-            "prepared_commitment_batches_verified": (self.prepared_commitment_batches_verified),
         }
 
     @classmethod
@@ -1808,23 +1828,18 @@ class Day1BExpectedF1MRegistryDescriptor:
         keys = {
             "schema_version",
             "anonymous_scratch_creation_isolation_verified",
-            "binding_count",
-            "binding_set_sha256",
+            "size_class_count",
+            "size_class_set_sha256",
             "cardinality_derivation_root_sha256",
-            "common_query_preparation_verified",
             "controller_registered_scratch_bytes_checkpoint_maximum",
-            "persistent_random_reservations_verified",
-            "phase_binding_counts",
+            "phase_size_class_counts",
             "phase_dummy_route_counts",
-            "phase_query_batch_counts",
+            "phase_query_counts",
             "phase_random_route_counts",
-            "pre_dispatch_batch_plan_sha256",
+            "controller_f1m_window_batch_stream_sha256",
             "pre_dispatch_context_sha256",
             "pre_dispatch_execution_admissible",
-            "pre_dispatch_ledger_identity_sha256",
-            "pre_dispatch_ledger_root_after_preparation_sha256",
-            "pre_dispatch_ledger_root_before_sha256",
-            "prepared_commitment_batches_verified",
+            "weighted_query_range_coverage_verified",
         }
         if type(value) is not dict or set(value) != keys:
             raise Day1BWorkerProtocolError("expected F1-M registry descriptor keys are not exact")
@@ -1832,9 +1847,9 @@ class Day1BExpectedF1MRegistryDescriptor:
             raise Day1BWorkerProtocolError("expected F1-M registry descriptor schema is not frozen")
         counts: dict[str, tuple[int, int, int]] = {}
         for field in (
-            "phase_binding_counts",
+            "phase_size_class_counts",
             "phase_dummy_route_counts",
-            "phase_query_batch_counts",
+            "phase_query_counts",
             "phase_random_route_counts",
         ):
             raw = value[field]
@@ -1848,32 +1863,23 @@ class Day1BExpectedF1MRegistryDescriptor:
                 anonymous_scratch_creation_isolation_verified=(
                     value["anonymous_scratch_creation_isolation_verified"]
                 ),
-                binding_count=value["binding_count"],
-                binding_set_sha256=value["binding_set_sha256"],
+                size_class_count=value["size_class_count"],
+                size_class_set_sha256=value["size_class_set_sha256"],
                 cardinality_derivation_root_sha256=(value["cardinality_derivation_root_sha256"]),
-                common_query_preparation_verified=(value["common_query_preparation_verified"]),
                 controller_registered_scratch_bytes_checkpoint_maximum=(
                     value["controller_registered_scratch_bytes_checkpoint_maximum"]
                 ),
-                persistent_random_reservations_verified=(
-                    value["persistent_random_reservations_verified"]
-                ),
-                phase_binding_counts=counts["phase_binding_counts"],
+                phase_size_class_counts=counts["phase_size_class_counts"],
                 phase_dummy_route_counts=counts["phase_dummy_route_counts"],
-                phase_query_batch_counts=counts["phase_query_batch_counts"],
+                phase_query_counts=counts["phase_query_counts"],
                 phase_random_route_counts=counts["phase_random_route_counts"],
-                pre_dispatch_batch_plan_sha256=value["pre_dispatch_batch_plan_sha256"],
+                controller_f1m_window_batch_stream_sha256=(
+                    value["controller_f1m_window_batch_stream_sha256"]
+                ),
                 pre_dispatch_context_sha256=value["pre_dispatch_context_sha256"],
                 pre_dispatch_execution_admissible=value["pre_dispatch_execution_admissible"],
-                pre_dispatch_ledger_identity_sha256=(value["pre_dispatch_ledger_identity_sha256"]),
-                pre_dispatch_ledger_root_after_preparation_sha256=(
-                    value["pre_dispatch_ledger_root_after_preparation_sha256"]
-                ),
-                pre_dispatch_ledger_root_before_sha256=(
-                    value["pre_dispatch_ledger_root_before_sha256"]
-                ),
-                prepared_commitment_batches_verified=(
-                    value["prepared_commitment_batches_verified"]
+                weighted_query_range_coverage_verified=(
+                    value["weighted_query_range_coverage_verified"]
                 ),
             )
         except (KeyError, TypeError) as error:  # pragma: no cover - exact keys above
@@ -1886,10 +1892,11 @@ def _create_expected_f1m_tables(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE TABLE expected_f1m ("
         "phase TEXT NOT NULL, window_index INTEGER NOT NULL, "
-        "global_query_ordinal INTEGER NOT NULL, category TEXT NOT NULL, "
+        "first_global_query_ordinal INTEGER NOT NULL, category TEXT NOT NULL, "
         "category_order INTEGER NOT NULL CHECK(category_order IN (0,1)), "
-        "object_ordinal INTEGER NOT NULL, binding_sha256 TEXT NOT NULL, "
-        "ledger_commitment_token TEXT NOT NULL, route_document BLOB NOT NULL, "
+        "object_ordinal INTEGER NOT NULL, size_class_sha256 TEXT NOT NULL, "
+        "multiplicity INTEGER NOT NULL "
+        "CHECK(multiplicity > 0), route_document BLOB NOT NULL, "
         "observed INTEGER NOT NULL CHECK(observed IN (0,1)), "
         "PRIMARY KEY(phase, category, object_ordinal)) WITHOUT ROWID"
     )
@@ -1903,33 +1910,18 @@ def _create_expected_f1m_tables(connection: sqlite3.Connection) -> None:
         "f1m_policy TEXT NOT NULL, "
         "expected_random_route_count INTEGER NOT NULL, "
         "expected_dummy_route_count INTEGER NOT NULL, "
-        "expected_route_subroot_sha256 TEXT NOT NULL, "
+        "expected_size_class_subroot_sha256 TEXT NOT NULL, "
         "PRIMARY KEY(phase, window_index)) WITHOUT ROWID"
     )
     connection.execute(
-        "CREATE TABLE expected_random_f1m_no_reuse_keys ("
-        "query_id TEXT NOT NULL, version_id TEXT NOT NULL, "
-        "output_plan_digest TEXT NOT NULL, component_id TEXT NOT NULL, "
-        "output_block_id TEXT NOT NULL, PRIMARY KEY("
-        "query_id, version_id, output_plan_digest, component_id, output_block_id"
-        ")) WITHOUT ROWID"
-    )
-    connection.execute(
-        "CREATE TABLE f1m_batch_transitions ("
-        "ledger_commitment_token TEXT PRIMARY KEY NOT NULL, phase TEXT NOT NULL, "
-        "window_index INTEGER NOT NULL, global_query_ordinal INTEGER NOT NULL, "
-        "query_id TEXT NOT NULL, version_id TEXT NOT NULL, "
+        "CREATE TABLE f1m_window_batches ("
+        "phase TEXT NOT NULL, window_index INTEGER NOT NULL, "
+        "first_global_query_ordinal INTEGER NOT NULL, "
+        "query_count INTEGER NOT NULL CHECK(query_count > 0), "
+        "version_id TEXT NOT NULL, "
         "output_plan_digest TEXT NOT NULL, private_plan_digest TEXT NOT NULL, "
-        "execution_binding_digest TEXT NOT NULL, route_set_root_sha256 TEXT NOT NULL, "
-        "ledger_identity_sha256 TEXT NOT NULL, transition_ordinal INTEGER NOT NULL UNIQUE, "
-        "ledger_root_before_sha256 TEXT NOT NULL, reservation_set_root_sha256 TEXT NOT NULL, "
-        "ledger_root_after_reservation_sha256 TEXT NOT NULL, "
-        "ledger_root_after_preparation_sha256 TEXT NOT NULL, "
-        "random_reservation_transition_verified INTEGER NOT NULL CHECK("
-        "random_reservation_transition_verified IN (0,1)), "
-        "prepared_commitment_transition_verified INTEGER NOT NULL CHECK("
-        "prepared_commitment_transition_verified IN (0,1)), "
-        "UNIQUE(query_id)) WITHOUT ROWID"
+        "execution_binding_digest TEXT NOT NULL, size_class_subroot_sha256 TEXT NOT NULL, "
+        "PRIMARY KEY(phase, window_index)) WITHOUT ROWID"
     )
     connection.execute(
         "CREATE INDEX expected_f1m_by_window_order ON expected_f1m("
@@ -1941,10 +1933,11 @@ def _create_expected_f1m_tables(connection: sqlite3.Connection) -> None:
     )
     connection.execute(
         "CREATE INDEX expected_f1m_by_batch_order ON expected_f1m("
-        "ledger_commitment_token, phase, window_index, object_ordinal, category_order)"
+        "phase, window_index, first_global_query_ordinal, multiplicity, "
+        "object_ordinal, category_order)"
     )
     connection.execute(
-        "CREATE INDEX f1m_batch_transitions_by_window ON f1m_batch_transitions(phase, window_index)"
+        "CREATE INDEX f1m_window_batches_by_window ON f1m_window_batches(phase, window_index)"
     )
 
 
@@ -1969,7 +1962,7 @@ def _insert_f1m_window_cardinality(
                 row.f1m_policy,
                 row.expected_random_route_count,
                 row.expected_dummy_route_count,
-                row.expected_route_subroot_sha256,
+                row.expected_size_class_subroot_sha256,
             ),
         )
     except sqlite3.IntegrityError as error:
@@ -1978,19 +1971,10 @@ def _insert_f1m_window_cardinality(
         ) from error
 
 
-def _insert_f1m_batch_transition(
+def _insert_f1m_window_batch(
     connection: sqlite3.Connection,
-    row: Day1BF1MBatchTransitionReceipt,
-    *,
-    invocation_id: str,
+    row: Day1BF1MWindowBatch,
 ) -> None:
-    if row.query_id != canonical_day1b_f1m_query_id(
-        invocation_id=invocation_id,
-        global_query_ordinal=row.global_query_ordinal,
-    ):
-        raise Day1BWorkerProtocolError(
-            "F1-M batch query identity does not derive from invocation/global ordinal"
-        )
     window = connection.execute(
         "SELECT first_global_query_ordinal, query_count, version_id, "
         "output_plan_digest, private_plan_digest, execution_binding_digest "
@@ -1999,11 +1983,13 @@ def _insert_f1m_batch_transition(
     ).fetchone()
     if window is None:
         raise Day1BWorkerProtocolError(
-            "F1-M batch transition is absent from controller window cardinality"
+            "F1-M window batch is absent from controller window cardinality"
         )
     first_query, query_count, version_id, output_plan, private_plan, execution = window
-    if not first_query <= row.global_query_ordinal < first_query + query_count:
-        raise Day1BWorkerProtocolError("F1-M batch query ordinal is outside its controller window")
+    if (row.first_global_query_ordinal, row.query_count) != (first_query, query_count):
+        raise Day1BWorkerProtocolError(
+            "F1-M window batch query range is not its exact controller window"
+        )
     if (
         row.version_id,
         row.output_plan_digest,
@@ -2011,36 +1997,26 @@ def _insert_f1m_batch_transition(
         row.execution_binding_digest,
     ) != (version_id, output_plan, private_plan, execution):
         raise Day1BWorkerProtocolError(
-            "F1-M batch transition differs from its OutputPlan/cardinality binding"
+            "F1-M window batch differs from its OutputPlan/cardinality identity"
         )
     try:
         connection.execute(
-            "INSERT INTO f1m_batch_transitions VALUES ("
-            "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO f1m_window_batches VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                row.ledger_commitment_token,
                 row.phase,
                 row.window_index,
-                row.global_query_ordinal,
-                row.query_id,
+                row.first_global_query_ordinal,
+                row.query_count,
                 row.version_id,
                 row.output_plan_digest,
                 row.private_plan_digest,
                 row.execution_binding_digest,
-                row.route_set_root_sha256,
-                row.ledger_identity_sha256,
-                row.transition_ordinal,
-                row.ledger_root_before_sha256,
-                row.reservation_set_root_sha256,
-                row.ledger_root_after_reservation_sha256,
-                row.ledger_root_after_preparation_sha256,
-                int(row.random_reservation_transition_verified),
-                int(row.prepared_commitment_transition_verified),
+                row.size_class_subroot_sha256,
             ),
         )
     except sqlite3.IntegrityError as error:
         raise Day1BWorkerProtocolError(
-            "F1-M batch transitions reuse a query, token, or transition ordinal"
+            "F1-M window batches repeat one phase/window identity"
         ) from error
 
 
@@ -2054,43 +2030,46 @@ def _insert_expected_f1m(
             (
                 item.phase,
                 item.window_index,
-                item.global_query_ordinal,
+                item.first_global_query_ordinal,
                 item.category,
-                DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES.index(item.category),
+                DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES.index(item.category),
                 item.object_ordinal,
-                hashlib.sha256(_canonical_json_bytes(item.f1m_binding.to_document())).hexdigest(),
-                item.f1m_binding.ledger_commitment_token,
+                hashlib.sha256(
+                    _canonical_json_bytes(item.f1m_size_class.to_document())
+                ).hexdigest(),
+                item.multiplicity,
                 _canonical_json_bytes(item.to_document()),
             ),
         )
-        if item.f1m_binding.f1m_kind == "random-zero-sum":
-            connection.execute(
-                "INSERT INTO expected_random_f1m_no_reuse_keys VALUES (?, ?, ?, ?, ?)",
-                item.f1m_binding.no_reuse_key,
-            )
     except sqlite3.IntegrityError as error:
         raise Day1BWorkerProtocolError(
-            "controller expected random F1-M routes reuse an ADR-0005 no-reuse key"
+            "controller expected F1-M size classes repeat one canonical route identity"
         ) from error
-    batch = item.f1m_binding
+    size_class = item.f1m_size_class
     admitted_batch = connection.execute(
-        "SELECT phase, window_index, global_query_ordinal, query_id, version_id, "
+        "SELECT phase, window_index, first_global_query_ordinal, query_count, version_id, "
         "output_plan_digest, private_plan_digest, execution_binding_digest "
-        "FROM f1m_batch_transitions WHERE ledger_commitment_token=?",
-        (batch.ledger_commitment_token,),
+        "FROM f1m_window_batches WHERE phase=? AND window_index=? "
+        "AND first_global_query_ordinal=? AND query_count=?",
+        (
+            item.phase,
+            item.window_index,
+            item.first_global_query_ordinal,
+            item.multiplicity,
+        ),
     ).fetchone()
     if admitted_batch != (
         item.phase,
         item.window_index,
-        item.global_query_ordinal,
-        batch.query_id,
-        batch.version_id,
-        batch.output_plan_digest,
-        batch.private_plan_digest,
-        batch.execution_binding_digest,
+        item.first_global_query_ordinal,
+        item.multiplicity,
+        size_class.version_id,
+        size_class.output_plan_digest,
+        size_class.private_plan_digest,
+        size_class.execution_binding_digest,
     ):
         raise Day1BWorkerProtocolError(
-            "controller expected F1-M query batch fields are not shared across its exact routes"
+            "controller expected F1-M query range fields are not shared across its size classes"
         )
     window = connection.execute(
         "SELECT first_global_query_ordinal, query_count, version_id, "
@@ -2100,26 +2079,30 @@ def _insert_expected_f1m(
     ).fetchone()
     if window is None:
         raise Day1BWorkerProtocolError(
-            "expected F1-M route is absent from controller window cardinality"
+            "expected F1-M size class is absent from controller window cardinality"
         )
     first_query, query_count, version_id, output_plan, private_plan, execution = window
-    if not first_query <= item.global_query_ordinal < first_query + query_count:
+    if not (
+        first_query <= item.first_global_query_ordinal
+        and item.first_global_query_ordinal + item.multiplicity
+        <= first_query + query_count
+    ):
         raise Day1BWorkerProtocolError(
-            "expected F1-M route query ordinal is outside its controller window"
+            "expected F1-M size-class query range is outside its controller window"
         )
     if (
-        batch.version_id,
-        batch.output_plan_digest,
-        batch.private_plan_digest,
-        batch.execution_binding_digest,
+        size_class.version_id,
+        size_class.output_plan_digest,
+        size_class.private_plan_digest,
+        size_class.execution_binding_digest,
     ) != (version_id, output_plan, private_plan, execution):
         raise Day1BWorkerProtocolError(
-            "expected F1-M route differs from its OutputPlan/cardinality binding"
+            "expected F1-M size class differs from its OutputPlan/cardinality identity"
         )
 
 
 class _ExpectedF1MRegistry:
-    """Descriptor-backed expected-route registry built from one bounded stream."""
+    """Descriptor-backed expected-size-class registry built from one bounded stream."""
 
     def __init__(
         self,
@@ -2128,7 +2111,7 @@ class _ExpectedF1MRegistry:
         contract: Day1BWorkerProtocolContract,
         controller_phase_audits: tuple[Day1BWorkerPhaseAudit, ...],
         window_cardinalities: Iterable[Day1BF1MWindowCardinality],
-        batch_transitions: Iterable[Day1BF1MBatchTransitionReceipt],
+        window_batches: Iterable[Day1BF1MWindowBatch],
         expected_f1m_objects: Iterable[Day1BControllerExpectedF1MObject],
     ) -> None:
         self.scratch = scratch
@@ -2148,15 +2131,11 @@ class _ExpectedF1MRegistry:
             self.connection.commit()
             scratch.require_within_cap()
             window_root = self._ingest_windows(window_cardinalities)
-            batch_root, ledger_facts = self._ingest_batches(
-                batch_transitions,
-                invocation_id=contract.invocation_id,
-            )
+            window_batch_root = self._ingest_batches(window_batches)
             self.descriptor = self._ingest_routes(
                 expected_f1m_objects,
                 window_root=window_root,
-                batch_root=batch_root,
-                ledger_facts=ledger_facts,
+                window_batch_root=window_batch_root,
                 pre_dispatch_context_sha256=_pre_dispatch_context_sha256(
                     contract,
                     controller_phase_audits,
@@ -2222,98 +2201,63 @@ class _ExpectedF1MRegistry:
             hasher.update(_canonical_json_bytes(row.to_document())[:-1])
             _insert_f1m_window_cardinality(self.connection, row)
             self._checkpoint(count)
-        hasher.update(b'],"schema_version":"dynamic-cssc-day1b-f1m-window-cardinality-set-v1"}\n')
+        hasher.update(b'],"schema_version":"dynamic-cssc-day1b-f1m-window-cardinality-set-v3"}\n')
         self.connection.commit()
         self.scratch.require_within_cap()
         return hasher.hexdigest()
 
     def _ingest_batches(
         self,
-        rows: Iterable[Day1BF1MBatchTransitionReceipt],
-        *,
-        invocation_id: str,
-    ) -> tuple[str, tuple[str, str, str, bool, bool]]:
-        _sha256(invocation_id, "invocation_id")
+        rows: Iterable[Day1BF1MWindowBatch],
+    ) -> str:
+        phase_order = {phase: index for index, phase in enumerate(_PHASE_NAMES)}
+        previous: tuple[int, int] | None = None
         hasher = hashlib.sha256()
-        hasher.update(b'{"batch_transitions":[')
+        hasher.update(b'{"window_batches":[')
         count = 0
-        identity: str | None = None
-        root_before: str | None = None
-        previous_root_after: str | None = None
-        all_random_reservations_verified = True
-        all_prepared_commitments_verified = True
-        for raw_row in self._iter_exact(rows, field="F1-M batch transitions"):
-            if type(raw_row) is not Day1BF1MBatchTransitionReceipt:
+        for count, raw_row in enumerate(
+            self._iter_exact(rows, field="F1-M window batches"),
+            start=1,
+        ):
+            if type(raw_row) is not Day1BF1MWindowBatch:
                 raise Day1BWorkerProtocolError(
-                    "F1-M batch transition stream contains a non-exact row"
+                    "F1-M window-batch stream contains a non-exact row"
                 )
             row = raw_row
-            if (
-                row.random_reservation_transition_verified
-                or row.prepared_commitment_transition_verified
-            ):
+            order = phase_order[row.phase], row.window_index
+            if previous is not None and order <= previous:
                 raise Day1BWorkerProtocolError(
-                    "private fixture batch plans cannot verify reserve or prepare transitions"
+                    "F1-M window batches are not unique canonical order"
                 )
-            if row.transition_ordinal != count:
-                raise Day1BWorkerProtocolError(
-                    "F1-M batch transition ordinals are not contiguous from zero"
-                )
-            if identity is None:
-                identity = row.ledger_identity_sha256
-                root_before = row.ledger_root_before_sha256
-            elif row.ledger_identity_sha256 != identity:
-                raise Day1BWorkerProtocolError(
-                    "F1-M batch transitions splice different ledger identities"
-                )
-            if previous_root_after is not None and row.ledger_root_before_sha256 != (
-                previous_root_after
-            ):
-                raise Day1BWorkerProtocolError(
-                    "F1-M batch transition ledger roots are not one exact chain"
-                )
-            if count:
+            previous = order
+            if count > 1:
                 hasher.update(b",")
             hasher.update(_canonical_json_bytes(row.to_document())[:-1])
-            _insert_f1m_batch_transition(
-                self.connection,
-                row,
-                invocation_id=invocation_id,
-            )
-            previous_root_after = row.ledger_root_after_preparation_sha256
-            all_random_reservations_verified = (
-                all_random_reservations_verified and row.random_reservation_transition_verified
-            )
-            all_prepared_commitments_verified = (
-                all_prepared_commitments_verified and row.prepared_commitment_transition_verified
-            )
-            count += 1
+            _insert_f1m_window_batch(self.connection, row)
             self._checkpoint(count)
-        hasher.update(b'],"schema_version":"dynamic-cssc-day1b-f1m-batch-transition-set-v1"}\n')
+        hasher.update(b'],"schema_version":"dynamic-cssc-day1b-f1m-window-batch-set-v1"}\n')
         self.connection.commit()
         self.scratch.require_within_cap()
-        return hasher.hexdigest(), (
-            identity or _TEST_ONLY_RESERVATION_LEDGER_IDENTITY_SHA256,
-            root_before or _EMPTY_RESERVATION_LEDGER_ROOT_SHA256,
-            previous_root_after or _EMPTY_RESERVATION_LEDGER_ROOT_SHA256,
-            bool(count) and all_random_reservations_verified,
-            bool(count) and all_prepared_commitments_verified,
-        )
+        return hasher.hexdigest()
 
     @staticmethod
-    def _route_subroot(route_documents: Iterable[bytes]) -> str:
+    def _size_class_subroot(size_class_documents: Iterable[bytes]) -> str:
         hasher = hashlib.sha256()
         hasher.update(b'{"routes":[')
         count = 0
-        for count, raw in enumerate(route_documents, start=1):
+        for count, raw in enumerate(size_class_documents, start=1):
             if type(raw) is not bytes or not raw.endswith(b"\n"):
-                raise Day1BWorkerProtocolError("expected F1-M route document spool is malformed")
+                raise Day1BWorkerProtocolError(
+                    "expected F1-M size-class document spool is malformed"
+                )
             if count > 1:
                 hasher.update(b",")
             hasher.update(raw[:-1])
         hasher.update(
             b'],"schema_version":'
-            + json.dumps(_DAY1B_WORKER_EXPECTED_F1M_ROUTE_SUBROOT_SCHEMA).encode("ascii")
+            + json.dumps(_DAY1B_WORKER_EXPECTED_F1M_SIZE_CLASS_SUBROOT_SCHEMA).encode(
+                "ascii"
+            )
             + b"}\n"
         )
         return hasher.hexdigest()
@@ -2321,7 +2265,8 @@ class _ExpectedF1MRegistry:
     def _validate_route_cardinality(self) -> None:
         for row in self.connection.execute(
             "SELECT phase, window_index, expected_random_route_count, "
-            "expected_dummy_route_count, expected_route_subroot_sha256, query_count "
+            "expected_dummy_route_count, expected_size_class_subroot_sha256, "
+            "first_global_query_ordinal, query_count "
             "FROM f1m_window_cardinality ORDER BY phase, window_index"
         ):
             (
@@ -2330,30 +2275,40 @@ class _ExpectedF1MRegistry:
                 expected_random,
                 expected_dummy,
                 expected_subroot,
+                first_query,
                 query_count,
             ) = row
-            batch_count = self.connection.execute(
-                "SELECT COUNT(*) FROM f1m_batch_transitions WHERE phase=? AND window_index=?",
+            window_batch = self.connection.execute(
+                "SELECT first_global_query_ordinal, query_count, "
+                "size_class_subroot_sha256 FROM f1m_window_batches "
+                "WHERE phase=? AND window_index=?",
                 (phase, window_index),
             ).fetchone()
-            if batch_count is None or batch_count[0] != query_count:
+            if (query_count == 0 and window_batch is not None) or (
+                query_count > 0
+                and window_batch != (first_query, query_count, expected_subroot)
+            ):
                 raise Day1BWorkerProtocolError(
-                    "F1-M window batch transitions do not cover every realized query"
+                    "F1-M window batch does not exactly cover its query-bearing window"
                 )
             observed = dict(
                 self.connection.execute(
-                    "SELECT category, COUNT(*) FROM expected_f1m "
+                    "SELECT category, SUM(multiplicity) FROM expected_f1m "
                     "WHERE phase=? AND window_index=? GROUP BY category",
                     (phase, window_index),
                 )
             )
             if (
-                observed.get(DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES[0], 0) != expected_random
-                or observed.get(DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES[1], 0)
+                observed.get(
+                    DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES[0],
+                    0,
+                )
+                != expected_random
+                or observed.get(DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES[1], 0)
                 != expected_dummy
             ):
                 raise Day1BWorkerProtocolError(
-                    "expected F1-M routes differ from OutputPlan-derived cardinality"
+                    "expected F1-M size classes differ from OutputPlan-derived cardinality"
                 )
             documents = (
                 result[0]
@@ -2364,26 +2319,9 @@ class _ExpectedF1MRegistry:
                     (phase, window_index),
                 )
             )
-            if self._route_subroot(documents) != expected_subroot:
+            if self._size_class_subroot(documents) != expected_subroot:
                 raise Day1BWorkerProtocolError(
-                    "expected F1-M window route subroot differs from exact routes"
-                )
-        for token, expected_subroot in self.connection.execute(
-            "SELECT ledger_commitment_token, route_set_root_sha256 "
-            "FROM f1m_batch_transitions ORDER BY transition_ordinal"
-        ):
-            documents = (
-                result[0]
-                for result in self.connection.execute(
-                    "SELECT route_document FROM expected_f1m "
-                    "WHERE ledger_commitment_token=? "
-                    "ORDER BY phase, window_index, object_ordinal, category_order",
-                    (token,),
-                )
-            )
-            if self._route_subroot(documents) != expected_subroot:
-                raise Day1BWorkerProtocolError(
-                    "F1-M batch route-set root differs from exact route membership"
+                    "expected F1-M window size-class subroot differs from exact descriptors"
                 )
 
     def _ingest_routes(
@@ -2391,8 +2329,7 @@ class _ExpectedF1MRegistry:
         expected_f1m_objects: Iterable[Day1BControllerExpectedF1MObject],
         *,
         window_root: str,
-        batch_root: str,
-        ledger_facts: tuple[str, str, str, bool, bool],
+        window_batch_root: str,
         pre_dispatch_context_sha256: str,
         controller_registered_scratch_bytes_checkpoint_maximum: int,
         anonymous_scratch_creation_isolation_verified: bool,
@@ -2404,12 +2341,12 @@ class _ExpectedF1MRegistry:
         phase_order = {phase: index for index, phase in enumerate(_PHASE_NAMES)}
         category_order = {
             category: index
-            for index, category in enumerate(DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES)
+            for index, category in enumerate(DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES)
         }
         previous_order: tuple[int, int, int, int] | None = None
         hasher = hashlib.sha256()
         hasher.update(b'{"objects":[')
-        phase_binding_counts = [0, 0, 0]
+        phase_size_class_counts = [0, 0, 0]
         phase_random_counts = [0, 0, 0]
         phase_dummy_counts = [0, 0, 0]
         next_object_ordinals: dict[tuple[str, str], int] = {}
@@ -2423,7 +2360,7 @@ class _ExpectedF1MRegistry:
             order = _expected_f1m_order(item, phase_order, category_order)
             if previous_order is not None and order <= previous_order:
                 raise Day1BWorkerProtocolError(
-                    "expected F1-M stream is not unique canonical route order"
+                    "expected F1-M stream is not unique canonical size-class order"
                 )
             previous_order = order
             ordinal_key = item.phase, item.category
@@ -2439,53 +2376,47 @@ class _ExpectedF1MRegistry:
             hasher.update(_canonical_json_bytes(item.to_document())[:-1])
             _insert_expected_f1m(self.connection, item)
             phase_index = phase_order[item.phase]
-            phase_binding_counts[phase_index] += 1
-            if item.category == DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES[0]:
-                phase_random_counts[phase_index] += 1
+            phase_size_class_counts[phase_index] += 1
+            if item.category == DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES[0]:
+                phase_random_counts[phase_index] += item.multiplicity
             else:
-                phase_dummy_counts[phase_index] += 1
+                phase_dummy_counts[phase_index] += item.multiplicity
             count += 1
             self._checkpoint(count)
         hasher.update(
             b'],"schema_version":'
-            + json.dumps(DAY1B_WORKER_EXPECTED_F1M_BINDING_SET_SCHEMA).encode("ascii")
+            + json.dumps(DAY1B_WORKER_EXPECTED_F1M_SIZE_CLASS_SET_SCHEMA).encode("ascii")
             + b"}\n"
         )
         self.connection.commit()
         self.scratch.require_within_cap()
         self._validate_route_cardinality()
-        phase_query_batch_counts = tuple(
+        phase_query_counts = tuple(
             int(
                 self.connection.execute(
-                    "SELECT COUNT(*) FROM f1m_batch_transitions WHERE phase=?",
+                    "SELECT COALESCE(SUM(query_count),0) FROM f1m_window_batches "
+                    "WHERE phase=?",
                     (phase,),
                 ).fetchone()[0]
             )
             for phase in _PHASE_NAMES
         )
-        binding_set_sha256 = hasher.hexdigest()
+        size_class_set_sha256 = hasher.hexdigest()
         cardinality_root = hashlib.sha256(
             _canonical_json_bytes(
                 {
-                    "binding_set_sha256": binding_set_sha256,
-                    "batch_transition_stream_sha256": batch_root,
-                    "schema_version": "dynamic-cssc-day1b-f1m-cardinality-derivation-v1",
+                    "size_class_set_sha256": size_class_set_sha256,
+                    "window_batch_stream_sha256": window_batch_root,
+                    "schema_version": "dynamic-cssc-day1b-f1m-cardinality-derivation-v4",
                     "window_cardinality_stream_sha256": window_root,
                 }
             )
         ).hexdigest()
-        (
-            ledger_identity,
-            root_before,
-            root_after_preparation,
-            persistent_random_verified,
-            prepared_commitments_verified,
-        ) = ledger_facts
         return Day1BExpectedF1MRegistryDescriptor(
-            binding_set_sha256=binding_set_sha256,
-            binding_count=count,
-            phase_binding_counts=tuple(phase_binding_counts),  # type: ignore[arg-type]
-            phase_query_batch_counts=phase_query_batch_counts,  # type: ignore[arg-type]
+            size_class_set_sha256=size_class_set_sha256,
+            size_class_count=count,
+            phase_size_class_counts=tuple(phase_size_class_counts),  # type: ignore[arg-type]
+            phase_query_counts=phase_query_counts,  # type: ignore[arg-type]
             phase_random_route_counts=tuple(phase_random_counts),  # type: ignore[arg-type]
             phase_dummy_route_counts=tuple(phase_dummy_counts),  # type: ignore[arg-type]
             cardinality_derivation_root_sha256=cardinality_root,
@@ -2496,13 +2427,8 @@ class _ExpectedF1MRegistry:
             anonymous_scratch_creation_isolation_verified=(
                 anonymous_scratch_creation_isolation_verified
             ),
-            pre_dispatch_ledger_identity_sha256=ledger_identity,
-            pre_dispatch_ledger_root_before_sha256=root_before,
-            pre_dispatch_ledger_root_after_preparation_sha256=(root_after_preparation),
-            pre_dispatch_batch_plan_sha256=batch_root,
-            persistent_random_reservations_verified=persistent_random_verified,
-            prepared_commitment_batches_verified=prepared_commitments_verified,
-            common_query_preparation_verified=False,
+            controller_f1m_window_batch_stream_sha256=window_batch_root,
+            weighted_query_range_coverage_verified=True,
             pre_dispatch_execution_admissible=False,
         )
 
@@ -2582,12 +2508,12 @@ class _ExpectedRegistryBinding:
 
 
 class Day1BExpectedF1MRegistryCapability:
-    """Opaque single-use expected-route registry minted by a controller ledger."""
+    """Opaque single-use expected size-class registry minted by a controller."""
 
     __slots__ = ("_binding", "__weakref__")
 
     def __new__(cls) -> Day1BExpectedF1MRegistryCapability:
-        raise TypeError("Day1B expected F1-M registries are controller-ledger-minted")
+        raise TypeError("Day1B expected F1-M registries are controller-minted")
 
     def __bool__(self) -> bool:
         raise TypeError("Day1B expected F1-M registry is not a caller boolean")
@@ -2624,7 +2550,7 @@ def _active_expected_registry_binding(
     consume: bool,
 ) -> _ExpectedRegistryBinding:
     if type(capability) is not Day1BExpectedF1MRegistryCapability:
-        raise TypeError("expected F1-M registry must be exact controller-ledger-minted evidence")
+        raise TypeError("expected F1-M registry must be exact controller-minted evidence")
     with _EXPECTED_REGISTRY_LOCK:
         active = (
             _ISSUED_EXPECTED_REGISTRIES.pop(id(capability), None)
@@ -2666,7 +2592,7 @@ def describe_day1b_expected_f1m_registry(
 def abandon_day1b_expected_f1m_registry(
     capability: Day1BExpectedF1MRegistryCapability,
 ) -> None:
-    """Consume an unused expected-route registry and clean its controlled scratch."""
+    """Consume an unused expected-size-class registry and clean its controlled scratch."""
 
     binding = _active_expected_registry_binding(capability, consume=True)
     binding.registry.close()
@@ -2894,11 +2820,11 @@ def _test_only_prepare_day1b_expected_f1m_registry(
     contract: Day1BWorkerProtocolContract,
     controller_phase_audits: tuple[Day1BWorkerPhaseAudit, ...],
     window_cardinalities: Iterable[Day1BF1MWindowCardinality],
-    batch_transitions: Iterable[Day1BF1MBatchTransitionReceipt],
+    window_batches: Iterable[Day1BF1MWindowBatch],
     expected_f1m_objects: Iterable[Day1BControllerExpectedF1MObject],
     controlled_scratch_root: Path,
 ) -> Day1BExpectedF1MRegistryCapability:
-    """Build private unverified ledger-shaped evidence for protocol fixtures."""
+    """Build private non-authorizing size-class evidence for protocol fixtures."""
 
     _require_test_invocation_issuer()
     if type(contract) is not Day1BWorkerProtocolContract:
@@ -2919,7 +2845,7 @@ def _test_only_prepare_day1b_expected_f1m_registry(
         contract=contract,
         controller_phase_audits=controller_phase_audits,
         window_cardinalities=window_cardinalities,
-        batch_transitions=batch_transitions,
+        window_batches=window_batches,
         expected_f1m_objects=expected_f1m_objects,
     )
     try:
@@ -2931,7 +2857,7 @@ def _test_only_prepare_day1b_expected_f1m_registry(
 
 
 class _ObjectReceiptSpool:
-    """Controlled disk metadata plus expected F1-M route matching."""
+    """Controlled disk metadata plus expected weighted F1-M size-class matching."""
 
     def __init__(
         self,
@@ -2944,9 +2870,6 @@ class _ObjectReceiptSpool:
         self._file: BinaryIO | None = None
         try:
             self._file = self._scratch.create_binary_file("object-receipts.jsonl")
-            self._digests.execute(
-                "CREATE TABLE f1m_payload_digests (digest TEXT PRIMARY KEY NOT NULL) WITHOUT ROWID"
-            )
             self._digests.commit()
             self._scratch.require_within_cap()
         except BaseException:
@@ -2958,7 +2881,7 @@ class _ObjectReceiptSpool:
             self._scratch.close()
             raise
         assert self._file is not None
-        self._observed_f1m_count = 0
+        self._observed_f1m_size_class_count = 0
         self._hasher = hashlib.sha256()
         self.object_count = 0
         self.line_count = 0
@@ -2985,31 +2908,28 @@ class _ObjectReceiptSpool:
         next_payload_bytes = self.payload_byte_count + receipt.serialized_byte_count
         if next_payload_bytes > self._limits.serialized_payload_bytes_per_cell_maximum:
             raise Day1BWorkerProtocolError("serialized payload bytes exceed frozen cell cap")
-        if receipt.f1m_binding is not None:
-            binding_sha256 = hashlib.sha256(
-                _canonical_json_bytes(receipt.f1m_binding.to_document())
+        if receipt.f1m_size_class is not None:
+            size_class_sha256 = hashlib.sha256(
+                _canonical_json_bytes(receipt.f1m_size_class.to_document())
             ).hexdigest()
             updated = self._digests.execute(
                 "UPDATE expected_f1m SET observed=1 "
                 "WHERE phase=? AND category=? AND object_ordinal=? "
-                "AND binding_sha256=? AND observed=0",
-                (phase, category, receipt.serialization_equivalence_class_ordinal, binding_sha256),
+                "AND size_class_sha256=? AND multiplicity=? AND observed=0",
+                (
+                    phase,
+                    category,
+                    receipt.serialization_equivalence_class_ordinal,
+                    size_class_sha256,
+                    receipt.multiplicity,
+                ),
             )
             if updated.rowcount != 1:
                 raise Day1BWorkerProtocolError(
                     "worker F1-M object does not match one unconsumed "
-                    "controller expected ledger route"
+                    "controller expected weighted size class"
                 )
-            try:
-                self._digests.execute(
-                    "INSERT INTO f1m_payload_digests(digest) VALUES (?)",
-                    (receipt.serialized_sha256,),
-                )
-            except sqlite3.IntegrityError as error:
-                raise Day1BWorkerProtocolError(
-                    "F1-M serialized objects repeated one payload digest"
-                ) from error
-            self._observed_f1m_count += 1
+            self._observed_f1m_size_class_count += 1
             self._digests.commit()
         self.object_count += 1
         self.payload_byte_count = next_payload_bytes
@@ -3060,7 +2980,7 @@ class _ObjectReceiptSpool:
             ).fetchone()
             if missing is None or type(missing[0]) is not int or missing[0] != 0:
                 raise Day1BWorkerProtocolError(
-                    "controller expected F1-M routes for a complete phase remain unobserved"
+                    "controller expected F1-M size classes for a complete phase remain unobserved"
                 )
         self._sealed = True
         self._file.flush()
@@ -3068,8 +2988,8 @@ class _ObjectReceiptSpool:
         return self._hasher.hexdigest(), self.line_count, self.byte_count
 
     @property
-    def observed_f1m_count(self) -> int:
-        return self._observed_f1m_count
+    def observed_f1m_size_class_count(self) -> int:
+        return self._observed_f1m_size_class_count
 
     @property
     def controller_registered_scratch_peak_bytes(self) -> int:
@@ -3171,7 +3091,7 @@ class _InvocationBinding:
 
 
 class Day1BWorkerInvocationCapability:
-    """Opaque single-use process/ledger observation minted by a launcher."""
+    """Opaque single-use process observation minted by a launcher."""
 
     __slots__ = ("_binding", "__weakref__")
 
@@ -3239,7 +3159,7 @@ def _test_only_issue_day1b_worker_invocation(
     peak_scratch_bytes: int,
     terminal_failure_code: str | None,
 ) -> Day1BWorkerInvocationCapability:
-    """Mint non-production fixture evidence; never verifies persistent reservations."""
+    """Mint non-production fixture evidence for one weighted candidate cell."""
 
     _require_test_invocation_issuer()
     if type(contract) is not Day1BWorkerProtocolContract:
@@ -3252,11 +3172,11 @@ def _test_only_issue_day1b_worker_invocation(
     descriptor = registry.descriptor
     try:
         if (
-            descriptor.binding_set_sha256 != contract.expected_f1m_binding_set_sha256
-            or descriptor.binding_count != contract.expected_f1m_binding_count
+            descriptor.size_class_set_sha256 != contract.expected_f1m_size_class_set_sha256
+            or descriptor.size_class_count != contract.expected_f1m_size_class_count
         ):
             raise Day1BWorkerProtocolError(
-                "fixture ledger expectation differs from the worker input binding"
+                "fixture size-class expectation differs from the worker input binding"
             )
         registry.validate_for_invocation(contract, controller_phase_audits)
         limits = contract.resource_limits
@@ -3276,8 +3196,6 @@ def _test_only_issue_day1b_worker_invocation(
             peak_resident_memory_bytes=peak_resident_memory_bytes,
             peak_scratch_bytes=peak_scratch_bytes,
             terminal_failure_code=terminal_failure_code,
-            prepared_commitment_consumption_verified=False,
-            prepared_commitment_consumption_transition_sha256=None,
         )
         spool = _ObjectReceiptSpool(contract, registry)
     except BaseException:
@@ -3644,27 +3562,25 @@ class _ReceiptBuilder:
         byte_count = _strict_positive(header["payload_byte_count"], "payload_byte_count")
         if payload_sha256 is None:
             raise Day1BWorkerProtocolError("serialized-object payload digest is absent")
-        f1m_binding_required = category in self.contract.f1m_binding_categories
-        if f1m_binding_required and multiplicity != 1:
-            raise Day1BWorkerProtocolError("F1-M binding categories require multiplicity one")
-        raw_f1m_binding = header["f1m_binding"]
-        if f1m_binding_required:
-            f1m_binding = Day1BF1MBindingReceipt.from_document(raw_f1m_binding)
+        f1m_size_class_required = category in self.contract.f1m_size_class_categories
+        raw_f1m_size_class = header["f1m_size_class"]
+        if f1m_size_class_required:
+            f1m_size_class = Day1BF1MSizeClass.from_document(raw_f1m_size_class)
             expected_kind = (
                 "random-zero-sum"
                 if category == "query-f1m-random-mask-ciphertexts"
                 else "encrypted-zero-dummy"
             )
-            if f1m_binding.f1m_kind != expected_kind:
+            if f1m_size_class.f1m_kind != expected_kind:
                 raise Day1BWorkerProtocolError(
-                    "F1-M binding kind does not match serialized category"
+                    "F1-M size-class kind does not match serialized category"
                 )
         else:
-            if raw_f1m_binding is not None:
+            if raw_f1m_size_class is not None:
                 raise Day1BWorkerProtocolError(
-                    "non-F1-M serialized category cannot carry an F1-M binding"
+                    "non-F1-M serialized category cannot carry an F1-M size class"
                 )
-            f1m_binding = None
+            f1m_size_class = None
         transaction = self.contract.serialized_categories[category_index][1]
         if transaction == "one-time" and phase != self.current_spec.retained_phases[0]:
             raise Day1BWorkerProtocolError(
@@ -3676,7 +3592,7 @@ class _ReceiptBuilder:
             serialized_sha256=payload_sha256,
             multiplicity=multiplicity,
             charged_byte_count=byte_count * multiplicity,
-            f1m_binding=f1m_binding,
+            f1m_size_class=f1m_size_class,
         )
         spool_line = self.spool.line_count
         line = self.spool.write(
@@ -3922,15 +3838,15 @@ class _ReceiptBuilder:
             controller_schedule_phase_audits=controller_phase_audits,
             worker_declared_phase_audits_match_controller_schedule_audits=True,
             runtime_state_continuity_verified=False,
-            controller_expected_f1m_binding_set_sha256=(
-                self.contract.expected_f1m_binding_set_sha256
+            controller_expected_f1m_size_class_set_sha256=(
+                self.contract.expected_f1m_size_class_set_sha256
             ),
-            controller_expected_f1m_binding_count=(self.contract.expected_f1m_binding_count),
-            controller_expected_f1m_phase_binding_counts=(
-                self.expected_registry_descriptor.phase_binding_counts
+            controller_expected_f1m_size_class_count=(self.contract.expected_f1m_size_class_count),
+            controller_expected_f1m_phase_size_class_counts=(
+                self.expected_registry_descriptor.phase_size_class_counts
             ),
-            controller_expected_f1m_phase_query_batch_counts=(
-                self.expected_registry_descriptor.phase_query_batch_counts
+            controller_expected_f1m_phase_query_counts=(
+                self.expected_registry_descriptor.phase_query_counts
             ),
             controller_expected_f1m_phase_random_route_counts=(
                 self.expected_registry_descriptor.phase_random_route_counts
@@ -3944,7 +3860,8 @@ class _ReceiptBuilder:
             controller_expected_serialized_equivalence_class_count=(
                 self.contract.expected_serialized_equivalence_class_count
             ),
-            worker_observed_f1m_binding_count=self.spool.observed_f1m_count,
+            worker_observed_f1m_size_class_count=self.spool.observed_f1m_size_class_count,
+            worker_observed_f1m_materialized_binding_count=0,
             pre_dispatch_context_sha256=(
                 self.expected_registry_descriptor.pre_dispatch_context_sha256
             ),
@@ -3957,32 +3874,11 @@ class _ReceiptBuilder:
             anonymous_scratch_creation_isolation_verified=(
                 self.expected_registry_descriptor.anonymous_scratch_creation_isolation_verified
             ),
-            pre_dispatch_ledger_identity_sha256=(
-                self.expected_registry_descriptor.pre_dispatch_ledger_identity_sha256
+            controller_f1m_window_batch_stream_sha256=(
+                self.expected_registry_descriptor.controller_f1m_window_batch_stream_sha256
             ),
-            pre_dispatch_ledger_root_before_sha256=(
-                self.expected_registry_descriptor.pre_dispatch_ledger_root_before_sha256
-            ),
-            pre_dispatch_ledger_root_after_preparation_sha256=(
-                self.expected_registry_descriptor.pre_dispatch_ledger_root_after_preparation_sha256
-            ),
-            pre_dispatch_batch_plan_sha256=(
-                self.expected_registry_descriptor.pre_dispatch_batch_plan_sha256
-            ),
-            persistent_random_reservations_verified=(
-                self.expected_registry_descriptor.persistent_random_reservations_verified
-            ),
-            prepared_commitment_batches_verified=(
-                self.expected_registry_descriptor.prepared_commitment_batches_verified
-            ),
-            prepared_commitment_consumption_verified=(
-                self.controller_candidate_observation.prepared_commitment_consumption_verified
-            ),
-            prepared_commitment_consumption_transition_sha256=(
-                self.controller_candidate_observation.prepared_commitment_consumption_transition_sha256
-            ),
-            common_query_preparation_verified=(
-                self.expected_registry_descriptor.common_query_preparation_verified
+            weighted_query_range_coverage_verified=(
+                self.expected_registry_descriptor.weighted_query_range_coverage_verified
             ),
             production_execution_admissible=False,
             object_receipt_spool_sha256=spool_sha256,
@@ -4075,13 +3971,13 @@ def _controller_terminal_receipt(
         controller_schedule_phase_audits=controller_phase_audits,
         worker_declared_phase_audits_match_controller_schedule_audits=False,
         runtime_state_continuity_verified=False,
-        controller_expected_f1m_binding_set_sha256=(contract.expected_f1m_binding_set_sha256),
-        controller_expected_f1m_binding_count=contract.expected_f1m_binding_count,
-        controller_expected_f1m_phase_binding_counts=(
-            expected_registry_descriptor.phase_binding_counts
+        controller_expected_f1m_size_class_set_sha256=(contract.expected_f1m_size_class_set_sha256),
+        controller_expected_f1m_size_class_count=contract.expected_f1m_size_class_count,
+        controller_expected_f1m_phase_size_class_counts=(
+            expected_registry_descriptor.phase_size_class_counts
         ),
-        controller_expected_f1m_phase_query_batch_counts=(
-            expected_registry_descriptor.phase_query_batch_counts
+        controller_expected_f1m_phase_query_counts=(
+            expected_registry_descriptor.phase_query_counts
         ),
         controller_expected_f1m_phase_random_route_counts=(
             expected_registry_descriptor.phase_random_route_counts
@@ -4095,7 +3991,8 @@ def _controller_terminal_receipt(
         controller_expected_serialized_equivalence_class_count=(
             contract.expected_serialized_equivalence_class_count
         ),
-        worker_observed_f1m_binding_count=spool.observed_f1m_count,
+        worker_observed_f1m_size_class_count=spool.observed_f1m_size_class_count,
+        worker_observed_f1m_materialized_binding_count=0,
         pre_dispatch_context_sha256=(expected_registry_descriptor.pre_dispatch_context_sha256),
         controller_registered_scratch_bytes_checkpoint_maximum=(
             expected_registry_descriptor.controller_registered_scratch_bytes_checkpoint_maximum
@@ -4106,32 +4003,11 @@ def _controller_terminal_receipt(
         anonymous_scratch_creation_isolation_verified=(
             expected_registry_descriptor.anonymous_scratch_creation_isolation_verified
         ),
-        pre_dispatch_ledger_identity_sha256=(
-            expected_registry_descriptor.pre_dispatch_ledger_identity_sha256
+        controller_f1m_window_batch_stream_sha256=(
+            expected_registry_descriptor.controller_f1m_window_batch_stream_sha256
         ),
-        pre_dispatch_ledger_root_before_sha256=(
-            expected_registry_descriptor.pre_dispatch_ledger_root_before_sha256
-        ),
-        pre_dispatch_ledger_root_after_preparation_sha256=(
-            expected_registry_descriptor.pre_dispatch_ledger_root_after_preparation_sha256
-        ),
-        pre_dispatch_batch_plan_sha256=(
-            expected_registry_descriptor.pre_dispatch_batch_plan_sha256
-        ),
-        persistent_random_reservations_verified=(
-            expected_registry_descriptor.persistent_random_reservations_verified
-        ),
-        prepared_commitment_batches_verified=(
-            expected_registry_descriptor.prepared_commitment_batches_verified
-        ),
-        prepared_commitment_consumption_verified=(
-            observation.prepared_commitment_consumption_verified
-        ),
-        prepared_commitment_consumption_transition_sha256=(
-            observation.prepared_commitment_consumption_transition_sha256
-        ),
-        common_query_preparation_verified=(
-            expected_registry_descriptor.common_query_preparation_verified
+        weighted_query_range_coverage_verified=(
+            expected_registry_descriptor.weighted_query_range_coverage_verified
         ),
         production_execution_admissible=False,
         object_receipt_spool_sha256=spool_sha256,
@@ -4314,13 +4190,15 @@ def consume_day1b_worker_frames(
 __all__ = (
     "DAY1B_WORKER_FRAME_SCHEMA",
     "DAY1B_WORKER_F1M_BINDING_SCHEMA",
-    "DAY1B_WORKER_EXPECTED_F1M_BINDING_SET_SCHEMA",
+    "DAY1B_WORKER_F1M_SIZE_CLASS_SCHEMA",
+    "DAY1B_WORKER_EXPECTED_F1M_SIZE_CLASS_SET_SCHEMA",
     "DAY1B_WORKER_EXPECTED_F1M_OBJECT_SCHEMA",
     "DAY1B_WORKER_EXPECTED_F1M_REGISTRY_DESCRIPTOR_SCHEMA",
-    "DAY1B_WORKER_F1M_BATCH_TRANSITION_SCHEMA",
+    "DAY1B_WORKER_EXECUTION_BASIS",
+    "DAY1B_WORKER_F1M_WINDOW_BATCH_SCHEMA",
     "DAY1B_WORKER_INPUT_BINDING_SCHEMA",
     "DAY1B_WORKER_MAX_HEADER_BYTES",
-    "DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES",
+    "DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES",
     "DAY1B_WORKER_RECEIPT_SCHEMA",
     "DAY1B_WORKER_WINDOW_AUDIT_SCHEMA",
     "DAY1B_WORKER_F1M_WINDOW_CARDINALITY_SCHEMA",
@@ -4329,8 +4207,9 @@ __all__ = (
     "Day1BControllerExpectedF1MObject",
     "Day1BExpectedF1MRegistryCapability",
     "Day1BExpectedF1MRegistryDescriptor",
-    "Day1BF1MBatchTransitionReceipt",
+    "Day1BF1MWindowBatch",
     "Day1BF1MBindingReceipt",
+    "Day1BF1MSizeClass",
     "Day1BF1MWindowCardinality",
     "Day1BWorkerCandidateReceipt",
     "Day1BWorkerCandidateSpec",
@@ -4347,8 +4226,8 @@ __all__ = (
     "abandon_day1b_worker_evidence",
     "abandon_day1b_expected_f1m_registry",
     "abandon_day1b_worker_invocation",
-    "canonical_day1b_expected_f1m_binding_set_sha256",
-    "canonical_day1b_expected_f1m_route_subroot_sha256",
+    "canonical_day1b_expected_f1m_size_class_set_sha256",
+    "canonical_day1b_expected_f1m_size_class_subroot_sha256",
     "canonical_day1b_f1m_cardinality_derivation_root_sha256",
     "canonical_day1b_f1m_query_id",
     "canonical_day1b_worker_window_audit_bytes",

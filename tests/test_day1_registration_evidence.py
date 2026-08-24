@@ -125,15 +125,22 @@ def _integrated_clean_repository(tmp_path: Path) -> tuple[Path, str]:
 
     central_path = repository / "src/dynamic_cssc/evidence_compatibility.py"
     central_source = central_path.read_text(encoding="utf-8")
-    marker = '    "tests/test_strong_day1_simulator.py",\n'
-    assert central_source.count(marker) == 1
+    registration_start = central_source.index("_DAY1_REGISTRATION_BEHAVIOR_PATHS = (\n")
+    registration_end = central_source.index(
+        "\n)\n\n# This is deliberately a PRE-S1",
+        registration_start,
+    )
+    registration_block = central_source[registration_start:registration_end]
     missing_paths = [
-        path for path in PRODUCER_BEHAVIOR_PATHS if f'    "{path}",' not in central_source
+        path for path in PRODUCER_BEHAVIOR_PATHS if f'    "{path}",' not in registration_block
     ]
     if missing_paths:
         additions = "".join(f'    "{path}",\n' for path in missing_paths)
         central_path.write_text(
-            central_source.replace(marker, marker + additions),
+            central_source[:registration_end]
+            + "\n"
+            + additions
+            + central_source[registration_end:],
             encoding="utf-8",
         )
     _git(repository, "add", "--all")

@@ -24,12 +24,14 @@ from dynamic_cssc.mask_ledger import (
 from dynamic_cssc.output_plan import PreparedMask, prepare_f1m_masks
 from dynamic_cssc.plaintext_oracle import execute_compiled_query, reconstruct_output
 from dynamic_cssc.query_compiler import (
+    QUERY_PRIVATE_PLAN_FORMAT,
     CompiledQuery,
     ResultRoute,
+    canonical_query_private_plan_payload,
     validate_compiled_query,
 )
 
-ORDINARY_PRIVATE_PLAN_SCHEMA = "dynamic-cssc-common-ordinary-private-plan-v1"
+ORDINARY_PRIVATE_PLAN_SCHEMA = QUERY_PRIVATE_PLAN_FORMAT
 ORDINARY_QUERY_PREPARATION_SCHEMA = (
     "dynamic-cssc-common-ordinary-query-preparation-v1"
 )
@@ -173,57 +175,22 @@ def _validated_vector(value: object, *, length: int) -> tuple[int, ...]:
     return value
 
 
-def _private_plan_payload(compiled: CompiledQuery) -> dict[str, object]:
-    return {
-        "bindings": {
-            "cloud_program_digest": compiled.cloud_program_digest,
-            "execution_binding_digest": compiled.execution_binding_digest,
-            "output_plan_digest": compiled.output_plan_digest,
-            "version_id": compiled.cloud_plan.binding.version_id,
-        },
-        "f1m_policy": compiled.f1m_policy,
-        "format": ORDINARY_PRIVATE_PLAN_SCHEMA,
-        "operands": [
-            {
-                "global_column_indices": list(spec.global_column_indices),
-                "query_ciphertext_id": spec.query_ciphertext_id,
-                "result_id": spec.result_id,
-                "source_kind": spec.source_kind,
-                "source_ordinal": spec.source_ordinal,
-                "value_ciphertext_id": spec.value_ciphertext_id,
-                "values": list(spec.values),
-            }
-            for spec in compiled.operand_specs
-        ],
-        "routes": [
-            {
-                "component_id": route.component_id,
-                "f1m_ciphertext_id": route.f1m_ciphertext_id,
-                "output_block_id": route.output_block_id,
-                "result_id": route.result_id,
-            }
-            for route in compiled.result_routes
-        ],
-    }
-
-
 def bind_ordinary_execution(compiled: CompiledQuery) -> OrdinaryExecutionBundle:
-    """Bind one deterministic overlap-only compilation to its private plan."""
+    """Validate and bind an independently supplied ordinary compilation."""
 
-    if type(compiled) is not CompiledQuery:
-        raise OrdinaryQueryLifecycleError("compiled must be an exact CompiledQuery")
     try:
         validate_compiled_query(compiled)
+        canonical_query_private_plan_payload(compiled)
     except ValueError as error:
         raise OrdinaryQueryLifecycleError("ordinary compilation is not canonical") from error
     if compiled.f1m_policy != "overlap-only":
         raise OrdinaryQueryLifecycleError(
             "ordinary lifecycle requires the exact overlap-only F1-M policy"
         )
-    private_plan_digest = hashlib.sha256(
-        _canonical_bytes(_private_plan_payload(compiled))
-    ).hexdigest()
-    return OrdinaryExecutionBundle(compiled=compiled, private_plan_digest=private_plan_digest)
+    return OrdinaryExecutionBundle(
+        compiled=compiled,
+        private_plan_digest=compiled.private_plan_digest,
+    )
 
 
 def _validate_bundle(bundle: OrdinaryExecutionBundle) -> None:
@@ -240,7 +207,7 @@ def canonical_ordinary_private_plan_payload(
     """Return private operands and routes; this payload is never Cloud-visible."""
 
     _validate_bundle(bundle)
-    return _private_plan_payload(bundle.compiled)
+    return canonical_query_private_plan_payload(bundle.compiled)
 
 
 def canonical_ordinary_private_plan_bytes(bundle: OrdinaryExecutionBundle) -> bytes:

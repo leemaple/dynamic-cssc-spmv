@@ -106,8 +106,10 @@ PAYLOAD_FILENAMES = (
     "openfhe-build.json",
     "contract-bindings.json",
     "rotation-key-plan.json",
+    "generated-key-inventory.json",
     "operation-profile-set.json",
     "raw-measurement-blocks.json",
+    "runtime-isolation-receipt.json",
     "producer-validation.json",
 )
 MEASUREMENT_STOP_RULE = "exactly-14-whole-blocks-outcome-independent-no-optional-stopping"
@@ -216,7 +218,7 @@ def _profile(primitive_name: str) -> dict[str, object]:
             {
                 "case_id": case_id,
                 "unit_definition": f"one {primitive_name} unit",
-                "input_fixture_sha256": "5" * 64,
+                "input_fixture_contract_sha256": "5" * 64,
                 "operation_count": (
                     1
                     if primitive_name.startswith("eval_")
@@ -241,12 +243,12 @@ def _artifact_behavior_inventory(source_sha: str) -> dict[str, object]:
         for path in repository_behavior_paths(EvidenceRole.DAY2)
     ]
     behavior_set = {
-        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v1",
+        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v4",
         "entries": entries,
         "role": "day2",
     }
     return {
-        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v1",
+        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v4",
         "behavior_set_sha256": _sha256(_canonical(behavior_set)),
         "entries": entries,
         "role": "day2",
@@ -262,7 +264,7 @@ def _valid_payloads() -> dict[str, object]:
         "schema_version": "dynamic-cssc-publication-day2-workflow-provenance-v1",
         "repository": "example/dynamic-cssc-spmv",
         "repository_id": 123,
-        "workflow_path": ".github/workflows/day2-microbench.yml",
+        "workflow_path": ".github/workflows/day2-publication-calibration.yml",
         "workflow_file_sha256": "1" * 64,
         "run_id": 456,
         "run_attempt": 2,
@@ -299,16 +301,21 @@ def _valid_payloads() -> dict[str, object]:
             }
         )
     rotation_plan = {
-        "schema_version": "dynamic-cssc-publication-rotation-key-plan-v1",
+        "schema_version": "dynamic-cssc-publication-rotation-key-plan-v2",
         "inventory_source_schema_version": "dynamic-cssc-day1a-rotation-inventory-v1",
         "day1a_authority_receipt_sha256": "6" * 64,
         "day1a_inventory_sha256": "7" * 64,
         "effective_slots": 4096,
         "required_exact_indices": [-1, 1, 2],
         "key_plan_kind": "direct-exact-index-v1",
-        "generated_exact_indices": [-1, 1, 2],
+        "planned_exact_indices": [-1, 1, 2],
         "composite_decompositions": [],
         "eval_rotate_case_ids": ["index=-1", "index=1", "index=2"],
+    }
+    generated_key_inventory = {
+        "schema_version": "dynamic-cssc-publication-generated-key-inventory-v1",
+        "rotation_key_plan_sha256": _sha256(_canonical(rotation_plan)),
+        "generated_exact_indices": [-1, 1, 2],
         "serialized_rotation_key_inventory_sha256": "8" * 64,
         "serialized_rotation_key_bytes": 12345,
         "eval_mult_key_generated": True,
@@ -327,13 +334,14 @@ def _valid_payloads() -> dict[str, object]:
         "day1a_count_bundle_schema_version": "dynamic-cssc-day1a-count-bundle-v1",
         "day1a_count_bundle_sha256": "e" * 64,
         "heldout_record_schema_version": "dynamic-cssc-publication-heldout-record-v4",
-        "primitive_accounting_schema_version": ("dynamic-cssc-publication-primitive-accounting-v1"),
+        "primitive_accounting_schema_version": ("dynamic-cssc-publication-primitive-accounting-v2"),
         "primitive_accounting_mapping_sha256": "f" * 64,
         "serialized_object_accounting_schema_version": (
             "dynamic-cssc-publication-serialized-object-accounting-v1"
         ),
         "serialized_object_accounting_contract_sha256": "0" * 64,
-        "rotation_inventory_sha256": "PENDING",
+        "day1a_rotation_inventory_sha256": rotation_plan["day1a_inventory_sha256"],
+        "rotation_key_plan_sha256": _sha256(_canonical(rotation_plan)),
     }
     return {
         "RUN_STATUS.json": {
@@ -363,7 +371,7 @@ def _valid_payloads() -> dict[str, object]:
         },
         "workflow-provenance.json": workflow,
         "host-profile.json": {
-            "schema_version": "dynamic-cssc-publication-day2-host-profile-v1",
+            "schema_version": "dynamic-cssc-publication-day2-host-profile-v2",
             "hardware": {
                 "architecture": "x86_64",
                 "cpu_vendor": "GenuineIntel",
@@ -384,7 +392,7 @@ def _valid_payloads() -> dict[str, object]:
                 "kernel_release": "6.8.0",
                 "kernel_cmdline_sha256": "6" * 64,
                 "glibc_version": "2.39",
-                "container_image_digest": "sha256:" + "7" * 64,
+                "runner_image_identity_sha256": "7" * 64,
             },
             "compiler": {
                 "path": "/usr/bin/g++",
@@ -394,11 +402,12 @@ def _valid_payloads() -> dict[str, object]:
             },
             "affinity": {
                 "requested_cpu_list": [0, 1],
-                "effective_process_cpu_list": [0, 1],
+                "verified_probe_cpu_list": [0, 1],
+                "probe_affinity_observation_stage": "pre-and-post-measurement-identical",
                 "omp_num_threads": 2,
                 "omp_proc_bind": "close",
                 "omp_places": "cores",
-                "per_block_observed_cpu_sets": [[0, 1] for _ in range(14)],
+                "per_block_allowed_cpu_sets": [[0, 1] for _ in range(14)],
             },
             "power": {
                 "scaling_driver": "intel_pstate",
@@ -412,10 +421,12 @@ def _valid_payloads() -> dict[str, object]:
                     }
                     for cpu in range(2)
                 ],
-                "turbo_enabled": False,
-                "ac_power": True,
-                "thermal_throttling_before": False,
-                "thermal_throttling_after": False,
+                "turbo_state": "disabled",
+                "power_source": "ac-observed-online",
+                "thermal_throttle_counters_observable": True,
+                "thermal_throttle_count_before": 3,
+                "thermal_throttle_count_after": 3,
+                "thermal_throttling_observed": False,
             },
         },
         "openfhe-build.json": {
@@ -435,6 +446,7 @@ def _valid_payloads() -> dict[str, object]:
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_CXX_EXTENSIONS": "OFF",
                 "CMAKE_CXX_STANDARD": "17",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "WITH_NATIVEOPT": "OFF",
                 "WITH_OPENMP": "ON",
             },
@@ -455,8 +467,9 @@ def _valid_payloads() -> dict[str, object]:
         },
         "contract-bindings.json": contract_bindings,
         "rotation-key-plan.json": rotation_plan,
+        "generated-key-inventory.json": generated_key_inventory,
         "operation-profile-set.json": {
-            "schema_version": "dynamic-cssc-publication-operation-profile-set-v1",
+            "schema_version": "dynamic-cssc-publication-operation-profile-set-v2",
             "primitive_names": list(PRIMITIVE_NAMES),
             "warmup_block_count": 3,
             "measurement_block_count": 14,
@@ -478,6 +491,20 @@ def _valid_payloads() -> dict[str, object]:
             "warmup_blocks": deepcopy(raw_blocks[:3]),
             "blocks": raw_blocks,
         },
+        "runtime-isolation-receipt.json": {
+            "schema_version": "dynamic-cssc-publication-day2-runtime-isolation-receipt-v1",
+            "authority_state": "descriptive-live-capability-consumed-v1",
+            "formal_authority_granted": False,
+            "source_git_sha": source_sha,
+            "fresh_detached_checkout": True,
+            "clean_environment": True,
+            "isolated_build_root": True,
+            "caller_python_and_git_environment_removed": True,
+            "profile_authority_consumed_once": True,
+            "launcher_source_sha256": "1" * 64,
+            "producer_source_sha256": "2" * 64,
+            "isolation_checks": list(authority_module.DAY2_RUNTIME_ISOLATION_CHECKS),
+        },
         "producer-validation.json": {
             "schema_version": "dynamic-cssc-publication-day2-producer-validation-v1",
             "status": "pass",
@@ -489,6 +516,8 @@ def _valid_payloads() -> dict[str, object]:
             "raw_measurement_blocks_sha256": "PENDING",
             "operation_profile_set_sha256": "PENDING",
             "rotation_key_plan_sha256": "PENDING",
+            "generated_key_inventory_sha256": "PENDING",
+            "runtime_isolation_receipt_sha256": "PENDING",
             "calibration_projection_sha256": "PENDING",
             "candidate_catalog_sha256": contract_bindings["candidate_catalog_sha256"],
             "accounting_contract_sha256": contract_bindings["primitive_accounting_mapping_sha256"],
@@ -507,8 +536,17 @@ def _archive_bytes(
     if mutate_payloads is not None:
         mutate_payloads(payloads)
     encoded = {name: _canonical(payload) for name, payload in payloads.items()}
+    payloads["generated-key-inventory.json"]["rotation_key_plan_sha256"] = _sha256(
+        encoded["rotation-key-plan.json"]
+    )
+    encoded["generated-key-inventory.json"] = _canonical(
+        payloads["generated-key-inventory.json"]
+    )
     encoded["contract-bindings.json"] = _canonical(payloads["contract-bindings.json"])
-    payloads["contract-bindings.json"]["rotation_inventory_sha256"] = _sha256(
+    payloads["contract-bindings.json"]["day1a_rotation_inventory_sha256"] = payloads[
+        "rotation-key-plan.json"
+    ]["day1a_inventory_sha256"]
+    payloads["contract-bindings.json"]["rotation_key_plan_sha256"] = _sha256(
         encoded["rotation-key-plan.json"]
     )
     encoded["contract-bindings.json"] = _canonical(payloads["contract-bindings.json"])
@@ -516,6 +554,12 @@ def _archive_bytes(
     validation["raw_measurement_blocks_sha256"] = _sha256(encoded["raw-measurement-blocks.json"])
     validation["operation_profile_set_sha256"] = _sha256(encoded["operation-profile-set.json"])
     validation["rotation_key_plan_sha256"] = _sha256(encoded["rotation-key-plan.json"])
+    validation["generated_key_inventory_sha256"] = _sha256(
+        encoded["generated-key-inventory.json"]
+    )
+    validation["runtime_isolation_receipt_sha256"] = _sha256(
+        encoded["runtime-isolation-receipt.json"]
+    )
     validation["calibration_projection_sha256"] = _sha256(
         _canonical(_calibration_projection(payloads))
     )
@@ -553,9 +597,10 @@ def _github_metadata(archive_bytes: bytes) -> dict[str, object]:
     workflow = _valid_payloads()["workflow-provenance.json"]
     return {
         **workflow,
-        "schema_version": "dynamic-cssc-publication-day2-github-artifact-metadata-v1",
+        "schema_version": "dynamic-cssc-publication-day2-github-artifact-metadata-v2",
         "artifact_id": 789,
-        "artifact_digest": "sha256:" + _sha256(archive_bytes),
+        "artifact_digest": "sha256:" + "f" * 64,
+        "inner_archive_sha256": _sha256(archive_bytes),
     }
 
 
@@ -564,9 +609,10 @@ def _valid_profile_anchor() -> tuple[dict[str, object], dict[str, object]]:
     profiles = payloads["operation-profile-set.json"]
     rotation_plan = payloads["rotation-key-plan.json"]
     contract = payloads["contract-bindings.json"]
-    contract["rotation_inventory_sha256"] = _sha256(_canonical(rotation_plan))
+    contract["day1a_rotation_inventory_sha256"] = rotation_plan["day1a_inventory_sha256"]
+    contract["rotation_key_plan_sha256"] = _sha256(_canonical(rotation_plan))
     anchor = {
-        "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-v2",
+        "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-v3",
         "operation_profile_set_sha256": _sha256(_canonical(profiles)),
         "warmup_block_count": 3,
         "rotation_key_plan_sha256": _sha256(_canonical(rotation_plan)),
@@ -591,6 +637,10 @@ def _valid_profile_anchor() -> tuple[dict[str, object], dict[str, object]]:
         "serialized_object_accounting_contract_sha256": contract[
             "serialized_object_accounting_contract_sha256"
         ],
+        "day1a_workflow_run_id": 123456,
+        "day1a_artifact_id": 654321,
+        "day1a_artifact_name": "r2-day1a-publication-" + "a" * 40 + "-20260821",
+        "day1a_artifact_digest": "sha256:" + "3" * 64,
     }
     return anchor, payloads
 
@@ -601,7 +651,7 @@ def _valid_post_run_anchor(
 ) -> dict[str, object]:
     behavior_inventory = payloads["source-provenance.json"]["behavior_inventory"]
     return {
-        "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-v2",
+        "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-v4",
         "experiment_source_git_sha": "a" * 40,
         "experiment_behavior_set_schema_version": behavior_inventory["behavior_set_schema_version"],
         "experiment_behavior_set_sha256": behavior_inventory["behavior_set_sha256"],
@@ -613,6 +663,13 @@ def _valid_post_run_anchor(
         ),
         "operation_profile_set_sha256": _sha256(_canonical(payloads["operation-profile-set.json"])),
         "rotation_key_plan_sha256": _sha256(_canonical(payloads["rotation-key-plan.json"])),
+        "generated_key_inventory_sha256": _sha256(
+            _canonical(payloads["generated-key-inventory.json"])
+        ),
+        "runtime_isolation_receipt_sha256": _sha256(
+            _canonical(payloads["runtime-isolation-receipt.json"])
+        ),
+        "contract_bindings_sha256": _sha256(_canonical(payloads["contract-bindings.json"])),
         "calibration_projection_sha256": _sha256(_canonical(_calibration_projection(payloads))),
     }
 
@@ -637,7 +694,7 @@ def _reduce_to_thirteen_blocks(payloads: dict[str, object]) -> None:
     profiles["measurement_block_count"] = 13
     raw["measurement_block_count"] = 13
     raw["blocks"].pop()
-    host["affinity"]["per_block_observed_cpu_sets"].pop()
+    host["affinity"]["per_block_allowed_cpu_sets"].pop()
 
 
 def _set_zero_elapsed_time(payloads: dict[str, object]) -> None:
@@ -725,8 +782,7 @@ def _drop_one_rotation_raw_case(payloads: dict[str, object]) -> None:
 
 
 def _change_generated_rotation_inventory(payloads: dict[str, object]) -> None:
-    plan = payloads["rotation-key-plan.json"]
-    plan["generated_exact_indices"] = [-1, 1]
+    payloads["generated-key-inventory.json"]["generated_exact_indices"] = [-1, 1]
 
 
 def _enable_composite_rotation_plan(payloads: dict[str, object]) -> None:
@@ -737,7 +793,8 @@ def _enable_composite_rotation_plan(payloads: dict[str, object]) -> None:
 def _add_modulo_alias_rotation(payloads: dict[str, object]) -> None:
     plan = payloads["rotation-key-plan.json"]
     plan["required_exact_indices"].append(4095)
-    plan["generated_exact_indices"].append(4095)
+    plan["planned_exact_indices"].append(4095)
+    payloads["generated-key-inventory.json"]["generated_exact_indices"].append(4095)
     plan["eval_rotate_case_ids"].append("index=4095")
     profiles = payloads["operation-profile-set.json"]
     profile = next(item for item in profiles["profiles"] if item["primitive_name"] == "eval_rotate")
@@ -745,7 +802,7 @@ def _add_modulo_alias_rotation(payloads: dict[str, object]) -> None:
         {
             "case_id": "index=4095",
             "unit_definition": "one eval_rotate unit",
-            "input_fixture_sha256": "5" * 64,
+            "input_fixture_contract_sha256": "5" * 64,
             "operation_count": 1,
         }
     )
@@ -778,11 +835,25 @@ def _change_host_compiler(payloads: dict[str, object]) -> None:
 
 
 def _change_effective_affinity(payloads: dict[str, object]) -> None:
-    payloads["host-profile.json"]["affinity"]["effective_process_cpu_list"] = [0]
+    payloads["host-profile.json"]["affinity"]["verified_probe_cpu_list"] = [0]
 
 
 def _make_power_state_unobservable(payloads: dict[str, object]) -> None:
     payloads["host-profile.json"]["power"]["scaling_driver"] = ""
+
+
+def _make_thermal_counters_unobservable(payloads: dict[str, object]) -> None:
+    power = payloads["host-profile.json"]["power"]
+    power["thermal_throttle_counters_observable"] = False
+    power["thermal_throttle_count_before"] = None
+    power["thermal_throttle_count_after"] = None
+    power["thermal_throttling_observed"] = None
+
+
+def _hide_observed_thermal_throttling(payloads: dict[str, object]) -> None:
+    power = payloads["host-profile.json"]["power"]
+    power["thermal_throttle_count_after"] = 4
+    power["thermal_throttling_observed"] = False
 
 
 def _replace_fixed_candidate(payloads: dict[str, object]) -> None:
@@ -804,7 +875,7 @@ def _change_generator_identity(payloads: dict[str, object]) -> None:
 
 
 def _change_rotation_binding(payloads: dict[str, object]) -> None:
-    payloads["contract-bindings.json"]["rotation_inventory_sha256"] = "2" * 64
+    payloads["contract-bindings.json"]["day1a_rotation_inventory_sha256"] = "2" * 64
 
 
 def _change_raw_blocks_binding(payloads: dict[str, object]) -> None:
@@ -959,12 +1030,15 @@ def test_valid_archive_inspection_is_descriptive_and_binds_the_closed_evidence(
     assert inspection.raw_measurement_blocks_sha256 == _sha256(
         _canonical(payloads["raw-measurement-blocks.json"])
     )
+    assert inspection.contract_bindings_sha256 == _sha256(
+        _canonical(payloads["contract-bindings.json"])
+    )
     assert inspection.calibration_projection_sha256 == _sha256(
         _canonical(_calibration_projection(payloads))
     )
     behavior_inventory = payloads["source-provenance.json"]["behavior_inventory"]
     assert inspection.artifact_behavior_inventory_sha256 == _sha256(_canonical(behavior_inventory))
-    assert inspection.behavior_set_schema_version == "dynamic-cssc-day2-behavior-set-v1"
+    assert inspection.behavior_set_schema_version == "dynamic-cssc-day2-behavior-set-v4"
     assert inspection.behavior_set_sha256 == behavior_inventory["behavior_set_sha256"]
 
 
@@ -1240,8 +1314,9 @@ def test_inspector_rejects_a_self_consistent_but_wrong_calibration_projection_di
         (_enable_native_optimization, "OpenFHE CMake flags are not frozen"),
         (_splice_probe_binary_identity, "producer identities do not match the OpenFHE build"),
         (_change_host_compiler, "host compiler does not match the OpenFHE build"),
-        (_change_effective_affinity, "requested and effective CPU affinity"),
+        (_change_effective_affinity, "requested and verified probe CPU affinity"),
         (_make_power_state_unobservable, "power scaling_driver"),
+        (_hide_observed_thermal_throttling, "thermal throttle counters are inconsistent"),
         (_replace_fixed_candidate, "fixed candidate IDs are not frozen"),
         (_change_accounting_schema, "primitive accounting schema is not frozen"),
         (_claim_producer_authority, "producer validation cannot grant authority"),
@@ -1267,6 +1342,24 @@ def test_inspector_rejects_self_consistent_environment_contract_and_producer_att
             expected_outer_sha256=_sha256(archive_bytes),
             github_metadata=_github_metadata(archive_bytes),
         )
+
+
+def test_inspector_records_unobservable_thermal_counters_without_fabricating_values(
+    tmp_path: Path,
+) -> None:
+    archive_bytes, _ = _archive_bytes(
+        mutate_payloads=_make_thermal_counters_unobservable
+    )
+    archive_path = tmp_path / "day2-unobservable-thermal.zip"
+    archive_path.write_bytes(archive_bytes)
+
+    inspection = inspect_day2_calibration_archive(
+        archive_path,
+        expected_outer_sha256=_sha256(archive_bytes),
+        github_metadata=_github_metadata(archive_bytes),
+    )
+
+    assert inspection.outer_archive_sha256 == _sha256(archive_bytes)
 
 
 @pytest.mark.parametrize(
@@ -1311,7 +1404,7 @@ def test_repository_calibration_authority_fails_closed_without_an_approved_ancho
     empty_post_run = _canonical(
         {
             "anchors": [],
-            "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v2",
+            "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
         }
     )
     monkeypatch.setattr(
@@ -1340,7 +1433,7 @@ def test_repository_pre_dispatch_profile_authority_fails_closed_without_anchor(
     empty_profile = _canonical(
         {
             "anchors": [],
-            "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+            "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
         }
     )
     monkeypatch.setattr(
@@ -1459,7 +1552,7 @@ def test_synthetic_pre_dispatch_anchor_parser_accepts_one_closed_binding_without
         _canonical(
             {
                 "anchors": [anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
             }
         )
     )
@@ -1478,7 +1571,7 @@ def test_synthetic_post_run_anchor_parser_accepts_one_evidence_only_binding() ->
         _canonical(
             {
                 "anchors": [anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
             }
         )
     )
@@ -1500,7 +1593,7 @@ def test_anchor_parsers_reject_duplicate_extra_missing_and_malformed_identity_da
     valid_profile_document = _canonical(
         {
             "anchors": [profile_anchor],
-            "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+            "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
         }
     )
     missing_profile = deepcopy(profile_anchor)
@@ -1515,31 +1608,31 @@ def test_anchor_parsers_reject_duplicate_extra_missing_and_malformed_identity_da
             {
                 "anchors": [profile_anchor],
                 "caller_anchor": True,
-                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
             }
         ),
         _canonical(
             {
                 "anchors": [missing_profile],
-                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
             }
         ),
         _canonical(
             {
                 "anchors": [profile_anchor, profile_anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
             }
         ),
         _canonical(
             {
                 "anchors": [malformed_profile],
-                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
             }
         ),
         _canonical(
             {
                 "anchors": [self_referential_profile],
-                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
             }
         ),
     )
@@ -1550,7 +1643,7 @@ def test_anchor_parsers_reject_duplicate_extra_missing_and_malformed_identity_da
     valid_post_document = _canonical(
         {
             "anchors": [post_anchor],
-            "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v2",
+            "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
         }
     )
     missing_post = deepcopy(post_anchor)
@@ -1578,31 +1671,31 @@ def test_anchor_parsers_reject_duplicate_extra_missing_and_malformed_identity_da
             {
                 "anchors": [post_anchor],
                 "caller_authority": True,
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
             }
         ),
         _canonical(
             {
                 "anchors": [missing_post],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
             }
         ),
         _canonical(
             {
                 "anchors": [post_anchor, post_anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
             }
         ),
         _canonical(
             {
                 "anchors": [malformed_post],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
             }
         ),
         _canonical(
             {
                 "anchors": [spliced_inventory_post],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
             }
         ),
     )
@@ -1618,13 +1711,19 @@ def test_pre_dispatch_repository_seam_records_only_hardened_current_day2_source(
     profile_document = _canonical(
         {
             "anchors": [anchor],
-            "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+            "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
+        }
+    )
+    empty_post_run = _canonical(
+        {
+            "anchors": [],
+            "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
         }
     )
     attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="a" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v1",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
         behavior_set_sha256="b" * 64,
         behavior_source_blob_sha256={},
         runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
@@ -1640,11 +1739,29 @@ def test_pre_dispatch_repository_seam_records_only_hardened_current_day2_source(
     monkeypatch.setattr(
         authority_module,
         "_read_repository_anchor_set",
-        lambda relative_path: profile_document,
+        lambda relative_path: (
+            profile_document
+            if relative_path == authority_module._PROFILE_ANCHOR_PATH  # noqa: SLF001
+            else empty_post_run
+        ),
     )
     monkeypatch.setattr(
         "dynamic_cssc.evidence_compatibility.verify_current_role_source",
         attest,
+    )
+    history_calls: list[EvidenceRole] = []
+
+    def verify_history(role: EvidenceRole, repository_root: Path) -> object:
+        assert repository_root == Path(authority_module.__file__).resolve().parents[2]
+        history_calls.append(role)
+        return SimpleNamespace(
+            analysis_source_git_sha="a" * 40,
+            day1a_authority_receipt_sha256=anchor["day1a_authority_receipt_sha256"],
+        )
+
+    monkeypatch.setattr(
+        "dynamic_cssc.evidence_compatibility.verify_repository_anchor_history",
+        verify_history,
     )
 
     capability = repository_day2_calibration_profile_authority()
@@ -1652,36 +1769,120 @@ def test_pre_dispatch_repository_seam_records_only_hardened_current_day2_source(
     assert capability.experiment_source_git_sha == "a" * 40
     assert capability.experiment_behavior_set_sha256 == "b" * 64
     assert observed_roles == [EvidenceRole.DAY2, EvidenceRole.DAY2]
+    assert history_calls == [EvidenceRole.DAY1_REGISTRATION]
 
 
-def test_pre_dispatch_repository_seam_holds_without_runtime_isolation(
+def test_pre_dispatch_repository_seam_leaves_live_runtime_isolation_to_the_launcher(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     anchor, _payloads = _valid_profile_anchor()
     profile_document = _canonical(
         {
             "anchors": [anchor],
-            "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+            "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
+        }
+    )
+    empty_post_run = _canonical(
+        {
+            "anchors": [],
+            "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
         }
     )
     attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="a" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v1",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
         behavior_set_sha256="b" * 64,
         behavior_source_blob_sha256={},
     )
     monkeypatch.setattr(
         authority_module,
         "_read_repository_anchor_set",
-        lambda relative_path: profile_document,
+        lambda relative_path: (
+            profile_document
+            if relative_path == authority_module._PROFILE_ANCHOR_PATH  # noqa: SLF001
+            else empty_post_run
+        ),
     )
     monkeypatch.setattr(
         "dynamic_cssc.evidence_compatibility.verify_current_role_source",
         lambda role, repository_root: attestation,
     )
+    monkeypatch.setattr(
+        "dynamic_cssc.evidence_compatibility.verify_repository_anchor_history",
+        lambda role, repository_root: SimpleNamespace(
+            analysis_source_git_sha="a" * 40,
+            day1a_authority_receipt_sha256=anchor["day1a_authority_receipt_sha256"],
+        ),
+    )
 
-    with pytest.raises(Day2CalibrationAuthorityError, match="HOLD.*runtime execution isolation"):
+    capability = repository_day2_calibration_profile_authority()
+
+    assert capability.experiment_source_git_sha == "a" * 40
+    assert capability.experiment_behavior_set_sha256 == "b" * 64
+
+
+@pytest.mark.parametrize(
+    ("history_source_sha", "history_receipt_sha", "message"),
+    (
+        ("f" * 40, None, "history-verified registration/profile source"),
+        ("a" * 40, "0" * 64, "history-anchored Day1A authority receipt"),
+    ),
+)
+def test_pre_dispatch_repository_seam_rejects_invalid_registration_profile_history(
+    monkeypatch: pytest.MonkeyPatch,
+    history_source_sha: str,
+    history_receipt_sha: str | None,
+    message: str,
+) -> None:
+    anchor, _payloads = _valid_profile_anchor()
+    profile_document = _canonical(
+        {
+            "anchors": [anchor],
+            "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
+        }
+    )
+    empty_post_run = _canonical(
+        {
+            "anchors": [],
+            "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+        }
+    )
+    attestation = RoleSourceAttestation(
+        role=EvidenceRole.DAY2,
+        git_sha="a" * 40,
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
+        behavior_set_sha256="b" * 64,
+        behavior_source_blob_sha256={},
+        runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
+        runtime_execution_isolation_verified=True,
+    )
+    monkeypatch.setattr(
+        authority_module,
+        "_read_repository_anchor_set",
+        lambda relative_path: (
+            profile_document
+            if relative_path == authority_module._PROFILE_ANCHOR_PATH  # noqa: SLF001
+            else empty_post_run
+        ),
+    )
+    monkeypatch.setattr(
+        "dynamic_cssc.evidence_compatibility.verify_current_role_source",
+        lambda role, repository_root: attestation,
+    )
+    monkeypatch.setattr(
+        "dynamic_cssc.evidence_compatibility.verify_repository_anchor_history",
+        lambda role, repository_root: SimpleNamespace(
+            analysis_source_git_sha=history_source_sha,
+            day1a_authority_receipt_sha256=(
+                anchor["day1a_authority_receipt_sha256"]
+                if history_receipt_sha is None
+                else history_receipt_sha
+            ),
+        ),
+    )
+
+    with pytest.raises(Day2CalibrationAuthorityError, match=message):
         repository_day2_calibration_profile_authority()
 
 
@@ -1692,7 +1893,7 @@ def test_pre_dispatch_repository_seam_rejects_anchor_race_during_attestation(
     document = _canonical(
         {
             "anchors": [anchor],
-            "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+            "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
         }
     )
     tampered_anchor = deepcopy(anchor)
@@ -1700,14 +1901,20 @@ def test_pre_dispatch_repository_seam_rejects_anchor_race_during_attestation(
     tampered_document = _canonical(
         {
             "anchors": [tampered_anchor],
-            "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+            "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
         }
     )
-    documents = iter((document, tampered_document))
+    profile_documents = iter((document, tampered_document))
+    empty_post_run = _canonical(
+        {
+            "anchors": [],
+            "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+        }
+    )
     attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="a" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v1",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
         behavior_set_sha256="b" * 64,
         behavior_source_blob_sha256={},
         runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
@@ -1716,14 +1923,57 @@ def test_pre_dispatch_repository_seam_rejects_anchor_race_during_attestation(
     monkeypatch.setattr(
         authority_module,
         "_read_repository_anchor_set",
-        lambda relative_path: next(documents),
+        lambda relative_path: (
+            next(profile_documents)
+            if relative_path == authority_module._PROFILE_ANCHOR_PATH  # noqa: SLF001
+            else empty_post_run
+        ),
     )
     monkeypatch.setattr(
         "dynamic_cssc.evidence_compatibility.verify_current_role_source",
         lambda role, repository_root: attestation,
     )
+    monkeypatch.setattr(
+        "dynamic_cssc.evidence_compatibility.verify_repository_anchor_history",
+        lambda role, repository_root: SimpleNamespace(
+            analysis_source_git_sha="a" * 40,
+            day1a_authority_receipt_sha256=anchor["day1a_authority_receipt_sha256"],
+        ),
+    )
 
     with pytest.raises(Day2CalibrationAuthorityError, match="anchor changed"):
+        repository_day2_calibration_profile_authority()
+
+
+def test_pre_dispatch_repository_seam_rejects_existing_post_run_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    anchor, _payloads = _valid_profile_anchor()
+    archive_bytes, payloads = _archive_bytes()
+    post_run_anchor = _valid_post_run_anchor(archive_bytes, payloads)
+    profile_document = _canonical(
+        {
+            "anchors": [anchor],
+            "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
+        }
+    )
+    post_run_document = _canonical(
+        {
+            "anchors": [post_run_anchor],
+            "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+        }
+    )
+    monkeypatch.setattr(
+        authority_module,
+        "_read_repository_anchor_set",
+        lambda relative_path: (
+            profile_document
+            if relative_path == authority_module._PROFILE_ANCHOR_PATH  # noqa: SLF001
+            else post_run_document
+        ),
+    )
+
+    with pytest.raises(Day2CalibrationAuthorityError, match="post-run anchor set.*empty"):
         repository_day2_calibration_profile_authority()
 
 
@@ -1737,20 +1987,20 @@ def test_post_run_repository_seam_verifies_s1_compatibility_before_minting(
         authority_module._PROFILE_ANCHOR_PATH: _canonical(  # noqa: SLF001
             {
                 "anchors": [profile_anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
             }
         ),
         authority_module._POST_RUN_ANCHOR_PATH: _canonical(  # noqa: SLF001
             {
                 "anchors": [post_anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
             }
         ),
     }
     attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="c" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v1",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
         behavior_set_sha256=post_anchor["experiment_behavior_set_sha256"],
         behavior_source_blob_sha256={},
         runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
@@ -1768,15 +2018,24 @@ def test_post_run_repository_seam_verifies_s1_compatibility_before_minting(
         "dynamic_cssc.evidence_compatibility.verify_current_role_source",
         lambda role, repository_root: attestation,
     )
+    monkeypatch.setattr(
+        "dynamic_cssc.evidence_compatibility.verify_repository_anchor_history",
+        lambda role, repository_root: SimpleNamespace(
+            analysis_source_git_sha="c" * 40,
+            day1a_authority_receipt_sha256=profile_anchor[
+                "day1a_authority_receipt_sha256"
+            ],
+        ),
+    )
 
     def verify_compatibility(**kwargs: object) -> object:
         observed.update(kwargs)
         return SimpleNamespace(
-            runtime_execution_isolation_verified=True,
+            runtime_execution_isolation_verified=False,
             to_document=lambda: {
                 "compatibility_verified": True,
                 "post_run_anchor_verified": True,
-                "runtime_execution_isolation_verified": True,
+                "runtime_execution_isolation_verified": False,
                 "snapshot_compatibility_verified": True,
             },
         )
@@ -1799,6 +2058,76 @@ def test_post_run_repository_seam_verifies_s1_compatibility_before_minting(
     assert observed["artifact_behavior_inventory"] is not artifact_inventory
 
 
+@pytest.mark.parametrize(
+    ("history_source_sha", "history_receipt_sha", "message"),
+    (
+        ("f" * 40, None, "history-verified profile source"),
+        ("c" * 40, "0" * 64, "history-anchored Day1A receipt"),
+    ),
+)
+def test_post_run_repository_seam_rejects_invalid_registration_profile_history(
+    monkeypatch: pytest.MonkeyPatch,
+    history_source_sha: str,
+    history_receipt_sha: str | None,
+    message: str,
+) -> None:
+    profile_anchor, _ = _valid_profile_anchor()
+    archive_bytes, payloads = _archive_bytes()
+    post_anchor = _valid_post_run_anchor(archive_bytes, payloads)
+    documents = {
+        authority_module._PROFILE_ANCHOR_PATH: _canonical(  # noqa: SLF001
+            {
+                "anchors": [profile_anchor],
+                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
+            }
+        ),
+        authority_module._POST_RUN_ANCHOR_PATH: _canonical(  # noqa: SLF001
+            {
+                "anchors": [post_anchor],
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+            }
+        ),
+    }
+    attestation = RoleSourceAttestation(
+        role=EvidenceRole.DAY2,
+        git_sha="c" * 40,
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
+        behavior_set_sha256=post_anchor["experiment_behavior_set_sha256"],
+        behavior_source_blob_sha256={},
+        runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
+        runtime_execution_isolation_verified=True,
+    )
+    monkeypatch.setattr(
+        authority_module,
+        "_read_repository_anchor_set",
+        lambda relative_path: documents[relative_path],
+    )
+    monkeypatch.setattr(
+        "dynamic_cssc.evidence_compatibility.verify_current_role_source",
+        lambda role, repository_root: attestation,
+    )
+    monkeypatch.setattr(
+        "dynamic_cssc.evidence_compatibility.verify_repository_anchor_history",
+        lambda role, repository_root: SimpleNamespace(
+            analysis_source_git_sha=history_source_sha,
+            day1a_authority_receipt_sha256=(
+                profile_anchor["day1a_authority_receipt_sha256"]
+                if history_receipt_sha is None
+                else history_receipt_sha
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "dynamic_cssc.evidence_compatibility.verify_evidence_compatibility",
+        lambda **kwargs: (_ for _ in ()).throw(
+            AssertionError("compatibility ran before registration/profile history")
+        ),
+    )
+
+    with pytest.raises(Day2CalibrationAuthorityError, match=message):
+        repository_day2_calibration_authority()
+
+
 def test_changed_day2_validator_behavior_cannot_install_a_post_run_anchor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1809,20 +2138,20 @@ def test_changed_day2_validator_behavior_cannot_install_a_post_run_anchor(
         authority_module._PROFILE_ANCHOR_PATH: _canonical(  # noqa: SLF001
             {
                 "anchors": [profile_anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
             }
         ),
         authority_module._POST_RUN_ANCHOR_PATH: _canonical(  # noqa: SLF001
             {
                 "anchors": [post_anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
             }
         ),
     }
     changed_attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="c" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v1",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
         behavior_set_sha256="d" * 64,
         behavior_source_blob_sha256={},
         runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
@@ -1837,29 +2166,43 @@ def test_changed_day2_validator_behavior_cannot_install_a_post_run_anchor(
         "dynamic_cssc.evidence_compatibility.verify_current_role_source",
         lambda role, repository_root: changed_attestation,
     )
+    monkeypatch.setattr(
+        "dynamic_cssc.evidence_compatibility.verify_repository_anchor_history",
+        lambda role, repository_root: SimpleNamespace(
+            analysis_source_git_sha="c" * 40,
+            day1a_authority_receipt_sha256=profile_anchor[
+                "day1a_authority_receipt_sha256"
+            ],
+        ),
+    )
 
     with pytest.raises(Day2CalibrationAuthorityError, match="Behavior Set does not match"):
         repository_day2_calibration_authority()
 
 
+@pytest.mark.parametrize(
+    "tampered_field",
+    ("operation_profile_set_sha256", "contract_bindings_sha256"),
+)
 def test_validly_encoded_post_run_identity_tamper_cannot_cross_the_pre_dispatch_anchor(
     monkeypatch: pytest.MonkeyPatch,
+    tampered_field: str,
 ) -> None:
     profile_anchor, _ = _valid_profile_anchor()
     archive_bytes, payloads = _archive_bytes()
     post_anchor = _valid_post_run_anchor(archive_bytes, payloads)
-    post_anchor["operation_profile_set_sha256"] = "0" * 64
+    post_anchor[tampered_field] = "0" * 64
     documents = {
         authority_module._PROFILE_ANCHOR_PATH: _canonical(  # noqa: SLF001
             {
                 "anchors": [profile_anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
             }
         ),
         authority_module._POST_RUN_ANCHOR_PATH: _canonical(  # noqa: SLF001
             {
                 "anchors": [post_anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
             }
         ),
     }
@@ -1882,13 +2225,13 @@ def test_post_run_anchor_alone_cannot_bypass_missing_pre_dispatch_authority(
         authority_module._PROFILE_ANCHOR_PATH: _canonical(  # noqa: SLF001
             {
                 "anchors": [],
-                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
             }
         ),
         authority_module._POST_RUN_ANCHOR_PATH: _canonical(  # noqa: SLF001
             {
                 "anchors": [post_anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
             }
         ),
     }
@@ -1914,14 +2257,14 @@ def test_pre_dispatch_profile_authority_freezes_profiles_day1a_and_contract_iden
         _canonical(
             {
                 "anchors": [anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v2",
+                "schema_version": "dynamic-cssc-day2-calibration-profile-anchor-set-v3",
             }
         )
     )[0]
     capability = authority_module._mint_repository_calibration_profile_authority(  # noqa: SLF001
         anchor=binding,
         experiment_source_git_sha="a" * 40,
-        experiment_behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v1",
+        experiment_behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
         experiment_behavior_set_sha256="b" * 64,
     )
 

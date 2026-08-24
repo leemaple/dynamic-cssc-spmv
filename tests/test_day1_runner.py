@@ -352,11 +352,17 @@ def test_seed_parser_returns_the_normalized_decimal_integer() -> None:
 def test_runner_executes_each_ratio_from_experiment_plan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    compact_plan_version = "test-only-runner-ratios-v1"
+    monkeypatch.setitem(
+        run_day1_suite._FROZEN_PLAN_LAYOUTS,  # noqa: SLF001
+        compact_plan_version,
+        (1, 4, 2048, 128),
+    )
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(
         json.dumps(
             {
-                "plan_version": "0.2.0",
+                "plan_version": compact_plan_version,
                 "split": {"warmup": 0.1, "tuning": 0.3, "held_out": 0.6},
                 "synthetic": {
                     "rows": 1,

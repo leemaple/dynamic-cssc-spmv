@@ -1072,10 +1072,25 @@ def test_t1_trace_uses_prefix_mapping_and_logs_clipped_noops(tmp_path: Path) -> 
         "reserved-empty-column:simplewiki-2026-07:partition-0:00000",
     ]
     assert padded.manifest["eligibility"] == {
-        "eligible": False,
-        "failure_reasons": ["reserved-column-padding-exceeds-10-percent:1/2"],
+        "eligible": True,
+        "failure_reasons": [],
         "replacement_allowed": False,
     }
+
+    _, _, _, _, empty_column_reasons = publication_traces._mapping_from_observed_ids(
+        publication_traces.CanonicalRawEventBatch(
+            dataset_id="simplewiki-2026-07",
+            dataset_release="mediawiki-history-2026-07-simplewiki-all-time",
+            events=(),
+            receipts=(),
+        ),
+        observed_row_ids=["wiki:page:00000000000000000002"],
+        observed_column_ids=[],
+        prefix_count=1,
+        source_partition_id=0,
+        config=replace(config, cols=2),
+    )
+    assert empty_column_reasons == ["no-observed-mapped-columns"]
 
 
 def test_t2_expires_before_admission_as_two_ordered_transitions(tmp_path: Path) -> None:

@@ -56,8 +56,11 @@ jobs:
             tests/test_openfhe_query_runtime.py \
             tests/test_ordinary_query_lifecycle.py \
             tests/test_publication_day1b.py \
+            tests/test_publication_day1b_accounting.py \
             tests/test_publication_day1b_worker_protocol.py \
-            tests/test_publication_day1b_workflow_contract.py
+            tests/test_publication_day1b_workflow_contract.py \
+            tests/test_query_accounting.py \
+            tests/test_strong_day1_simulator.py
           .venv/bin/python -m ruff check \
             scripts/run_publication_day1b.py \
             scripts/run_openfhe_query_smoke.py \
@@ -66,12 +69,17 @@ jobs:
             src/dynamic_cssc/openfhe_query_runtime.py \
             src/dynamic_cssc/ordinary_query_lifecycle.py \
             src/dynamic_cssc/publication_day1b.py \
+            src/dynamic_cssc/publication_day1b_accounting.py \
+            src/dynamic_cssc/simulator.py \
             tests/test_evidence_compatibility.py \
             tests/test_openfhe_query_runner.py \
             tests/test_openfhe_query_runtime.py \
             tests/test_ordinary_query_lifecycle.py \
             tests/test_publication_day1b.py \
-            tests/test_publication_day1b_workflow_contract.py
+            tests/test_publication_day1b_accounting.py \
+            tests/test_publication_day1b_workflow_contract.py \
+            tests/test_query_accounting.py \
+            tests/test_strong_day1_simulator.py
           git diff --check
       - name: Record the deliberate execution boundary
         run: |
