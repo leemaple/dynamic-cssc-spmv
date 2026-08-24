@@ -5,11 +5,18 @@ import hashlib
 import json
 import warnings
 from dataclasses import asdict, replace
+from inspect import signature
 from pathlib import Path
 
 import pytest
 
+import dynamic_cssc.day1_registry as registry
 import dynamic_cssc.report as report
+from dynamic_cssc.day1_registry import (
+    Day1CandidateCatalog,
+    Day1CandidateRegistrationError,
+    RegistrationEvidence,
+)
 from dynamic_cssc.metrics import StrategyMetrics, UnitCosts
 from dynamic_cssc.report import (
     CausalMetricRecord,
@@ -18,11 +25,158 @@ from dynamic_cssc.report import (
     write_causal_records,
     write_causal_summary,
 )
+from dynamic_cssc.simulator import RotationInventory
+
+
+def _registered_catalog() -> Day1CandidateCatalog:
+    registration = RegistrationEvidence(
+        schema_version="dynamic-cssc-day1-registration-evidence-v1",
+        source_git_sha="1" * 40,
+        run_id=123,
+        correctness_artifact_sha256="2" * 64,
+        accounting_evidence_sha256="3" * 64,
+        policy_contract_sha256=("a35cecd1553f53da9639a041d49d817c47bc9ae90aee269eaf2cd6f5daa8227b"),
+    )
+    return registry._build_day1_candidate_catalog(registration)
+
+
+def _unavailable_catalog() -> Day1CandidateCatalog:
+    raise Day1CandidateRegistrationError(
+        "no repository-approved Day-1 composite registration anchor"
+    )
+
+
+@pytest.fixture(autouse=True)
+def _authorized_report_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    catalog = _registered_catalog()
+    monkeypatch.setattr(report, "repository_day1_candidate_catalog", lambda: catalog)
+
+
+def test_public_causal_validator_owns_the_zero_argument_catalog_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def unavailable_catalog() -> object:
+        nonlocal calls
+        calls += 1
+        raise Day1CandidateRegistrationError("registration authority unavailable")
+
+    monkeypatch.setattr(
+        report,
+        "repository_day1_candidate_catalog",
+        unavailable_catalog,
+        raising=False,
+    )
+
+    assert tuple(signature(validate_causal_payload).parameters) == ("payload",)
+    with pytest.raises(Day1CandidateRegistrationError, match="authority unavailable"):
+        validate_causal_payload({})
+    assert calls == 1
+
+
+def test_fixed_causal_record_exposes_an_explicit_ablation_role() -> None:
+    record = CausalMetricRecord(
+        record_kind="fixed-candidate",
+        candidate_id="packed-coo-client-lane-delta/capacity=128",
+        label="packed-coo-client-lane-delta/capacity=128",
+        strategy_kind="Packed-COO-Client-Lane-Delta",
+        selection_source="fixed-candidate",
+        metrics=StrategyMetrics(
+            "Packed-COO-Client-Lane-Delta",
+            "ablation",
+            source="persistent-state-predicted",
+        ),
+        candidate_role="ablation",
+    )
+
+    assert record.candidate_role == "ablation"
+
+
+def test_fixed_causal_record_reconciles_exact_rotation_counts_and_preserves_warmup_keys() -> None:
+    record = replace(
+        _fixed_record(),
+        metrics=replace(_fixed_record().metrics, rotations=2),
+        rotation_inventory=RotationInventory(((1, 2),), (1, 2)),
+    )
+
+    assert record.rotation_inventory.measured_counts_by_exact_index == ((1, 2),)
+    assert record.rotation_inventory.required_indices == (1, 2)
+
+    with pytest.raises(ValueError, match="rotation inventory.*metrics.rotations"):
+        replace(record, metrics=replace(record.metrics, rotations=3))
+
+
+def test_fixed_causal_record_requires_closed_update_accounting() -> None:
+    with pytest.raises(ValueError, match="update_encryptions.*update_ciphertexts"):
+        replace(
+            _fixed_record(),
+            metrics=replace(
+                _fixed_record().metrics,
+                update_encryptions=2,
+                update_ciphertexts=1,
+            ),
+        )
+
+
+def test_fixed_causal_record_requires_closed_query_accounting() -> None:
+    with pytest.raises(ValueError, match="query_ciphertexts.*relinearizations"):
+        replace(
+            _fixed_record(),
+            metrics=replace(
+                _fixed_record().metrics,
+                query_ciphertexts=1,
+                cc_multiplications=1,
+                relinearizations=0,
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"result_ciphertexts": 1}, "result_ciphertexts.*decryptions"),
+        (
+            {"blinding_mask_ciphertexts": 1},
+            "blinding_encryptions.*blinding_mask_ciphertexts",
+        ),
+        (
+            {"blinding_encryptions": 1, "blinding_mask_ciphertexts": 1},
+            "blinding_additions.*blinding_encryptions",
+        ),
+    ],
+)
+def test_fixed_causal_record_requires_remaining_closed_accounting(
+    changes: dict[str, int],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(
+            _fixed_record(),
+            metrics=replace(_fixed_record().metrics, **changes),
+        )
+
+
+def test_fixed_causal_record_does_not_treat_structural_outcomes_as_all_updates() -> None:
+    record = replace(
+        _fixed_record(),
+        metrics=replace(
+            _fixed_record().metrics,
+            updates=3,
+            update_encryptions=1,
+            update_ciphertexts=1,
+            overflow_updates=2,
+        ),
+    )
+
+    assert record.metrics.updates == 3
+    assert record.metrics.absorbed_updates + record.metrics.overflow_updates == 2
 
 
 def _fixed_record(
     candidate_id: str = "reserved-slack/beta=0.05",
     strategy_kind: str = "ReservedSlack-CSSC",
+    candidate_role: str = "reference",
 ) -> CausalMetricRecord:
     return CausalMetricRecord(
         record_kind="fixed-candidate",
@@ -32,9 +186,10 @@ def _fixed_record(
         selection_source="fixed-candidate",
         metrics=StrategyMetrics(
             strategy_kind,
-            "reference",
+            candidate_role,
             source="persistent-state-predicted",
         ),
+        candidate_role=candidate_role,  # type: ignore[arg-type]
     )
 
 
@@ -84,40 +239,53 @@ def _auditable_report_fixture() -> tuple[
 ]:
     fixed_records: list[CausalMetricRecord] = []
     tuning_results: dict[str, StrategyMetrics] = {}
-    for index in range(13):
-        candidate_id = f"candidate/{index:02d}"
-        held_out_encryptions = 2 if index == 7 else 200 + index
-        tuning_encryptions = 1 if index == 3 else 100 + index
+    selected_candidate_id = "reserved-slack/beta=0.05"
+    oracle_candidate_id = "mini-cssc-delta"
+    ablation_candidate_id = "packed-coo-client-lane-delta/capacity=128"
+    for index, candidate in enumerate(_registered_catalog().candidates):
+        held_out_encryptions = (
+            0
+            if candidate.candidate_id == ablation_candidate_id
+            else 2
+            if candidate.candidate_id == oracle_candidate_id
+            else 200 + index
+        )
         fixed_records.append(
             CausalMetricRecord(
                 "fixed-candidate",
-                candidate_id,
-                candidate_id,
-                "PaddingReuse-CSSC",
+                candidate.candidate_id,
+                candidate.candidate_id,
+                candidate.strategy,
                 "fixed-candidate",
                 StrategyMetrics(
-                    "PaddingReuse-CSSC",
-                    "reference",
+                    candidate.strategy,
+                    candidate.role,
                     windows=4,
                     queries=8,
                     updates=16,
                     update_encryptions=held_out_encryptions,
+                    update_ciphertexts=held_out_encryptions,
+                    absorbed_updates=16,
                     source="persistent-state-predicted",
                 ),
+                candidate_role=candidate.role,
             )
         )
-        tuning_results[candidate_id] = StrategyMetrics(
-            "PaddingReuse-CSSC",
+        if candidate.role != "reference":
+            continue
+        tuning_encryptions = 1 if candidate.candidate_id == selected_candidate_id else 100 + index
+        tuning_results[candidate.candidate_id] = StrategyMetrics(
+            candidate.strategy,
             "reference",
             windows=3,
             queries=6,
             updates=12,
             update_encryptions=tuning_encryptions,
+            update_ciphertexts=tuning_encryptions,
+            absorbed_updates=12,
             source="persistent-state-predicted",
         )
 
-    selected_candidate_id = "candidate/03"
-    oracle_candidate_id = "candidate/07"
     fixed_by_id = {record.candidate_id: record for record in fixed_records}
     tuned_basis = fixed_by_id[selected_candidate_id]
     oracle_basis = fixed_by_id[oracle_candidate_id]
@@ -133,6 +301,7 @@ def _auditable_report_fixture() -> tuple[
             category="tuned-fixed-policy",
             source="tuning-prefix-frozen",
         ),
+        rotation_inventory=tuned_basis.rotation_inventory,
     )
     oracle = CausalMetricRecord(
         "diagnostic-oracle",
@@ -146,11 +315,15 @@ def _auditable_report_fixture() -> tuple[
             category="diagnostic-oracle",
             source="held-out-hindsight-diagnostic",
         ),
+        rotation_inventory=oracle_basis.rotation_inventory,
     )
     metadata: dict[str, object] = {
         "selected_candidate_id": selected_candidate_id,
         "oracle_candidate_id": oracle_candidate_id,
-        "fixed_candidate_count": 13,
+        "fixed_candidate_count": 14,
+        "reference_candidate_count": 13,
+        "ablation_candidate_count": 1,
+        "complete_reference_set": True,
     }
     return (
         [*fixed_records, tuned, oracle],
@@ -170,7 +343,7 @@ def _placeholder_audit_kwargs() -> dict[str, object]:
     }
 
 
-def _write_auditable_payload(tmp_path: Path) -> tuple[dict[str, object], list[str]]:
+def _write_auditable_payload(tmp_path: Path) -> tuple[dict[str, object], Day1CandidateCatalog]:
     records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
     write_causal_records(
         tmp_path,
@@ -182,7 +355,286 @@ def _write_auditable_payload(tmp_path: Path) -> tuple[dict[str, object], list[st
         oracle_candidate_id=oracle_id,
     )
     payload = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
-    return payload, [record.candidate_id for record in reversed(records[:13])]
+    return payload, _registered_catalog()
+
+
+def test_causal_schema_v2_emits_the_registered_14_13_1_16_completion_proof(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = _registered_catalog()
+    authority_calls = 0
+
+    def registered_catalog() -> Day1CandidateCatalog:
+        nonlocal authority_calls
+        authority_calls += 1
+        return catalog
+
+    monkeypatch.setattr(report, "repository_day1_candidate_catalog", registered_catalog)
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+
+    write_causal_records(
+        tmp_path,
+        records,
+        costs,
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
+    )
+    payload = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
+    validate_causal_payload(payload)
+
+    reference_ids = sorted(candidate.candidate_id for candidate in catalog.selection_candidates)
+    ablation_ids = sorted(candidate.candidate_id for candidate in catalog.ablation_candidates)
+    fixed_ids = sorted(candidate.candidate_id for candidate in catalog.candidates)
+    assert authority_calls == 2
+    assert payload["schema"] == "day1-causal-predicted-v2"
+    assert payload["complete_reference_set"] is True
+    assert payload["gate_eligible"] is False
+    assert payload["complete_cost_claim_allowed"] is False
+    assert payload["security_claim_allowed"] is False
+    assert payload["formal_performance_claim"] is False
+    assert len(payload["records"]) == 16
+    assert [record["candidate_id"] for record in payload["records"][:14]] == fixed_ids
+    assert {
+        record["candidate_id"]: record["candidate_role"] for record in payload["records"][:14]
+    } == {
+        **{candidate_id: "reference" for candidate_id in reference_ids},
+        **{candidate_id: "ablation" for candidate_id in ablation_ids},
+    }
+    assert [item["candidate_id"] for item in payload["tuning_aggregates"]] == reference_ids
+    assert payload["metadata"]["oracle_candidate_id"] in reference_ids
+    assert payload["metadata"]["oracle_candidate_id"] not in ablation_ids
+    proof = payload["completion_proof"]
+    assert proof["schema"] == "day1-causal-completion-proof-v1"
+    assert proof["registration"] == asdict(catalog.registration)
+    assert proof["fixed_candidate_count"] == 14
+    assert proof["reference_candidate_count"] == 13
+    assert proof["ablation_candidate_count"] == 1
+    assert proof["tuning_candidate_count"] == 13
+    assert proof["record_count"] == 16
+    assert proof["fixed_candidate_ids"] == fixed_ids
+    assert proof["reference_candidate_ids"] == reference_ids
+    assert proof["ablation_candidate_ids"] == ablation_ids
+    assert proof["tuning_candidate_ids"] == reference_ids
+    assert proof["accounting_invariants"] == [
+        "metadata_units=ci_patch_entries+ci_full_sync_entries",
+        "update_encryptions=update_ciphertexts+compaction_ciphertexts",
+        "query_ciphertexts=cc_multiplications=relinearizations",
+        "result_ciphertexts=decryptions",
+        "blinding_encryptions=blinding_mask_ciphertexts+blinding_dummy_ciphertexts",
+        "blinding_additions=blinding_encryptions",
+        "rotations=sum(measured_counts_by_exact_index)",
+    ]
+    assert [item["candidate_id"] for item in proof["fixed_rotation_inventories"]] == fixed_ids
+    assert all(
+        set(item)
+        == {
+            "candidate_id",
+            "measured_counts_by_exact_index",
+            "required_indices",
+        }
+        for item in proof["fixed_rotation_inventories"]
+    )
+
+
+def _canonical_auditable_payload() -> dict[str, object]:
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    decoded = report._decode_causal_inputs(
+        records,
+        costs,
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
+        candidate_catalog=_registered_catalog(),
+    )
+    return report._canonical_payload(decoded)
+
+
+def test_public_validator_fails_closed_while_the_composite_registration_gate_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        report,
+        "repository_day1_candidate_catalog",
+        _unavailable_catalog,
+    )
+    with pytest.raises(
+        Day1CandidateRegistrationError,
+        match="no repository-approved Day-1 composite registration anchor",
+    ):
+        validate_causal_payload(_canonical_auditable_payload())
+
+
+def test_all_public_causal_artifact_paths_fail_closed_without_registration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = _canonical_auditable_payload()
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    audit = {
+        "tuning_results": tuning_results,
+        "selected_candidate_id": selected_id,
+        "oracle_candidate_id": oracle_id,
+    }
+    monkeypatch.setattr(
+        report,
+        "repository_day1_candidate_catalog",
+        _unavailable_catalog,
+    )
+    operations = (
+        lambda: report.render_causal_artifacts(tmp_path / "render", payload),
+        lambda: write_causal_records(tmp_path / "records", records, costs, metadata, **audit),
+        lambda: write_causal_summary(tmp_path / "summary", records, costs, metadata, **audit),
+        lambda: write_causal_plots(tmp_path / "plots", records, costs, **audit),
+    )
+
+    for operation in operations:
+        with pytest.raises(
+            Day1CandidateRegistrationError,
+            match="no repository-approved Day-1 composite registration anchor",
+        ):
+            operation()
+    assert not tmp_path.exists() or not any(tmp_path.iterdir())
+
+
+def test_private_decoder_rejects_a_jointly_forged_ablation_role() -> None:
+    payload = _canonical_auditable_payload()
+    ablation = next(
+        record
+        for record in payload["records"]
+        if record["candidate_id"] == "packed-coo-client-lane-delta/capacity=128"
+    )
+    ablation["candidate_role"] = "reference"
+    ablation["category"] = "reference"
+
+    with pytest.raises(ValueError, match="candidate_role.*registration"):
+        report._decode_causal_payload(
+            payload,
+            candidate_catalog=_registered_catalog(),
+        )
+
+
+def test_private_decoder_rejects_an_ablation_in_the_tuning_inventory() -> None:
+    payload = _canonical_auditable_payload()
+    payload["tuning_aggregates"][0]["candidate_id"] = "packed-coo-client-lane-delta/capacity=128"
+
+    with pytest.raises(ValueError, match="tuning_aggregates candidate_ids"):
+        report._decode_causal_payload(
+            payload,
+            candidate_catalog=_registered_catalog(),
+        )
+
+
+def test_private_decoder_rejects_an_ablation_as_the_held_out_oracle() -> None:
+    payload = _canonical_auditable_payload()
+    payload["metadata"]["oracle_candidate_id"] = "packed-coo-client-lane-delta/capacity=128"
+
+    with pytest.raises(ValueError, match="oracle_candidate_id.*reference"):
+        report._decode_causal_payload(
+            payload,
+            candidate_catalog=_registered_catalog(),
+        )
+
+
+def test_completion_proof_binds_every_fixed_rotation_inventory_exactly() -> None:
+    payload = _canonical_auditable_payload()
+    payload["completion_proof"]["fixed_rotation_inventories"][0]["required_indices"] = [17]
+
+    with pytest.raises(ValueError, match="completion_proof.*required_indices"):
+        report._decode_causal_payload(
+            payload,
+            candidate_catalog=_registered_catalog(),
+        )
+
+
+def test_serialized_rotation_inventory_rejects_measured_keys_outside_requirements() -> None:
+    payload = _canonical_auditable_payload()
+    payload["records"][0]["rotation_inventory"] = {
+        "measured_counts_by_exact_index": [[1, 1]],
+        "required_indices": [],
+    }
+
+    with pytest.raises(ValueError, match="rotation_inventory.*canonical and complete"):
+        report._decode_causal_payload(
+            payload,
+            candidate_catalog=_registered_catalog(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("location", "field_name"),
+    [
+        ("payload", "gate_eligible"),
+        ("payload", "complete_cost_claim_allowed"),
+        ("payload", "security_claim_allowed"),
+        ("payload", "formal_performance_claim"),
+        ("metadata", "security_claim_allowed"),
+        ("record", "formal_performance_claim"),
+    ],
+)
+def test_private_decoder_keeps_all_gate_cost_security_and_performance_claims_false(
+    location: str,
+    field_name: str,
+) -> None:
+    payload = _canonical_auditable_payload()
+    target = (
+        payload
+        if location == "payload"
+        else payload["metadata"]
+        if location == "metadata"
+        else payload["records"][0]
+    )
+    target[field_name] = True
+
+    with pytest.raises(ValueError, match=field_name):
+        report._decode_causal_payload(
+            payload,
+            candidate_catalog=_registered_catalog(),
+        )
+
+
+def test_completion_proof_preserves_a_warmup_only_required_rotation_index(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = _registered_catalog()
+    monkeypatch.setattr(report, "repository_day1_candidate_catalog", lambda: catalog)
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    candidate_id = "padding-reuse"
+    index = next(
+        index
+        for index, record in enumerate(records)
+        if record.record_kind == "fixed-candidate" and record.candidate_id == candidate_id
+    )
+    records[index] = replace(
+        records[index],
+        rotation_inventory=RotationInventory((), (17,)),
+    )
+
+    write_causal_records(
+        tmp_path,
+        records,
+        costs,
+        metadata,
+        tuning_results=tuning_results,
+        selected_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
+    )
+    payload = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
+
+    fixed_record = next(
+        record for record in payload["records"] if record["candidate_id"] == candidate_id
+    )
+    proof_inventory = next(
+        item
+        for item in payload["completion_proof"]["fixed_rotation_inventories"]
+        if item["candidate_id"] == candidate_id
+    )
+    assert fixed_record["rotation_inventory"]["required_indices"] == [17]
+    assert proof_inventory["required_indices"] == [17]
 
 
 @pytest.mark.parametrize(
@@ -343,9 +795,9 @@ def test_causal_writer_requires_exactly_one_oracle_alias(tmp_path: Path) -> None
 
 def test_causal_writer_rejects_tuned_metrics_tampering(tmp_path: Path) -> None:
     tuned = _tuned_record()
-    tuned.metrics.updates = 999
+    tuned.metrics.update_encryptions = 999
 
-    with pytest.raises(ValueError, match="tuned-fixed-policy metrics.*fixed basis"):
+    with pytest.raises(ValueError, match="metrics.update_encryptions.*update_ciphertexts"):
         write_causal_records(
             tmp_path,
             [_fixed_record(), tuned, _oracle_record()],
@@ -361,7 +813,7 @@ def test_causal_writer_recomputes_tuning_selection_and_rejects_wrong_id(
     tmp_path: Path,
 ) -> None:
     records, tuning_results, costs, metadata, _selected_id, oracle_id = _auditable_report_fixture()
-    wrong_selected_id = "candidate/04"
+    wrong_selected_id = "reserved-slack/beta=0.1"
     metadata["selected_candidate_id"] = wrong_selected_id
 
     with pytest.raises(ValueError, match="selected_candidate_id.*tuning aggregates"):
@@ -382,7 +834,7 @@ def test_causal_writer_recomputes_oracle_from_held_out_fixed_records(
     tmp_path: Path,
 ) -> None:
     records, tuning_results, costs, metadata, selected_id, _oracle_id = _auditable_report_fixture()
-    wrong_oracle_id = "candidate/08"
+    wrong_oracle_id = "reserved-slack/beta=0"
     metadata["oracle_candidate_id"] = wrong_oracle_id
 
     with pytest.raises(ValueError, match="oracle_candidate_id.*held-out fixed"):
@@ -423,7 +875,7 @@ def test_causal_writer_rejects_a_mismatched_metadata_candidate_count(
     records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
     metadata["fixed_candidate_count"] = 12
 
-    with pytest.raises(ValueError, match="metadata.fixed_candidate_count.*13"):
+    with pytest.raises(ValueError, match="metadata.fixed_candidate_count.*14"):
         write_causal_records(
             tmp_path,
             records,
@@ -480,7 +932,7 @@ def test_causal_record_writer_requires_metadata_candidate_ids_to_join_fixed_reco
 def test_causal_writer_requires_alias_ids_to_join_selection_ids(tmp_path: Path) -> None:
     records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
     wrong_basis = records[4]
-    records[13] = CausalMetricRecord(
+    records[14] = CausalMetricRecord(
         "tuned-fixed-policy",
         wrong_basis.candidate_id,
         "TunedFixedPolicy",
@@ -510,9 +962,9 @@ def test_causal_writer_requires_alias_ids_to_join_selection_ids(tmp_path: Path) 
 
 def test_causal_writer_requires_all_thirteen_tuning_aggregates(tmp_path: Path) -> None:
     records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
-    del tuning_results["candidate/12"]
+    del tuning_results["reserved-slack/beta=0.4"]
 
-    with pytest.raises(ValueError, match="tuning_results.*missing.*candidate/12"):
+    with pytest.raises(ValueError, match=r"tuning_results.*missing.*reserved-slack/beta=0\.4"):
         write_causal_records(
             tmp_path,
             records,
@@ -530,9 +982,12 @@ def test_causal_writer_requires_tuning_aggregates_to_join_fixed_identity(
     tmp_path: Path,
 ) -> None:
     records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
-    tuning_results["candidate/12"].strategy = "PeriodicRepack"
+    tuning_results["reserved-slack/beta=0.4"].strategy = "PeriodicRepack"
 
-    with pytest.raises(ValueError, match="tuning_results.*candidate/12.*fixed basis"):
+    with pytest.raises(
+        ValueError,
+        match=r"tuning_results.*reserved-slack/beta=0\.4.*fixed basis",
+    ):
         write_causal_records(
             tmp_path,
             records,
@@ -585,14 +1040,8 @@ def test_causal_writer_serializes_replayable_costs_and_all_tuning_aggregates(
 
 
 def test_causal_writer_payload_roundtrips_through_public_validator(tmp_path: Path) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
-    assert (
-        validate_causal_payload(
-            payload,
-            expected_candidate_ids=expected_candidate_ids,
-        )
-        is None
-    )
+    payload, _catalog = _write_auditable_payload(tmp_path)
+    assert validate_causal_payload(payload) is None
 
 
 def test_canonical_renderer_recreates_metrics_json_and_csv_bytes(
@@ -600,13 +1049,9 @@ def test_canonical_renderer_recreates_metrics_json_and_csv_bytes(
 ) -> None:
     source_dir = tmp_path / "source"
     rendered_dir = tmp_path / "rendered"
-    payload, expected_candidate_ids = _write_auditable_payload(source_dir)
+    payload, _catalog = _write_auditable_payload(source_dir)
 
-    digests = report.render_causal_artifacts(
-        rendered_dir,
-        payload,
-        expected_candidate_ids=expected_candidate_ids,
-    )
+    digests = report.render_causal_artifacts(rendered_dir, payload)
 
     for filename in ("metrics.json", "metrics.csv", "tuning_aggregates.csv"):
         source_bytes = (source_dir / filename).read_bytes()
@@ -640,13 +1085,7 @@ def test_canonical_renderer_recreates_summary_with_fail_closed_disclosures(
         oracle_candidate_id=oracle_id,
     )
     payload = json.loads((source_dir / "metrics.json").read_text(encoding="utf-8"))
-    expected_candidate_ids = [record.candidate_id for record in records[:13]]
-
-    digests = report.render_causal_artifacts(
-        rendered_dir,
-        payload,
-        expected_candidate_ids=expected_candidate_ids,
-    )
+    digests = report.render_causal_artifacts(rendered_dir, payload)
 
     source_bytes = (source_dir / "SUMMARY.md").read_bytes()
     assert (rendered_dir / "SUMMARY.md").read_bytes() == source_bytes
@@ -654,8 +1093,8 @@ def test_canonical_renderer_recreates_summary_with_fail_closed_disclosures(
     summary = source_bytes.decode("utf-8").lower()
     assert "predicted synthetic proxy" in summary
     assert "bandwidth" in summary and "deferred" in summary
-    assert "complete_reference_set=false" in summary
-    assert "full-baseline hold" in summary
+    assert "complete_reference_set=true" in summary
+    assert "performance/security gates remain hold" in summary
 
 
 def test_canonical_renderer_recreates_deterministic_proxy_plots_with_disclosures(
@@ -685,18 +1124,8 @@ def test_canonical_renderer_recreates_deterministic_proxy_plots_with_disclosures
         oracle_candidate_id=oracle_id,
     )
     payload = json.loads((source_dir / "metrics.json").read_text(encoding="utf-8"))
-    expected_candidate_ids = [record.candidate_id for record in records[:13]]
-
-    digests = report.render_causal_artifacts(
-        rendered_dir,
-        payload,
-        expected_candidate_ids=expected_candidate_ids,
-    )
-    second_digests = report.render_causal_artifacts(
-        rendered_again_dir,
-        payload,
-        expected_candidate_ids=reversed(expected_candidate_ids),
-    )
+    digests = report.render_causal_artifacts(rendered_dir, payload)
+    second_digests = report.render_causal_artifacts(rendered_again_dir, payload)
 
     for filename in ("ua_vs_qa_proxy.png", "t_rho_proxy.png"):
         source_bytes = (source_dir / filename).read_bytes()
@@ -707,14 +1136,14 @@ def test_canonical_renderer_recreates_deterministic_proxy_plots_with_disclosures
             description = image.info["Description"].lower()
         assert "predicted synthetic proxy" in description
         assert "bandwidth" in description and "deferred" in description
-        assert "complete_reference_set=false" in description
-        assert "full-baseline hold" in description
+        assert "complete_reference_set=true" in description
+        assert "performance/security gates remain hold" in description
 
 
 def test_canonical_renderer_zero_metrics_has_no_log_warning_and_is_deterministic(
     tmp_path: Path,
 ) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path / "source")
+    payload, catalog = _write_auditable_payload(tmp_path / "source")
     numeric_metric_fields = set(asdict(StrategyMetrics("placeholder", "reference"))) - {
         "strategy",
         "category",
@@ -726,10 +1155,12 @@ def test_canonical_renderer_zero_metrics_has_no_log_warning_and_is_deterministic
     for aggregate in payload["tuning_aggregates"]:
         for field_name in numeric_metric_fields:
             aggregate["metrics"][field_name] = 0
+        aggregate["metrics"]["absorbed_updates"] = aggregate["metrics"]["updates"]
         aggregate["score"] = 0.0
     for record in payload["records"]:
         for field_name in numeric_metric_fields:
             record[field_name] = 0
+        record["absorbed_updates"] = record["updates"]
         for field_name in (
             "predicted_update_time",
             "predicted_query_time",
@@ -738,24 +1169,20 @@ def test_canonical_renderer_zero_metrics_has_no_log_warning_and_is_deterministic
             "update_ct_equivalents_per_update",
         ):
             record[field_name] = 0.0
-    canonical_basis_id = min(expected_candidate_ids)
+    canonical_basis_id = min(candidate.candidate_id for candidate in catalog.selection_candidates)
+    basis = next(
+        record for record in payload["records"][:14] if record["candidate_id"] == canonical_basis_id
+    )
     payload["metadata"]["selected_candidate_id"] = canonical_basis_id
     payload["metadata"]["oracle_candidate_id"] = canonical_basis_id
-    payload["records"][13]["candidate_id"] = canonical_basis_id
-    payload["records"][14]["candidate_id"] = canonical_basis_id
+    for alias in payload["records"][14:]:
+        alias["candidate_id"] = canonical_basis_id
+        alias["strategy_kind"] = basis["strategy_kind"]
 
     with warnings.catch_warnings():
         warnings.simplefilter("error", UserWarning)
-        first_digests = report.render_causal_artifacts(
-            tmp_path / "first",
-            payload,
-            expected_candidate_ids=expected_candidate_ids,
-        )
-        second_digests = report.render_causal_artifacts(
-            tmp_path / "second",
-            payload,
-            expected_candidate_ids=reversed(expected_candidate_ids),
-        )
+        first_digests = report.render_causal_artifacts(tmp_path / "first", payload)
+        second_digests = report.render_causal_artifacts(tmp_path / "second", payload)
 
     assert first_digests["t_rho_proxy.png"] == second_digests["t_rho_proxy.png"]
     assert (tmp_path / "first" / "t_rho_proxy.png").read_bytes() == (
@@ -801,12 +1228,7 @@ def test_canonical_renderer_digest_exposes_false_derived_artifact_roundtrips(
         oracle_candidate_id=oracle_id,
     )
     payload = json.loads((source_dir / "metrics.json").read_text(encoding="utf-8"))
-    expected_candidate_ids = [record.candidate_id for record in records[:13]]
-    expected_digests = report.render_causal_artifacts(
-        canonical_dir,
-        payload,
-        expected_candidate_ids=expected_candidate_ids,
-    )
+    expected_digests = report.render_causal_artifacts(canonical_dir, payload)
     artifact_path = source_dir / filename
     artifact_path.write_bytes(artifact_path.read_bytes() + b"forged")
 
@@ -818,7 +1240,7 @@ def test_causal_writer_canonicalizes_fixed_record_order_before_validation(
     tmp_path: Path,
 ) -> None:
     records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
-    unsorted_records = [*reversed(records[:13]), *records[13:]]
+    unsorted_records = [*reversed(records[:14]), *records[14:]]
 
     write_causal_records(
         tmp_path,
@@ -831,137 +1253,129 @@ def test_causal_writer_canonicalizes_fixed_record_order_before_validation(
     )
 
     payload = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
-    assert [record["candidate_id"] for record in payload["records"][:13]] == sorted(tuning_results)
+    assert [record["candidate_id"] for record in payload["records"][:14]] == sorted(
+        candidate.candidate_id for candidate in _registered_catalog().candidates
+    )
 
 
 def test_causal_payload_validator_rejects_extra_top_level_keys(tmp_path: Path) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload, _catalog = _write_auditable_payload(tmp_path)
     payload["unreviewed"] = True
 
     with pytest.raises(ValueError, match="payload keys.*extra.*unreviewed"):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
-
-
-def test_causal_payload_validator_rejects_duplicate_expected_candidate_ids(
-    tmp_path: Path,
-) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
-    expected_candidate_ids.append(expected_candidate_ids[0])
-
-    with pytest.raises(ValueError, match="expected_candidate_ids.*unique.*13"):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+        validate_causal_payload(payload)
 
 
 def test_causal_payload_validator_requires_complete_unit_costs(tmp_path: Path) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload, _catalog = _write_auditable_payload(tmp_path)
     del payload["unit_costs"]["encrypt"]
 
     with pytest.raises(ValueError, match="unit_costs keys.*missing.*encrypt"):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+        validate_causal_payload(payload)
 
 
 def test_causal_payload_validator_rejects_extra_tuning_metric_fields(
     tmp_path: Path,
 ) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload, _catalog = _write_auditable_payload(tmp_path)
     payload["tuning_aggregates"][0]["metrics"]["unpriced_work"] = 1
 
     with pytest.raises(ValueError, match=r"tuning_aggregates\[0\].metrics keys.*extra"):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+        validate_causal_payload(payload)
 
 
 def test_causal_payload_validator_rejects_missing_tuning_metric_fields(
     tmp_path: Path,
 ) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload, _catalog = _write_auditable_payload(tmp_path)
     del payload["tuning_aggregates"][0]["metrics"]["blinding_dummy_ciphertexts"]
 
     with pytest.raises(
         ValueError,
         match=r"tuning_aggregates\[0\].metrics keys.*missing.*blinding_dummy_ciphertexts",
     ):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+        validate_causal_payload(payload)
 
 
 def test_causal_payload_validator_rejects_missing_tuning_aggregate_fields(
     tmp_path: Path,
 ) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload, _catalog = _write_auditable_payload(tmp_path)
     del payload["tuning_aggregates"][0]["score"]
 
     with pytest.raises(ValueError, match=r"tuning_aggregates\[0\] keys.*missing.*score"):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+        validate_causal_payload(payload)
 
 
 def test_causal_payload_validator_rejects_extra_record_fields(tmp_path: Path) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload, _catalog = _write_auditable_payload(tmp_path)
     payload["records"][0]["unreviewed"] = 1
 
     with pytest.raises(ValueError, match=r"records\[0\] keys.*extra.*unreviewed"):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+        validate_causal_payload(payload)
 
 
 def test_causal_payload_validator_rejects_missing_dummy_blinding_record_field(
     tmp_path: Path,
 ) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload, _catalog = _write_auditable_payload(tmp_path)
     del payload["records"][0]["blinding_dummy_ciphertexts"]
 
     with pytest.raises(
         ValueError,
         match=r"records\[0\] keys.*missing.*blinding_dummy_ciphertexts",
     ):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+        validate_causal_payload(payload)
 
 
 def test_causal_payload_validator_recomputes_derived_record_fields(tmp_path: Path) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload, _catalog = _write_auditable_payload(tmp_path)
     payload["records"][0]["predicted_normalized_time"] += 1
 
     with pytest.raises(ValueError, match=r"records\[0\].predicted_normalized_time"):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+        validate_causal_payload(payload)
 
 
 def test_causal_payload_validator_recomputes_selected_candidate(tmp_path: Path) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
-    payload["metadata"]["selected_candidate_id"] = "candidate/04"
+    payload, _catalog = _write_auditable_payload(tmp_path)
+    payload["metadata"]["selected_candidate_id"] = "reserved-slack/beta=0.1"
 
     with pytest.raises(ValueError, match="selected_candidate_id.*tuning_aggregates"):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+        validate_causal_payload(payload)
 
 
 def test_causal_payload_validator_recomputes_held_out_oracle(tmp_path: Path) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
-    payload["metadata"]["oracle_candidate_id"] = "candidate/08"
+    payload, _catalog = _write_auditable_payload(tmp_path)
+    payload["metadata"]["oracle_candidate_id"] = "reserved-slack/beta=0"
 
-    with pytest.raises(ValueError, match="oracle_candidate_id.*held-out fixed"):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+    with pytest.raises(ValueError, match="oracle_candidate_id.*held-out reference"):
+        validate_causal_payload(payload)
 
 
 def test_causal_payload_validator_rejects_tuning_score_tampering(tmp_path: Path) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload, _catalog = _write_auditable_payload(tmp_path)
     payload["tuning_aggregates"][0]["score"] += 1
 
     with pytest.raises(ValueError, match=r"tuning_aggregates\[0\].score"):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+        validate_causal_payload(payload)
 
 
 def test_causal_payload_validator_rejects_noncanonical_integral_score_type(
     tmp_path: Path,
 ) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload, _catalog = _write_auditable_payload(tmp_path)
     original_score = payload["tuning_aggregates"][0]["score"]
     assert isinstance(original_score, float) and original_score.is_integer()
     payload["tuning_aggregates"][0]["score"] = int(original_score)
 
     with pytest.raises((TypeError, ValueError), match=r"tuning_aggregates\[0\]\.score"):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+        validate_causal_payload(payload)
 
 
 def test_causal_payload_validator_rejects_jointly_forged_costs_and_scores(
     tmp_path: Path,
 ) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload, _catalog = _write_auditable_payload(tmp_path)
     forged_encrypt_cost = 9.0
     payload["unit_costs"]["encrypt"] = forged_encrypt_cost
     for aggregate in payload["tuning_aggregates"]:
@@ -973,25 +1387,25 @@ def test_causal_payload_validator_rejects_jointly_forged_costs_and_scores(
         record["unit_cost_encrypt"] = forged_encrypt_cost
 
     with pytest.raises(ValueError, match=r"unit_costs\.encrypt.*frozen"):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+        validate_causal_payload(payload)
 
 
 def test_causal_payload_validator_requires_the_frozen_unit_cost_label(tmp_path: Path) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload, _catalog = _write_auditable_payload(tmp_path)
     payload["unit_costs"]["label"] = "self-consistent-but-unfrozen"
     for record in payload["records"]:
         record["unit_cost_label"] = "self-consistent-but-unfrozen"
 
     with pytest.raises(ValueError, match=r"unit_costs\.label.*frozen"):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+        validate_causal_payload(payload)
 
 
 def test_causal_payload_validator_rejects_alias_numeric_tampering(tmp_path: Path) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
-    payload["records"][13]["updates"] = 999
+    payload, _catalog = _write_auditable_payload(tmp_path)
+    payload["records"][14]["windows"] += 1
 
     with pytest.raises(ValueError, match="tuned-fixed-policy metrics.*fixed basis"):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+        validate_causal_payload(payload)
 
 
 @pytest.mark.parametrize("tampered_value", ["8.0", float("nan")])
@@ -999,19 +1413,19 @@ def test_causal_payload_validator_rejects_invalid_unit_cost_types_and_values(
     tmp_path: Path,
     tampered_value: object,
 ) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload, _catalog = _write_auditable_payload(tmp_path)
     payload["unit_costs"]["encrypt"] = tampered_value
 
     with pytest.raises((TypeError, ValueError), match="unit[_ ]costs.*finite"):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+        validate_causal_payload(payload)
 
 
 def test_causal_payload_validator_rejects_nonfinite_context_metadata(tmp_path: Path) -> None:
-    payload, expected_candidate_ids = _write_auditable_payload(tmp_path)
+    payload, _catalog = _write_auditable_payload(tmp_path)
     payload["metadata"]["context_score"] = float("inf")
 
     with pytest.raises(ValueError, match="metadata.context_score.*finite"):
-        validate_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+        validate_causal_payload(payload)
 
 
 def test_causal_writer_rejects_nonfinite_unused_unit_cost_before_writing(
@@ -1105,7 +1519,7 @@ def test_causal_plot_writer_rejects_a_nonreproducible_selection(tmp_path: Path) 
             records,
             costs,
             tuning_results=tuning_results,
-            selected_candidate_id="candidate/04",
+            selected_candidate_id="reserved-slack/beta=0.1",
             oracle_candidate_id=oracle_id,
         )
 
@@ -1131,18 +1545,21 @@ def test_causal_records_use_the_predicted_schema_and_three_explicit_kinds(
     payload = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
     with (tmp_path / "metrics.csv").open(newline="", encoding="utf-8") as handle:
         csv_records = list(csv.DictReader(handle))
-    assert payload["schema"] == "day1-causal-predicted-v1"
+    assert payload["schema"] == "day1-causal-predicted-v2"
     assert payload["state_model"] == "persistent-strategy-snapshots"
     assert payload["measurement_kind"] == "predicted-proxy"
     assert payload["gate_eligible"] is False
     assert payload["complete_cost_claim_allowed"] is False
+    assert payload["complete_reference_set"] is True
+    assert payload["security_claim_allowed"] is False
+    assert payload["formal_performance_claim"] is False
     assert payload["metadata"]["gate_eligible"] is False
     assert [record["record_kind"] for record in payload["records"]] == [
-        *(["fixed-candidate"] * 13),
+        *(["fixed-candidate"] * 14),
         "tuned-fixed-policy",
         "diagnostic-oracle",
     ]
-    fixed_ids = [f"candidate/{index:02d}" for index in range(13)]
+    fixed_ids = sorted(candidate.candidate_id for candidate in _registered_catalog().candidates)
     assert [record["candidate_id"] for record in payload["records"]] == [
         *fixed_ids,
         selected_id,
@@ -1159,7 +1576,7 @@ def test_causal_records_use_the_predicted_schema_and_three_explicit_kinds(
     ]
     assert all(record["phase"] == "held-out" for record in payload["records"])
     assert [record["selection_source"] for record in payload["records"]] == [
-        *(["fixed-candidate"] * 13),
+        *(["fixed-candidate"] * 14),
         "tuning-prefix-only",
         "held-out-hindsight-diagnostic-only",
     ]
@@ -1168,91 +1585,36 @@ def test_causal_records_use_the_predicted_schema_and_three_explicit_kinds(
     assert all(record["measurement_kind"] == "predicted-proxy" for record in payload["records"])
     assert all(record["gate_eligible"] is False for record in payload["records"])
     assert all(record["complete_cost_claim_allowed"] is False for record in payload["records"])
+    assert all(record["complete_reference_set"] is True for record in payload["records"])
+    assert all(record["security_claim_allowed"] is False for record in payload["records"])
+    assert all(record["formal_performance_claim"] is False for record in payload["records"])
     assert costs.label in json.dumps(payload)
 
 
 def test_parameterized_fixed_candidate_ids_survive_the_json_csv_join(
     tmp_path: Path,
 ) -> None:
-    candidate_ids = [
-        "padding-reuse",
-        "mini-cssc-delta",
-        "packed-coo-client-lane-delta/capacity=128",
-        "strict-local-repack",
-        "reserved-slack/beta=0",
-        "reserved-slack/beta=0.05",
-        "reserved-slack/beta=0.1",
-        "reserved-slack/beta=0.2",
-        "reserved-slack/beta=0.4",
-        "periodic-repack/windows=1",
-        "periodic-repack/windows=4",
-        "periodic-repack/windows=16",
-        "periodic-repack/windows=64",
-    ]
-    records = [
-        _fixed_record(
-            candidate_id,
-            (
-                "ReservedSlack-CSSC"
-                if candidate_id.startswith("reserved-slack")
-                else (
-                    "PeriodicRepack"
-                    if candidate_id.startswith("periodic-repack")
-                    else "PaddingReuse-CSSC"
-                )
-            ),
-        )
-        for candidate_id in candidate_ids
-    ]
-    selected_id = min(candidate_ids)
-    basis = next(record for record in records if record.candidate_id == selected_id)
-    records.extend(
-        [
-            replace(
-                _tuned_record(selected_id, basis.strategy_kind),
-                metrics=replace(
-                    basis.metrics,
-                    strategy="TunedFixedPolicy",
-                    category="tuned-fixed-policy",
-                    source="tuning-prefix-frozen",
-                ),
-            ),
-            replace(
-                _oracle_record(selected_id, basis.strategy_kind),
-                metrics=replace(
-                    basis.metrics,
-                    strategy="BestFixed-Offline-Oracle",
-                    category="diagnostic-oracle",
-                    source="held-out-hindsight-diagnostic",
-                ),
-            ),
-        ]
-    )
-    tuning_results = {record.candidate_id: record.metrics for record in records[:13]}
-    metadata = {
-        "selected_candidate_id": selected_id,
-        "oracle_candidate_id": selected_id,
-        "fixed_candidate_count": 13,
-    }
+    records, tuning_results, costs, metadata, selected_id, oracle_id = _auditable_report_fixture()
+    candidate_ids = sorted(candidate.candidate_id for candidate in _registered_catalog().candidates)
 
     write_causal_records(
         tmp_path,
         records,
-        UnitCosts(),
+        costs,
         metadata,
         tuning_results=tuning_results,
         selected_candidate_id=selected_id,
-        oracle_candidate_id=selected_id,
+        oracle_candidate_id=oracle_id,
     )
 
     payload = json.loads((tmp_path / "metrics.json").read_text(encoding="utf-8"))
     with (tmp_path / "metrics.csv").open(newline="", encoding="utf-8") as handle:
         csv_records = list(csv.DictReader(handle))
-    json_candidate_ids = [record["candidate_id"] for record in payload["records"][:13]]
-    csv_candidate_ids = [record["candidate_id"] for record in csv_records[:13]]
-    assert json_candidate_ids == sorted(candidate_ids)
-    assert csv_candidate_ids == sorted(candidate_ids)
-    assert len(set(json_candidate_ids)) == 13
+    json_candidate_ids = [record["candidate_id"] for record in payload["records"][:14]]
+    csv_candidate_ids = [record["candidate_id"] for record in csv_records[:14]]
+    assert json_candidate_ids == candidate_ids
+    assert csv_candidate_ids == candidate_ids
+    assert len(set(json_candidate_ids)) == 14
 
 
 def test_causal_plots_label_fixed_points_and_aliases_with_basis_candidate_ids(
@@ -1262,7 +1624,7 @@ def test_causal_plots_label_fixed_points_and_aliases_with_basis_candidate_ids(
     from matplotlib.axes import Axes
 
     records, tuning_results, costs, _metadata, selected_id, oracle_id = _auditable_report_fixture()
-    candidate_ids = [record.candidate_id for record in records[:13]]
+    candidate_ids = [record.candidate_id for record in records[:14]]
     annotations: list[str] = []
     original_annotate = Axes.annotate
 
@@ -1298,7 +1660,7 @@ def test_causal_summary_names_the_frozen_policy_and_diagnostic_oracle(
             "windows_total": 10,
             "span80_by_candidate": {
                 item.candidate_id: ({1: 0.25, 2: 0.125} if index == 0 else {})
-                for index, item in enumerate(items[:13])
+                for index, item in enumerate(items[:14])
             },
         }
     )
@@ -1314,7 +1676,7 @@ def test_causal_summary_names_the_frozen_policy_and_diagnostic_oracle(
     )
 
     summary = (tmp_path / "SUMMARY.md").read_text(encoding="utf-8")
-    assert "day1-causal-predicted-v1" in summary
+    assert "day1-causal-predicted-v2" in summary
     assert "persistent-strategy-snapshots" in summary
     assert "TunedFixedPolicy" in summary
     assert "BestFixed-Offline-Oracle" in summary

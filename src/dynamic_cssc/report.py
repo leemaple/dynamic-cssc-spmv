@@ -10,14 +10,21 @@ from math import isfinite
 from pathlib import Path
 from typing import Literal
 
+from .day1_registry import (
+    CandidateRole,
+    Day1CandidateCatalog,
+    repository_day1_candidate_catalog,
+)
 from .metrics import StrategyMetrics, UnitCosts
+from .simulator import RotationInventory
 
-CAUSAL_SCHEMA = "day1-causal-predicted-v1"
+CAUSAL_SCHEMA = "day1-causal-predicted-v2"
+CAUSAL_COMPLETION_PROOF_SCHEMA = "day1-causal-completion-proof-v1"
 CAUSAL_STATE_MODEL = "persistent-strategy-snapshots"
 CAUSAL_MEASUREMENT_KIND = "predicted-proxy"
 CAUSAL_DISCLOSURE = (
     "Predicted synthetic proxy; bandwidth dimension deferred; "
-    "complete_reference_set=false; full-baseline HOLD."
+    "complete_reference_set=true; performance/security gates remain HOLD."
 )
 CausalRecordKind = Literal["fixed-candidate", "tuned-fixed-policy", "diagnostic-oracle"]
 _CAUSAL_RECORD_KINDS = {
@@ -52,17 +59,52 @@ _CAUSAL_PAYLOAD_KEYS = frozenset(
         "schema",
         "state_model",
         "measurement_kind",
+        "complete_reference_set",
         "gate_eligible",
         "complete_cost_claim_allowed",
+        "security_claim_allowed",
+        "formal_performance_claim",
         "unit_costs",
         "tuning_aggregates",
         "metadata",
         "records",
+        "completion_proof",
     }
 )
 _UNIT_COST_KEYS = frozenset(field.name for field in fields(UnitCosts))
 _STRATEGY_METRIC_KEYS = frozenset(field.name for field in fields(StrategyMetrics))
 _TUNING_AGGREGATE_KEYS = frozenset({"candidate_id", "metrics", "score"})
+_ROTATION_INVENTORY_KEYS = frozenset({"measured_counts_by_exact_index", "required_indices"})
+_FIXED_ROTATION_PROOF_KEYS = frozenset(
+    {"candidate_id", "measured_counts_by_exact_index", "required_indices"}
+)
+_ACCOUNTING_INVARIANTS = (
+    "metadata_units=ci_patch_entries+ci_full_sync_entries",
+    "update_encryptions=update_ciphertexts+compaction_ciphertexts",
+    "query_ciphertexts=cc_multiplications=relinearizations",
+    "result_ciphertexts=decryptions",
+    "blinding_encryptions=blinding_mask_ciphertexts+blinding_dummy_ciphertexts",
+    "blinding_additions=blinding_encryptions",
+    "rotations=sum(measured_counts_by_exact_index)",
+)
+_COMPLETION_PROOF_KEYS = frozenset(
+    {
+        "schema",
+        "registration",
+        "complete_reference_set",
+        "fixed_candidate_count",
+        "reference_candidate_count",
+        "ablation_candidate_count",
+        "tuning_candidate_count",
+        "record_count",
+        "fixed_candidate_ids",
+        "reference_candidate_ids",
+        "ablation_candidate_ids",
+        "tuning_candidate_ids",
+        "fixed_rotation_inventories",
+        "accounting_invariants",
+    }
+)
 _DERIVED_METRIC_RECORD_KEYS = frozenset(
     {
         "predicted_update_time",
@@ -77,8 +119,11 @@ _CAUSAL_RECORD_ENVELOPE_KEYS = frozenset(
         "schema",
         "state_model",
         "measurement_kind",
+        "complete_reference_set",
         "gate_eligible",
         "complete_cost_claim_allowed",
+        "security_claim_allowed",
+        "formal_performance_claim",
         "unit_cost_model",
         "record_kind",
         "candidate_id",
@@ -86,6 +131,8 @@ _CAUSAL_RECORD_ENVELOPE_KEYS = frozenset(
         "strategy_kind",
         "phase",
         "selection_source",
+        "candidate_role",
+        "rotation_inventory",
     }
 )
 _FLAT_UNIT_COST_KEYS = frozenset(f"unit_cost_{field_name}" for field_name in _UNIT_COST_KEYS)
@@ -99,9 +146,14 @@ _CAUSAL_METADATA_REQUIRED_KEYS = frozenset(
     {
         "state_model",
         "measurement_kind",
+        "complete_reference_set",
         "gate_eligible",
         "complete_cost_claim_allowed",
+        "security_claim_allowed",
+        "formal_performance_claim",
         "fixed_candidate_count",
+        "reference_candidate_count",
+        "ablation_candidate_count",
         "selected_candidate_id",
         "oracle_candidate_id",
     }
@@ -124,6 +176,7 @@ class _DecodedCausalPayload:
     metadata: dict[str, object]
     selected_candidate_id: str
     oracle_candidate_id: str
+    candidate_catalog: Day1CandidateCatalog
 
 
 def _require_exact_dict(value: object, field_name: str) -> dict[str, object]:
@@ -170,18 +223,37 @@ def _require_exact_keys(
         raise ValueError(f"{field_name} keys mismatch; missing={missing}, extra={extra}")
 
 
-def _canonical_candidate_ids(expected_candidate_ids: Iterable[str]) -> tuple[str, ...]:
-    if isinstance(expected_candidate_ids, (str, bytes)):
-        raise TypeError("expected_candidate_ids must be an iterable of exact str values")
-    try:
-        candidate_ids = tuple(expected_candidate_ids)
-    except TypeError as error:
-        raise TypeError("expected_candidate_ids must be iterable") from error
-    for candidate_id in candidate_ids:
-        _require_nonempty_exact_str(candidate_id, "expected_candidate_ids entry")
-    if len(candidate_ids) != 13 or len(set(candidate_ids)) != 13:
-        raise ValueError("expected_candidate_ids must be a unique set of exactly 13 values")
-    return tuple(sorted(candidate_ids))
+def _catalog_role_ids(
+    candidate_catalog: Day1CandidateCatalog,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    if type(candidate_catalog) is not Day1CandidateCatalog:
+        raise TypeError("candidate_catalog must be an exact Day1CandidateCatalog")
+    fixed_ids = tuple(sorted(candidate.candidate_id for candidate in candidate_catalog.candidates))
+    reference_ids = tuple(
+        sorted(candidate.candidate_id for candidate in candidate_catalog.selection_candidates)
+    )
+    ablation_ids = tuple(
+        sorted(candidate.candidate_id for candidate in candidate_catalog.ablation_candidates)
+    )
+    if len(fixed_ids) != 14 or len(set(fixed_ids)) != 14:
+        raise ValueError("candidate catalog must contain exactly 14 unique fixed candidates")
+    if len(reference_ids) != 13 or len(set(reference_ids)) != 13:
+        raise ValueError("candidate catalog must contain exactly 13 unique references")
+    if len(ablation_ids) != 1 or len(set(ablation_ids)) != 1:
+        raise ValueError("candidate catalog must contain exactly one ablation")
+    if set(reference_ids).isdisjoint(ablation_ids) and set(fixed_ids) == (
+        set(reference_ids) | set(ablation_ids)
+    ):
+        return fixed_ids, reference_ids, ablation_ids
+    raise ValueError("candidate catalog roles must partition the fixed candidates exactly")
+
+
+def _repository_candidate_catalog() -> Day1CandidateCatalog:
+    candidate_catalog = repository_day1_candidate_catalog()
+    if type(candidate_catalog) is not Day1CandidateCatalog:
+        raise TypeError("repository Day-1 candidate catalog has the wrong type")
+    _catalog_role_ids(candidate_catalog)
+    return candidate_catalog
 
 
 def _decode_unit_costs(value: object) -> UnitCosts:
@@ -209,7 +281,45 @@ def _decode_strategy_metrics(value: object, field_name: str) -> StrategyMetrics:
             f"{field_name}.{identity_field}",
         )
     _validate_metrics_numbers(metrics)
+    _validate_metrics_accounting(metrics)
     return metrics
+
+
+def _decode_rotation_inventory(value: object, field_name: str) -> RotationInventory:
+    serialized = _require_exact_dict(value, field_name)
+    _require_exact_keys(serialized, _ROTATION_INVENTORY_KEYS, field_name)
+    measured_items = _require_exact_list(
+        serialized["measured_counts_by_exact_index"],
+        f"{field_name}.measured_counts_by_exact_index",
+    )
+    measured: list[tuple[int, int]] = []
+    for index, value_item in enumerate(measured_items):
+        item_name = f"{field_name}.measured_counts_by_exact_index[{index}]"
+        item = _require_exact_list(value_item, item_name)
+        if len(item) != 2 or any(type(part) is not int for part in item):
+            raise TypeError(f"{item_name} must contain two exact integers")
+        measured.append((item[0], item[1]))
+    required_items = _require_exact_list(
+        serialized["required_indices"],
+        f"{field_name}.required_indices",
+    )
+    if any(type(index) is not int for index in required_items):
+        raise TypeError(f"{field_name}.required_indices must contain exact integers")
+    try:
+        return RotationInventory(tuple(measured), tuple(required_items))
+    except ValueError as error:
+        raise ValueError(f"{field_name} is not canonical and complete") from error
+
+
+def _rotation_inventory_payload(inventory: RotationInventory) -> dict[str, object]:
+    if type(inventory) is not RotationInventory:
+        raise TypeError("rotation_inventory must be RotationInventory")
+    return {
+        "measured_counts_by_exact_index": [
+            [index, count] for index, count in inventory.measured_counts_by_exact_index
+        ],
+        "required_indices": list(inventory.required_indices),
+    }
 
 
 def _require_finite_number(value: object, field_name: str) -> int | float:
@@ -251,11 +361,12 @@ def _decode_tuning_aggregates(
 def _decode_causal_records(
     value: object,
     costs: UnitCosts,
-    canonical_candidate_ids: tuple[str, ...],
+    candidate_catalog: Day1CandidateCatalog,
 ) -> list[CausalMetricRecord]:
+    fixed_candidate_ids, _reference_ids, _ablation_ids = _catalog_role_ids(candidate_catalog)
     serialized_records = _require_exact_list(value, "records")
-    if len(serialized_records) != 15:
-        raise ValueError("records must contain exactly 15 entries")
+    if len(serialized_records) != 16:
+        raise ValueError("records must contain exactly 16 entries")
     decoded: list[CausalMetricRecord] = []
     for index, value_record in enumerate(serialized_records):
         field_name = f"records[{index}]"
@@ -265,6 +376,10 @@ def _decode_causal_records(
             {key: record[key] for key in _STRATEGY_METRIC_KEYS},
             f"{field_name}.metrics",
         )
+        rotation_inventory = _decode_rotation_inventory(
+            record["rotation_inventory"],
+            f"{field_name}.rotation_inventory",
+        )
         item = CausalMetricRecord(
             record_kind=record["record_kind"],
             candidate_id=record["candidate_id"],
@@ -272,9 +387,13 @@ def _decode_causal_records(
             strategy_kind=record["strategy_kind"],
             selection_source=record["selection_source"],
             metrics=metrics,
+            candidate_role=record["candidate_role"],
+            rotation_inventory=rotation_inventory,
             phase=record["phase"],
             gate_eligible=record["gate_eligible"],
             complete_cost_claim_allowed=record["complete_cost_claim_allowed"],
+            security_claim_allowed=record["security_claim_allowed"],
+            formal_performance_claim=record["formal_performance_claim"],
         )
         expected_record = _causal_record(item, costs)
         for key, expected in expected_record.items():
@@ -283,16 +402,16 @@ def _decode_causal_records(
                 raise ValueError(f"{field_name}.{key} does not match recomputed value")
         decoded.append(item)
 
-    _validate_causal_record_set(decoded)
+    _validate_causal_record_set(decoded, candidate_catalog)
     fixed_ids = tuple(
         item.candidate_id for item in decoded if item.record_kind == "fixed-candidate"
     )
-    if fixed_ids != canonical_candidate_ids:
-        raise ValueError("fixed record candidate_ids must equal canonical sorted IDs")
+    if fixed_ids != fixed_candidate_ids:
+        raise ValueError("fixed record candidate_ids must equal the registered sorted IDs")
     if decoded[-2].record_kind != "tuned-fixed-policy":
-        raise ValueError("records[13] must be the tuned-fixed-policy alias")
+        raise ValueError("records[14] must be the tuned-fixed-policy alias")
     if decoded[-1].record_kind != "diagnostic-oracle":
-        raise ValueError("records[14] must be the diagnostic-oracle alias")
+        raise ValueError("records[15] must be the diagnostic-oracle alias")
     return decoded
 
 
@@ -303,8 +422,11 @@ def _require_exact_value(actual: object, expected: object, field_name: str) -> N
 
 def _decode_causal_metadata(
     value: object,
-    canonical_candidate_ids: tuple[str, ...],
+    candidate_catalog: Day1CandidateCatalog,
 ) -> tuple[str, str]:
+    fixed_candidate_ids, reference_candidate_ids, _ablation_candidate_ids = _catalog_role_ids(
+        candidate_catalog
+    )
     metadata = _require_exact_dict(value, "metadata")
     missing = sorted(_CAUSAL_METADATA_REQUIRED_KEYS - set(metadata))
     if missing:
@@ -312,43 +434,147 @@ def _decode_causal_metadata(
     for field_name, expected in (
         ("state_model", CAUSAL_STATE_MODEL),
         ("measurement_kind", CAUSAL_MEASUREMENT_KIND),
+        ("complete_reference_set", True),
         ("gate_eligible", False),
         ("complete_cost_claim_allowed", False),
-        ("fixed_candidate_count", 13),
+        ("security_claim_allowed", False),
+        ("formal_performance_claim", False),
+        ("fixed_candidate_count", 14),
+        ("reference_candidate_count", 13),
+        ("ablation_candidate_count", 1),
     ):
         _require_exact_value(metadata[field_name], expected, f"metadata.{field_name}")
     selected_candidate_id = metadata["selected_candidate_id"]
     oracle_candidate_id = metadata["oracle_candidate_id"]
     _require_nonempty_exact_str(selected_candidate_id, "metadata.selected_candidate_id")
     _require_nonempty_exact_str(oracle_candidate_id, "metadata.oracle_candidate_id")
-    if selected_candidate_id not in canonical_candidate_ids:
-        raise ValueError("metadata.selected_candidate_id is not a fixed candidate")
-    if oracle_candidate_id not in canonical_candidate_ids:
-        raise ValueError("metadata.oracle_candidate_id is not a fixed candidate")
+    if selected_candidate_id not in reference_candidate_ids:
+        raise ValueError("metadata.selected_candidate_id is not a selectable reference")
+    if oracle_candidate_id not in reference_candidate_ids:
+        raise ValueError("metadata.oracle_candidate_id is not a reference candidate")
     span80_by_candidate = metadata.get("span80_by_candidate")
     if span80_by_candidate is not None:
         span80 = _require_exact_dict(span80_by_candidate, "metadata.span80_by_candidate")
-        if tuple(sorted(span80)) != canonical_candidate_ids:
-            raise ValueError("metadata.span80_by_candidate keys must equal canonical candidate IDs")
+        if tuple(sorted(span80)) != fixed_candidate_ids:
+            raise ValueError("metadata.span80_by_candidate keys must equal registered fixed IDs")
     return selected_candidate_id, oracle_candidate_id
 
 
-def validate_causal_payload(
-    payload: object,
-    *,
-    expected_candidate_ids: Iterable[str],
-) -> None:
-    """Validate one serialized Day-1 causal payload without external state."""
+def _completion_proof_payload(
+    records: Iterable[CausalMetricRecord],
+    tuning_candidate_ids: Iterable[str],
+    candidate_catalog: Day1CandidateCatalog,
+) -> dict[str, object]:
+    fixed_candidate_ids, reference_candidate_ids, ablation_candidate_ids = _catalog_role_ids(
+        candidate_catalog
+    )
+    records_tuple = tuple(records)
+    fixed_by_candidate = {
+        item.candidate_id: item for item in records_tuple if item.record_kind == "fixed-candidate"
+    }
+    canonical_tuning_ids = tuple(sorted(tuning_candidate_ids))
+    return {
+        "schema": CAUSAL_COMPLETION_PROOF_SCHEMA,
+        "registration": asdict(candidate_catalog.registration),
+        "complete_reference_set": True,
+        "fixed_candidate_count": 14,
+        "reference_candidate_count": 13,
+        "ablation_candidate_count": 1,
+        "tuning_candidate_count": 13,
+        "record_count": 16,
+        "fixed_candidate_ids": list(fixed_candidate_ids),
+        "reference_candidate_ids": list(reference_candidate_ids),
+        "ablation_candidate_ids": list(ablation_candidate_ids),
+        "tuning_candidate_ids": list(canonical_tuning_ids),
+        "fixed_rotation_inventories": [
+            {
+                "candidate_id": candidate_id,
+                **_rotation_inventory_payload(fixed_by_candidate[candidate_id].rotation_inventory),
+            }
+            for candidate_id in fixed_candidate_ids
+        ],
+        "accounting_invariants": list(_ACCOUNTING_INVARIANTS),
+    }
 
-    _decode_causal_payload(payload, expected_candidate_ids=expected_candidate_ids)
+
+def _require_exact_json_tree(actual: object, expected: object, field_name: str) -> None:
+    if type(actual) is not type(expected):
+        raise ValueError(f"{field_name} has a noncanonical JSON type")
+    if type(expected) is dict:
+        actual_dict = _require_exact_dict(actual, field_name)
+        expected_dict = _require_exact_dict(expected, field_name)
+        _require_exact_keys(actual_dict, frozenset(expected_dict), field_name)
+        for key, expected_value in expected_dict.items():
+            _require_exact_json_tree(
+                actual_dict[key],
+                expected_value,
+                f"{field_name}.{key}",
+            )
+        return
+    if type(expected) is list:
+        actual_list = _require_exact_list(actual, field_name)
+        expected_list = _require_exact_list(expected, field_name)
+        if len(actual_list) != len(expected_list):
+            raise ValueError(f"{field_name} has the wrong length")
+        for index, (actual_item, expected_item) in enumerate(
+            zip(actual_list, expected_list, strict=True)
+        ):
+            _require_exact_json_tree(
+                actual_item,
+                expected_item,
+                f"{field_name}[{index}]",
+            )
+        return
+    if actual != expected:
+        raise ValueError(f"{field_name} does not match the completion proof")
+
+
+def _decode_completion_proof(
+    value: object,
+    records: list[CausalMetricRecord],
+    tuning_candidate_ids: Iterable[str],
+    candidate_catalog: Day1CandidateCatalog,
+) -> None:
+    proof = _require_exact_dict(value, "completion_proof")
+    _require_exact_keys(proof, _COMPLETION_PROOF_KEYS, "completion_proof")
+    rotation_items = _require_exact_list(
+        proof["fixed_rotation_inventories"],
+        "completion_proof.fixed_rotation_inventories",
+    )
+    for index, value_item in enumerate(rotation_items):
+        field_name = f"completion_proof.fixed_rotation_inventories[{index}]"
+        item = _require_exact_dict(value_item, field_name)
+        _require_exact_keys(item, _FIXED_ROTATION_PROOF_KEYS, field_name)
+        _decode_rotation_inventory(
+            {
+                "measured_counts_by_exact_index": item["measured_counts_by_exact_index"],
+                "required_indices": item["required_indices"],
+            },
+            field_name,
+        )
+    expected = _completion_proof_payload(
+        records,
+        tuning_candidate_ids,
+        candidate_catalog,
+    )
+    _require_exact_json_tree(proof, expected, "completion_proof")
+
+
+def validate_causal_payload(payload: object) -> None:
+    """Validate one serialized Day-1 causal payload against repository authority."""
+
+    _decode_causal_payload(
+        payload,
+        candidate_catalog=_repository_candidate_catalog(),
+    )
 
 
 def _decode_causal_payload(
     payload: object,
     *,
-    expected_candidate_ids: Iterable[str],
+    candidate_catalog: Day1CandidateCatalog,
 ) -> _DecodedCausalPayload:
-    """Validate and decode one serialized Day-1 causal payload."""
+    """Purely validate and decode one serialized Day-1 causal payload."""
 
     _validate_json_value(payload, "payload")
     payload_dict = _require_exact_dict(payload, "payload")
@@ -357,30 +583,35 @@ def _decode_causal_payload(
         ("schema", CAUSAL_SCHEMA),
         ("state_model", CAUSAL_STATE_MODEL),
         ("measurement_kind", CAUSAL_MEASUREMENT_KIND),
+        ("complete_reference_set", True),
         ("gate_eligible", False),
         ("complete_cost_claim_allowed", False),
+        ("security_claim_allowed", False),
+        ("formal_performance_claim", False),
     ):
         _require_exact_value(payload_dict[field_name], expected, field_name)
-    canonical_candidate_ids = _canonical_candidate_ids(expected_candidate_ids)
+    _fixed_candidate_ids, reference_candidate_ids, _ablation_candidate_ids = _catalog_role_ids(
+        candidate_catalog
+    )
     costs = _decode_unit_costs(payload_dict["unit_costs"])
     tuning_by_candidate = _decode_tuning_aggregates(
         payload_dict["tuning_aggregates"],
         costs,
-        canonical_candidate_ids,
+        reference_candidate_ids,
     )
     records = _decode_causal_records(
         payload_dict["records"],
         costs,
-        canonical_candidate_ids,
+        candidate_catalog,
     )
     selected_candidate_id, oracle_candidate_id = _decode_causal_metadata(
         payload_dict["metadata"],
-        canonical_candidate_ids,
+        candidate_catalog,
     )
     fixed_by_candidate = {
         item.candidate_id: item.metrics for item in records if item.record_kind == "fixed-candidate"
     }
-    for candidate_id in canonical_candidate_ids:
+    for candidate_id in reference_candidate_ids:
         tuning_metrics = tuning_by_candidate[candidate_id]
         fixed_metrics = fixed_by_candidate[candidate_id]
         if any(
@@ -398,12 +629,18 @@ def _decode_causal_payload(
     if selected_candidate_id != recomputed_selected_id:
         raise ValueError("selected_candidate_id does not match tuning_aggregates ranking")
     recomputed_oracle_id = min(
-        (metrics.predicted_time(costs), candidate_id)
-        for candidate_id, metrics in fixed_by_candidate.items()
+        (fixed_by_candidate[candidate_id].predicted_time(costs), candidate_id)
+        for candidate_id in reference_candidate_ids
     )[1]
     if oracle_candidate_id != recomputed_oracle_id:
-        raise ValueError("oracle_candidate_id does not match held-out fixed ranking")
+        raise ValueError("oracle_candidate_id does not match held-out reference ranking")
     _validate_alias_ids(records, selected_candidate_id, oracle_candidate_id)
+    _decode_completion_proof(
+        payload_dict["completion_proof"],
+        records,
+        tuning_by_candidate,
+        candidate_catalog,
+    )
     return _DecodedCausalPayload(
         records=tuple(records),
         costs=costs,
@@ -411,6 +648,7 @@ def _decode_causal_payload(
         metadata=dict(payload_dict["metadata"]),
         selected_candidate_id=selected_candidate_id,
         oracle_candidate_id=oracle_candidate_id,
+        candidate_catalog=candidate_catalog,
     )
 
 
@@ -436,6 +674,28 @@ def _validate_metrics_numbers(metrics: StrategyMetrics) -> None:
             raise ValueError(f"metrics.{field_name} must be a finite nonnegative integer")
 
 
+def _validate_metrics_accounting(metrics: StrategyMetrics) -> None:
+    if metrics.update_encryptions != (metrics.update_ciphertexts + metrics.compaction_ciphertexts):
+        raise ValueError(
+            "metrics.update_encryptions must equal update_ciphertexts + compaction_ciphertexts"
+        )
+    if not (metrics.query_ciphertexts == metrics.cc_multiplications == metrics.relinearizations):
+        raise ValueError(
+            "metrics.query_ciphertexts, cc_multiplications, and relinearizations must be equal"
+        )
+    if metrics.result_ciphertexts != metrics.decryptions:
+        raise ValueError("metrics.result_ciphertexts must equal decryptions")
+    if metrics.blinding_encryptions != (
+        metrics.blinding_mask_ciphertexts + metrics.blinding_dummy_ciphertexts
+    ):
+        raise ValueError(
+            "metrics.blinding_encryptions must equal blinding_mask_ciphertexts + "
+            "blinding_dummy_ciphertexts"
+        )
+    if metrics.blinding_additions != metrics.blinding_encryptions:
+        raise ValueError("metrics.blinding_additions must equal blinding_encryptions")
+
+
 @dataclass(frozen=True, slots=True)
 class CausalMetricRecord:
     record_kind: CausalRecordKind
@@ -444,9 +704,13 @@ class CausalMetricRecord:
     strategy_kind: str
     selection_source: str
     metrics: StrategyMetrics
+    candidate_role: CandidateRole = "reference"
+    rotation_inventory: RotationInventory = RotationInventory()
     phase: Literal["held-out"] = "held-out"
     gate_eligible: Literal[False] = False
     complete_cost_claim_allowed: Literal[False] = False
+    security_claim_allowed: Literal[False] = False
+    formal_performance_claim: Literal[False] = False
 
     def __post_init__(self) -> None:
         self._validate()
@@ -459,6 +723,7 @@ class CausalMetricRecord:
             "strategy_kind",
             "phase",
             "selection_source",
+            "candidate_role",
         ):
             _require_nonempty_exact_str(getattr(self, field_name), field_name)
         _require_exact_false(self.gate_eligible, "gate_eligible")
@@ -466,8 +731,17 @@ class CausalMetricRecord:
             self.complete_cost_claim_allowed,
             "complete_cost_claim_allowed",
         )
+        _require_exact_false(self.security_claim_allowed, "security_claim_allowed")
+        _require_exact_false(
+            self.formal_performance_claim,
+            "formal_performance_claim",
+        )
         if self.record_kind not in _CAUSAL_RECORD_KINDS:
             raise ValueError("unknown causal record_kind")
+        if self.candidate_role not in {"reference", "ablation"}:
+            raise ValueError("candidate_role must be reference or ablation")
+        if self.record_kind != "fixed-candidate" and self.candidate_role != "reference":
+            raise ValueError(f"{self.record_kind} must have candidate_role reference")
         if self.phase != "held-out":
             raise ValueError("causal record phase must be held-out")
 
@@ -483,7 +757,15 @@ class CausalMetricRecord:
             raise ValueError(f"selection_source contradicts record_kind {self.record_kind}")
         if not isinstance(self.metrics, StrategyMetrics):
             raise TypeError("metrics must be StrategyMetrics")
+        if type(self.rotation_inventory) is not RotationInventory:
+            raise TypeError("rotation_inventory must be RotationInventory")
         _validate_metrics_numbers(self.metrics)
+        _validate_metrics_accounting(self.metrics)
+        measured_rotation_count = sum(
+            count for _index, count in self.rotation_inventory.measured_counts_by_exact_index
+        )
+        if measured_rotation_count != self.metrics.rotations:
+            raise ValueError("rotation inventory must reconcile with metrics.rotations")
         for field_name in ("strategy", "category", "source"):
             _require_nonempty_exact_str(
                 getattr(self.metrics, field_name),
@@ -495,6 +777,7 @@ class CausalMetricRecord:
         ]
         if expected_strategy is None:
             expected_strategy = self.strategy_kind
+            expected_category = self.candidate_role
         if self.metrics.strategy != expected_strategy:
             if self.record_kind == "fixed-candidate":
                 raise ValueError("fixed-candidate strategy_kind must match metrics.strategy")
@@ -505,7 +788,16 @@ class CausalMetricRecord:
             raise ValueError(f"metrics.source contradicts record_kind {self.record_kind}")
 
 
-def _validate_causal_record_set(items: list[CausalMetricRecord]) -> None:
+def _validate_causal_record_set(
+    items: list[CausalMetricRecord],
+    candidate_catalog: Day1CandidateCatalog,
+) -> None:
+    fixed_candidate_ids, _reference_candidate_ids, _ablation_candidate_ids = _catalog_role_ids(
+        candidate_catalog
+    )
+    registered_by_id = {
+        candidate.candidate_id: candidate for candidate in candidate_catalog.candidates
+    }
     fixed_by_candidate: dict[str, CausalMetricRecord] = {}
     tuned_count = 0
     oracle_count = 0
@@ -536,6 +828,8 @@ def _validate_causal_record_set(items: list[CausalMetricRecord]) -> None:
             raise ValueError(
                 f"{item.record_kind} has no fixed basis candidate_id {item.candidate_id}"
             )
+        if basis.candidate_role != "reference":
+            raise ValueError(f"{item.record_kind} cannot use an ablation basis")
         if item.strategy_kind != basis.metrics.strategy:
             raise ValueError(
                 f"{item.record_kind} basis strategy_kind does not match "
@@ -552,6 +846,21 @@ def _validate_causal_record_set(items: list[CausalMetricRecord]) -> None:
                 f"{item.record_kind} metrics must equal its fixed basis after "
                 "normalizing strategy/category/source identity"
             )
+        if item.rotation_inventory != basis.rotation_inventory:
+            raise ValueError(f"{item.record_kind} rotation inventory must equal its fixed basis")
+
+    if tuple(sorted(fixed_by_candidate)) != fixed_candidate_ids:
+        raise ValueError("fixed records must exactly match the registered candidate IDs")
+    for candidate_id, item in fixed_by_candidate.items():
+        registered = registered_by_id[candidate_id]
+        if item.strategy_kind != registered.strategy:
+            raise ValueError(
+                f"fixed record {candidate_id} strategy_kind does not match registration"
+            )
+        if item.candidate_role != registered.role:
+            raise ValueError(
+                f"fixed record {candidate_id} candidate_role does not match registration"
+            )
 
 
 def _causal_record(item: CausalMetricRecord, costs: UnitCosts) -> dict[str, object]:
@@ -561,8 +870,11 @@ def _causal_record(item: CausalMetricRecord, costs: UnitCosts) -> dict[str, obje
             "schema": CAUSAL_SCHEMA,
             "state_model": CAUSAL_STATE_MODEL,
             "measurement_kind": CAUSAL_MEASUREMENT_KIND,
+            "complete_reference_set": True,
             "gate_eligible": item.gate_eligible,
             "complete_cost_claim_allowed": item.complete_cost_claim_allowed,
+            "security_claim_allowed": item.security_claim_allowed,
+            "formal_performance_claim": item.formal_performance_claim,
             "unit_cost_model": "normalized-predicted-proxy",
             "record_kind": item.record_kind,
             "candidate_id": item.candidate_id,
@@ -570,6 +882,8 @@ def _causal_record(item: CausalMetricRecord, costs: UnitCosts) -> dict[str, obje
             "strategy_kind": item.strategy_kind,
             "phase": item.phase,
             "selection_source": item.selection_source,
+            "candidate_role": item.candidate_role,
+            "rotation_inventory": _rotation_inventory_payload(item.rotation_inventory),
         }
     )
     record.update({f"unit_cost_{field_name}": value for field_name, value in asdict(costs).items()})
@@ -581,14 +895,18 @@ def _validate_tuning_selection(
     tuning_results: Mapping[str, StrategyMetrics],
     costs: UnitCosts,
     selected_candidate_id: str,
+    candidate_catalog: Day1CandidateCatalog,
 ) -> list[dict[str, object]]:
     if not isinstance(tuning_results, Mapping):
         raise TypeError("tuning_results must be a mapping")
     fixed_by_candidate = {
         item.candidate_id: item for item in items if item.record_kind == "fixed-candidate"
     }
-    if len(fixed_by_candidate) != 13:
-        raise ValueError("causal report must contain exactly 13 fixed candidates")
+    fixed_candidate_ids, reference_candidate_ids, _ablation_candidate_ids = _catalog_role_ids(
+        candidate_catalog
+    )
+    if tuple(sorted(fixed_by_candidate)) != fixed_candidate_ids:
+        raise ValueError("causal report must contain exactly 14 registered fixed candidates")
     tuning_entries = list(tuning_results.items())
     tuning_ids = [candidate_id for candidate_id, _metrics in tuning_entries]
     for candidate_id in tuning_ids:
@@ -596,13 +914,13 @@ def _validate_tuning_selection(
     if len(tuning_ids) != len(set(tuning_ids)):
         raise ValueError("tuning_results contains duplicate candidate_id values")
     tuning_by_candidate = dict(tuning_entries)
-    fixed_candidate_ids = set(fixed_by_candidate)
+    selectable_candidate_ids = set(reference_candidate_ids)
     tuning_candidate_ids = set(tuning_by_candidate)
-    missing = sorted(fixed_candidate_ids - tuning_candidate_ids)
-    extra = sorted(tuning_candidate_ids - fixed_candidate_ids)
+    missing = sorted(selectable_candidate_ids - tuning_candidate_ids)
+    extra = sorted(tuning_candidate_ids - selectable_candidate_ids)
     if missing or extra:
         raise ValueError(
-            "tuning_results IDs must exactly match fixed candidate IDs; "
+            "tuning_results IDs must exactly match registered reference candidate IDs; "
             f"missing={missing}, extra={extra}"
         )
     ranked: list[tuple[float, str]] = []
@@ -610,6 +928,7 @@ def _validate_tuning_selection(
         if not isinstance(metrics, StrategyMetrics):
             raise TypeError("tuning_results values must be StrategyMetrics")
         _validate_metrics_numbers(metrics)
+        _validate_metrics_accounting(metrics)
         fixed_metrics = fixed_by_candidate[candidate_id].metrics
         if any(
             getattr(metrics, field_name) != getattr(fixed_metrics, field_name)
@@ -644,7 +963,7 @@ def _validate_oracle_selection(
 ) -> None:
     ranked: list[tuple[float, str]] = []
     for item in items:
-        if item.record_kind != "fixed-candidate":
+        if item.record_kind != "fixed-candidate" or item.candidate_role != "reference":
             continue
         score = item.metrics.predicted_time(costs)
         if not isfinite(score):
@@ -663,13 +982,18 @@ def _validate_metadata_ids(
     if not isinstance(metadata, Mapping):
         raise TypeError("metadata must be a mapping")
     fixed_candidate_count = metadata.get("fixed_candidate_count")
-    if type(fixed_candidate_count) is not int or fixed_candidate_count != 13:
-        raise ValueError("metadata.fixed_candidate_count must equal 13")
+    if type(fixed_candidate_count) is not int or fixed_candidate_count != 14:
+        raise ValueError("metadata.fixed_candidate_count must equal 14")
     canonical_fields: dict[str, object] = {
         "state_model": CAUSAL_STATE_MODEL,
         "measurement_kind": CAUSAL_MEASUREMENT_KIND,
+        "complete_reference_set": True,
         "gate_eligible": False,
         "complete_cost_claim_allowed": False,
+        "security_claim_allowed": False,
+        "formal_performance_claim": False,
+        "reference_candidate_count": 13,
+        "ablation_candidate_count": 1,
     }
     for field_name, expected in canonical_fields.items():
         if field_name not in metadata:
@@ -756,8 +1080,11 @@ def _canonical_payload(decoded: _DecodedCausalPayload) -> dict[str, object]:
         "schema": CAUSAL_SCHEMA,
         "state_model": CAUSAL_STATE_MODEL,
         "measurement_kind": CAUSAL_MEASUREMENT_KIND,
+        "complete_reference_set": True,
         "gate_eligible": False,
         "complete_cost_claim_allowed": False,
+        "security_claim_allowed": False,
+        "formal_performance_claim": False,
         "unit_costs": serialized_costs,
         "tuning_aggregates": [
             {
@@ -769,6 +1096,11 @@ def _canonical_payload(decoded: _DecodedCausalPayload) -> dict[str, object]:
         ],
         "metadata": decoded.metadata,
         "records": [_causal_record(item, decoded.costs) for item in decoded.records],
+        "completion_proof": _completion_proof_payload(
+            decoded.records,
+            decoded.tuning_results,
+            decoded.candidate_catalog,
+        ),
     }
 
 
@@ -784,9 +1116,11 @@ def _causal_summary_text(decoded: _DecodedCausalPayload) -> str:
         f"- Measurement kind: `{CAUSAL_MEASUREMENT_KIND}`",
         "- `gate_eligible=false`",
         "- `complete_cost_claim_allowed=false`",
-        "- `complete_reference_set=false`",
+        "- `security_claim_allowed=false`",
+        "- `formal_performance_claim=false`",
+        "- `complete_reference_set=true`",
         "- Bandwidth dimension: `deferred`",
-        "- Full-baseline verdict: **HOLD**",
+        "- Performance/security gates remain: **HOLD**",
         f"- Workload: `{decoded.metadata.get('workload')}`",
         f"- Publication windows: `{decoded.metadata.get('windows_total')}`",
         f"- Selected fixed basis: `{decoded.selected_candidate_id}`",
@@ -898,7 +1232,9 @@ def _causal_plot_artifacts(decoded: _DecodedCausalPayload) -> dict[str, bytes]:
         )
         for item in items
     ]
-    footer = "Bandwidth deferred | complete_reference_set=false | full-baseline HOLD"
+    footer = (
+        "Bandwidth deferred | complete_reference_set=true | performance/security gates remain HOLD"
+    )
 
     figure, axis = plt.subplots(figsize=(10, 6))
     axis.scatter(query_values, update_values)
@@ -994,14 +1330,12 @@ def _render_causal_artifact_bytes(
 def render_causal_artifacts(
     output_dir: Path,
     payload: object,
-    *,
-    expected_candidate_ids: Iterable[str],
 ) -> dict[str, str]:
     """Validate a payload and write its canonical, reproducible report artifacts."""
 
     decoded = _decode_causal_payload(
         payload,
-        expected_candidate_ids=expected_candidate_ids,
+        candidate_catalog=_repository_candidate_catalog(),
     )
     artifacts = _render_causal_artifact_bytes(decoded, CAUSAL_ARTIFACT_FILENAMES)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1020,9 +1354,10 @@ def _validate_causal_audit(
     tuning_results: Mapping[str, StrategyMetrics],
     selected_candidate_id: str,
     oracle_candidate_id: str,
+    candidate_catalog: Day1CandidateCatalog,
 ) -> tuple[dict[str, object], list[dict[str, object]]]:
     serialized_costs = _serialize_unit_costs(costs)
-    _validate_causal_record_set(items)
+    _validate_causal_record_set(items, candidate_catalog)
     _validate_metadata_ids(metadata, selected_candidate_id, oracle_candidate_id)
     _validate_metadata_candidate_ids(metadata, items)
     tuning_aggregates = _validate_tuning_selection(
@@ -1030,6 +1365,7 @@ def _validate_causal_audit(
         tuning_results,
         costs,
         selected_candidate_id,
+        candidate_catalog,
     )
     _validate_oracle_selection(items, costs, oracle_candidate_id)
     _validate_alias_ids(items, selected_candidate_id, oracle_candidate_id)
@@ -1044,6 +1380,7 @@ def _decode_causal_inputs(
     tuning_results: Mapping[str, StrategyMetrics],
     selected_candidate_id: str,
     oracle_candidate_id: str,
+    candidate_catalog: Day1CandidateCatalog,
 ) -> _DecodedCausalPayload:
     serialized_costs, tuning_aggregates = _validate_causal_audit(
         items,
@@ -1052,6 +1389,7 @@ def _decode_causal_inputs(
         tuning_results=tuning_results,
         selected_candidate_id=selected_candidate_id,
         oracle_candidate_id=oracle_candidate_id,
+        candidate_catalog=candidate_catalog,
     )
     canonical_items = [
         *sorted(
@@ -1065,25 +1403,37 @@ def _decode_causal_inputs(
         "schema": CAUSAL_SCHEMA,
         "state_model": CAUSAL_STATE_MODEL,
         "measurement_kind": CAUSAL_MEASUREMENT_KIND,
+        "complete_reference_set": True,
         "gate_eligible": False,
         "complete_cost_claim_allowed": False,
+        "security_claim_allowed": False,
+        "formal_performance_claim": False,
         "unit_costs": serialized_costs,
         "tuning_aggregates": tuning_aggregates,
         "metadata": {
             **metadata,
             "state_model": CAUSAL_STATE_MODEL,
             "measurement_kind": CAUSAL_MEASUREMENT_KIND,
+            "complete_reference_set": True,
             "gate_eligible": False,
             "complete_cost_claim_allowed": False,
+            "security_claim_allowed": False,
+            "formal_performance_claim": False,
+            "fixed_candidate_count": 14,
+            "reference_candidate_count": 13,
+            "ablation_candidate_count": 1,
         },
         "records": [_causal_record(item, costs) for item in canonical_items],
+        "completion_proof": _completion_proof_payload(
+            canonical_items,
+            tuning_results,
+            candidate_catalog,
+        ),
     }
     serialized_payload = json.loads(json.dumps(payload, allow_nan=False))
     return _decode_causal_payload(
         serialized_payload,
-        expected_candidate_ids=(
-            item.candidate_id for item in canonical_items if item.record_kind == "fixed-candidate"
-        ),
+        candidate_catalog=candidate_catalog,
     )
 
 
@@ -1106,6 +1456,7 @@ def write_causal_records(
         tuning_results=tuning_results,
         selected_candidate_id=selected_candidate_id,
         oracle_candidate_id=oracle_candidate_id,
+        candidate_catalog=_repository_candidate_catalog(),
     )
     artifacts = _render_causal_artifact_bytes(
         decoded,
@@ -1133,6 +1484,7 @@ def write_causal_summary(
         tuning_results=tuning_results,
         selected_candidate_id=selected_candidate_id,
         oracle_candidate_id=oracle_candidate_id,
+        candidate_catalog=_repository_candidate_catalog(),
     )
     artifacts = _render_causal_artifact_bytes(decoded, ("SUMMARY.md",))
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1230,11 +1582,15 @@ def write_causal_plots(
         {
             "selected_candidate_id": selected_candidate_id,
             "oracle_candidate_id": oracle_candidate_id,
-            "fixed_candidate_count": 13,
+            "fixed_candidate_count": 14,
+            "reference_candidate_count": 13,
+            "ablation_candidate_count": 1,
+            "complete_reference_set": True,
         },
         tuning_results=tuning_results,
         selected_candidate_id=selected_candidate_id,
         oracle_candidate_id=oracle_candidate_id,
+        candidate_catalog=_repository_candidate_catalog(),
     )
     artifacts = _render_causal_artifact_bytes(
         decoded,

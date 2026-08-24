@@ -33,6 +33,7 @@ class StrategyMetrics:
     query_ciphertexts: int = 0
     result_ciphertexts: int = 0
     cc_multiplications: int = 0
+    relinearizations: int = 0
     rotations: int = 0
     additions: int = 0
     plaintext_masks: int = 0
@@ -45,16 +46,29 @@ class StrategyMetrics:
     mask_random_elements: int = 0
     mask_mapped_elements: int = 0
     client_reorder_elements: int = 0
-    metadata_units: int = 0
+    ci_patch_entries: int = 0
+    ci_full_sync_entries: int = 0
+    metadata_units: int | None = None
     overflow_updates: int = 0
     absorbed_updates: int = 0
     source: str = "predicted-proxy"
+
+    def __post_init__(self) -> None:
+        expected_metadata_units = self.ci_patch_entries + self.ci_full_sync_entries
+        if self.metadata_units is None:
+            self.metadata_units = expected_metadata_units
+        elif self.metadata_units != expected_metadata_units:
+            raise ValueError("metadata_units must equal ci_patch_entries + ci_full_sync_entries")
 
     def merge(self, other: StrategyMetrics) -> None:
         for field_name in self.__dataclass_fields__:
             if field_name in {"strategy", "category", "source"}:
                 continue
             setattr(self, field_name, getattr(self, field_name) + getattr(other, field_name))
+        if self.metadata_units != self.ci_patch_entries + self.ci_full_sync_entries:
+            raise AssertionError(
+                "metadata_units must equal ci_patch_entries + ci_full_sync_entries"
+            )
 
     def predicted_update_time(self, costs: UnitCosts) -> float:
         return self.update_encryptions * costs.encrypt

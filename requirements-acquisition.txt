@@ -1,0 +1,23 @@
+--only-binary=:all:
+
+# Frozen CPython 3.12 binary wheels for the publication acquisition transport:
+# macOS arm64/x86_64, manylinux2014 arm64/x86_64, and musllinux 1.2
+# arm64/x86_64. Source distributions and unlisted platforms fail closed.
+certifi==2026.7.22 \
+    --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775
+cffi==2.1.1 \
+    --hash=sha256:f81b3b8f3d4e343550fa4baa0e479bba9f2d29ce9c2e9b51d1ce1718d7442fcf \
+    --hash=sha256:c8c69575568085ba0b1b10c0249d779a214aea6f6522e949a0fc9fb0fcb449d0 \
+    --hash=sha256:68e62fe11f30d5ca8289242866f0a5291402d8529ca2178ab8afc5c9694ae890 \
+    --hash=sha256:c1453022f490d2459a11819d83ad1d586e9ff65a12ac3e705ffebd46d3685dcf \
+    --hash=sha256:208f941bb9d18e768138677f0a6d2ce01f590df56043dda1df1535ac57c88517 \
+    --hash=sha256:210019b6c7cf07f081b4c54635c8cf744377001350e29cc0f81c4377b4797735
+curl-cffi==0.16.1 \
+    --hash=sha256:648f3150ef49fea01f6e13b99c524d2589bacf4ca080484aae0587c014f3f89d \
+    --hash=sha256:dce85922435cb6678e8b01a982b65ce20e8fb681e5d18588073ba3984569e76a \
+    --hash=sha256:1bc9f913212d9e13499dde43b6527fa3613f3846035ea9c5b05ca24be1153a75 \
+    --hash=sha256:793d79c61ad4f8b0aeb9fd13afa58ff38a48110946b781e257013f8ffe3501dc \
+    --hash=sha256:37890c60c5865f98b32050326612e5eee570a9767da57d4c7ef698f0bc80c1e4 \
+    --hash=sha256:270c8eb46002d878d361f75265b17428a54afe06a35810de9f60acbd89bdec26
+pycparser==3.0 \
+    --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992

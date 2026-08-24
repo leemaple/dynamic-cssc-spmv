@@ -1,11 +1,28 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, fields
+from pathlib import Path
+from types import MappingProxyType
+
+from .evidence_compatibility import (
+    STRONG_REFERENCE_EVIDENCE_ANCHOR_PATH,
+    EvidenceCompatibilityError,
+    EvidenceRole,
+    HistoricalStrongSourceAttestation,
+    _verify_historical_strong_source,
+    read_current_role_evidence_data,
+)
 
 __all__ = (
+    "HistoricalStrongSourceAttestation",
     "StrongReferenceCapability",
     "StrongReferenceReceiptError",
+    "repository_historical_strong_source_attestation",
+    "repository_strong_reference_capability",
     "validate_strong_reference_receipt",
 )
 
@@ -22,7 +39,7 @@ _LOWER_GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 
 
 class StrongReferenceReceiptError(ValueError):
-    """Raised when a receipt cannot authorize a strong-reference capability."""
+    """Raised when a receipt cannot produce a repository-anchored projection."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +50,8 @@ class _StrongReferenceTrustAnchor:
     witness_run_id: int
     property_contract_run_id: int
     compiler_sha256: str
-    validator_sha256: str
+    whole_query_validator_sha256: str
+    property_contract_validator_sha256: str
     witness_source_sha256: str
     witness_binary_sha256: str
     binding_generator_sha256: str
@@ -50,13 +68,14 @@ class _StrongReferenceTrustAnchor:
 
 @dataclass(frozen=True, slots=True, init=False)
 class StrongReferenceCapability:
-    """Identifiers admitted from one pinned whole-query evidence receipt.
+    """Immutable descriptive projection of one pinned evidence receipt.
 
-    The disabled constructor is API hardening, not cryptographic sealing. A future
-    registry must call public admission against the repository-owned trust-anchor
-    allowlist at load time; it must not accept a caller-supplied capability as authority.
+    The disabled constructor covers conventional construction only; Python callers can
+    forge equivalent values through reflection. The value is therefore never authority.
+    A future registry must use the zero-argument repository admission seam itself.
     """
 
+    authority_state: str
     schema_version: str
     evidence_scope: str
     source_git_sha: str
@@ -66,7 +85,8 @@ class StrongReferenceCapability:
     openfhe_commit: str
     segment_width: int
     compiler_sha256: str
-    validator_sha256: str
+    whole_query_validator_sha256: str
+    property_contract_validator_sha256: str
     witness_source_sha256: str
     witness_binary_sha256: str
     binding_generator_sha256: str
@@ -80,10 +100,24 @@ class StrongReferenceCapability:
     contract_test_source_sha256: str
     contract_junit_sha256: str
     contract_evidence_sha256: str
+    formal_authority_granted: bool
+    gate_eligible: bool
+    candidate_registered: bool
+    candidate_registration_allowed: bool
+    complete_reference_set: bool
+    complete_cost_claim_allowed: bool
+    formal_parameter_claim_allowed: bool
+    end_to_end_correctness_claim_allowed: bool
+    security_claim_allowed: bool
+    formal_correctness_claim: bool
+    formal_security_claim: bool
+    formal_performance_claim: bool
+    mixed_workload_parameter_claim: bool
 
     def __init__(self) -> None:
         raise TypeError(
-            "StrongReferenceCapability is produced only by validate_strong_reference_receipt"
+            "conventional StrongReferenceCapability construction is disabled; "
+            "validate a receipt for a descriptive projection"
         )
 
 
@@ -96,78 +130,83 @@ def _anchor(field: str) -> _Anchored:
     return _Anchored(field)
 
 
-_RECEIPT_V1_SCHEMA: dict[str, object] = {
-    "schema_version": RECEIPT_SCHEMA_VERSION,
-    "status": "pass",
-    "evidence_valid": True,
-    "evidence_scope": WHOLE_QUERY_EVIDENCE_SCOPE,
-    "builder_grammar_authorized": True,
-    "source_git_sha": _anchor("source_git_sha"),
-    "witness_run_id": _anchor("witness_run_id"),
-    "openfhe": {
-        "version": PINNED_OPENFHE_VERSION,
-        "commit": PINNED_OPENFHE_COMMIT,
-    },
-    "segment_width": FROZEN_SEGMENT_WIDTH,
-    "provenance": {
-        "compiler_sha256": _anchor("compiler_sha256"),
-        "validator_sha256": _anchor("validator_sha256"),
-        "witness_source_sha256": _anchor("witness_source_sha256"),
-        "witness_binary_sha256": _anchor("witness_binary_sha256"),
-        "binding_generator_sha256": _anchor("binding_generator_sha256"),
-    },
-    "whole_query_fixture": {
-        "kind": WHOLE_QUERY_FIXTURE_KIND,
-        "cloud_program_sha256": _anchor("cloud_program_sha256"),
-        "output_plan_sha256": _anchor("output_plan_sha256"),
-        "execution_binding_sha256": _anchor("execution_binding_sha256"),
-    },
-    "artifacts": {
-        "witness_sha256": _anchor("witness_sha256"),
-        "provenance_sha256": _anchor("provenance_sha256"),
-        "artifact_sha256": _anchor("artifact_sha256"),
-    },
-    "property_contract_gate": {
-        "schema_version": PROPERTY_CONTRACT_GATE_SCHEMA_VERSION,
-        "source_git_sha": _anchor("source_git_sha"),
-        "run_id": _anchor("property_contract_run_id"),
-        "status": "pass",
-        "compiler_sha256": _anchor("compiler_sha256"),
-        "validator_sha256": _anchor("validator_sha256"),
-        "contract_test_source_sha256": _anchor("contract_test_source_sha256"),
-        "junit_sha256": _anchor("contract_junit_sha256"),
-        "evidence_sha256": _anchor("contract_evidence_sha256"),
-    },
-    "coverage": {
-        "base_plus_delta": True,
-        "post_reduction_lanes": True,
-        "f1m_random_and_dummy": True,
-        "global_ci_above_slots": True,
-        "tail": True,
-        "boundary_127_128": True,
-        "second_bfv_row_zero": True,
-    },
-    "claims": {
-        "gate_eligible": False,
-        "complete_cost_claim_allowed": False,
-        "formal_parameter_claim_allowed": False,
-        "end_to_end_correctness_claim_allowed": False,
-        "security_claim_allowed": False,
-        "formal_correctness_claim": False,
-        "formal_security_claim": False,
-        "formal_performance_claim": False,
-        "mixed_workload_parameter_claim": False,
-    },
-}
+def _freeze_schema(schema: dict[str, object]) -> Mapping[str, object]:
+    return MappingProxyType(
+        {
+            field: _freeze_schema(expected) if isinstance(expected, dict) else expected
+            for field, expected in schema.items()
+        }
+    )
 
-_CAPABILITY_POLICY: dict[str, object] = {
-    "schema_version": RECEIPT_SCHEMA_VERSION,
-    "evidence_scope": WHOLE_QUERY_EVIDENCE_SCOPE,
-    "builder_grammar_authorized": True,
-    "openfhe_version": PINNED_OPENFHE_VERSION,
-    "openfhe_commit": PINNED_OPENFHE_COMMIT,
-    "segment_width": FROZEN_SEGMENT_WIDTH,
-}
+
+_RECEIPT_V1_SCHEMA: Mapping[str, object] = _freeze_schema(
+    {
+        "schema_version": RECEIPT_SCHEMA_VERSION,
+        "status": "pass",
+        "evidence_valid": True,
+        "evidence_scope": WHOLE_QUERY_EVIDENCE_SCOPE,
+        "builder_grammar_authorized": True,
+        "source_git_sha": _anchor("source_git_sha"),
+        "witness_run_id": _anchor("witness_run_id"),
+        "openfhe": {
+            "version": PINNED_OPENFHE_VERSION,
+            "commit": PINNED_OPENFHE_COMMIT,
+        },
+        "segment_width": FROZEN_SEGMENT_WIDTH,
+        "provenance": {
+            "compiler_sha256": _anchor("compiler_sha256"),
+            "validator_sha256": _anchor("whole_query_validator_sha256"),
+            "witness_source_sha256": _anchor("witness_source_sha256"),
+            "witness_binary_sha256": _anchor("witness_binary_sha256"),
+            "binding_generator_sha256": _anchor("binding_generator_sha256"),
+        },
+        "whole_query_fixture": {
+            "kind": WHOLE_QUERY_FIXTURE_KIND,
+            "cloud_program_sha256": _anchor("cloud_program_sha256"),
+            "output_plan_sha256": _anchor("output_plan_sha256"),
+            "execution_binding_sha256": _anchor("execution_binding_sha256"),
+        },
+        "artifacts": {
+            "witness_sha256": _anchor("witness_sha256"),
+            "provenance_sha256": _anchor("provenance_sha256"),
+            "artifact_sha256": _anchor("artifact_sha256"),
+        },
+        "property_contract_gate": {
+            "schema_version": PROPERTY_CONTRACT_GATE_SCHEMA_VERSION,
+            "source_git_sha": _anchor("source_git_sha"),
+            "run_id": _anchor("property_contract_run_id"),
+            "status": "pass",
+            "compiler_sha256": _anchor("compiler_sha256"),
+            "validator_sha256": _anchor("property_contract_validator_sha256"),
+            "contract_test_source_sha256": _anchor("contract_test_source_sha256"),
+            "junit_sha256": _anchor("contract_junit_sha256"),
+            "evidence_sha256": _anchor("contract_evidence_sha256"),
+        },
+        "coverage": {
+            "base_plus_delta": True,
+            "post_reduction_lanes": True,
+            "f1m_random_and_dummy": True,
+            "global_ci_above_slots": True,
+            "tail": True,
+            "boundary_127_128": True,
+            "second_bfv_row_zero": True,
+        },
+        "claims": {
+            "gate_eligible": False,
+            "candidate_registered": False,
+            "candidate_registration_allowed": False,
+            "complete_reference_set": False,
+            "complete_cost_claim_allowed": False,
+            "formal_parameter_claim_allowed": False,
+            "end_to_end_correctness_claim_allowed": False,
+            "security_claim_allowed": False,
+            "formal_correctness_claim": False,
+            "formal_security_claim": False,
+            "formal_performance_claim": False,
+            "mixed_workload_parameter_claim": False,
+        },
+    }
+)
 
 
 def _closed_object(value: object, fields: set[str], context: str) -> dict[str, object]:
@@ -245,7 +284,7 @@ def _validate_closed_schema(
     if isinstance(schema, _Anchored):
         _validate_anchored_field(value, schema, context, trust_anchor)
         return
-    if isinstance(schema, dict):
+    if isinstance(schema, Mapping):
         actual = _closed_object(value, set(schema), context)
         for field, expected in schema.items():
             _validate_closed_schema(
@@ -258,42 +297,244 @@ def _validate_closed_schema(
     _require_exact(value, schema, context)
 
 
-def _admit_capability(
-    trust_anchor: _StrongReferenceTrustAnchor,
-) -> StrongReferenceCapability:
-    capability = object.__new__(StrongReferenceCapability)
-    for field in fields(capability):
-        value = _CAPABILITY_POLICY.get(
-            field.name,
-            getattr(trust_anchor, field.name, None),
+_ANCHOR_SET_SCHEMA_VERSION = "dynamic-cssc-strong-reference-evidence-anchor-set-v1"
+_ANCHOR_SCHEMA_VERSION = "dynamic-cssc-strong-reference-evidence-anchor-v1"
+_ANCHOR_AUTHORITY_STATE = "historical-descriptive-only"
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _canonical_json_bytes(payload: object) -> bytes:
+    try:
+        rendered = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
         )
-        object.__setattr__(capability, field.name, value)
-    return capability
+    except (TypeError, ValueError) as error:
+        raise StrongReferenceReceiptError("strong reference evidence is not JSON") from error
+    return (rendered + "\n").encode("ascii")
 
 
-def _validate_against_anchor(
-    payload: object,
-    *,
-    trust_anchor: _StrongReferenceTrustAnchor,
-) -> StrongReferenceCapability:
-    """Validate a receipt against one already-selected repository trust anchor."""
+def _read_anchor_bytes() -> bytes:
+    try:
+        blobs = read_current_role_evidence_data(
+            EvidenceRole.STRONG_CORRECTNESS,
+            _REPOSITORY_ROOT,
+        )
+    except EvidenceCompatibilityError as error:
+        raise StrongReferenceReceiptError(
+            f"repository strong-reference evidence anchor is unavailable: {error}"
+        ) from error
+    if len(blobs) != 1 or blobs[0].path != STRONG_REFERENCE_EVIDENCE_ANCHOR_PATH:
+        raise StrongReferenceReceiptError(
+            "repository strong-reference evidence anchor path set is not exact"
+        )
+    return blobs[0].content
 
-    trust_anchor = _validate_trust_anchor(trust_anchor)
-    _validate_closed_schema(payload, _RECEIPT_V1_SCHEMA, "receipt", trust_anchor)
-    return _admit_capability(trust_anchor)
+
+def _decode_anchor_data(content: bytes) -> dict[str, object]:
+    def reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        decoded: dict[str, object] = {}
+        for key, value in pairs:
+            if key in decoded:
+                raise StrongReferenceReceiptError(
+                    "repository strong-reference evidence contains duplicate JSON keys"
+                )
+            decoded[key] = value
+        return decoded
+
+    try:
+        document = json.loads(
+            content.decode("ascii"),
+            object_pairs_hook=reject_duplicates,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                StrongReferenceReceiptError(
+                    f"repository strong-reference evidence contains {value}"
+                )
+            ),
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise StrongReferenceReceiptError(
+            "repository strong-reference evidence is not canonical JSON"
+        ) from error
+    if type(document) is not dict or _canonical_json_bytes(document) != content:
+        raise StrongReferenceReceiptError(
+            "repository strong-reference evidence is not canonical JSON"
+        )
+    return document
 
 
-_REPOSITORY_TRUST_ANCHORS: tuple[_StrongReferenceTrustAnchor, ...] = ()
+def _trust_anchor_from_receipt(receipt: dict[str, object]) -> _StrongReferenceTrustAnchor:
+    try:
+        provenance = receipt["provenance"]
+        fixture = receipt["whole_query_fixture"]
+        artifacts = receipt["artifacts"]
+        contract = receipt["property_contract_gate"]
+        if not all(type(value) is dict for value in (provenance, fixture, artifacts, contract)):
+            raise TypeError
+        return _StrongReferenceTrustAnchor(
+            source_git_sha=receipt["source_git_sha"],  # type: ignore[arg-type]
+            witness_run_id=receipt["witness_run_id"],  # type: ignore[arg-type]
+            property_contract_run_id=contract["run_id"],  # type: ignore[index,arg-type]
+            compiler_sha256=provenance["compiler_sha256"],  # type: ignore[index,arg-type]
+            whole_query_validator_sha256=provenance["validator_sha256"],  # type: ignore[index,arg-type]
+            property_contract_validator_sha256=contract["validator_sha256"],  # type: ignore[index,arg-type]
+            witness_source_sha256=provenance["witness_source_sha256"],  # type: ignore[index,arg-type]
+            witness_binary_sha256=provenance["witness_binary_sha256"],  # type: ignore[index,arg-type]
+            binding_generator_sha256=provenance["binding_generator_sha256"],  # type: ignore[index,arg-type]
+            cloud_program_sha256=fixture["cloud_program_sha256"],  # type: ignore[index,arg-type]
+            output_plan_sha256=fixture["output_plan_sha256"],  # type: ignore[index,arg-type]
+            execution_binding_sha256=fixture["execution_binding_sha256"],  # type: ignore[index,arg-type]
+            witness_sha256=artifacts["witness_sha256"],  # type: ignore[index,arg-type]
+            provenance_sha256=artifacts["provenance_sha256"],  # type: ignore[index,arg-type]
+            artifact_sha256=artifacts["artifact_sha256"],  # type: ignore[index,arg-type]
+            contract_test_source_sha256=contract["contract_test_source_sha256"],  # type: ignore[index,arg-type]
+            contract_junit_sha256=contract["junit_sha256"],  # type: ignore[index,arg-type]
+            contract_evidence_sha256=contract["evidence_sha256"],  # type: ignore[index,arg-type]
+        )
+    except (KeyError, TypeError) as error:
+        raise StrongReferenceReceiptError(
+            "repository strong-reference receipt cannot define its closed trust anchor"
+        ) from error
+
+
+def _repository_anchor() -> tuple[
+    dict[str, object],
+    _StrongReferenceTrustAnchor,
+    dict[str, object],
+]:
+    document = _decode_anchor_data(_read_anchor_bytes())
+    if set(document) != {"anchors", "schema_version"}:
+        raise StrongReferenceReceiptError(
+            "repository strong-reference anchor-set keys must be exact"
+        )
+    if document["schema_version"] != _ANCHOR_SET_SCHEMA_VERSION:
+        raise StrongReferenceReceiptError(
+            "repository strong-reference anchor-set schema is not frozen"
+        )
+    anchors = document["anchors"]
+    if type(anchors) is not list or len(anchors) != 1 or type(anchors[0]) is not dict:
+        raise StrongReferenceReceiptError(
+            "repository strong-reference anchor set must contain exactly one historical record"
+        )
+    anchor = anchors[0]
+    if set(anchor) != {
+        "artifact_sha256",
+        "authority_state",
+        "receipt",
+        "receipt_sha256",
+        "role",
+        "schema_version",
+        "source_behavior_set_schema_version",
+        "source_behavior_set_sha256",
+    }:
+        raise StrongReferenceReceiptError("repository strong-reference anchor keys must be exact")
+    if (
+        anchor["schema_version"] != _ANCHOR_SCHEMA_VERSION
+        or anchor["role"] != "strong-correctness"
+        or anchor["authority_state"] != _ANCHOR_AUTHORITY_STATE
+    ):
+        raise StrongReferenceReceiptError(
+            "repository strong-reference historical authority state is not frozen"
+        )
+    receipt = anchor["receipt"]
+    if type(receipt) is not dict:
+        raise StrongReferenceReceiptError("repository strong-reference receipt must be an object")
+    receipt_sha256 = hashlib.sha256(_canonical_json_bytes(receipt)).hexdigest()
+    if anchor["receipt_sha256"] != receipt_sha256:
+        raise StrongReferenceReceiptError(
+            "repository strong-reference receipt digest does not match its canonical bytes"
+        )
+    artifacts = receipt.get("artifacts")
+    if type(artifacts) is not dict or anchor["artifact_sha256"] != artifacts.get("artifact_sha256"):
+        raise StrongReferenceReceiptError(
+            "repository strong-reference artifact identity is not closed"
+        )
+    trust_anchor = _validate_trust_anchor(_trust_anchor_from_receipt(receipt))
+    _validate_closed_schema(receipt, _RECEIPT_V1_SCHEMA, "receipt", trust_anchor)
+    return receipt, trust_anchor, anchor
 
 
 def validate_strong_reference_receipt(payload: object) -> StrongReferenceCapability:
-    """Admit a receipt only through the repository-owned trust-anchor allowlist."""
+    """Validate a receipt and return its descriptive repository-anchored projection."""
 
-    for trust_anchor in _REPOSITORY_TRUST_ANCHORS:
-        try:
-            return _validate_against_anchor(payload, trust_anchor=trust_anchor)
-        except StrongReferenceReceiptError:
-            continue
-    raise StrongReferenceReceiptError(
-        "receipt does not match any repository-approved strong-reference trust anchor"
+    _repository_receipt, trust_anchor, _anchor_document = _repository_anchor()
+    try:
+        _validate_closed_schema(payload, _RECEIPT_V1_SCHEMA, "receipt", trust_anchor)
+    except StrongReferenceReceiptError as error:
+        raise StrongReferenceReceiptError(
+            "receipt does not match the repository-approved strong-reference data anchor"
+        ) from error
+    capability = object.__new__(StrongReferenceCapability)
+    projection = (
+        ("authority_state", _ANCHOR_AUTHORITY_STATE),
+        ("schema_version", RECEIPT_SCHEMA_VERSION),
+        ("evidence_scope", WHOLE_QUERY_EVIDENCE_SCOPE),
+        ("source_git_sha", trust_anchor.source_git_sha),
+        ("witness_run_id", trust_anchor.witness_run_id),
+        ("builder_grammar_authorized", True),
+        ("openfhe_version", PINNED_OPENFHE_VERSION),
+        ("openfhe_commit", PINNED_OPENFHE_COMMIT),
+        ("segment_width", FROZEN_SEGMENT_WIDTH),
+        ("compiler_sha256", trust_anchor.compiler_sha256),
+        ("whole_query_validator_sha256", trust_anchor.whole_query_validator_sha256),
+        (
+            "property_contract_validator_sha256",
+            trust_anchor.property_contract_validator_sha256,
+        ),
+        ("witness_source_sha256", trust_anchor.witness_source_sha256),
+        ("witness_binary_sha256", trust_anchor.witness_binary_sha256),
+        ("binding_generator_sha256", trust_anchor.binding_generator_sha256),
+        ("cloud_program_sha256", trust_anchor.cloud_program_sha256),
+        ("output_plan_sha256", trust_anchor.output_plan_sha256),
+        ("execution_binding_sha256", trust_anchor.execution_binding_sha256),
+        ("witness_sha256", trust_anchor.witness_sha256),
+        ("provenance_sha256", trust_anchor.provenance_sha256),
+        ("artifact_sha256", trust_anchor.artifact_sha256),
+        ("property_contract_run_id", trust_anchor.property_contract_run_id),
+        ("contract_test_source_sha256", trust_anchor.contract_test_source_sha256),
+        ("contract_junit_sha256", trust_anchor.contract_junit_sha256),
+        ("contract_evidence_sha256", trust_anchor.contract_evidence_sha256),
+        ("formal_authority_granted", False),
+        ("gate_eligible", False),
+        ("candidate_registered", False),
+        ("candidate_registration_allowed", False),
+        ("complete_reference_set", False),
+        ("complete_cost_claim_allowed", False),
+        ("formal_parameter_claim_allowed", False),
+        ("end_to_end_correctness_claim_allowed", False),
+        ("security_claim_allowed", False),
+        ("formal_correctness_claim", False),
+        ("formal_security_claim", False),
+        ("formal_performance_claim", False),
+        ("mixed_workload_parameter_claim", False),
     )
+    for field, value in projection:
+        object.__setattr__(capability, field, value)
+    return capability
+
+
+def repository_strong_reference_capability() -> StrongReferenceCapability:
+    """Return the historical receipt identity as a non-authoritative projection."""
+
+    receipt, _trust_anchor, _anchor_document = _repository_anchor()
+    return validate_strong_reference_receipt(receipt)
+
+
+def repository_historical_strong_source_attestation() -> HistoricalStrongSourceAttestation:
+    """Verify the repository-anchored historical STRONG source without caller input."""
+
+    _receipt, trust_anchor, anchor = _repository_anchor()
+    try:
+        return _verify_historical_strong_source(
+            _REPOSITORY_ROOT,
+            source_git_sha=trust_anchor.source_git_sha,
+            expected_behavior_set_schema_version=anchor["source_behavior_set_schema_version"],
+            expected_behavior_set_sha256=anchor["source_behavior_set_sha256"],
+        )
+    except EvidenceCompatibilityError as error:
+        raise StrongReferenceReceiptError(
+            f"repository historical strong source commit attestation failed: {error}"
+        ) from error

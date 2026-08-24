@@ -8,4 +8,5 @@ cmake -S "$ROOT_DIR/cpp" -B "$BUILD_DIR" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH="$OPENFHE_INSTALL_DIR"
 cmake --build "$BUILD_DIR" --parallel "$JOBS"
+ctest --test-dir "$BUILD_DIR" --output-on-failure
 printf '%s\n' "$BUILD_DIR"

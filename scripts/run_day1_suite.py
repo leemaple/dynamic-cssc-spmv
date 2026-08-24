@@ -8,13 +8,20 @@ import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, replace
 from fractions import Fraction
+from itertools import chain, groupby
 from math import isfinite
 from pathlib import Path
 
+from dynamic_cssc.day1_registry import (
+    Day1CandidateCatalog,
+    RegisteredCandidate,
+    repository_day1_candidate_catalog,
+)
 from dynamic_cssc.events import Event, EventKind, PublicationWindow, publication_windows
 from dynamic_cssc.manifest import load_manifest
 from dynamic_cssc.metrics import StrategyMetrics, UnitCosts
 from dynamic_cssc.preflight import run_day1_preflight
+from dynamic_cssc.publication_traces import PublicationTransition
 from dynamic_cssc.report import (
     CAUSAL_MEASUREMENT_KIND,
     CAUSAL_SCHEMA,
@@ -37,6 +44,7 @@ from dynamic_cssc.simulator import (
     SimulationConfig,
     SimulationResult,
     SimulationTarget,
+    simulate_strong_reference,
     simulate_targets,
 )
 from dynamic_cssc.span80 import span80_curve
@@ -49,7 +57,8 @@ from dynamic_cssc.workloads import (
 WORKLOADS = SYNTHETIC_WORKLOADS
 EVENT_WINDOW_TRACE_SCHEMA = "day1-event-window-trace-v2"
 LAYOUT_MEASUREMENT_KIND = "synthetic-proxy"
-DEFERRED_REFERENCE_BASELINES = ("strong-packed-coo",)
+DEFERRED_REFERENCE_BASELINES: tuple[str, ...] = ()
+STRONG_REFERENCE_CANDIDATE_ID = "packed-coo-cloud-segmented-delta/segment-width=128"
 _CANONICAL_SEED = re.compile(r"(?:0|[1-9][0-9]*)")
 _MAX_SUITE_SEED = (1 << 63) - 1 - len(WORKLOADS)
 
@@ -110,7 +119,10 @@ class ExperimentPlan:
     bandwidth_profiles_mbps: tuple[Fraction, ...]
 
 
-def _candidate_config(base_config: SimulationConfig, candidate: FixedCandidate) -> SimulationConfig:
+def _candidate_config(
+    base_config: SimulationConfig,
+    candidate: FixedCandidate | RegisteredCandidate,
+) -> SimulationConfig:
     changes: dict[str, object] = {}
     if candidate.reserved_slack_beta is not None:
         changes["reserved_slack_beta"] = float(candidate.reserved_slack_beta)
@@ -122,7 +134,8 @@ def _candidate_config(base_config: SimulationConfig, candidate: FixedCandidate) 
 
 
 def _candidate_targets(
-    base_config: SimulationConfig, candidates: tuple[FixedCandidate, ...]
+    base_config: SimulationConfig,
+    candidates: tuple[RegisteredCandidate, ...],
 ) -> list[SimulationTarget]:
     return [
         SimulationTarget(
@@ -134,10 +147,10 @@ def _candidate_targets(
     ]
 
 
-def _validate_candidate_results(
-    candidates: tuple[FixedCandidate, ...],
+def _normalize_candidate_results(
+    candidates: tuple[RegisteredCandidate, ...],
     results: dict[str, SimulationResult],
-) -> None:
+) -> dict[str, SimulationResult]:
     expected_ids = {candidate.candidate_id for candidate in candidates}
     actual_ids = set(results)
     if actual_ids != expected_ids:
@@ -146,50 +159,114 @@ def _validate_candidate_results(
             f"missing={sorted(expected_ids - actual_ids)}, "
             f"extra={sorted(actual_ids - expected_ids)}"
         )
+    normalized: dict[str, SimulationResult] = {}
     for candidate in candidates:
         result = results[candidate.candidate_id]
         if not isinstance(result, SimulationResult):
             raise TypeError("simulation results must be SimulationResult values")
         if result.metrics.strategy != candidate.strategy:
             raise ValueError(f"simulation result strategy contradicts {candidate.candidate_id}")
+        normalized[candidate.candidate_id] = replace(
+            result,
+            metrics=replace(result.metrics, category=candidate.role),
+        )
+    return normalized
 
 
-def evaluate_causal_cell(
+def _evaluate_causal_cell(
     *,
     windows: list[PublicationWindow],
     initial_state: dict[tuple[int, int], int],
     base_config: SimulationConfig,
     split: ExperimentSplit,
-    candidates: tuple[FixedCandidate, ...],
     costs: UnitCosts,
-    simulate_targets_fn: Callable[..., dict[str, SimulationResult]] | None = None,
+    catalog: Day1CandidateCatalog,
+    simulate_targets_fn: Callable[..., dict[str, SimulationResult]],
+    simulate_strong_fn: Callable[..., SimulationResult],
 ) -> CausalCellResult:
-    """Tune fixed candidates on a prefix, freeze one, then replay held-out causally."""
+    """Exercise the private simulator seam under an already-admitted catalog."""
 
-    run_simulation = simulate_targets if simulate_targets_fn is None else simulate_targets_fn
+    if type(catalog) is not Day1CandidateCatalog:
+        raise TypeError("catalog must be an exact Day1CandidateCatalog")
     warmup_end, tuning_end = split_boundaries(len(windows), split)
-    targets = _candidate_targets(base_config, candidates)
+    strong_candidates = tuple(
+        candidate
+        for candidate in catalog.candidates
+        if candidate.candidate_id == STRONG_REFERENCE_CANDIDATE_ID
+    )
+    if len(strong_candidates) != 1 or strong_candidates[0].role != "reference":
+        raise ValueError("catalog must contain exactly one selectable strong reference")
+    strong_candidate = strong_candidates[0]
+    tuning_ordinary = tuple(
+        candidate
+        for candidate in catalog.selection_candidates
+        if candidate.candidate_id != STRONG_REFERENCE_CANDIDATE_ID
+    )
+    held_out_ordinary = tuple(
+        candidate
+        for candidate in catalog.candidates
+        if candidate.candidate_id != STRONG_REFERENCE_CANDIDATE_ID
+    )
+
     tuning_replay = windows[:tuning_end]
-    tuning_results = run_simulation(
+    ordinary_tuning_results = simulate_targets_fn(
         tuning_replay,
         initial_state,
-        targets,
+        _candidate_targets(base_config, tuning_ordinary),
         measure_from=warmup_end,
     )
-    _validate_candidate_results(candidates, tuning_results)
+    ordinary_tuning_results = _normalize_candidate_results(
+        tuning_ordinary,
+        ordinary_tuning_results,
+    )
+    strong_tuning_result = simulate_strong_fn(
+        tuning_replay,
+        initial_state,
+        _candidate_config(base_config, strong_candidate),
+        measure_from=warmup_end,
+    )
+    strong_tuning = _normalize_candidate_results(
+        (strong_candidate,),
+        {strong_candidate.candidate_id: strong_tuning_result},
+    )
+    tuning_results = {**ordinary_tuning_results, **strong_tuning}
     tuning_metrics = {
         candidate_id: result.metrics for candidate_id, result in tuning_results.items()
     }
 
-    selected = select_tuned_fixed_candidate(candidates, tuning_metrics, costs)
+    selection_candidates = tuple(
+        FixedCandidate(
+            candidate_id=candidate.candidate_id,
+            strategy=candidate.strategy,
+            reserved_slack_beta=candidate.reserved_slack_beta,
+            periodic_repack_windows=candidate.periodic_repack_windows,
+            packed_coo_segment_capacity=candidate.packed_coo_segment_capacity,
+        )
+        for candidate in catalog.selection_candidates
+    )
+    selected = select_tuned_fixed_candidate(selection_candidates, tuning_metrics, costs)
 
-    fixed_results = run_simulation(
+    ordinary_fixed_results = simulate_targets_fn(
         windows,
         initial_state,
-        targets,
+        _candidate_targets(base_config, held_out_ordinary),
         measure_from=tuning_end,
     )
-    _validate_candidate_results(candidates, fixed_results)
+    ordinary_fixed_results = _normalize_candidate_results(
+        held_out_ordinary,
+        ordinary_fixed_results,
+    )
+    strong_fixed_result = simulate_strong_fn(
+        windows,
+        initial_state,
+        _candidate_config(base_config, strong_candidate),
+        measure_from=tuning_end,
+    )
+    strong_fixed = _normalize_candidate_results(
+        (strong_candidate,),
+        {strong_candidate.candidate_id: strong_fixed_result},
+    )
+    fixed_results = {**ordinary_fixed_results, **strong_fixed}
     fixed_metrics = {candidate_id: result.metrics for candidate_id, result in fixed_results.items()}
 
     selected_metric = fixed_metrics[selected.candidate_id]
@@ -202,6 +279,7 @@ def evaluate_causal_cell(
     ranked_oracle = [
         (metric.predicted_time(costs), candidate_id)
         for candidate_id, metric in fixed_metrics.items()
+        if candidate_id in {candidate.candidate_id for candidate in catalog.selection_candidates}
         if isfinite(metric.predicted_time(costs))
     ]
     if not ranked_oracle:
@@ -225,10 +303,41 @@ def evaluate_causal_cell(
     )
 
 
+def evaluate_causal_cell(
+    *,
+    windows: list[PublicationWindow],
+    initial_state: dict[tuple[int, int], int],
+    base_config: SimulationConfig,
+    split: ExperimentSplit,
+    costs: UnitCosts,
+) -> CausalCellResult:
+    """Tune references, freeze one, then separately replay all held-out roles."""
+
+    catalog = repository_day1_candidate_catalog()
+    return _evaluate_causal_cell(
+        windows=windows,
+        initial_state=initial_state,
+        base_config=base_config,
+        split=split,
+        costs=costs,
+        catalog=catalog,
+        simulate_targets_fn=simulate_targets,
+        simulate_strong_fn=simulate_strong_reference,
+    )
+
+
 def insert_queries_by_ratio(
-    events: Iterable[Event], queries_per_update: Fraction | int | float | str
+    events: Iterable[Event | PublicationTransition],
+    queries_per_update: Fraction | int | float | str,
 ) -> list[Event]:
-    """Insert a deterministic query schedule using exact rational arithmetic."""
+    """Insert queries after complete accepted-event groups using exact rational rho.
+
+    Legacy synthetic ``Event`` input keeps its one-SET-per-denominator-event contract.
+    Publication input is a contiguous prefix from accepted ordinal zero: all transitions
+    for one ordinal are emitted before its clock tick and queries. Every accepted group emits
+    one TICK, so clipped no-ops advance freshness and rho without emitting a SET. After ``N``
+    accepted events the cumulative query count is ``floor(N*rho)``.
+    """
 
     ratio = (
         queries_per_update
@@ -238,17 +347,89 @@ def insert_queries_by_ratio(
     if ratio < 0:
         raise ValueError("queries_per_update must be nonnegative")
 
+    event_iterator = iter(events)
+    try:
+        first = next(event_iterator)
+    except StopIteration:
+        return []
+
     scheduled: list[Event] = []
-    remainder = 0
-    for event in events:
-        if event.kind == EventKind.QUERY:
-            raise ValueError("base events must not contain queries")
-        scheduled.append(event)
-        if event.kind != EventKind.SET:
-            continue
-        remainder += ratio.numerator
-        query_count, remainder = divmod(remainder, ratio.denominator)
-        scheduled.extend(Event.query(event.timestamp) for _ in range(query_count))
+    if isinstance(first, Event):
+        remainder = 0
+        for event in chain((first,), event_iterator):
+            if not isinstance(event, Event):
+                raise TypeError("query scheduling inputs must not mix event representations")
+            if event.kind == EventKind.QUERY:
+                raise ValueError("base events must not contain queries")
+            scheduled.append(event)
+            if event.kind != EventKind.SET:
+                continue
+            remainder += ratio.numerator
+            query_count, remainder = divmod(remainder, ratio.denominator)
+            scheduled.extend(Event.query(event.timestamp) for _ in range(query_count))
+        return scheduled
+
+    if not isinstance(first, PublicationTransition):
+        raise TypeError("query scheduling inputs must be events or publication transitions")
+    logical_time_denominator: int | None = None
+    transitions = chain((first,), event_iterator)
+    for expected_accepted_ordinal, (accepted_ordinal, accepted_group_iterator) in enumerate(
+        groupby(
+            transitions,
+            key=lambda transition: transition.accepted_event_ordinal,
+        )
+    ):
+        accepted_group = tuple(accepted_group_iterator)
+        if not all(isinstance(transition, PublicationTransition) for transition in accepted_group):
+            raise TypeError("query scheduling inputs must not mix event representations")
+        if accepted_ordinal != expected_accepted_ordinal:
+            raise ValueError("publication accepted-event ordinals must be contiguous from zero")
+        if any(
+            type(transition.logical_time_numerator) is not int
+            or transition.logical_time_numerator != accepted_ordinal
+            for transition in accepted_group
+        ):
+            raise ValueError("publication logical time must equal accepted-event ordinal")
+        group_denominators = {transition.logical_time_denominator for transition in accepted_group}
+        if len(group_denominators) != 1 or any(
+            type(value) is not int or value <= 0 for value in group_denominators
+        ):
+            raise ValueError("publication logical time must use one positive integer clock")
+        group_denominator = next(iter(group_denominators))
+        if logical_time_denominator is None:
+            logical_time_denominator = group_denominator
+        elif group_denominator != logical_time_denominator:
+            raise ValueError("publication logical time must use one fixed clock")
+        semantics = {transition.semantics for transition in accepted_group}
+        transition_order = tuple(
+            (transition.transition_ordinal, transition.transition_cause)
+            for transition in accepted_group
+        )
+        if semantics == {"T1"}:
+            if transition_order != ((0, "admission"),):
+                raise ValueError("T1 transitions must contain exactly one admission")
+        elif semantics == {"T2"}:
+            if transition_order not in (
+                ((1, "admission"),),
+                ((0, "expiry"), (1, "admission")),
+            ):
+                raise ValueError("T2 transitions must order expiry before admission")
+        else:
+            raise ValueError("one publication transition group must use one T1 or T2 semantics")
+        timestamp_fraction = Fraction(
+            accepted_ordinal,
+            group_denominator,
+        )
+        timestamp = float(timestamp_fraction)
+        scheduled.extend(
+            Event.set(timestamp, transition.row_index, transition.column_index, transition.after)
+            for transition in accepted_group
+            if transition.operation != "clipped-no-op"
+        )
+        scheduled.append(Event.tick(timestamp))
+        queries_before = accepted_ordinal * ratio.numerator // ratio.denominator
+        queries_after = (accepted_ordinal + 1) * ratio.numerator // ratio.denominator
+        scheduled.extend(Event.query(timestamp) for _ in range(queries_after - queries_before))
     return scheduled
 
 
@@ -576,38 +757,43 @@ def parse_experiment_plan(payload: Mapping[str, object]) -> ExperimentPlan:
     )
 
 
-def _candidate_records(
-    candidates: tuple[FixedCandidate, ...], result: CausalCellResult
-) -> list[CausalMetricRecord]:
-    candidate_by_id = {candidate.candidate_id: candidate for candidate in candidates}
+def _candidate_records(result: CausalCellResult) -> list[CausalMetricRecord]:
     records = [
         CausalMetricRecord(
-            "fixed-candidate",
-            candidate.candidate_id,
-            candidate.candidate_id,
-            candidate.strategy,
-            "fixed-candidate",
-            result.fixed_results[candidate.candidate_id].metrics,
+            record_kind="fixed-candidate",
+            candidate_id=candidate_id,
+            label=candidate_id,
+            strategy_kind=simulation.metrics.strategy,
+            selection_source="fixed-candidate",
+            metrics=simulation.metrics,
+            candidate_role=simulation.metrics.category,
+            rotation_inventory=simulation.rotation_inventory,
         )
-        for candidate in candidates
+        for candidate_id, simulation in sorted(result.fixed_results.items())
     ]
+    selected_basis = result.fixed_results[result.selected_candidate_id]
+    oracle_basis = result.fixed_results[result.oracle_candidate_id]
     records.extend(
         [
             CausalMetricRecord(
-                "tuned-fixed-policy",
-                result.selected_candidate_id,
-                "TunedFixedPolicy",
-                candidate_by_id[result.selected_candidate_id].strategy,
-                "tuning-prefix-only",
-                result.tuned_policy,
+                record_kind="tuned-fixed-policy",
+                candidate_id=result.selected_candidate_id,
+                label="TunedFixedPolicy",
+                strategy_kind=selected_basis.metrics.strategy,
+                selection_source="tuning-prefix-only",
+                metrics=result.tuned_policy,
+                candidate_role="reference",
+                rotation_inventory=selected_basis.rotation_inventory,
             ),
             CausalMetricRecord(
-                "diagnostic-oracle",
-                result.oracle_candidate_id,
-                "BestFixed-Offline-Oracle",
-                candidate_by_id[result.oracle_candidate_id].strategy,
-                "held-out-hindsight-diagnostic-only",
-                result.offline_oracle,
+                record_kind="diagnostic-oracle",
+                candidate_id=result.oracle_candidate_id,
+                label="BestFixed-Offline-Oracle",
+                strategy_kind=oracle_basis.metrics.strategy,
+                selection_source="held-out-hindsight-diagnostic-only",
+                metrics=result.offline_oracle,
+                candidate_role="reference",
+                rotation_inventory=oracle_basis.rotation_inventory,
             ),
         ]
     )
@@ -616,12 +802,11 @@ def _candidate_records(
 
 def _candidate_span80(
     rows: int,
-    candidates: tuple[FixedCandidate, ...],
     result: CausalCellResult,
 ) -> dict[str, dict[int, float]]:
     curves: dict[str, dict[int, float]] = {}
-    for candidate in candidates:
-        overflow_by_row = result.fixed_results[candidate.candidate_id].overflow_by_row
+    for candidate_id, simulation in sorted(result.fixed_results.items()):
+        overflow_by_row = simulation.overflow_by_row
         for row, count in overflow_by_row.items():
             if (
                 isinstance(row, bool)
@@ -631,10 +816,8 @@ def _candidate_span80(
                 or not isinstance(count, int)
                 or count < 0
             ):
-                raise ValueError(f"invalid measured overflow_by_row for {candidate.candidate_id}")
-        curves[candidate.candidate_id] = span80_curve(
-            [overflow_by_row.get(row, 0) for row in range(rows)]
-        )
+                raise ValueError(f"invalid measured overflow_by_row for {candidate_id}")
+        curves[candidate_id] = span80_curve([overflow_by_row.get(row, 0) for row in range(rows)])
     return curves
 
 
@@ -716,7 +899,6 @@ def run_suite(args: argparse.Namespace) -> int:
     manifest_sha256 = _sha256_file(args.manifest)
     split = experiment_plan.split
     ratio_grid = experiment_plan.ratio_grid
-    candidates = experiment_plan.candidates
 
     integer_correctness = _mapping(
         manifest.get("integer_correctness"), "manifest.integer_correctness"
@@ -751,6 +933,9 @@ def run_suite(args: argparse.Namespace) -> int:
     )
     costs = UnitCosts()
     cells: list[dict[str, object]] = []
+    fixed_candidate_ids: tuple[str, ...] | None = None
+    reference_candidate_ids: tuple[str, ...] | None = None
+    ablation_candidate_ids: tuple[str, ...] | None = None
     workload_offset = experiment_plan.workloads.index(workload)
     workload_seed = seed + workload_offset + 1
 
@@ -781,9 +966,31 @@ def run_suite(args: argparse.Namespace) -> int:
             initial_state=initial,
             base_config=base_config,
             split=split,
-            candidates=candidates,
             costs=costs,
         )
+        cell_fixed_candidate_ids = tuple(sorted(result.fixed_results))
+        cell_reference_candidate_ids = tuple(sorted(result.tuning_results))
+        cell_ablation_candidate_ids = tuple(
+            sorted(set(cell_fixed_candidate_ids) - set(cell_reference_candidate_ids))
+        )
+        if not (
+            len(cell_fixed_candidate_ids) == 14
+            and len(cell_reference_candidate_ids) == 13
+            and cell_ablation_candidate_ids == ("packed-coo-client-lane-delta/capacity=128",)
+            and result.selected_candidate_id in cell_reference_candidate_ids
+            and result.oracle_candidate_id in cell_reference_candidate_ids
+        ):
+            raise ValueError("cell result does not satisfy the canonical 14/13/1 role contract")
+        if fixed_candidate_ids is None:
+            fixed_candidate_ids = cell_fixed_candidate_ids
+            reference_candidate_ids = cell_reference_candidate_ids
+            ablation_candidate_ids = cell_ablation_candidate_ids
+        elif (
+            cell_fixed_candidate_ids != fixed_candidate_ids
+            or cell_reference_candidate_ids != reference_candidate_ids
+            or cell_ablation_candidate_ids != ablation_candidate_ids
+        ):
+            raise ValueError("candidate role IDs changed between cells in one shard")
         held_out = windows[result.tuning_end :]
         rho_id = rho_path_id(ratio)
         output_dir = args.output_dir / workload / freshness_path_id(freshness_seconds) / rho_id
@@ -836,10 +1043,12 @@ def run_suite(args: argparse.Namespace) -> int:
             "warmup_windows": result.warmup_end,
             "tuning_windows": result.tuning_end - result.warmup_end,
             "held_out_windows": len(held_out),
-            "fixed_candidate_count": len(candidates),
+            "fixed_candidate_count": len(result.fixed_results),
+            "reference_candidate_count": len(result.tuning_results),
+            "ablation_candidate_count": len(result.fixed_results) - len(result.tuning_results),
             "selected_candidate_id": result.selected_candidate_id,
             "oracle_candidate_id": result.oracle_candidate_id,
-            "span80_by_candidate": _candidate_span80(rows, candidates, result),
+            "span80_by_candidate": _candidate_span80(rows, result),
             "experiment_plan_sha256": experiment_plan_sha256,
             "manifest_sha256": manifest_sha256,
             "initial_state_sha256": initial_state_sha256,
@@ -850,9 +1059,11 @@ def run_suite(args: argparse.Namespace) -> int:
             "measurement_kind": CAUSAL_MEASUREMENT_KIND,
             "gate_eligible": False,
             "complete_cost_claim_allowed": False,
-            "complete_reference_set": False,
+            "security_claim_allowed": False,
+            "formal_performance_claim": False,
+            "complete_reference_set": True,
         }
-        records = _candidate_records(candidates, result)
+        records = _candidate_records(result)
         report_audit = {
             "tuning_results": {
                 candidate_id: simulation.metrics
@@ -881,7 +1092,9 @@ def run_suite(args: argparse.Namespace) -> int:
         "measurement_kind": CAUSAL_MEASUREMENT_KIND,
         "gate_eligible": False,
         "complete_cost_claim_allowed": False,
-        "complete_reference_set": False,
+        "security_claim_allowed": False,
+        "formal_performance_claim": False,
+        "complete_reference_set": True,
         "suite_complete": False,
         "deferred_reference_baselines": list(DEFERRED_REFERENCE_BASELINES),
         "seed": seed,
@@ -894,7 +1107,12 @@ def run_suite(args: argparse.Namespace) -> int:
         "rho_ids": [rho_path_id(ratio) for ratio in ratio_grid],
         "cells_expected": len(ratio_grid),
         "cells_completed": len(cells),
-        "candidate_ids": sorted(candidate.candidate_id for candidate in candidates),
+        "candidate_ids": list(fixed_candidate_ids or ()),
+        "reference_candidate_ids": list(reference_candidate_ids or ()),
+        "ablation_candidate_ids": list(ablation_candidate_ids or ()),
+        "fixed_candidate_count": len(fixed_candidate_ids or ()),
+        "reference_candidate_count": len(reference_candidate_ids or ()),
+        "ablation_candidate_count": len(ablation_candidate_ids or ()),
         "effective_slots": effective_slots,
         "partition_rows": partition_rows,
         "layout_measurement_kind": experiment_plan.layout_measurement_kind,

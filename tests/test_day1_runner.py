@@ -3,17 +3,83 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
 
 import pytest
 
-from dynamic_cssc.events import Event, EventKind
+from dynamic_cssc.day1_registry import (
+    Day1CandidateCatalog,
+    RegistrationEvidence,
+    _canonical_registered_candidates,
+)
+from dynamic_cssc.events import Event, EventKind, publication_windows
 from dynamic_cssc.metrics import StrategyMetrics
 from dynamic_cssc.preflight import Day1PreflightError, PreflightReport
+from dynamic_cssc.publication_traces import (
+    PublicationTransition,
+    TransitionEventProvenance,
+)
 from dynamic_cssc.simulator import SimulationResult
 from scripts import run_day1_suite
 from scripts.run_day1_suite import CausalCellResult, insert_queries_by_ratio
+
+
+def _registered_catalog() -> Day1CandidateCatalog:
+    return Day1CandidateCatalog(
+        candidates=_canonical_registered_candidates(),
+        registration=RegistrationEvidence(
+            schema_version="dynamic-cssc-day1-registration-evidence-v1",
+            source_git_sha="1" * 40,
+            run_id=1,
+            correctness_artifact_sha256="2" * 64,
+            accounting_evidence_sha256="3" * 64,
+            policy_contract_sha256=(
+                "a35cecd1553f53da9639a041d49d817c47bc9ae90aee269eaf2cd6f5daa8227b"
+            ),
+        ),
+    )
+
+
+def _publication_transition(
+    accepted_event_ordinal: int,
+    transition_ordinal: int,
+    transition_cause: str,
+    *,
+    row: int,
+    col: int,
+    before: int,
+    after: int,
+    operation: str,
+) -> PublicationTransition:
+    event_provenance = TransitionEventProvenance(
+        canonical_raw_event_ordinal=accepted_event_ordinal,
+        source_timestamp_utc=f"2026-01-01T00:00:{accepted_event_ordinal:02d}Z",
+        source_file_ordinal=0,
+        within_file_ordinal=accepted_event_ordinal,
+        source_event_type="fixture",
+    )
+    return PublicationTransition(
+        schema_version="dynamic-cssc-publication-transition-v3",
+        dataset_id="fixture",
+        dataset_release="fixture-v1",
+        semantics="T2",
+        source_partition=0,
+        repository_provenance_sha256="f" * 64,
+        accepted_event_ordinal=accepted_event_ordinal,
+        transition_ordinal=transition_ordinal,
+        transition_cause=transition_cause,
+        trigger_event=event_provenance,
+        subject_event=event_provenance,
+        logical_time_numerator=accepted_event_ordinal,
+        logical_time_denominator=128,
+        row_index=row,
+        column_index=col,
+        operation=operation,
+        before=before,
+        after=after,
+    )
 
 
 @pytest.mark.parametrize(
@@ -40,6 +106,212 @@ def test_fraction_scheduler_inserts_exact_grid_query_totals(ratio: Fraction) -> 
     assert [event.timestamp for event in scheduled] == sorted(
         event.timestamp for event in scheduled
     )
+
+
+def test_publication_scheduler_queries_only_after_an_atomic_t2_transition_group() -> None:
+    transitions = [
+        _publication_transition(
+            0,
+            1,
+            "admission",
+            row=0,
+            col=0,
+            before=0,
+            after=1,
+            operation="insert",
+        ),
+        _publication_transition(
+            1,
+            0,
+            "expiry",
+            row=0,
+            col=0,
+            before=1,
+            after=0,
+            operation="delete",
+        ),
+        _publication_transition(
+            1,
+            1,
+            "admission",
+            row=0,
+            col=1,
+            before=0,
+            after=1,
+            operation="insert",
+        ),
+    ]
+
+    scheduled = insert_queries_by_ratio(transitions, Fraction(1))
+
+    assert [(event.kind, event.col, event.value) for event in scheduled] == [
+        (EventKind.SET, 0, 1),
+        (EventKind.TICK, None, None),
+        (EventKind.QUERY, None, None),
+        (EventKind.SET, 0, 0),
+        (EventKind.SET, 1, 1),
+        (EventKind.TICK, None, None),
+        (EventKind.QUERY, None, None),
+    ]
+    assert [event.timestamp for event in scheduled] == [
+        0.0,
+        0.0,
+        0.0,
+        1 / 128,
+        1 / 128,
+        1 / 128,
+        1 / 128,
+    ]
+
+
+def test_publication_scheduler_counts_clipped_noop_as_an_accepted_rho_event() -> None:
+    transitions = [
+        _publication_transition(
+            0,
+            1,
+            "admission",
+            row=0,
+            col=0,
+            before=0,
+            after=1,
+            operation="insert",
+        ),
+        _publication_transition(
+            1,
+            1,
+            "admission",
+            row=0,
+            col=0,
+            before=1,
+            after=1,
+            operation="clipped-no-op",
+        ),
+    ]
+
+    scheduled = insert_queries_by_ratio(transitions, Fraction(1, 2))
+
+    assert [(event.kind, event.col, event.value) for event in scheduled] == [
+        (EventKind.SET, 0, 1),
+        (EventKind.TICK, None, None),
+        (EventKind.TICK, None, None),
+        (EventKind.QUERY, None, None),
+    ]
+    assert scheduled[-1].timestamp == 1 / 128
+
+
+def test_silent_clipped_groups_still_advance_the_freshness_clock() -> None:
+    transitions = [
+        _publication_transition(
+            0,
+            1,
+            "admission",
+            row=0,
+            col=0,
+            before=0,
+            after=1,
+            operation="insert",
+        ),
+        *(
+            _publication_transition(
+                accepted_event_ordinal,
+                1,
+                "admission",
+                row=0,
+                col=0,
+                before=1,
+                after=1,
+                operation="clipped-no-op",
+            )
+            for accepted_event_ordinal in range(1, 16)
+        ),
+    ]
+
+    scheduled = insert_queries_by_ratio(transitions, Fraction(1, 100))
+    windows = list(
+        publication_windows(
+            scheduled,
+            max_seconds=0.1,
+            microbatch_max_updates=64,
+        )
+    )
+
+    assert sum(event.kind == EventKind.TICK for event in scheduled) == 16
+    assert sum(event.kind == EventKind.QUERY for event in scheduled) == 0
+    assert len(windows) == 1
+    assert windows[0].reason == "freshness"
+    assert windows[0].end_time == 0.1
+    assert [
+        (update.row, update.col, update.before, update.after) for update in windows[0].updates
+    ] == [(0, 0, 0, 1)]
+
+
+def test_publication_scheduler_rejects_noncanonical_t2_transition_order() -> None:
+    transitions = [
+        _publication_transition(
+            0,
+            1,
+            "admission",
+            row=0,
+            col=0,
+            before=0,
+            after=1,
+            operation="insert",
+        ),
+        _publication_transition(
+            1,
+            1,
+            "admission",
+            row=0,
+            col=1,
+            before=0,
+            after=1,
+            operation="insert",
+        ),
+        _publication_transition(
+            1,
+            0,
+            "expiry",
+            row=0,
+            col=0,
+            before=1,
+            after=0,
+            operation="delete",
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="expiry before admission"):
+        insert_queries_by_ratio(transitions, Fraction(1))
+
+
+def test_publication_scheduler_rejects_a_logical_tick_not_bound_to_accepted_ordinal() -> None:
+    transitions = [
+        _publication_transition(
+            0,
+            1,
+            "admission",
+            row=0,
+            col=0,
+            before=0,
+            after=1,
+            operation="insert",
+        ),
+        replace(
+            _publication_transition(
+                1,
+                1,
+                "admission",
+                row=0,
+                col=1,
+                before=0,
+                after=1,
+                operation="insert",
+            ),
+            logical_time_numerator=0,
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="logical time must equal accepted-event ordinal"):
+        insert_queries_by_ratio(transitions, Fraction(1))
 
 
 def test_fraction_path_ids_are_exact_injection_safe_and_collision_free() -> None:
@@ -161,23 +433,26 @@ def test_runner_executes_each_ratio_from_experiment_plan(
     monkeypatch.setattr(run_day1_suite, "generate_event_stream", fake_generate_event_stream)
 
     def fake_cell(**kwargs: object) -> CausalCellResult:
-        candidates = kwargs["candidates"]
+        catalog = _registered_catalog()
         fixed = {
             candidate.candidate_id: SimulationResult(
                 StrategyMetrics(
                     candidate.strategy,
-                    "reference",
+                    candidate.role,
                     source="persistent-state-predicted",
                 ),
                 {},
             )
-            for candidate in candidates
+            for candidate in catalog.candidates
         }
-        selected_id = candidates[0].candidate_id
+        selected_id = catalog.selection_candidates[0].candidate_id
         return CausalCellResult(
             warmup_end=0,
             tuning_end=1,
-            tuning_results=fixed,
+            tuning_results={
+                candidate.candidate_id: fixed[candidate.candidate_id]
+                for candidate in catalog.selection_candidates
+            },
             fixed_results=fixed,
             selected_candidate_id=selected_id,
             tuned_policy=StrategyMetrics(
@@ -251,12 +526,12 @@ def test_runner_executes_each_ratio_from_experiment_plan(
     shard_status = json.loads((output_dir / "SHARD_STATUS.json").read_text(encoding="utf-8"))
     assert shard_status == {
         **shard_status,
-        "schema": "day1-causal-predicted-v1",
+        "schema": run_day1_suite.CAUSAL_SCHEMA,
         "state_model": "persistent-strategy-snapshots",
         "measurement_kind": "predicted-proxy",
         "gate_eligible": False,
         "complete_cost_claim_allowed": False,
-        "complete_reference_set": False,
+        "complete_reference_set": True,
         "suite_complete": False,
         "seed": 7,
         "workload": "zipf",
@@ -267,7 +542,11 @@ def test_runner_executes_each_ratio_from_experiment_plan(
         "experiment_plan_sha256": hashlib.sha256(plan_path.read_bytes()).hexdigest(),
         "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
     }
-    assert "strong-packed-coo" in shard_status["deferred_reference_baselines"]
+    assert shard_status["complete_reference_set"] is True
+    assert shard_status["candidate_ids"] == sorted(
+        candidate.candidate_id for candidate in _registered_catalog().candidates
+    )
+    assert shard_status["deferred_reference_baselines"] == []
 
     first_path, first_metadata = records[0]
     trace_path = first_path / "event-window-trace.jsonl"

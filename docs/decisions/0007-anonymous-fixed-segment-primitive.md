@@ -1,11 +1,14 @@
-# ADR 0007: Build an anonymous fixed-segment primitive before registering the strong baseline
+# ADR 0007: Build an opaque-identifier fixed-segment primitive before registering the strong baseline
 
 - Status: Accepted for the Phase 1 primitive; candidate registration deferred
 - Date: 2026-08-22
 
 The strong packed-COO path uses a public, power-of-two physical segment width `c`.
-Every allocated segment contains entries for exactly one logical row, but the Cloud sees
-only fixed public page and segment shapes plus opaque ordinal identifiers. A segment may
+Every allocated segment contains entries for exactly one logical row. Its typed Cloud
+interface uses fixed public page and segment shapes plus opaque ordinal identifiers rather
+than RowMap or same-row-equivalence fields. The Cloud-visible leakage still includes the
+published shapes and counts, schedule and timing, opaque identifiers, query/version
+identifiers, and binding digests. No segment-unlinkability claim is made. A segment may
 have a non-power-of-two active-payload region of at most `c` lanes; the remaining lanes
 are explicit zeros. For example, the primitive witness exercises the boundary of a
 127-lane active-payload region inside a physical segment of width `c=128`: it touches
@@ -14,12 +17,14 @@ offset 126 and proves offset 127 is zero. This does not define a `c=127` candida
 The Cloud executes one page-wide SIMD program with the same fixed-stride multiply,
 relinearize, rotate-and-add reduction, segment-start mask, F1-M operand addition, and
 return schedule for every public page shape. Each segment is reduced only into its own
-post-reduction leader lane. If two opaque segments contribute to the same hidden logical
-row, their leader lanes remain distinct, even when they share one page ciphertext and one
+post-reduction leader lane. If two opaque segments contribute to the same logical row,
+their leader lanes remain distinct, even when they share one page ciphertext and one
 page Output Share; Client B combines them using the version-bound OutputPlan. Asking the
-Cloud to merge those leaders would disclose row-equivalence unless a separate oblivious
-routing construction were specified. This fixed-segment definition resolves the
-ambiguity recorded in ADR 0006 without exposing a RowMap to the Cloud.
+Cloud to merge those leaders would add an explicit same-row-equivalence field unless a
+separate oblivious routing construction were specified. This fixed-segment definition
+resolves the ambiguity recorded in ADR 0006 while carrying RowMap and same-row-equivalence
+fields only in Client B's typed plan; that access-control boundary is not an unlinkability
+proof.
 
 For this primitive, every returned share has an identical visible F1-M ciphertext-add
 schedule. A share that needs no random overlap mask uses an encryption of zero as an
@@ -44,3 +49,8 @@ enter the Day 1 registry until all of the following are present:
 Until those gates pass, `Packed-COO-Client-Lane-Delta` remains a separate ablation,
 `Packed-COO-Cloud-Segmented-Delta` remains unregistered, and Day 1 continues to report
 `complete_reference_set=false` and full-baseline HOLD.
+
+ADR 0009 supersedes only that final artifact-output rule: current Day 1 refuses to emit a
+partial suite while registration is pending and requires a role-aware complete suite after
+admission. The primitive/candidate distinction and all registration prerequisites remain
+in force.

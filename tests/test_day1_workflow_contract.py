@@ -2,11 +2,24 @@ from __future__ import annotations
 
 import json
 import re
+import textwrap
 from pathlib import Path
 
 from scripts.run_day1_suite import load_experiment_plan
 
 ROOT = Path(__file__).parents[1]
+
+
+def test_every_embedded_day1_python_guard_is_syntax_valid() -> None:
+    workflow = (ROOT / ".github/workflows/day1-cost-model.yml").read_text(encoding="utf-8")
+    blocks = re.findall(
+        r"(?ms)^ {10}.*?\.venv/bin/python - <<'PY'\n(.*?)^ {10}PY$",
+        workflow,
+    )
+
+    assert len(blocks) == 4
+    for index, block in enumerate(blocks):
+        compile(textwrap.dedent(block), f"day1-workflow-guard-{index}.py", "exec")
 
 
 def test_ci_lock_exactly_pins_and_hashes_every_dependency() -> None:
@@ -35,17 +48,27 @@ def test_day1_workflow_installs_only_the_hashed_ci_lock() -> None:
     assert "\nenv:\n  PYTHONPATH: src:.\n\njobs:" in workflow
 
 
+def test_every_day1_job_checks_out_complete_history_without_credentials() -> None:
+    workflow = (ROOT / ".github/workflows/day1-cost-model.yml").read_text(encoding="utf-8")
+
+    assert workflow.count("uses: actions/checkout@v4") == 3
+    assert workflow.count("fetch-depth: 0") == 3
+    assert workflow.count("persist-credentials: false") == 3
+
+
 def test_day1_workflow_guards_the_causal_evidence_contract() -> None:
     workflow = (ROOT / ".github/workflows/day1-cost-model.yml").read_text(encoding="utf-8")
 
     assert "p['status']" not in workflow
     assert "inputs.updates" not in workflow
-    assert "assert p['schema'] == 'day1-causal-predicted-v1'" in workflow
+    assert workflow.count("assert p['schema'] == 'day1-causal-predicted-v2'") == 2
     assert "assert p['state_model'] == 'persistent-strategy-snapshots'" in workflow
     assert "assert p['measurement_kind'] == 'predicted-proxy'" in workflow
     assert "assert p['gate_eligible'] is False" in workflow
     assert "assert p['complete_cost_claim_allowed'] is False" in workflow
-    assert "assert p['complete_reference_set'] is False" in workflow
+    assert "assert p['security_claim_allowed'] is False" in workflow
+    assert "assert p['formal_performance_claim'] is False" in workflow
+    assert "assert p['complete_reference_set'] is True" in workflow
     assert "assert p['suite_complete'] is True" in workflow
     assert workflow.count("assert p['experiment_plan_version'] == '0.2.0'") == 2
     assert workflow.count("assert p['effective_slots'] == 2048") == 2
@@ -55,6 +78,44 @@ def test_day1_workflow_guards_the_causal_evidence_contract() -> None:
         "assert p['deferred_unpriced_plan_dimensions'] == ['bandwidth_profiles_mbps']" in workflow
     )
     assert "assert p['preflight']['status'] == 'pass'" in workflow
+
+
+def test_day1_workflow_guards_the_exact_role_aware_candidate_roster() -> None:
+    workflow = (ROOT / ".github/workflows/day1-cost-model.yml").read_text(encoding="utf-8")
+
+    assert workflow.count("assert p['fixed_candidate_count'] == 14") == 2
+    assert workflow.count("assert p['reference_candidate_count'] == 13") == 2
+    assert workflow.count("assert p['ablation_candidate_count'] == 1") == 2
+    assert workflow.count("assert p['candidate_ids'] == fixed_candidate_ids") == 2
+    assert workflow.count("assert p['reference_candidate_ids'] == reference_candidate_ids") == 2
+    assert workflow.count("assert p['ablation_candidate_ids'] == ablation_candidate_ids") == 2
+    assert (
+        workflow.count(
+            "assert ablation_candidate_ids == ['packed-coo-client-lane-delta/capacity=128']"
+        )
+        == 2
+    )
+    assert (
+        workflow.count("assert set(reference_candidate_ids).isdisjoint(ablation_candidate_ids)")
+        == 2
+    )
+    assert workflow.count("assert p['deferred_reference_baselines'] == []") == 2
+
+
+def test_aggregate_guard_revalidates_all_189_role_and_rotation_proofs() -> None:
+    workflow = (ROOT / ".github/workflows/day1-cost-model.yml").read_text(encoding="utf-8")
+
+    assert "from dynamic_cssc.report import validate_causal_payload" in workflow
+    assert "metrics_paths = sorted(Path('results/day1').glob('*/*/*/metrics.json'))" in workflow
+    assert "assert len(metrics_paths) == 189" in workflow
+    assert "validate_causal_payload(payload)" in workflow
+    assert "assert len(payload['records']) == 16" in workflow
+    assert "assert proof['fixed_candidate_count'] == 14" in workflow
+    assert "assert proof['reference_candidate_count'] == 13" in workflow
+    assert "assert proof['ablation_candidate_count'] == 1" in workflow
+    assert "assert proof['tuning_candidate_count'] == 13" in workflow
+    assert "assert proof['record_count'] == 16" in workflow
+    assert "assert set(measured).issubset(required)" in workflow
 
 
 def test_dispatch_seed_is_normalized_once_from_env_before_any_use() -> None:
@@ -92,10 +153,18 @@ def test_plan_job_runs_the_only_install_test_and_ruff_gate_before_matrix_output(
 
     install = ".venv/bin/python -m pip install --require-hashes -r requirements-ci.txt"
     pytest_gate = ".venv/bin/python -m pytest -q"
-    ruff_gate = ".venv/bin/python -m ruff check ."
+    ruff_gate = ".venv/bin/python -m ruff check \\\n"
     assert workflow.count(install) == 1
     assert workflow.count(pytest_gate) == 1
     assert workflow.count(ruff_gate) == 1
+    for behavior_path in (
+        "scripts/produce_day1_registration_evidence.py",
+        "src/dynamic_cssc/day1a_export.py",
+        "src/dynamic_cssc/day1_registration_evidence.py",
+        "src/dynamic_cssc/plaintext_oracle.py",
+        "tests/test_day1_registration_evidence.py",
+    ):
+        assert f"{behavior_path} \\" in workflow
     assert workflow.index(pytest_gate) < workflow.index("id: build-matrix")
     assert workflow.index(ruff_gate) < workflow.index("id: build-matrix")
     assert workflow.count("uses: actions/cache@v4") == 1
@@ -136,6 +205,9 @@ def test_day1_workflow_builds_a_dynamic_21_job_shard_matrix_and_aggregates_once(
     assert "python scripts/aggregate_day1_shards.py" in workflow
     assert "--shards-dir downloaded-shards" in workflow
     assert workflow.count("SUITE_STATUS.json") == 1
+    assert workflow.count("DAY1A_COUNT_BUNDLE.json") == 1
+    assert workflow.count("DAY1A_ROTATION_INVENTORY.json") == 1
+    assert workflow.count("DAY1A_AUTHORITY_RECEIPT.json") == 1
     assert workflow.count("python scripts/run_day1_suite.py") == 1
 
 
@@ -159,8 +231,10 @@ def test_shard_guard_requires_a_complete_digest_bound_replay_receipt() -> None:
     workflow = (ROOT / ".github/workflows/day1-cost-model.yml").read_text(encoding="utf-8")
 
     assert "assert r['schema'] == 'day1-shard-replay-receipt-v1'" in workflow
-    assert "assert r['validator_schema'] == 'day1-independent-replay-validator-v1'" in workflow
-    assert "assert r['validator_version'] == '1'" in workflow
+    assert (
+        "assert r['validator_schema'] == 'day1-separate-deterministic-replay-validator-v2'"
+    ) in workflow
+    assert "assert r['validator_version'] == '2'" in workflow
     assert "assert r['source_git_sha'] == os.environ['EXPECTED_SOURCE_GIT_SHA']" in workflow
     assert "assert r['experiment_plan_sha256'] == p['experiment_plan_sha256']" in workflow
     assert "assert r['manifest_sha256'] == p['manifest_sha256']" in workflow
@@ -193,12 +267,16 @@ def test_aggregate_guard_binds_all_receipts_to_source_and_verifies_final_checksu
     assert receipt_count_guard in workflow
     assert "assert p['replay_receipt_schema'] == 'day1-shard-replay-receipt-v1'" in workflow
     validator_schema_guard = (
-        "assert p['replay_validator_schema'] == 'day1-independent-replay-validator-v1'"
+        "assert p['replay_validator_schema'] == 'day1-separate-deterministic-replay-validator-v2'"
     )
     assert validator_schema_guard in workflow
     assert "assert len(p['replay_receipts']) == 21" in workflow
     assert "assert set(item) == receipt_item_keys" in workflow
     assert "assert re.fullmatch(r'[0-9a-f]{64}', item['sha256'])" in workflow
+    assert "assert count_bundle['fixed_record_count'] == 189 * 14" in workflow
+    assert "assert rotation_inventory['publication_domain_match'] is False" in workflow
+    assert "assert day1a_receipt['day1a_count_evidence_authorized'] is True" in workflow
+    assert "assert day1a_receipt['day2_direct_key_plan_authorized'] is False" in workflow
 
 
 def test_frozen_plan_supplies_the_exact_matrix_and_nine_rhos_per_shard() -> None:

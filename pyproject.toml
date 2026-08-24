@@ -13,9 +13,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+acquisition = [
+  "curl-cffi==0.16.1",
+]
 dev = [
   "pytest>=8,<10",
   "ruff>=0.6,<1",
+]
+publication = [
+  "pyarrow==25.0.1",
 ]
 
 [project.scripts]

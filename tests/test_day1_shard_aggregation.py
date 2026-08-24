@@ -15,6 +15,19 @@ from pathlib import Path
 
 import pytest
 
+import dynamic_cssc.report as report_module
+from dynamic_cssc.day1_registry import (
+    Day1CandidateCatalog,
+    Day1CandidateRegistrationError,
+    RegistrationEvidence,
+    _canonical_registered_candidates,
+)
+from dynamic_cssc.day1a_export import (
+    AUTHORITY_RECEIPT_FILENAME,
+    COUNT_BUNDLE_FILENAME,
+    ROTATION_INVENTORY_FILENAME,
+    export_day1a_evidence,
+)
 from dynamic_cssc.events import EventKind, PublicationWindow, publication_windows
 from dynamic_cssc.metrics import StrategyMetrics, UnitCosts
 from dynamic_cssc.report import (
@@ -27,7 +40,7 @@ from dynamic_cssc.report import (
 from dynamic_cssc.selection import split_boundaries
 from dynamic_cssc.simulator import SimulationConfig
 from dynamic_cssc.workloads import generate_event_stream, generate_initial_matrix
-from scripts import aggregate_day1_shards, replay_day1_shard
+from scripts import aggregate_day1_shards, replay_day1_shard, run_day1_suite
 from scripts.run_day1_suite import (
     EVENT_WINDOW_TRACE_SCHEMA,
     ExperimentPlan,
@@ -73,6 +86,66 @@ PREFLIGHT = {
     "reconstructed_high_row_value": 1,
 }
 _LAYOUT_TEMPLATE_ROOT: Path | None = None
+
+
+def _registered_catalog() -> Day1CandidateCatalog:
+    return Day1CandidateCatalog(
+        candidates=_canonical_registered_candidates(),
+        registration=RegistrationEvidence(
+            schema_version="dynamic-cssc-day1-registration-evidence-v1",
+            source_git_sha="1" * 40,
+            run_id=1,
+            correctness_artifact_sha256="2" * 64,
+            accounting_evidence_sha256="3" * 64,
+            policy_contract_sha256=(
+                "a35cecd1553f53da9639a041d49d817c47bc9ae90aee269eaf2cd6f5daa8227b"
+            ),
+        ),
+    )
+
+
+def _unavailable_catalog() -> Day1CandidateCatalog:
+    raise Day1CandidateRegistrationError(
+        "no repository-approved Day-1 composite registration anchor"
+    )
+
+
+@pytest.fixture(autouse=True)
+def _authorized_day1_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    catalog = _registered_catalog()
+    monkeypatch.setattr(report_module, "repository_day1_candidate_catalog", lambda: catalog)
+    monkeypatch.setattr(run_day1_suite, "repository_day1_candidate_catalog", lambda: catalog)
+    monkeypatch.setattr(replay_day1_shard, "repository_day1_candidate_catalog", lambda: catalog)
+    monkeypatch.setattr(
+        aggregate_day1_shards,
+        "repository_day1_candidate_catalog",
+        lambda: catalog,
+    )
+
+
+def test_public_aggregator_fails_closed_before_accepting_unregistered_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        aggregate_day1_shards,
+        "repository_day1_candidate_catalog",
+        _unavailable_catalog,
+    )
+    with pytest.raises(
+        Day1CandidateRegistrationError,
+        match="no repository-approved Day-1 composite registration anchor",
+    ):
+        aggregate_day1_shards.aggregate_shards(
+            shards_dir=tmp_path / "missing-shards",
+            output_dir=tmp_path / "day1",
+            experiment_plan=PLAN_PATH,
+            manifest=MANIFEST_PATH,
+            seed=SEED,
+            source_sha=SOURCE_SHA,
+        )
+
+    assert not (tmp_path / "day1").exists()
 
 
 def _sha256(path: Path) -> str:
@@ -182,7 +255,6 @@ def _write_cell(
     plan: ExperimentPlan,
     plan_sha256: str,
     manifest_sha256: str,
-    candidate_ids: list[str],
     initial_state_sha256: str,
     microbatch_max_updates: int,
     query_requires_latest: bool,
@@ -254,7 +326,6 @@ def _write_cell(
             packed_coo_segment_capacity=128,
         ),
         split=plan.split,
-        candidates=plan.candidates,
         costs=UnitCosts(),
     )
     metadata = {
@@ -287,8 +358,10 @@ def _write_cell(
         "warmup_windows": result.warmup_end,
         "tuning_windows": result.tuning_end - result.warmup_end,
         "held_out_windows": len(held_out_windows),
-        "fixed_candidate_count": 13,
-        "span80_by_candidate": _candidate_span80(plan.rows, plan.candidates, result),
+        "fixed_candidate_count": 14,
+        "reference_candidate_count": 13,
+        "ablation_candidate_count": 1,
+        "span80_by_candidate": _candidate_span80(plan.rows, result),
         "initial_state_sha256": initial_state_sha256,
         "real_temporal_dataset": False,
         "selected_candidate_id": result.selected_candidate_id,
@@ -297,9 +370,11 @@ def _write_cell(
         "measurement_kind": "predicted-proxy",
         "gate_eligible": False,
         "complete_cost_claim_allowed": False,
-        "complete_reference_set": False,
+        "security_claim_allowed": False,
+        "formal_performance_claim": False,
+        "complete_reference_set": True,
     }
-    records = _candidate_records(plan.candidates, result)
+    records = _candidate_records(result)
     report_audit = {
         "tuning_results": {
             candidate_id: simulation.metrics
@@ -350,7 +425,10 @@ def _create_download_layout(download_dir: Path) -> list[Path]:
         matrix_entry_abs_bound=manifest["integer_correctness"]["matrix_entry_abs_bound"],
     )
     initial_state_digest = _initial_state_sha256(initial_state)
-    candidate_ids = [candidate.candidate_id for candidate in plan.candidates]
+    catalog = _registered_catalog()
+    candidate_ids = [candidate.candidate_id for candidate in catalog.candidates]
+    reference_candidate_ids = [candidate.candidate_id for candidate in catalog.selection_candidates]
+    ablation_candidate_ids = [candidate.candidate_id for candidate in catalog.ablation_candidates]
     shards: list[Path] = []
     for shard_index, (workload, freshness) in enumerate(
         (workload, freshness) for workload in plan.workloads for freshness in plan.freshness_seconds
@@ -368,7 +446,6 @@ def _create_download_layout(download_dir: Path) -> list[Path]:
                 plan=plan,
                 plan_sha256=plan_sha256,
                 manifest_sha256=manifest_sha256,
-                candidate_ids=candidate_ids,
                 initial_state_sha256=initial_state_digest,
                 microbatch_max_updates=manifest["freshness"]["microbatch_max_updates"],
                 query_requires_latest=manifest["freshness"]["query_requires_latest"],
@@ -378,14 +455,16 @@ def _create_download_layout(download_dir: Path) -> list[Path]:
             for ratio in plan.ratio_grid
         ]
         status = {
-            "schema": "day1-causal-predicted-v1",
+            "schema": "day1-causal-predicted-v2",
             "state_model": "persistent-strategy-snapshots",
             "measurement_kind": "predicted-proxy",
             "gate_eligible": False,
             "complete_cost_claim_allowed": False,
-            "complete_reference_set": False,
+            "security_claim_allowed": False,
+            "formal_performance_claim": False,
+            "complete_reference_set": True,
             "suite_complete": False,
-            "deferred_reference_baselines": ["strong-packed-coo"],
+            "deferred_reference_baselines": [],
             "seed": SEED,
             "experiment_plan_sha256": plan_sha256,
             "manifest_sha256": manifest_sha256,
@@ -397,6 +476,11 @@ def _create_download_layout(download_dir: Path) -> list[Path]:
             "cells_expected": 9,
             "cells_completed": 9,
             "candidate_ids": sorted(candidate_ids),
+            "reference_candidate_ids": sorted(reference_candidate_ids),
+            "ablation_candidate_ids": sorted(ablation_candidate_ids),
+            "fixed_candidate_count": 14,
+            "reference_candidate_count": 13,
+            "ablation_candidate_count": 1,
             "effective_slots": plan.effective_slots,
             "partition_rows": plan.partition_rows,
             "layout_measurement_kind": plan.layout_measurement_kind,
@@ -500,6 +584,10 @@ def _write_zero_operation_forgery(cell_dir: Path, *, keep_updates: bool) -> None
     for record in fixed_records:
         metrics = zeroed(record)
         record.update(metrics.to_record(costs))
+        record["rotation_inventory"] = {
+            "measured_counts_by_exact_index": [],
+            "required_indices": [],
+        }
         fixed_by_id[record["candidate_id"]] = metrics
 
     selected_id = min(
@@ -509,6 +597,10 @@ def _write_zero_operation_forgery(cell_dir: Path, *, keep_updates: bool) -> None
     oracle_id = min(
         (metrics.predicted_time(costs), candidate_id)
         for candidate_id, metrics in fixed_by_id.items()
+        if next(record for record in fixed_records if record["candidate_id"] == candidate_id)[
+            "candidate_role"
+        ]
+        == "reference"
     )[1]
     payload["metadata"]["selected_candidate_id"] = selected_id
     payload["metadata"]["oracle_candidate_id"] = oracle_id
@@ -540,52 +632,59 @@ def _write_zero_operation_forgery(cell_dir: Path, *, keep_updates: bool) -> None
         )
         record["candidate_id"] = candidate_id
         record["strategy_kind"] = basis.strategy
+        record["rotation_inventory"] = {
+            "measured_counts_by_exact_index": [],
+            "required_indices": [],
+        }
         record.update(alias_metrics.to_record(costs))
+
+    payload["completion_proof"]["fixed_rotation_inventories"] = [
+        {
+            "candidate_id": record["candidate_id"],
+            "measured_counts_by_exact_index": [],
+            "required_indices": [],
+        }
+        for record in sorted(fixed_records, key=lambda item: item["candidate_id"])
+    ]
 
     with tempfile.TemporaryDirectory(prefix="day1-forged-render-") as temporary:
         rendered = Path(temporary)
         render_causal_artifacts(
             rendered,
             payload,
-            expected_candidate_ids=sorted(fixed_by_id),
         )
         for filename in CAUSAL_ARTIFACT_FILENAMES:
             shutil.copy2(rendered / filename, cell_dir / filename)
 
 
-def test_independent_replay_accepts_an_official_small_plan_shard(tmp_path: Path) -> None:
+def test_independent_replay_path_fails_closed_until_composite_registration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     download_dir = tmp_path / "downloaded-shards"
     shard_dir = _build_download_layout(download_dir)[0]
     status = json.loads((shard_dir / "SHARD_STATUS.json").read_text(encoding="utf-8"))
 
-    subprocess.run(
-        [
-            sys.executable,
-            "scripts/replay_day1_shard.py",
-            "--shard-dir",
-            str(shard_dir),
-            "--experiment-plan",
-            str(_fixture_plan_path(download_dir)),
-            "--manifest",
-            str(MANIFEST_PATH),
-            "--seed",
-            str(SEED),
-            "--workload",
-            status["workload"],
-            "--freshness-seconds",
-            status["freshness_seconds_fraction"],
-            "--source-sha",
-            SOURCE_SHA,
-        ],
-        cwd=ROOT,
-        env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
-        check=True,
+    monkeypatch.setattr(
+        replay_day1_shard,
+        "repository_day1_candidate_catalog",
+        _unavailable_catalog,
     )
-    receipt = json.loads((shard_dir / "REPLAY_RECEIPT.json").read_text(encoding="utf-8"))
 
-    assert receipt["verified"] is True
-    assert receipt["cells_replayed"] == 9
-    assert [cell["rho_id"] for cell in receipt["cells"]] == status["rho_ids"]
+    with pytest.raises(
+        Day1CandidateRegistrationError,
+        match="no repository-approved Day-1 composite registration anchor",
+    ):
+        replay_day1_shard.replay_shard(
+            shard_dir=shard_dir,
+            experiment_plan=_fixture_plan_path(download_dir),
+            manifest=MANIFEST_PATH,
+            seed=SEED,
+            workload=status["workload"],
+            freshness=Fraction(status["freshness_seconds_fraction"]),
+            source_sha=SOURCE_SHA,
+        )
+    assert not (shard_dir / "REPLAY_RECEIPT.json").exists()
 
 
 def _replay_existing_shard(
@@ -602,6 +701,19 @@ def _replay_existing_shard(
         freshness=Fraction(status["freshness_seconds_fraction"]),
         source_sha=SOURCE_SHA,
     )
+
+
+def test_independent_replay_accepts_an_authorized_official_small_plan_shard(
+    tmp_path: Path,
+) -> None:
+    download_dir = tmp_path / "downloaded-shards"
+    shard_dir = _build_download_layout(download_dir)[0]
+
+    receipt = _replay_existing_shard(shard_dir, download_dir)
+
+    assert receipt["verified"] is True
+    assert receipt["cells_replayed"] == 9
+    assert (shard_dir / "REPLAY_RECEIPT.json").is_file()
 
 
 @pytest.mark.parametrize("keep_updates", [False, True])
@@ -765,8 +877,23 @@ def test_aggregator_accepts_only_the_complete_21_shard_189_cell_cartesian_produc
     )
 
     assert len(shards) == 21
+    assert status["schema"] == "day1-causal-predicted-v2"
     assert status["suite_complete"] is True
-    assert status["complete_reference_set"] is False
+    assert status["complete_reference_set"] is True
+    assert status["gate_eligible"] is False
+    assert status["complete_cost_claim_allowed"] is False
+    assert status["security_claim_allowed"] is False
+    assert status["formal_performance_claim"] is False
+    assert status["fixed_candidate_count"] == 14
+    assert status["reference_candidate_count"] == 13
+    assert status["ablation_candidate_count"] == 1
+    assert len(status["candidate_ids"]) == 14
+    assert len(status["reference_candidate_ids"]) == 13
+    assert status["ablation_candidate_ids"] == ["packed-coo-client-lane-delta/capacity=128"]
+    assert set(status["reference_candidate_ids"]).isdisjoint(status["ablation_candidate_ids"])
+    assert set(status["candidate_ids"]) == set(status["reference_candidate_ids"]) | set(
+        status["ablation_candidate_ids"]
+    )
     assert status["shards_expected"] == status["shards_completed"] == 21
     assert status["cells_expected"] == status["cells_completed"] == 189
     assert status["source_git_sha"] == SOURCE_SHA
@@ -786,8 +913,63 @@ def test_aggregator_accepts_only_the_complete_21_shard_189_cell_cartesian_produc
     assert status["layout_measurement_kind"] == "synthetic-proxy"
     assert status["planned_bandwidth_profiles_mbps"] == [100.0, 1000.0, 10000.0]
     assert status["deferred_unpriced_plan_dimensions"] == ["bandwidth_profiles_mbps"]
+    assert status["deferred_reference_baselines"] == []
     assert status["preflight"] == PREFLIGHT
     assert (output_dir / "SUITE_STATUS.json").is_file()
+    count_bundle_path = output_dir / COUNT_BUNDLE_FILENAME
+    rotation_inventory_path = output_dir / ROTATION_INVENTORY_FILENAME
+    authority_receipt_path = output_dir / AUTHORITY_RECEIPT_FILENAME
+    assert count_bundle_path.is_file()
+    assert rotation_inventory_path.is_file()
+    assert authority_receipt_path.is_file()
+
+    count_bundle = json.loads(count_bundle_path.read_text(encoding="ascii"))
+    rotation_inventory = json.loads(rotation_inventory_path.read_text(encoding="ascii"))
+    authority_receipt = json.loads(authority_receipt_path.read_text(encoding="ascii"))
+    assert count_bundle["schema_version"] == "dynamic-cssc-day1a-count-bundle-v1"
+    assert count_bundle["cell_count"] == 189
+    assert count_bundle["fixed_record_count"] == 189 * 14
+    assert len(count_bundle["records"]) == 189 * 14
+    assert rotation_inventory["schema_version"] == (
+        "dynamic-cssc-day1a-rotation-inventory-v1"
+    )
+    assert rotation_inventory["rows"] == FIXTURE_ROWS
+    assert rotation_inventory["cols"] == FIXTURE_COLS
+    assert rotation_inventory["effective_slots"] == 2048
+    assert rotation_inventory["partition_rows"] == 128
+    assert rotation_inventory["publication_rows"] == 4096
+    assert rotation_inventory["publication_cols"] == 8193
+    assert rotation_inventory["publication_effective_slots"] == 4096
+    assert rotation_inventory["publication_partition_rows"] == 4096
+    assert rotation_inventory["publication_domain_match"] is False
+    assert rotation_inventory["day2_direct_key_plan_eligible"] is False
+    assert rotation_inventory["required_exact_indices"]
+    assert rotation_inventory["indices_in_range"] is True
+    assert rotation_inventory["modulo_alias_free"] is True
+    assert authority_receipt["schema_version"] == (
+        "dynamic-cssc-day1a-authority-receipt-v1"
+    )
+    assert authority_receipt["day1a_count_evidence_authorized"] is True
+    assert authority_receipt["day2_direct_key_plan_authorized"] is False
+    assert authority_receipt["publication_domain_match"] is False
+    assert authority_receipt["complete_cost_claim_allowed"] is False
+    assert authority_receipt["formal_performance_claim_allowed"] is False
+    assert authority_receipt["paper_verdict_allowed"] is False
+    assert authority_receipt["security_claim_allowed"] is False
+    assert authority_receipt["count_bundle_sha256"] == _sha256(count_bundle_path)
+    assert authority_receipt["rotation_inventory_sha256"] == _sha256(
+        rotation_inventory_path
+    )
+
+    with pytest.raises(ValueError, match="targets must be absent"):
+        export_day1a_evidence(
+            suite_dir=output_dir,
+            source_git_sha=SOURCE_SHA,
+            publication_rows=4096,
+            publication_cols=8193,
+            publication_effective_slots=4096,
+            publication_partition_rows=4096,
+        )
     assert (output_dir / "SHA256SUMS").is_file()
     assert not (output_dir / "SHARD_STATUS.json").exists()
     checksummed_paths = {
@@ -800,7 +982,7 @@ def test_aggregator_accepts_only_the_complete_21_shard_189_cell_cartesian_produc
         if path.is_file() and path != output_dir / "SHA256SUMS"
     }
     assert checksummed_paths == output_files
-    assert len(checksummed_paths) == 1 + 189 * 8 + 21
+    assert len(checksummed_paths) == 1 + 3 + 189 * 8 + 21
 
 
 def test_aggregator_cli_loads_when_executed_by_workflow_script_path() -> None:
@@ -817,6 +999,22 @@ def test_aggregator_cli_loads_when_executed_by_workflow_script_path() -> None:
 
     assert completed.returncode == 0, completed.stderr
     assert "downloaded-shards/<artifact-name>/SHARD_STATUS.json" in completed.stdout
+
+
+def test_replay_cli_loads_when_executed_by_workflow_script_path() -> None:
+    environment = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+
+    completed = subprocess.run(
+        [sys.executable, "scripts/replay_day1_shard.py", "--help"],
+        cwd=ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "Independently replay one Day-1 shard" in completed.stdout
 
 
 @pytest.mark.parametrize(
@@ -1122,11 +1320,18 @@ def test_aggregator_requires_exact_trace_header_keys(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "mutation", ["skinny", "forged-score", "unknown-record", "unknown-candidate"]
+    ("mutation", "message"),
+    [
+        ("skinny", "unit_costs keys mismatch"),
+        ("forged-score", "score does not match reconstructed metrics"),
+        ("unknown-record", "unknown causal record_kind"),
+        ("unknown-candidate", "label contradicts record_kind"),
+    ],
 )
 def test_aggregator_reuses_report_validator_for_causal_payloads(
     tmp_path: Path,
     mutation: str,
+    message: str,
 ) -> None:
     download_dir = tmp_path / "downloaded-shards"
     shards = _build_download_layout(download_dir)
@@ -1144,7 +1349,73 @@ def test_aggregator_reuses_report_validator_for_causal_payloads(
     metrics_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     _resign_cell_and_shard(shards[0], cell_dir)
 
-    with pytest.raises(ValueError, match="metrics_json_sha256"):
+    with pytest.raises(ValueError, match=message):
+        aggregate_day1_shards.aggregate_shards(
+            shards_dir=download_dir,
+            output_dir=tmp_path / "day1",
+            experiment_plan=_fixture_plan_path(download_dir),
+            manifest=MANIFEST_PATH,
+            seed=SEED,
+            source_sha=SOURCE_SHA,
+        )
+
+
+def test_aggregator_rejects_a_resigned_cell_with_incomplete_exact_rotation_inventory(
+    tmp_path: Path,
+) -> None:
+    download_dir = tmp_path / "downloaded-shards"
+    shards = _build_download_layout(download_dir)
+    located: tuple[Path, Path, dict[str, object], dict[str, object]] | None = None
+    for metrics_path in shards[0].rglob("metrics.json"):
+        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+        record = next(
+            (
+                item
+                for item in payload["records"]
+                if item["record_kind"] == "fixed-candidate"
+                and item["rotation_inventory"]["measured_counts_by_exact_index"]
+            ),
+            None,
+        )
+        if record is not None:
+            located = metrics_path.parent, metrics_path, payload, record
+            break
+    assert located is not None
+    cell_dir, metrics_path, payload, record = located
+    measured_index = record["rotation_inventory"]["measured_counts_by_exact_index"][0][0]
+    record["rotation_inventory"]["required_indices"].remove(measured_index)
+    metrics_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    _resign_cell_and_shard(shards[0], cell_dir)
+
+    with pytest.raises(ValueError, match="rotation_inventory.*canonical and complete"):
+        aggregate_day1_shards.aggregate_shards(
+            shards_dir=download_dir,
+            output_dir=tmp_path / "day1",
+            experiment_plan=_fixture_plan_path(download_dir),
+            manifest=MANIFEST_PATH,
+            seed=SEED,
+            source_sha=SOURCE_SHA,
+        )
+
+
+def test_aggregator_rejects_client_lane_ablation_as_selected_or_oracle(
+    tmp_path: Path,
+) -> None:
+    download_dir = tmp_path / "downloaded-shards"
+    shards = _build_download_layout(download_dir)
+    cell_dir = next(path.parent for path in shards[0].rglob("metrics.json"))
+    metrics_path = cell_dir / "metrics.json"
+    payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+    ablation_id = "packed-coo-client-lane-delta/capacity=128"
+    payload["metadata"]["selected_candidate_id"] = ablation_id
+    tuned = next(
+        record for record in payload["records"] if record["record_kind"] == "tuned-fixed-policy"
+    )
+    tuned["candidate_id"] = ablation_id
+    metrics_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    _resign_cell_and_shard(shards[0], cell_dir)
+
+    with pytest.raises(ValueError, match="ablation basis"):
         aggregate_day1_shards.aggregate_shards(
             shards_dir=download_dir,
             output_dir=tmp_path / "day1",
@@ -1308,18 +1579,23 @@ def test_aggregator_rejects_a_canonical_trace_that_diverges_from_the_generated_s
 
 
 @pytest.mark.parametrize(
-    ("phase", "metric_field"),
+    ("phase", "metric_field", "message"),
     [
-        ("held-out", "windows"),
-        ("held-out", "queries"),
-        ("tuning", "windows"),
-        ("tuning", "queries"),
+        ("held-out", "windows", "metrics_json_sha256"),
+        (
+            "held-out",
+            "queries",
+            "predicted_query_time_per_query|replay receipt cell.metrics_json_sha256",
+        ),
+        ("tuning", "windows", "metrics_json_sha256"),
+        ("tuning", "queries", "metrics_json_sha256"),
     ],
 )
 def test_aggregator_binds_report_window_and_query_counts_to_reconstructed_phases(
     tmp_path: Path,
     phase: str,
     metric_field: str,
+    message: str,
 ) -> None:
     download_dir = tmp_path / "downloaded-shards"
     shards = _build_download_layout(download_dir)
@@ -1336,7 +1612,7 @@ def test_aggregator_binds_report_window_and_query_counts_to_reconstructed_phases
     metrics_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     _resign_cell_and_shard(shards[0], cell_dir)
 
-    with pytest.raises(ValueError, match="metrics_json_sha256"):
+    with pytest.raises(ValueError, match=message):
         aggregate_day1_shards.aggregate_shards(
             shards_dir=download_dir,
             output_dir=tmp_path / "day1",

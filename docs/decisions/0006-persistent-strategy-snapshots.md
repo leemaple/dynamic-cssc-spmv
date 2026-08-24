@@ -47,3 +47,8 @@ deferred. Consequently Day 1 artifacts must report `complete_reference_set=false
 `strong-packed-coo` as a missing/deferred baseline, and remain in full-baseline HOLD.
 They do not support claims that all fixed references, a six-reference comparison, or a
 complete baseline suite has been implemented.
+
+The partial-reference artifact policy in the preceding paragraph is historical and is
+superseded by ADR 0009. The current production contract fails closed before writing R2
+output until the strong candidate is admitted; after admission it requires the exact
+role-aware complete set.

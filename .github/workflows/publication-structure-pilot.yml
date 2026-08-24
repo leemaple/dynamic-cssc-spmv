@@ -1,0 +1,64 @@
+name: Publication structure pilot
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publication-structure-pilot
+  cancel-in-progress: false
+
+env:
+  PYTHONPATH: src:.
+  PUBLICATION_ACQUISITION_BUNDLE_ROOT: /mnt/dynamic-cssc-publication-corpus/acquisition-bundles
+  PUBLICATION_STRUCTURE_PILOT_OUTPUT_PARENT: /mnt/dynamic-cssc-publication-pilot-output
+  PUBLICATION_STRUCTURE_PILOT_SCRATCH_ROOT: /mnt/dynamic-cssc-publication-pilot-scratch
+
+jobs:
+  structure-pilot:
+    runs-on: [self-hosted, linux, x64, publication-corpus]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.13'
+      - name: Install the frozen publication parser environment
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --require-hashes -r requirements-publication.txt
+      - name: Run the fixed outcome-blind structure pilot
+        env:
+          PUBLICATION_STRUCTURE_PILOT_OUTPUT_DIR: >-
+            ${{ env.PUBLICATION_STRUCTURE_PILOT_OUTPUT_PARENT }}/NONADMISSIBLE-structure-pilot-${{ github.run_id }}-${{ github.run_attempt }}
+          TMPDIR: ${{ env.PUBLICATION_STRUCTURE_PILOT_SCRATCH_ROOT }}
+          SQLITE_TMPDIR: ${{ env.PUBLICATION_STRUCTURE_PILOT_SCRATCH_ROOT }}
+        run: >-
+          .venv/bin/python scripts/run_publication_structure_pilot.py
+          --acquisition-bundle-root "$PUBLICATION_ACQUISITION_BUNDLE_ROOT"
+          --output-dir "$PUBLICATION_STRUCTURE_PILOT_OUTPUT_DIR"
+      - name: Guard the exact structure-pilot output tree
+        env:
+          PUBLICATION_STRUCTURE_PILOT_OUTPUT_DIR: >-
+            ${{ env.PUBLICATION_STRUCTURE_PILOT_OUTPUT_PARENT }}/NONADMISSIBLE-structure-pilot-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          .venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ['PUBLICATION_STRUCTURE_PILOT_OUTPUT_DIR'])
+          expected_names = {'checksums.sha256', 'structure-pilot-report.json'}
+          actual_paths = tuple(root.iterdir())
+          actual_names = {path.name for path in actual_paths}
+          assert actual_names == expected_names
+          assert all(path.is_file() and not path.is_symlink() for path in actual_paths)
+          PY
+          (cd "$PUBLICATION_STRUCTURE_PILOT_OUTPUT_DIR" && sha256sum --check --strict checksums.sha256)
+      - name: Upload the permanently non-admissible structure report
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: NONADMISSIBLE-structure-pilot-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.PUBLICATION_STRUCTURE_PILOT_OUTPUT_PARENT }}/NONADMISSIBLE-structure-pilot-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error

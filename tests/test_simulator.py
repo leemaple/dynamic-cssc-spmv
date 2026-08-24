@@ -9,6 +9,7 @@ import pytest
 import dynamic_cssc.simulator as simulator_module
 from dynamic_cssc.events import NetUpdate, PublicationWindow
 from dynamic_cssc.simulator import (
+    RotationInventory,
     SimulationConfig,
     SimulationTarget,
     simulate,
@@ -113,6 +114,26 @@ def test_simulate_targets_rejects_duplicate_run_ids_before_initialization(
 def test_simulate_targets_rejects_an_empty_target_list() -> None:
     with pytest.raises(ValueError, match="must not be empty"):
         simulate_targets([], {(0, 0): 1}, [], measure_from=0)
+
+
+@pytest.mark.parametrize(
+    ("measured", "required"),
+    (
+        (((2, 1), (1, 1)), (1, 2)),
+        (((1, 1), (1, 2)), (1,)),
+        (((1, 0),), (1,)),
+        (((True, 1),), (1,)),
+        (((2, 1),), (1,)),
+        ((), (2, 1)),
+        ((), (1, 1)),
+    ),
+)
+def test_rotation_inventory_rejects_noncanonical_or_incomplete_values(
+    measured: tuple[tuple[int, int], ...],
+    required: tuple[int, ...],
+) -> None:
+    with pytest.raises(ValueError, match="rotation inventory"):
+        RotationInventory(measured, required)
 
 
 def test_simulation_config_requires_the_complete_canonical_schema() -> None:
@@ -242,8 +263,7 @@ def test_query_accounting_fails_closed_on_a_canonically_different_output_plan(
         altered_share = replace(
             first_share,
             slot_to_logical=tuple(
-                (physical_slot, 1)
-                for physical_slot, _logical in first_share.slot_to_logical
+                (physical_slot, 1) for physical_slot, _logical in first_share.slot_to_logical
             ),
         )
         return replace(
@@ -303,9 +323,7 @@ def test_each_ordinary_transition_compiles_all_active_sources_once(
     calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
     real_compile = simulator_module.compile_query
 
-    def recording_compile(
-        components: tuple[object, ...], **kwargs: object
-    ) -> object:
+    def recording_compile(components: tuple[object, ...], **kwargs: object) -> object:
         calls.append((components, kwargs))
         return real_compile(components, **kwargs)  # type: ignore[arg-type]
 
@@ -360,6 +378,28 @@ def test_simulate_advances_warmup_state_but_aggregates_only_the_measured_suffix(
     assert all(item.queries == 2 for item in metrics)
     assert all(item.updates == 1 for item in metrics)
     assert "BestFixed-Offline-Oracle" not in {item.strategy for item in metrics}
+
+
+def test_rotation_inventory_counts_only_suffix_queries_but_requires_warmup_dags() -> None:
+    result = simulate_targets(
+        [
+            _window(index=0, queries=3),
+            _window(index=1, queries=2),
+        ],
+        {(0, 0): 1, (0, 1): 2, (0, 2): 3},
+        [
+            SimulationTarget(
+                "padding",
+                "PaddingReuse-CSSC",
+                _config(rows=1, cols=3, partition_rows=1, max_row_nnz=3),
+            )
+        ],
+        measure_from=1,
+    )["padding"]
+
+    assert result.metrics.queries == 2
+    assert result.rotation_inventory.measured_counts_by_exact_index == ((1, 2), (2, 2))
+    assert result.rotation_inventory.required_indices == (1, 2)
 
 
 def test_packed_coo_query_accounting_uses_client_lane_outputs() -> None:
@@ -420,19 +460,23 @@ def test_transition_facts_map_to_maintenance_metrics_without_double_counting() -
         mini.update_encryptions,
         mini.update_ciphertexts,
         mini.compaction_ciphertexts,
+        mini.ci_patch_entries,
+        mini.ci_full_sync_entries,
         mini.metadata_units,
         mini.absorbed_updates,
         mini.overflow_updates,
-    ) == (1, 1, 0, 1, 0, 1)
+    ) == (1, 1, 0, 0, 1, 1, 0, 1)
     padding = metrics["PaddingReuse-CSSC"]
     assert (
         padding.update_encryptions,
         padding.update_ciphertexts,
         padding.compaction_ciphertexts,
+        padding.ci_patch_entries,
+        padding.ci_full_sync_entries,
         padding.metadata_units,
         padding.absorbed_updates,
         padding.overflow_updates,
-    ) == (2, 0, 2, 2, 0, 1)
+    ) == (2, 0, 2, 0, 2, 2, 0, 1)
 
 
 def test_cloud_additions_do_not_merge_disjoint_horizontal_output_blocks() -> None:
