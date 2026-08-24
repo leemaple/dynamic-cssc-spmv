@@ -237,6 +237,7 @@ _DAY2_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/output_plan.py",
     "src/dynamic_cssc/plaintext_oracle.py",
     "src/dynamic_cssc/publication_artifact_install.py",
+    "src/dynamic_cssc/publication_primitive_accounting.py",
     "src/dynamic_cssc/query_compiler.py",
     "src/dynamic_cssc/report.py",
     "src/dynamic_cssc/selection.py",
@@ -405,6 +406,7 @@ _DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/__init__.py",
     "src/dynamic_cssc/cloud_execution_plan.py",
     "src/dynamic_cssc/cssc.py",
+    "src/dynamic_cssc/day2_calibration_authority.py",
     "src/dynamic_cssc/day1_registry.py",
     "src/dynamic_cssc/evidence_compatibility.py",
     "src/dynamic_cssc/events.py",
@@ -419,6 +421,7 @@ _DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/publication_artifact_install.py",
     "src/dynamic_cssc/publication_day1b.py",
     "src/dynamic_cssc/publication_day1b_worker_protocol.py",
+    "src/dynamic_cssc/publication_primitive_accounting.py",
     "src/dynamic_cssc/publication_schedule.py",
     "src/dynamic_cssc/publication_statistics.py",
     "src/dynamic_cssc/publication_traces.py",
@@ -435,6 +438,7 @@ _DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "tests/test_publication_day1b.py",
     "tests/test_publication_day1b_worker_protocol.py",
     "tests/test_publication_day1b_workflow_contract.py",
+    "tests/test_publication_primitive_accounting.py",
 )
 
 _ROLE_BEHAVIOR_PATHS: dict[EvidenceRole, tuple[str, ...] | None] = {
@@ -450,8 +454,8 @@ _ROLE_BEHAVIOR_PATHS: dict[EvidenceRole, tuple[str, ...] | None] = {
 _ROLE_BEHAVIOR_SCHEMAS = {
     EvidenceRole.ACQUISITION: "dynamic-cssc-acquisition-behavior-set-v2",
     EvidenceRole.TRACE: "dynamic-cssc-trace-behavior-set-v2",
-    EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v6",
-    EvidenceRole.DAY2: "dynamic-cssc-day2-behavior-set-v3",
+    EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v7",
+    EvidenceRole.DAY2: "dynamic-cssc-day2-behavior-set-v4",
     EvidenceRole.ANALYZER: "dynamic-cssc-publication-analyzer-behavior-set-v2",
     EvidenceRole.STRONG_CORRECTNESS: "dynamic-cssc-strong-correctness-behavior-set-v1",
     EvidenceRole.DAY1_REGISTRATION: "dynamic-cssc-day1-registration-behavior-set-v3",

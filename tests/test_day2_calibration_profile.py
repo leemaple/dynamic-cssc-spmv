@@ -13,6 +13,9 @@ from dynamic_cssc.day2_calibration_profile import (
     _derive_day2_profile_documents,
     propose_repository_day2_calibration_profile,
 )
+from dynamic_cssc.publication_primitive_accounting import (
+    publication_primitive_accounting_contract_document,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SHA = "a" * 40
@@ -204,6 +207,12 @@ def test_profile_derivation_freezes_exact_probe_cases_and_profile_anchor_retriev
     assert anchor["rotation_key_plan_sha256"] == _sha256(documents.rotation_key_plan)
     assert anchor["operation_profile_set_sha256"] == _sha256(profiles)
     assert anchor["contract_bindings_sha256"] == _sha256(documents.contract_bindings)
+    assert anchor["primitive_accounting_schema_version"] == (
+        "dynamic-cssc-publication-primitive-accounting-v2"
+    )
+    assert anchor["primitive_accounting_mapping_sha256"] == _sha256(
+        publication_primitive_accounting_contract_document()
+    )
     assert anchor["day1a_workflow_run_id"] == 456
     assert anchor["day1a_artifact_id"] == 789
     assert anchor["day1a_artifact_name"] == f"r2-day1a-publication-{SOURCE_SHA}-20260821"

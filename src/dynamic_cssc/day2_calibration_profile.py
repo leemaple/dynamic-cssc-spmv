@@ -43,6 +43,9 @@ from dynamic_cssc.publication_artifact_install import (
     install_verified_directory,
     quarantine_owned_directory,
 )
+from dynamic_cssc.publication_primitive_accounting import (
+    publication_primitive_accounting_contract_document,
+)
 
 __all__ = (
     "Day2CalibrationProfileDocuments",
@@ -595,17 +598,7 @@ def _repository_contract_documents(repository_root: Path) -> tuple[dict[str, obj
         "operation_order_seed": CALIBRATION_OPERATION_ORDER_SEED,
         "operation_order_method": CALIBRATION_OPERATION_ORDER_METHOD,
     }
-    primitive_accounting = {
-        "schema_version": "dynamic-cssc-publication-primitive-accounting-v1",
-        "primitive_names": list(PRIMITIVE_NAMES),
-        "heldout_count_vectors": ["update_primitive_counts", "query_primitive_counts"],
-        "vector_index_rule": "primitive_names-canonical-order",
-        "relinearization_rule": (
-            "count-exactly-once-inside-eval_mult_with_relinearization"
-        ),
-        "rotation_rule": "count-each-exact-index-call-under-eval_rotate",
-        "incomplete_outcome_rule": "all-measured-quantities-null-no-partial-pricing",
-    }
+    primitive_accounting = publication_primitive_accounting_contract_document()
     serialized_accounting = {
         "schema_version": "dynamic-cssc-publication-serialized-object-accounting-v1",
         "categories": [

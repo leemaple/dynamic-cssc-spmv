@@ -84,6 +84,7 @@ DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/__init__.py",
     "src/dynamic_cssc/cloud_execution_plan.py",
     "src/dynamic_cssc/cssc.py",
+    "src/dynamic_cssc/day2_calibration_authority.py",
     "src/dynamic_cssc/day1_registry.py",
     "src/dynamic_cssc/evidence_compatibility.py",
     "src/dynamic_cssc/events.py",
@@ -98,6 +99,7 @@ DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/publication_artifact_install.py",
     "src/dynamic_cssc/publication_day1b.py",
     "src/dynamic_cssc/publication_day1b_worker_protocol.py",
+    "src/dynamic_cssc/publication_primitive_accounting.py",
     "src/dynamic_cssc/publication_schedule.py",
     "src/dynamic_cssc/publication_statistics.py",
     "src/dynamic_cssc/publication_traces.py",
@@ -114,6 +116,7 @@ DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "tests/test_publication_day1b.py",
     "tests/test_publication_day1b_worker_protocol.py",
     "tests/test_publication_day1b_workflow_contract.py",
+    "tests/test_publication_primitive_accounting.py",
 )
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
@@ -274,7 +277,7 @@ def _day2_profile_binding(
         "day1a_count_bundle_sha256": "a" * 64,
         "heldout_record_schema_version": "dynamic-cssc-publication-heldout-record-v4",
         "primitive_accounting_schema_version": (
-            "dynamic-cssc-publication-primitive-accounting-v1"
+            "dynamic-cssc-publication-primitive-accounting-v2"
         ),
         "primitive_accounting_mapping_sha256": "b" * 64,
         "serialized_object_accounting_schema_version": (
@@ -2104,7 +2107,7 @@ def test_day1b_preparatory_behavior_inventory_is_exact_but_non_authorizing(
         DAY1B_PREPARATORY_BEHAVIOR_PATHS
     )
     assert inventory["behavior_set_schema_version"] == (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v6"
+        "dynamic-cssc-day1b-preparatory-behavior-set-v7"
     )
     assert inventory["role"] == "day1b"
     assert inventory["source_git_sha"] == source_git_sha
@@ -2210,6 +2213,7 @@ def test_role_sets_freeze_entrypoint_workflow_build_lock_runtime_and_transitive_
         "src/dynamic_cssc/day2_calibration_runtime.py",
         "src/dynamic_cssc/plaintext_oracle.py",
         "src/dynamic_cssc/publication_artifact_install.py",
+        "src/dynamic_cssc/publication_primitive_accounting.py",
         "src/dynamic_cssc/query_compiler.py",
         "src/dynamic_cssc/strategy_state.py",
         "src/dynamic_cssc/strong_execution.py",

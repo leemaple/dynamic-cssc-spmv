@@ -243,12 +243,12 @@ def _artifact_behavior_inventory(source_sha: str) -> dict[str, object]:
         for path in repository_behavior_paths(EvidenceRole.DAY2)
     ]
     behavior_set = {
-        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v3",
+        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v4",
         "entries": entries,
         "role": "day2",
     }
     return {
-        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v3",
+        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v4",
         "behavior_set_sha256": _sha256(_canonical(behavior_set)),
         "entries": entries,
         "role": "day2",
@@ -334,7 +334,7 @@ def _valid_payloads() -> dict[str, object]:
         "day1a_count_bundle_schema_version": "dynamic-cssc-day1a-count-bundle-v1",
         "day1a_count_bundle_sha256": "e" * 64,
         "heldout_record_schema_version": "dynamic-cssc-publication-heldout-record-v4",
-        "primitive_accounting_schema_version": ("dynamic-cssc-publication-primitive-accounting-v1"),
+        "primitive_accounting_schema_version": ("dynamic-cssc-publication-primitive-accounting-v2"),
         "primitive_accounting_mapping_sha256": "f" * 64,
         "serialized_object_accounting_schema_version": (
             "dynamic-cssc-publication-serialized-object-accounting-v1"
@@ -1038,7 +1038,7 @@ def test_valid_archive_inspection_is_descriptive_and_binds_the_closed_evidence(
     )
     behavior_inventory = payloads["source-provenance.json"]["behavior_inventory"]
     assert inspection.artifact_behavior_inventory_sha256 == _sha256(_canonical(behavior_inventory))
-    assert inspection.behavior_set_schema_version == "dynamic-cssc-day2-behavior-set-v3"
+    assert inspection.behavior_set_schema_version == "dynamic-cssc-day2-behavior-set-v4"
     assert inspection.behavior_set_sha256 == behavior_inventory["behavior_set_sha256"]
 
 
@@ -1723,7 +1723,7 @@ def test_pre_dispatch_repository_seam_records_only_hardened_current_day2_source(
     attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="a" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v3",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
         behavior_set_sha256="b" * 64,
         behavior_source_blob_sha256={},
         runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
@@ -1791,7 +1791,7 @@ def test_pre_dispatch_repository_seam_leaves_live_runtime_isolation_to_the_launc
     attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="a" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v3",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
         behavior_set_sha256="b" * 64,
         behavior_source_blob_sha256={},
     )
@@ -1851,7 +1851,7 @@ def test_pre_dispatch_repository_seam_rejects_invalid_registration_profile_histo
     attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="a" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v3",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
         behavior_set_sha256="b" * 64,
         behavior_source_blob_sha256={},
         runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
@@ -1914,7 +1914,7 @@ def test_pre_dispatch_repository_seam_rejects_anchor_race_during_attestation(
     attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="a" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v3",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
         behavior_set_sha256="b" * 64,
         behavior_source_blob_sha256={},
         runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
@@ -2000,7 +2000,7 @@ def test_post_run_repository_seam_verifies_s1_compatibility_before_minting(
     attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="c" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v3",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
         behavior_set_sha256=post_anchor["experiment_behavior_set_sha256"],
         behavior_source_blob_sha256={},
         runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
@@ -2091,7 +2091,7 @@ def test_post_run_repository_seam_rejects_invalid_registration_profile_history(
     attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="c" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v3",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
         behavior_set_sha256=post_anchor["experiment_behavior_set_sha256"],
         behavior_source_blob_sha256={},
         runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
@@ -2151,7 +2151,7 @@ def test_changed_day2_validator_behavior_cannot_install_a_post_run_anchor(
     changed_attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="c" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v3",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
         behavior_set_sha256="d" * 64,
         behavior_source_blob_sha256={},
         runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
@@ -2264,7 +2264,7 @@ def test_pre_dispatch_profile_authority_freezes_profiles_day1a_and_contract_iden
     capability = authority_module._mint_repository_calibration_profile_authority(  # noqa: SLF001
         anchor=binding,
         experiment_source_git_sha="a" * 40,
-        experiment_behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v3",
+        experiment_behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
         experiment_behavior_set_sha256="b" * 64,
     )
 

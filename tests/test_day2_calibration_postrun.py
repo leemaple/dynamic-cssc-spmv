@@ -39,7 +39,7 @@ def _behavior_inventory(source_sha: str) -> dict[str, object]:
         for path in repository_behavior_paths(EvidenceRole.DAY2)
     ]
     behavior_set = {
-        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v3",
+        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v4",
         "entries": entries,
         "role": "day2",
     }
@@ -47,7 +47,7 @@ def _behavior_inventory(source_sha: str) -> dict[str, object]:
         "schema_version": "dynamic-cssc-evidence-behavior-inventory-v1",
         "role": "day2",
         "source_git_sha": source_sha,
-        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v3",
+        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v4",
         "behavior_set_sha256": _sha256(_canonical(behavior_set)),
         "entries": entries,
     }
@@ -72,7 +72,7 @@ def _inspection(inventory: dict[str, object]) -> Day2CalibrationInspection:
         contract_bindings_sha256="9" * 64,
         calibration_projection_sha256="b" * 64,
         artifact_behavior_inventory_sha256=_sha256(_canonical(inventory)),
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v3",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
         behavior_set_sha256=inventory["behavior_set_sha256"],
     )
 

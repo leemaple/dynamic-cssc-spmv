@@ -774,7 +774,7 @@ def _mint_repository_calibration_profile_authority(
         raise Day2CalibrationAuthorityError(
             "repository pre-dispatch warmup block count is not frozen"
         )
-    if experiment_behavior_set_schema_version != "dynamic-cssc-day2-behavior-set-v3":
+    if experiment_behavior_set_schema_version != "dynamic-cssc-day2-behavior-set-v4":
         raise Day2CalibrationAuthorityError(
             "repository pre-dispatch Behavior Set schema is not frozen"
         )
@@ -1043,7 +1043,7 @@ def _decode_profile_anchor_set(content: bytes) -> tuple[_Day2CalibrationProfileB
             "day1a_count_bundle_schema_version": "dynamic-cssc-day1a-count-bundle-v1",
             "heldout_record_schema_version": "dynamic-cssc-publication-heldout-record-v4",
             "primitive_accounting_schema_version": (
-                "dynamic-cssc-publication-primitive-accounting-v1"
+                "dynamic-cssc-publication-primitive-accounting-v2"
             ),
             "serialized_object_accounting_schema_version": (
                 "dynamic-cssc-publication-serialized-object-accounting-v1"
@@ -1148,7 +1148,7 @@ def _decode_post_run_anchor_set(content: bytes) -> tuple[_Day2CalibrationBinding
         _require_exact_keys(anchor, _POST_RUN_ANCHOR_KEYS, "Day 2 post-run anchor")
         if anchor["schema_version"] != "dynamic-cssc-day2-calibration-post-run-anchor-v4":
             raise Day2CalibrationAuthorityError("Day 2 post-run anchor schema is not frozen")
-        if anchor["experiment_behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v3":
+        if anchor["experiment_behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v4":
             raise Day2CalibrationAuthorityError("Day 2 post-run Behavior Set schema is not frozen")
         experiment_source_git_sha = _require_lower_git_sha(
             anchor["experiment_source_git_sha"],
@@ -1442,7 +1442,7 @@ def _validate_artifact_behavior_inventory(
         raise Day2CalibrationAuthorityError(
             "artifact Behavior inventory source SHA does not match source provenance"
         )
-    if value["behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v3":
+    if value["behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v4":
         raise Day2CalibrationAuthorityError("artifact Day 2 Behavior Set schema is not frozen")
     entries = value["entries"]
     if type(entries) is not list or not entries:
@@ -1806,7 +1806,7 @@ def _validate_contract_bindings(
     expected_schema_versions = {
         "day1a_count_bundle_schema_version": "dynamic-cssc-day1a-count-bundle-v1",
         "heldout_record_schema_version": "dynamic-cssc-publication-heldout-record-v4",
-        "primitive_accounting_schema_version": ("dynamic-cssc-publication-primitive-accounting-v1"),
+        "primitive_accounting_schema_version": ("dynamic-cssc-publication-primitive-accounting-v2"),
         "serialized_object_accounting_schema_version": (
             "dynamic-cssc-publication-serialized-object-accounting-v1"
         ),

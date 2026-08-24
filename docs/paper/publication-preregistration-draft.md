@@ -469,7 +469,7 @@ with `selective_candidate_retry_allowed=false`); it is not a measured resource
 choice and cannot activate the policy. Every empirical numeric limit and every
 measurement-method choice remains `null`.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v6` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v7` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface. A successful workflow validation is not a
 dispatch receipt or evidence artifact: the workflow has no semantic inputs,
@@ -715,6 +715,17 @@ exactly once inside `eval_mult_with_relinearization`. Per-operation seconds use
 a unique canonical exact-rational encoding: a minimal terminating decimal when
 possible, otherwise a reduced positive `numerator/denominator` string. This
 keeps every positive integer operation count representable without rounding.
+
+The Day1B-to-Day2 mapping is the machine-readable
+`dynamic-cssc-publication-primitive-accounting-v2` contract generated from the
+same closed formula table used for execution. Each transmitted ciphertext is
+charged exactly once for serialization and once for deserialization; query
+packing is charged per effective-slot element of every query ciphertext; F1-M
+mask and dummy ciphertexts are charged as encode/encrypt/query inputs; and
+returned ciphertexts are charged as serialized/deserialized/decrypted outputs.
+The contract rejects nonclosed encryption, relinearization, result, F1-M, and
+metadata inventories before a vector can be priced. Its canonical digest is
+carried by both the Day 2 profile anchor and every later Day1B binding.
 
 For `eval_rotate`, every block measures every exact index/profile in the
 Day-1A-authorized direct-key inventory. Its scalar block value is the maximum
