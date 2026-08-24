@@ -1808,7 +1808,7 @@ def test_repository_ci_uses_the_frozen_runtime_complete_history_and_budget() -> 
 
     assert "fetch-depth: 0" in workflow
     assert "python-version: '3.12.13'" in workflow
-    assert "timeout-minutes: 30" in workflow
+    assert "timeout-minutes: 60" in workflow
 
 
 @pytest.mark.parametrize(
