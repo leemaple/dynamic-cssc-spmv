@@ -374,9 +374,10 @@ _DAY1_REGISTRATION_BEHAVIOR_PATHS = (
     "tests/test_strong_day1_simulator.py",
 )
 
-# This is the exact reviewed v9 schema-source inventory bound by the first
-# resource amendment.  Keep it immutable so later source can reconstruct that
-# historical inventory without treating the current path set as retroactive.
+# This is deliberately a PRE-S1 exact reviewed v9 schema-source inventory bound
+# by the first resource amendment.  Keep it immutable so later source can
+# reconstruct that historical inventory without treating the current path set
+# as retroactive.
 _DAY1B_RESOURCE_AMENDMENT_SCHEMA_SOURCE_BEHAVIOR_PATHS = (
     ".github/workflows/publication-day1b-preparatory.yml",
     "config/params_manifest.json",
