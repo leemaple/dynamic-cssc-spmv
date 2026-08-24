@@ -159,6 +159,7 @@ def test_plan_job_runs_the_only_install_test_and_ruff_gate_before_matrix_output(
     assert workflow.count(ruff_gate) == 1
     for behavior_path in (
         "scripts/produce_day1_registration_evidence.py",
+        "src/dynamic_cssc/day1a_export.py",
         "src/dynamic_cssc/day1_registration_evidence.py",
         "src/dynamic_cssc/plaintext_oracle.py",
         "tests/test_day1_registration_evidence.py",
@@ -204,6 +205,9 @@ def test_day1_workflow_builds_a_dynamic_21_job_shard_matrix_and_aggregates_once(
     assert "python scripts/aggregate_day1_shards.py" in workflow
     assert "--shards-dir downloaded-shards" in workflow
     assert workflow.count("SUITE_STATUS.json") == 1
+    assert workflow.count("DAY1A_COUNT_BUNDLE.json") == 1
+    assert workflow.count("DAY1A_ROTATION_INVENTORY.json") == 1
+    assert workflow.count("DAY1A_AUTHORITY_RECEIPT.json") == 1
     assert workflow.count("python scripts/run_day1_suite.py") == 1
 
 
@@ -269,6 +273,10 @@ def test_aggregate_guard_binds_all_receipts_to_source_and_verifies_final_checksu
     assert "assert len(p['replay_receipts']) == 21" in workflow
     assert "assert set(item) == receipt_item_keys" in workflow
     assert "assert re.fullmatch(r'[0-9a-f]{64}', item['sha256'])" in workflow
+    assert "assert count_bundle['fixed_record_count'] == 189 * 14" in workflow
+    assert "assert rotation_inventory['publication_domain_match'] is False" in workflow
+    assert "assert day1a_receipt['day1a_count_evidence_authorized'] is True" in workflow
+    assert "assert day1a_receipt['day2_direct_key_plan_authorized'] is False" in workflow
 
 
 def test_frozen_plan_supplies_the_exact_matrix_and_nine_rhos_per_shard() -> None:

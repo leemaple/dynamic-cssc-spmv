@@ -57,6 +57,7 @@ jobs:
             src/dynamic_cssc/__init__.py \
             src/dynamic_cssc/cloud_execution_plan.py \
             src/dynamic_cssc/cssc.py \
+            src/dynamic_cssc/day1a_export.py \
             src/dynamic_cssc/day1_registration_evidence.py \
             src/dynamic_cssc/day1_registry.py \
             src/dynamic_cssc/evidence_compatibility.py \
@@ -349,6 +350,9 @@ jobs:
           from dynamic_cssc.report import validate_causal_payload
 
           p = json.load(open('results/day1/SUITE_STATUS.json'))
+          count_bundle = json.load(open('results/day1/DAY1A_COUNT_BUNDLE.json'))
+          rotation_inventory = json.load(open('results/day1/DAY1A_ROTATION_INVENTORY.json'))
+          day1a_receipt = json.load(open('results/day1/DAY1A_AUTHORITY_RECEIPT.json'))
           catalog = repository_day1_candidate_catalog()
           fixed_candidate_ids = sorted(c.candidate_id for c in catalog.candidates)
           reference_candidate_ids = sorted(
@@ -405,6 +409,36 @@ jobs:
               (item['workload'], item['freshness_seconds_fraction'])
               for item in p['replay_receipts']
           }) == 21
+          assert count_bundle['schema_version'] == 'dynamic-cssc-day1a-count-bundle-v1'
+          assert count_bundle['source_git_sha'] == p['source_git_sha']
+          assert count_bundle['cell_count'] == 189
+          assert count_bundle['fixed_record_count'] == 189 * 14
+          assert len(count_bundle['records']) == 189 * 14
+          assert rotation_inventory['schema_version'] == (
+              'dynamic-cssc-day1a-rotation-inventory-v1'
+          )
+          assert rotation_inventory['source_git_sha'] == p['source_git_sha']
+          assert rotation_inventory['rows'] == 512
+          assert rotation_inventory['cols'] == 512
+          assert rotation_inventory['effective_slots'] == 2048
+          assert rotation_inventory['partition_rows'] == 128
+          assert rotation_inventory['publication_rows'] == 4096
+          assert rotation_inventory['publication_cols'] == 8193
+          assert rotation_inventory['publication_effective_slots'] == 4096
+          assert rotation_inventory['publication_partition_rows'] == 4096
+          assert rotation_inventory['publication_domain_match'] is False
+          assert rotation_inventory['day2_direct_key_plan_eligible'] is False
+          assert rotation_inventory['required_exact_indices']
+          assert day1a_receipt['schema_version'] == (
+              'dynamic-cssc-day1a-authority-receipt-v1'
+          )
+          assert day1a_receipt['source_git_sha'] == p['source_git_sha']
+          assert day1a_receipt['day1a_count_evidence_authorized'] is True
+          assert day1a_receipt['day2_direct_key_plan_authorized'] is False
+          assert day1a_receipt['complete_cost_claim_allowed'] is False
+          assert day1a_receipt['formal_performance_claim_allowed'] is False
+          assert day1a_receipt['paper_verdict_allowed'] is False
+          assert day1a_receipt['security_claim_allowed'] is False
 
           metrics_paths = sorted(Path('results/day1').glob('*/*/*/metrics.json'))
           assert len(metrics_paths) == 189

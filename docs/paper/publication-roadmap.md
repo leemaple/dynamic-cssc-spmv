@@ -85,6 +85,17 @@ Day 1A is count evidence and pipeline validation. It does not choose the paper's
 final winner because measured primitive costs and byte-accurate bandwidth costs
 do not yet exist.
 
+The complete-suite aggregator emits a canonical fixed-record count bundle, an
+exact-index rotation inventory, and a narrowly scoped Day1A receipt. The receipt
+authorizes only synthetic causal count evidence. It independently compares the
+suite's slot domain with the publication manifest: the current exploratory plan
+uses a 512-by-512 matrix, 2048 effective slots, and 128-row partitions, while
+the publication domain uses 4096-by-8193, 4096 effective slots, and 4096-row
+partitions. Its receipt must therefore set
+`day2_direct_key_plan_authorized=false`. A later preregistered Day1A plan must
+close the full matrix/layout-domain mismatch before Day 2 can consume the
+inventory.
+
 ### Phase C — measured primitive and communication model (P0b / Day 2)
 
 Generate keys only for the exact inventory from Day 1A. Measure every priced primitive

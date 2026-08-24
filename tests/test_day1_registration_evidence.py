@@ -610,9 +610,13 @@ def test_private_fixed_run_core_produces_a_closed_non_authoritative_anchor_proje
         "rotations=sum(measured_counts_by_exact_index)",
     ]
     assert {binding["path"] for binding in accounting["validation_source_bindings"]} >= {
+        "scripts/aggregate_day1_shards.py",
+        "src/dynamic_cssc/day1a_export.py",
         "src/dynamic_cssc/report.py",
         "src/dynamic_cssc/simulator.py",
         "tests/test_day1_registry.py",
+        "tests/test_day1_shard_aggregation.py",
+        "tests/test_day1_workflow_contract.py",
         "tests/test_query_accounting.py",
         "tests/test_report.py",
         "tests/test_strong_day1_simulator.py",

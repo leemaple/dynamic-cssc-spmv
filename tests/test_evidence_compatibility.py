@@ -1760,6 +1760,7 @@ def test_role_sets_freeze_entrypoint_workflow_build_lock_runtime_and_transitive_
         "scripts/replay_day1_shard.py",
         "scripts/run_day1_suite.py",
         "scripts/produce_day1_registration_evidence.py",
+        "src/dynamic_cssc/day1a_export.py",
         "src/dynamic_cssc/day1_registration_evidence.py",
         "src/dynamic_cssc/day1_registry.py",
         "src/dynamic_cssc/evidence_compatibility.py",
@@ -1770,6 +1771,8 @@ def test_role_sets_freeze_entrypoint_workflow_build_lock_runtime_and_transitive_
         "src/dynamic_cssc/selection.py",
         "src/dynamic_cssc/strong_reference_receipt.py",
         "tests/test_day1_registration_evidence.py",
+        "tests/test_day1_shard_aggregation.py",
+        "tests/test_day1_workflow_contract.py",
     } <= day1_registration_paths
     assert STRONG_REFERENCE_EVIDENCE_ANCHOR_PATH not in strong_correctness_paths
     assert DAY1_REGISTRATION_ANCHOR_PATH not in day1_registration_paths

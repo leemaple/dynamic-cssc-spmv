@@ -12,6 +12,7 @@ from fractions import Fraction
 from pathlib import Path
 
 from dynamic_cssc.day1_registry import Day1CandidateCatalog, repository_day1_candidate_catalog
+from dynamic_cssc.day1a_export import export_day1a_evidence
 from dynamic_cssc.manifest import load_manifest
 from dynamic_cssc.preflight import run_day1_preflight
 from dynamic_cssc.report import (
@@ -712,6 +713,31 @@ def aggregate_shards(
     (output_dir / "SUITE_STATUS.json").write_text(
         json.dumps(status, indent=2, sort_keys=True, allow_nan=False),
         encoding="utf-8",
+    )
+    packing = _mapping(manifest_payload.get("packing"), "manifest.packing")
+    publication_effective_slots = _strict_int(
+        packing.get("effective_slots"),
+        "manifest.packing.effective_slots",
+        minimum=1,
+    )
+    matrix = _mapping(manifest_payload.get("matrix"), "manifest.matrix")
+    publication_rows = _strict_int(
+        matrix.get("rows"),
+        "manifest.matrix.rows",
+        minimum=1,
+    )
+    publication_cols = _strict_int(
+        matrix.get("cols"),
+        "manifest.matrix.cols",
+        minimum=1,
+    )
+    export_day1a_evidence(
+        suite_dir=output_dir,
+        source_git_sha=source_sha,
+        publication_rows=publication_rows,
+        publication_cols=publication_cols,
+        publication_effective_slots=publication_effective_slots,
+        publication_partition_rows=publication_effective_slots,
     )
     _write_root_checksums(output_dir)
     return status
