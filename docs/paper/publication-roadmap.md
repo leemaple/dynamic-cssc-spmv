@@ -139,12 +139,14 @@ verifier. After the run, S2 adds the archive/raw/projection binding in the separ
 Day-2 post-run evidence anchor; installing it must not modify the profile anchor,
 validator source, or any other Day-2 behavior blob.
 
-The existing `day2-microbench.yml` is a historical isolated probe, not this
-publication contract: it times only the first caller-supplied rotation index,
-emits summaries rather than raw blocks, and does not cover the closed
-14-primitive vocabulary or consume Day1A's registered key inventory. It must be
-replaced or extended with the schema above before any calibration input gains
-authority.
+The existing `day2-microbench.yml` remains a historical isolated probe, not this
+publication contract. Its executable can exercise every caller-supplied exact
+rotation index and emit outcome-independent raw blocks over the closed
+14-primitive vocabulary, but the workflow still consumes the legacy 11-repeat
+manifest value and does not consume Day1A's registered key inventory, bind the
+fixed host and toolchain, produce the canonical R3 member set, or install either
+evidence anchor. Those remaining producer and authority steps must be completed
+before any calibration input gains authority.
 
 Within the preregistered protocol-object transaction scope, the complete cost
 model must include:

@@ -91,7 +91,7 @@ The smoke run is a **model prediction**, not an OpenFHE measurement. Publication
 
 ## CI design
 
-Fast Python validation runs on every push and pull request. OpenFHE compilation and cryptographic measurements are manual workflows because they are heavier and parameter-sensitive. Every publication-authoritative workflow must upload a digest-addressed artifact containing raw data, manifests, logs, commit metadata, and checksums; retention is recorded separately and is not described as permanent. The historical summary-only Day 2 probe does not satisfy that publication contract.
+Fast Python validation runs on every push and pull request. OpenFHE compilation and cryptographic measurements are manual workflows because they are heavier and parameter-sensitive. Every publication-authoritative workflow must upload a digest-addressed artifact containing raw data, manifests, logs, commit metadata, and checksums; retention is recorded separately and is not described as permanent. The Day 2 probe executable can emit raw blocks for mechanism testing, but the historical workflow does not produce or authorize the complete R3 archive.
 
 ## Review checkpoints
 

@@ -72,7 +72,9 @@ Contains the Day1A-authorized exact key plan, three complete warm-up blocks,
 exactly 14 complete whole measurement blocks over the frozen 14-primitive
 profiles/cases, raw per-case timings, host/compiler/OpenFHE identities, the
 canonical calibration projection, and its pre-dispatch and post-run evidence
-anchors. The historical summary-only `day2-microbench.yml` is not R3.
+anchors. The raw-block-capable historical `day2-microbench.yml` still lacks the
+registered key plan, fixed-host provenance, profile and post-run anchors, and
+canonical R3 archive, so it is not R3.
 
 ## R4 — Minimal prototype
 
