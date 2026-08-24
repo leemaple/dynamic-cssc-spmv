@@ -2,8 +2,8 @@
 
 This module validates worker output; it does not locate, admit, or execute a worker.
 Binary protocol-object payloads are hashed while transport chunks arrive and are never
-retained in the returned receipt.  Controller scratch requires POSIX ``/dev/fd``
-descriptor reopening; there is deliberately no pathname-backed fallback.
+retained in the returned receipt.  Controller scratch is supplied as launcher-opened
+storage and never reopens a pathname after the capability is claimed.
 """
 
 from __future__ import annotations
@@ -1387,6 +1387,7 @@ class _AnonymousScratchBinding:
     controller_registered_scratch_bytes_checkpoint_maximum: int
     members: tuple[tuple[str, BinaryIO, tuple[int, int]], ...]
     anonymous_scratch_creation_isolation_verified: bool
+    sqlite_connection: sqlite3.Connection | None = None
 
 
 class Day1BAnonymousScratchCapability:
@@ -1402,6 +1403,9 @@ class Day1BAnonymousScratchCapability:
 
 
 def _close_anonymous_scratch_binding(binding: _AnonymousScratchBinding) -> None:
+    if binding.sqlite_connection is not None:
+        with suppress(BaseException):
+            binding.sqlite_connection.close()
     for _name, file, _identity in binding.members:
         with suppress(BaseException):
             file.close()
@@ -1487,6 +1491,10 @@ class _ControlledScratch:
                 raise Day1BWorkerProtocolError(
                     "anonymous scratch capability member roles are not exact"
                 )
+            if binding.sqlite_connection is None:
+                raise Day1BWorkerProtocolError(
+                    "anonymous scratch capability lacks its launcher-opened SQLite connection"
+                )
             identities: set[tuple[int, int]] = set()
             files: dict[str, BinaryIO] = {}
             expected_identities: dict[str, tuple[int, int]] = {}
@@ -1513,6 +1521,7 @@ class _ControlledScratch:
         self._byte_limit = expected_limit
         self._files = files
         self._identities = expected_identities
+        self._sqlite_connection = binding.sqlite_connection
         self._claimed_names: set[str] = set()
         self.anonymous_scratch_creation_isolation_verified = (
             binding.anonymous_scratch_creation_isolation_verified
@@ -1523,22 +1532,25 @@ class _ControlledScratch:
     def _claim_file(self, name: str) -> BinaryIO:
         if type(name) is not str or name not in _ANONYMOUS_SCRATCH_MEMBER_NAMES:
             raise Day1BWorkerProtocolError("controlled scratch member role is invalid")
-        if self._closed:
-            raise Day1BWorkerProtocolError("controlled invocation scratch is closed")
-        if name in self._claimed_names:
-            raise Day1BWorkerProtocolError("controlled scratch member role is already claimed")
-        file = self._files[name]
-        observed = os.fstat(file.fileno())
-        if (
-            not stat.S_ISREG(observed.st_mode)
-            or observed.st_nlink != 0
-            or (observed.st_dev, observed.st_ino) != self._identities[name]
-        ):
-            raise Day1BWorkerProtocolError("controlled anonymous scratch file identity changed")
-        self._claimed_names.add(name)
-        return file
+        with self._lock:
+            if self._closed:
+                raise Day1BWorkerProtocolError("controlled invocation scratch is closed")
+            if name in self._claimed_names:
+                raise Day1BWorkerProtocolError("controlled scratch member role is already claimed")
+            file = self._files[name]
+            observed = os.fstat(file.fileno())
+            if (
+                not stat.S_ISREG(observed.st_mode)
+                or observed.st_nlink != 0
+                or (observed.st_dev, observed.st_ino) != self._identities[name]
+            ):
+                raise Day1BWorkerProtocolError("controlled anonymous scratch file identity changed")
+            self._claimed_names.add(name)
+            return file
 
     def create_binary_file(self, name: str) -> BinaryIO:
+        if type(name) is not str or name != "object-receipts.jsonl":
+            raise Day1BWorkerProtocolError("binary scratch member role is not exact")
         held = self._claim_file(name)
         descriptor: int | None = None
         try:
@@ -1567,16 +1579,19 @@ class _ControlledScratch:
         return file
 
     def create_sqlite_connection(self, name: str) -> sqlite3.Connection:
+        if type(name) is not str or name != "binding-index.sqlite3":
+            raise Day1BWorkerProtocolError("SQLite scratch member role is not exact")
         held = self._claim_file(name)
-        connection: sqlite3.Connection | None = None
+        connection = self._sqlite_connection
+        self._sqlite_connection = None
         try:
-            descriptor_path = f"/dev/fd/{held.fileno()}"
-            connection = sqlite3.connect(
-                descriptor_path,
-                check_same_thread=False,
-            )
-            # SQLite may normalize /dev/fd to a platform-specific filename.  The
-            # application-id round trip below proves the held-file byte binding.
+            if connection is None:
+                raise Day1BWorkerProtocolError(
+                    "launcher-opened anonymous SQLite connection is unavailable"
+                )
+            # SQLite may normalize an unlinked database to a platform-specific
+            # filename.  The application-id round trip below proves the already-open
+            # connection still writes the exact inode held by the capability.
             database_list = connection.execute("PRAGMA database_list").fetchall()
             database_row = database_list[0] if len(database_list) == 1 else None
             if (
@@ -1645,6 +1660,12 @@ class _ControlledScratch:
                 return
             self._closed = True
             file_error: BaseException | None = None
+            if self._sqlite_connection is not None:
+                try:
+                    self._sqlite_connection.close()
+                except BaseException as error:  # pragma: no cover - defensive cleanup
+                    file_error = error
+                self._sqlite_connection = None
             for file in self._files.values():
                 try:
                     file.close()
@@ -2658,17 +2679,135 @@ def _test_only_issue_day1b_anonymous_scratch_capability(
     if root_entries:
         raise Day1BWorkerProtocolError("test-only scratch observation root must be empty")
     owned: tuple[BinaryIO, ...]
+    sqlite_connection: sqlite3.Connection | None = None
     if handles is None:
         created: list[BinaryIO] = []
+        root_descriptor: int | None = None
+        sqlite_file: BinaryIO | None = None
+        sqlite_path: Path | None = None
+        sqlite_link_name: str | None = None
         try:
-            for _name in _ANONYMOUS_SCRATCH_MEMBER_NAMES:
-                # The fixture source is deliberately not a production/isolation fact.
-                created.append(tempfile.TemporaryFile(mode="w+b"))  # noqa: SIM115
+            root_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
+            root_descriptor = os.open(controlled_scratch_root, root_flags)
+            held_root = os.fstat(root_descriptor)
+            visible_root = os.stat(controlled_scratch_root, follow_symlinks=False)
+            if (
+                not stat.S_ISDIR(held_root.st_mode)
+                or not stat.S_ISDIR(visible_root.st_mode)
+                or (held_root.st_dev, held_root.st_ino)
+                != (visible_root.st_dev, visible_root.st_ino)
+            ):
+                raise Day1BWorkerProtocolError(
+                    "test-only scratch observation root identity is not exact"
+                )
+
+            # SQLite must first open a secure, launcher-visible name.  The launcher
+            # verifies that name against both its directory and file descriptors,
+            # unlinks it, and only then mints the capability.  This avoids Linux's
+            # non-portable /dev/fd SQLite reopen semantics while leaving no name for
+            # claimed worker code to resolve or mutate.
+            sqlite_file = tempfile.NamedTemporaryFile(  # noqa: SIM115
+                mode="w+b",
+                dir=controlled_scratch_root,
+                prefix=".day1b-sqlite-",
+                delete=False,
+            )
+            created.append(sqlite_file)
+            sqlite_path = Path(sqlite_file.name)
+            sqlite_link_name = sqlite_path.name
+            held_sqlite = os.fstat(sqlite_file.fileno())
+            linked_sqlite = os.stat(
+                sqlite_link_name,
+                dir_fd=root_descriptor,
+                follow_symlinks=False,
+            )
+            sqlite_identity = held_sqlite.st_dev, held_sqlite.st_ino
+            if (
+                not stat.S_ISREG(held_sqlite.st_mode)
+                or held_sqlite.st_nlink != 1
+                or held_sqlite.st_size != 0
+                or (linked_sqlite.st_dev, linked_sqlite.st_ino) != sqlite_identity
+            ):
+                raise Day1BWorkerProtocolError(
+                    "launcher-visible SQLite scratch identity is not exact"
+                )
+            sqlite_connection = sqlite3.connect(
+                f"{sqlite_path.as_uri()}?mode=rw",
+                check_same_thread=False,
+                uri=True,
+            )
+            held_after_connect = os.fstat(sqlite_file.fileno())
+            linked_after_connect = os.stat(
+                sqlite_link_name,
+                dir_fd=root_descriptor,
+                follow_symlinks=False,
+            )
+            visible_after_connect = os.stat(sqlite_path, follow_symlinks=False)
+            if (
+                (held_after_connect.st_dev, held_after_connect.st_ino) != sqlite_identity
+                or (linked_after_connect.st_dev, linked_after_connect.st_ino) != sqlite_identity
+                or (visible_after_connect.st_dev, visible_after_connect.st_ino) != sqlite_identity
+                or held_after_connect.st_nlink != 1
+                or held_after_connect.st_size != 0
+            ):
+                raise Day1BWorkerProtocolError(
+                    "launcher-visible SQLite scratch changed while it was opened"
+                )
+            os.unlink(sqlite_link_name, dir_fd=root_descriptor)
+            unlinked_sqlite = os.fstat(sqlite_file.fileno())
+            if (
+                (unlinked_sqlite.st_dev, unlinked_sqlite.st_ino) != sqlite_identity
+                or unlinked_sqlite.st_nlink != 0
+                or unlinked_sqlite.st_size != 0
+            ):
+                raise Day1BWorkerProtocolError(
+                    "launcher-opened SQLite scratch did not become exact anonymous storage"
+                )
+            sqlite_link_name = None
+
+            # The fixture source is deliberately not a production/isolation fact.
+            created.append(tempfile.TemporaryFile(mode="w+b"))  # noqa: SIM115
         except BaseException:
+            if sqlite_connection is not None:
+                with suppress(BaseException):
+                    sqlite_connection.close()
+            if sqlite_file is not None and sqlite_link_name is not None:
+                expected_identity: tuple[int, int] | None = None
+                with suppress(BaseException):
+                    observed = os.fstat(sqlite_file.fileno())
+                    expected_identity = observed.st_dev, observed.st_ino
+                removed_from_held_root = False
+                if root_descriptor is not None and expected_identity is not None:
+                    try:
+                        linked = os.stat(
+                            sqlite_link_name,
+                            dir_fd=root_descriptor,
+                            follow_symlinks=False,
+                        )
+                        if (linked.st_dev, linked.st_ino) == expected_identity:
+                            os.unlink(sqlite_link_name, dir_fd=root_descriptor)
+                            removed_from_held_root = True
+                    except OSError:
+                        pass
+                if (
+                    not removed_from_held_root
+                    and sqlite_path is not None
+                    and expected_identity is not None
+                ):
+                    try:
+                        linked = os.stat(sqlite_path, follow_symlinks=False)
+                        if (linked.st_dev, linked.st_ino) == expected_identity:
+                            os.unlink(sqlite_path)
+                    except OSError:
+                        pass
             for file in created:
                 with suppress(BaseException):
                     file.close()
             raise
+        finally:
+            if root_descriptor is not None:
+                with suppress(OSError):
+                    os.close(root_descriptor)
         owned = tuple(created)
     elif type(handles) is tuple:
         owned = handles
@@ -2700,10 +2839,20 @@ def _test_only_issue_day1b_anonymous_scratch_capability(
             identities.add(identity)
             members.append((name, file, identity))
     except BaseException:
+        if sqlite_connection is not None:
+            with suppress(BaseException):
+                sqlite_connection.close()
         for file in owned:
             with suppress(BaseException):
                 file.close()
         raise
+    if sqlite_connection is None:
+        for file in owned:
+            with suppress(BaseException):
+                file.close()
+        raise Day1BWorkerProtocolError(
+            "custom anonymous scratch handles lack a launcher-opened SQLite connection"
+        )
     binding = _AnonymousScratchBinding(
         pre_dispatch_context_sha256=_pre_dispatch_context_sha256(
             contract,
@@ -2714,6 +2863,7 @@ def _test_only_issue_day1b_anonymous_scratch_capability(
         ),
         members=tuple(members),
         anonymous_scratch_creation_isolation_verified=False,
+        sqlite_connection=sqlite_connection,
     )
     try:
         return _mint_anonymous_scratch_capability(binding)

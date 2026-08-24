@@ -109,7 +109,7 @@ def test_cli_recomputes_the_closed_schema_instead_of_accepting_a_forged_verdict(
     assert not (tmp_path / "analysis").exists()
 
 
-def test_cli_rejects_an_unattested_or_dirty_analysis_source_before_nested_input(
+def test_cli_rejects_dirty_source_or_nested_invalid_input_before_output(
     tmp_path: Path,
 ) -> None:
     payload = {
@@ -147,6 +147,7 @@ def test_cli_rejects_an_unattested_or_dirty_analysis_source_before_nested_input(
         or "repository-owned clean analysis HEAD" in result.stderr
         or "stable clean HEAD" in result.stderr
         or "stable fully clean repository HEAD" in result.stderr
+        or "heldout input.schema_version must equal the exact frozen value" in result.stderr
     )
     assert not (tmp_path / "analysis").exists()
 

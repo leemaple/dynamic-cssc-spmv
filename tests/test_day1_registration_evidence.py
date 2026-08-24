@@ -262,7 +262,10 @@ def test_public_interfaces_are_path_only_and_missing_observed_context_holds_befo
 
     with pytest.raises(
         (Day1RegistrationEvidenceHold, Day1RegistrationEvidenceError),
-        match="Behavior Set|source attestation|registration run identity",
+        match=(
+            "Behavior Set|source attestation|registration run identity|"
+            "observed GitHub Actions environment"
+        ),
     ):
         produce_day1_registration_evidence_archive(output_dir)
 

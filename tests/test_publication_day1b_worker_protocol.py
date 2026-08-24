@@ -1318,12 +1318,16 @@ def test_anonymous_scratch_capability_is_opaque_single_use_and_context_bound() -
 def test_unclaimed_anonymous_scratch_capability_closes_both_handles_on_collection() -> None:
     capability, _contract_value, _audits = _scratch_capability()
     handles = tuple(item[1] for item in capability._binding.members)
+    connection = capability._binding.sqlite_connection
+    assert connection is not None
     reference = weakref.ref(capability)
 
     del capability
     gc.collect()
     assert reference() is None
     assert all(file.closed for file in handles)
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("SELECT 1")
     _assert_no_live_controlled_scratch()
 
 
@@ -1348,6 +1352,7 @@ def test_anonymous_scratch_mint_failure_closes_fixture_owned_handles(
 ) -> None:
     created: list[BinaryIO] = []
     original_temporary_file = worker_protocol.tempfile.TemporaryFile
+    original_named_temporary_file = worker_protocol.tempfile.NamedTemporaryFile
     failure = RuntimeError("fixture anonymous scratch mint failure")
 
     def capture_file(*args: object, **kwargs: object) -> BinaryIO:
@@ -1355,10 +1360,20 @@ def test_anonymous_scratch_mint_failure_closes_fixture_owned_handles(
         created.append(file)
         return file
 
+    def capture_named_file(*args: object, **kwargs: object) -> BinaryIO:
+        file = original_named_temporary_file(*args, **kwargs)
+        created.append(file)
+        return file
+
     def fail_mint(_binding: object) -> None:
         raise failure
 
     monkeypatch.setattr(worker_protocol.tempfile, "TemporaryFile", capture_file)
+    monkeypatch.setattr(
+        worker_protocol.tempfile,
+        "NamedTemporaryFile",
+        capture_named_file,
+    )
     monkeypatch.setattr(worker_protocol, "_mint_anonymous_scratch_capability", fail_mint)
 
     with pytest.raises(RuntimeError) as raised:
@@ -1463,6 +1478,19 @@ def test_anonymous_scratch_capability_rejects_linked_or_same_inode_handles(
     base.close()
 
 
+def test_custom_anonymous_scratch_handles_require_a_preopened_sqlite_connection() -> None:
+    handles = tuple(_anonymous_test_file() for _ in range(2))
+    contract = _contract()
+    with pytest.raises(Day1BWorkerProtocolError, match="launcher-opened SQLite connection"):
+        _test_only_issue_day1b_anonymous_scratch_capability(
+            contract=contract,
+            controller_phase_audits=_phase_audits(),
+            controlled_scratch_root=_CURRENT_CONTROLLED_SCRATCH,
+            handles=handles,
+        )
+    assert all(file.closed for file in handles)
+
+
 def test_registry_descriptor_document_is_closed_and_round_trips() -> None:
     contract = _contract()
     registry = _prepare_registry(
@@ -1498,10 +1526,13 @@ def test_sqlite_registry_is_bound_to_one_anonymous_descriptor_inode(
     opened: list[tuple[str, tuple[int, int], sqlite3.Connection]] = []
 
     def capture_connect(database: str, **kwargs: object) -> sqlite3.Connection:
-        assert database.startswith("/dev/fd/")
-        before = os.stat(database)
+        assert database.startswith("file:") and database.endswith("?mode=rw")
+        assert kwargs == {"check_same_thread": False, "uri": True}
+        visible = tuple(_CURRENT_CONTROLLED_SCRATCH.iterdir())
+        assert len(visible) == 1
+        before = os.stat(visible[0])
         connection = original_connect(database, **kwargs)
-        after = os.stat(database)
+        after = os.stat(visible[0])
         assert (after.st_dev, after.st_ino) == (before.st_dev, before.st_ino)
         opened.append((database, (before.st_dev, before.st_ino), connection))
         return connection
@@ -1514,14 +1545,116 @@ def test_sqlite_registry_is_bound_to_one_anonymous_descriptor_inode(
     )
 
     assert len(opened) == 1
-    database, identity, connection = opened[0]
-    database_stat = os.stat(database)
+    _database, identity, connection = opened[0]
+    held = registry._binding.registry.scratch._files["binding-index.sqlite3"]
+    database_stat = os.fstat(held.fileno())
     assert (database_stat.st_dev, database_stat.st_ino) == identity
+    assert database_stat.st_nlink == 0
     page_count = connection.execute("PRAGMA page_count").fetchone()[0]
     page_size = connection.execute("PRAGMA page_size").fetchone()[0]
     assert database_stat.st_size == page_count * page_size > 0
     _assert_no_live_controlled_scratch()
     abandon_day1b_expected_f1m_registry(registry)
+    _assert_no_live_controlled_scratch()
+
+
+def test_sqlite_connection_is_preopened_before_anonymous_capability_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    capability, contract, audits = _scratch_capability()
+    preopened = capability._binding.sqlite_connection
+    assert type(preopened) is sqlite3.Connection
+    scratch = worker_protocol._ControlledScratch(
+        capability,
+        contract=contract,
+        controller_phase_audits=audits,
+    )
+
+    def forbid_connect(*_args: object, **_kwargs: object) -> sqlite3.Connection:
+        raise AssertionError("claimed scratch must use its launcher-opened connection")
+
+    monkeypatch.setattr(worker_protocol.sqlite3, "connect", forbid_connect)
+    connection = scratch.create_sqlite_connection("binding-index.sqlite3")
+    assert connection is preopened
+    assert connection.execute("PRAGMA application_id").fetchone() == (
+        worker_protocol._ANONYMOUS_SQLITE_APPLICATION_ID,
+    )
+    held = scratch._files["binding-index.sqlite3"]
+    assert int.from_bytes(os.pread(held.fileno(), 4, 68), "big") == (
+        worker_protocol._ANONYMOUS_SQLITE_APPLICATION_ID
+    )
+    connection.close()
+    scratch.close()
+    _assert_no_live_controlled_scratch()
+
+
+def test_concurrent_same_member_claim_has_exactly_one_winner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scratch = _claimed_scratch()
+    held = scratch._files["binding-index.sqlite3"]
+    original_fstat = worker_protocol.os.fstat
+    first_observation = threading.Event()
+    release_first = threading.Event()
+    observation_lock = threading.Lock()
+    observation_count = 0
+
+    def delay_first_observation(descriptor: int) -> os.stat_result:
+        nonlocal observation_count
+        if (
+            descriptor == held.fileno()
+            and threading.current_thread() is not threading.main_thread()
+        ):
+            with observation_lock:
+                observation_count += 1
+                ordinal = observation_count
+            if ordinal == 1:
+                first_observation.set()
+                release_first.wait(timeout=0.25)
+            elif ordinal == 2:
+                release_first.set()
+        return original_fstat(descriptor)
+
+    monkeypatch.setattr(worker_protocol.os, "fstat", delay_first_observation)
+    claimed: list[BinaryIO] = []
+    errors: list[BaseException] = []
+
+    def claim() -> None:
+        try:
+            claimed.append(scratch._claim_file("binding-index.sqlite3"))
+        except BaseException as error:  # pragma: no cover - asserted below
+            errors.append(error)
+
+    first = threading.Thread(target=claim)
+    second = threading.Thread(target=claim)
+    first.start()
+    assert first_observation.wait(timeout=1)
+    second.start()
+    first.join()
+    second.join()
+
+    assert len(claimed) == 1
+    assert len(errors) == 1
+    assert isinstance(errors[0], Day1BWorkerProtocolError)
+    assert "already claimed" in str(errors[0])
+    scratch.close()
+    _assert_no_live_controlled_scratch()
+
+
+def test_controlled_scratch_member_factory_roles_are_exact() -> None:
+    scratch = _claimed_scratch()
+    with pytest.raises(Day1BWorkerProtocolError, match="SQLite scratch member role"):
+        scratch.create_sqlite_connection("object-receipts.jsonl")
+    connection = scratch.create_sqlite_connection("binding-index.sqlite3")
+    connection.close()
+    scratch.close()
+
+    scratch = _claimed_scratch()
+    with pytest.raises(Day1BWorkerProtocolError, match="binary scratch member role"):
+        scratch.create_binary_file("binding-index.sqlite3")
+    file = scratch.create_binary_file("object-receipts.jsonl")
+    file.close()
+    scratch.close()
     _assert_no_live_controlled_scratch()
 
 
@@ -1562,7 +1695,7 @@ def test_sqlite_registry_accepts_a_platform_normalized_descriptor_filename(
     _assert_no_live_controlled_scratch()
 
 
-def test_sqlite_descriptor_is_independent_of_a_later_observation_root_splice(
+def test_sqlite_launcher_rejects_an_observation_root_splice_without_foreign_mutation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original_connect = worker_protocol.sqlite3.connect
@@ -1571,45 +1704,38 @@ def test_sqlite_descriptor_is_independent_of_a_later_observation_root_splice(
 
     def splice_root(database: str, **kwargs: object) -> sqlite3.Connection:
         nonlocal observed_identity
-        before = os.stat(database)
+        visible = tuple(_CURRENT_CONTROLLED_SCRATCH.iterdir())
+        assert len(visible) == 1
+        before = os.stat(visible[0])
         observed_identity = before.st_dev, before.st_ino
         _CURRENT_CONTROLLED_SCRATCH.rename(detached)
         _CURRENT_CONTROLLED_SCRATCH.mkdir()
         (_CURRENT_CONTROLLED_SCRATCH / "foreign-marker").write_bytes(b"foreign")
-        connection = original_connect(database, **kwargs)
-        after = os.stat(database)
-        assert (after.st_dev, after.st_ino) == observed_identity
-        return connection
+        return original_connect(database, **kwargs)
 
     monkeypatch.setattr(worker_protocol.sqlite3, "connect", splice_root)
     contract = _contract()
-    registry = _prepare_registry(
-        _expected_f1m_objects(contract.candidate.candidate_id),
-        contract=contract,
-    )
+    with pytest.raises(sqlite3.OperationalError, match="unable to open database file"):
+        _prepare_registry(
+            _expected_f1m_objects(contract.candidate.candidate_id),
+            contract=contract,
+        )
     assert observed_identity is not None
     assert (_CURRENT_CONTROLLED_SCRATCH / "foreign-marker").read_bytes() == b"foreign"
     assert not tuple(detached.iterdir())
-    abandon_day1b_expected_f1m_registry(registry)
-    assert (_CURRENT_CONTROLLED_SCRATCH / "foreign-marker").read_bytes() == b"foreign"
 
 
 def test_sqlite_connection_retarget_is_rejected_by_held_file_byte_binding(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     original_connect = worker_protocol.sqlite3.connect
-    replacement = _anonymous_test_file()
+    replacement = tmp_path / "replacement.sqlite3"
+    replacement.write_bytes(b"")
 
     def retarget_during_connect(database: str, **kwargs: object) -> sqlite3.Connection:
-        held_descriptor = int(database.rsplit("/", 1)[1])
-        saved = os.dup(held_descriptor)
-        try:
-            os.dup2(replacement.fileno(), held_descriptor)
-            connection = original_connect(database, **kwargs)
-            os.dup2(saved, held_descriptor)
-            return connection
-        finally:
-            os.close(saved)
+        assert database.startswith("file:")
+        return original_connect(str(replacement), **kwargs)
 
     monkeypatch.setattr(worker_protocol.sqlite3, "connect", retarget_during_connect)
     contract = _contract()
@@ -1618,11 +1744,10 @@ def test_sqlite_connection_retarget_is_rejected_by_held_file_byte_binding(
             _expected_f1m_objects(contract.candidate.candidate_id),
             contract=contract,
         )
-    replacement.close()
     _assert_no_live_controlled_scratch()
 
 
-def test_sqlite_scratch_has_no_pathname_fallback_when_dev_fd_is_unavailable(
+def test_sqlite_scratch_opens_only_one_launcher_visible_path_before_claim(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original_connect = worker_protocol.sqlite3.connect
@@ -1630,19 +1755,19 @@ def test_sqlite_scratch_has_no_pathname_fallback_when_dev_fd_is_unavailable(
 
     def reject_descriptor_reopen(database: str, **kwargs: object) -> sqlite3.Connection:
         attempted.append(database)
-        if database.startswith("/dev/fd/"):
-            raise FileNotFoundError("fixture unsupported descriptor reopening")
+        assert not database.startswith("/dev/fd/")
         return original_connect(database, **kwargs)
 
     monkeypatch.setattr(worker_protocol.sqlite3, "connect", reject_descriptor_reopen)
     contract = _contract()
-    with pytest.raises(Day1BWorkerProtocolError, match="anonymous SQLite scratch"):
-        _prepare_registry(
-            _expected_f1m_objects(contract.candidate.candidate_id),
-            contract=contract,
-        )
+    registry = _prepare_registry(
+        _expected_f1m_objects(contract.candidate.candidate_id),
+        contract=contract,
+    )
+    abandon_day1b_expected_f1m_registry(registry)
     _assert_no_live_controlled_scratch()
-    assert len(attempted) == 1 and attempted[0].startswith("/dev/fd/")
+    assert len(attempted) == 1
+    assert attempted[0].startswith("file:") and attempted[0].endswith("?mode=rw")
 
 
 def test_controller_registry_contract_types_are_explicit_public_api() -> None:
@@ -1671,13 +1796,24 @@ def test_repeated_abandon_closes_every_anonymous_handle(
 ) -> None:
     created: list[BinaryIO] = []
     original_temporary_file = worker_protocol.tempfile.TemporaryFile
+    original_named_temporary_file = worker_protocol.tempfile.NamedTemporaryFile
 
     def capture_file(*args: object, **kwargs: object) -> BinaryIO:
         file = original_temporary_file(*args, **kwargs)
         created.append(file)
         return file
 
+    def capture_named_file(*args: object, **kwargs: object) -> BinaryIO:
+        file = original_named_temporary_file(*args, **kwargs)
+        created.append(file)
+        return file
+
     monkeypatch.setattr(worker_protocol.tempfile, "TemporaryFile", capture_file)
+    monkeypatch.setattr(
+        worker_protocol.tempfile,
+        "NamedTemporaryFile",
+        capture_named_file,
+    )
     for _ in range(252):
         invocation = _issue_invocation(_contract())
         abandon_day1b_worker_invocation(invocation)
