@@ -25,13 +25,13 @@ from dynamic_cssc.publication_day1b_worker_protocol import (
     DAY1B_WORKER_FRAME_SCHEMA,
     DAY1B_WORKER_MAX_HEADER_BYTES,
     DAY1B_WORKER_RECEIPT_SCHEMA,
-    DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES,
+    DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES,
     Day1BAnonymousScratchCapability,
     Day1BControllerExpectedF1MObject,
     Day1BExpectedF1MRegistryCapability,
     Day1BExpectedF1MRegistryDescriptor,
-    Day1BF1MBatchTransitionReceipt,
-    Day1BF1MBindingReceipt,
+    Day1BF1MSizeClass,
+    Day1BF1MWindowBatch,
     Day1BF1MWindowCardinality,
     Day1BWorkerCandidateSpec,
     Day1BWorkerEvidenceCapability,
@@ -47,10 +47,9 @@ from dynamic_cssc.publication_day1b_worker_protocol import (
     abandon_day1b_expected_f1m_registry,
     abandon_day1b_worker_evidence,
     abandon_day1b_worker_invocation,
-    canonical_day1b_expected_f1m_binding_set_sha256,
-    canonical_day1b_expected_f1m_route_subroot_sha256,
+    canonical_day1b_expected_f1m_size_class_set_sha256,
+    canonical_day1b_expected_f1m_size_class_subroot_sha256,
     canonical_day1b_f1m_cardinality_derivation_root_sha256,
-    canonical_day1b_f1m_query_id,
     canonical_day1b_worker_window_audit_bytes,
     claim_day1b_worker_evidence,
     consume_day1b_worker_frames,
@@ -163,7 +162,7 @@ def _contract(
         else expected_f1m_objects
     )
     selected_audits = controller_phase_audits or _phase_audits()
-    window_cardinalities, batch_transitions = _fixture_registry_inputs(
+    window_cardinalities, window_batches = _fixture_registry_inputs(
         selected_expected,
         candidate=selected_candidate,
         controller_phase_audits=selected_audits,
@@ -201,17 +200,17 @@ def _contract(
             ("query-f1m-encrypted-zero-dummy-ciphertexts", "query"),
             ("evaluation-keys", "one-time"),
         ),
-        f1m_binding_categories=DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES,
-        expected_f1m_binding_set_sha256=(
-            canonical_day1b_expected_f1m_binding_set_sha256(selected_expected)
+        f1m_size_class_categories=DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES,
+        expected_f1m_size_class_set_sha256=(
+            canonical_day1b_expected_f1m_size_class_set_sha256(selected_expected)
         ),
-        expected_f1m_binding_count=len(selected_expected),
+        expected_f1m_size_class_count=len(selected_expected),
         expected_serialized_equivalence_class_count=(selected_all_serialized_count),
         expected_f1m_cardinality_derivation_root_sha256=(
             canonical_day1b_f1m_cardinality_derivation_root_sha256(
                 window_cardinalities=window_cardinalities,
-                batch_transitions=batch_transitions,
-                expected_routes=selected_expected,
+                window_batches=window_batches,
+                expected_size_classes=selected_expected,
             )
         ),
         resource_limits=Day1BWorkerResourceLimits(
@@ -256,7 +255,7 @@ def _issue_invocation(
         else expected_f1m_objects
     )
     selected_audits = controller_phase_audits or _phase_audits()
-    window_cardinalities, batch_transitions = _fixture_registry_inputs(
+    window_cardinalities, window_batches = _fixture_registry_inputs(
         selected_expected,
         candidate=contract.candidate,
         controller_phase_audits=selected_audits,
@@ -265,7 +264,7 @@ def _issue_invocation(
         contract=contract,
         controller_phase_audits=selected_audits,
         window_cardinalities=iter(window_cardinalities),
-        batch_transitions=iter(batch_transitions),
+        window_batches=iter(window_batches),
         expected_f1m_objects=iter(selected_expected),
         controlled_scratch_root=_CURRENT_CONTROLLED_SCRATCH,
     )
@@ -306,14 +305,14 @@ def _consume(
     )
 
 
-def _f1m_binding(
+def _f1m_size_class(
     *,
     candidate_id: str,
     phase: str,
     category: str,
     ordinal: int,
 ) -> dict[str, object] | None:
-    if category not in DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES:
+    if category not in DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES:
         return None
     window_identity = f"{candidate_id}:{phase}"
     global_query_ordinal = {
@@ -328,19 +327,12 @@ def _f1m_binding(
         else "encrypted-zero-dummy"
     )
     return {
-        "schema_version": "dynamic-cssc-publication-day1b-f1m-binding-receipt-v1",
-        "query_id": canonical_day1b_f1m_query_id(
-            invocation_id="6" * 64,
-            global_query_ordinal=global_query_ordinal,
-        ),
+        "schema_version": "dynamic-cssc-publication-day1b-f1m-size-class-v1",
         "version_id": "version-0001",
         "output_plan_digest": hashlib.sha256(f"plan:{window_identity}".encode()).hexdigest(),
         "component_id": f"component-{category}",
         "output_block_id": f"block-{batch_identity}-{category}",
         "f1m_kind": f1m_kind,
-        "ledger_commitment_token": hashlib.sha256(
-            f"commitment:{batch_identity}".encode()
-        ).hexdigest(),
         "private_plan_digest": hashlib.sha256(f"private:{window_identity}".encode()).hexdigest(),
         "execution_binding_digest": hashlib.sha256(
             f"execution:{window_identity}".encode()
@@ -353,13 +345,15 @@ def _expected_f1m_objects(
     *,
     phases: tuple[str, ...] = ("tuning-prefix", "held-out"),
     object_count: int = 1,
-    categories: tuple[str, ...] = DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES,
+    query_count: int = 1,
+    categories: tuple[str, ...] = DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES,
 ) -> tuple[Day1BControllerExpectedF1MObject, ...]:
     return tuple(
         _iter_expected_f1m_objects(
             candidate_id,
             phases=phases,
             object_count=object_count,
+            query_count=query_count,
             categories=categories,
         )
     )
@@ -370,25 +364,26 @@ def _iter_expected_f1m_objects(
     *,
     phases: tuple[str, ...] = ("tuning-prefix", "held-out"),
     object_count: int = 1,
-    categories: tuple[str, ...] = DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES,
+    query_count: int = 1,
+    categories: tuple[str, ...] = DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES,
 ) -> Iterable[Day1BControllerExpectedF1MObject]:
     return (
         Day1BControllerExpectedF1MObject(
             category=category,
-            f1m_binding=Day1BF1MBindingReceipt.from_document(
-                _f1m_binding(
+            f1m_size_class=Day1BF1MSizeClass.from_document(
+                _f1m_size_class(
                     candidate_id=candidate_id,
                     phase=phase,
                     category=category,
                     ordinal=ordinal,
                 )
             ),
-            global_query_ordinal={
+            first_global_query_ordinal={
                 "warmup": 0,
                 "tuning-prefix": 1_000_000,
                 "held-out": 2_000_000,
-            }[phase]
-            + ordinal,
+            }[phase],
+            multiplicity=query_count,
             object_ordinal=ordinal,
             phase=phase,
             window_index={"warmup": 0, "tuning-prefix": 1, "held-out": 2}[phase],
@@ -406,7 +401,7 @@ def _fixture_registry_inputs(
     controller_phase_audits: tuple[Day1BWorkerPhaseAudit, ...],
 ) -> tuple[
     tuple[Day1BF1MWindowCardinality, ...],
-    tuple[Day1BF1MBatchTransitionReceipt, ...],
+    tuple[Day1BF1MWindowBatch, ...],
 ]:
     audit_by_phase = dict(
         zip(("warmup", "tuning-prefix", "held-out"), controller_phase_audits, strict=True)
@@ -469,97 +464,35 @@ def _fixture_registry_inputs(
                 overlap_masked_share_count=masked_share_count,
                 expected_random_route_count=random_count,
                 expected_dummy_route_count=dummy_count,
-                expected_route_subroot_sha256=(
-                    canonical_day1b_expected_f1m_route_subroot_sha256(routes)
+                expected_size_class_subroot_sha256=(
+                    canonical_day1b_expected_f1m_size_class_subroot_sha256(routes)
                 ),
             )
         )
 
-    ledger_identity = hashlib.sha256(b"private-fixture-ledger").hexdigest()
-    prior_root = hashlib.sha256(b"private-fixture-ledger-empty-root").hexdigest()
-    batch_transitions: list[Day1BF1MBatchTransitionReceipt] = []
+    window_batches: list[Day1BF1MWindowBatch] = []
     for phase in candidate.retained_phases:
         cardinality = next(row for row in window_cardinalities if row.phase == phase)
-        global_ordinal = cardinality.first_global_query_ordinal
-        window_end = global_ordinal + cardinality.query_count
-        while global_ordinal < window_end:
-            routes = tuple(
-                item for item in phase_routes[phase] if item.global_query_ordinal == global_ordinal
+        if cardinality.query_count == 0:
+            continue
+        window_batches.append(
+            Day1BF1MWindowBatch(
+                phase=phase,
+                window_index=cardinality.window_index,
+                first_global_query_ordinal=cardinality.first_global_query_ordinal,
+                query_count=cardinality.query_count,
+                version_id=cardinality.version_id,
+                output_plan_digest=cardinality.output_plan_digest,
+                private_plan_digest=cardinality.private_plan_digest,
+                execution_binding_digest=cardinality.execution_binding_digest,
+                size_class_subroot_sha256=(
+                    canonical_day1b_expected_f1m_size_class_subroot_sha256(
+                        phase_routes[phase]
+                    )
+                ),
             )
-            if routes:
-                binding = routes[0].f1m_binding
-                query_id = binding.query_id
-                token = binding.ledger_commitment_token
-                query_count = routes[0].multiplicity
-                assert all(item.multiplicity == query_count for item in routes)
-            else:
-                query_id = canonical_day1b_f1m_query_id(
-                    invocation_id="6" * 64,
-                    global_query_ordinal=global_ordinal,
-                )
-                token = hashlib.sha256(
-                    f"commitment:{candidate.candidate_id}:{global_ordinal}".encode()
-                ).hexdigest()
-                query_count = 1
-            random_keys = [
-                list(item.f1m_binding.no_reuse_key)
-                for item in routes
-                if item.f1m_binding.f1m_kind == "random-zero-sum"
-            ]
-            reservation_root = hashlib.sha256(
-                _canonical_bytes(
-                    {
-                        "random_no_reuse_keys": random_keys,
-                        "schema_version": "private-fixture-reservation-set-v1",
-                    }
-                )
-            ).hexdigest()
-            route_root = canonical_day1b_expected_f1m_route_subroot_sha256(routes)
-            after_reservation_root = hashlib.sha256(
-                _canonical_bytes(
-                    {
-                        "prior_root_sha256": prior_root,
-                        "reservation_set_root_sha256": reservation_root,
-                        "schema_version": "private-fixture-random-reservation-v1",
-                    }
-                )
-            ).hexdigest()
-            next_root = hashlib.sha256(
-                _canonical_bytes(
-                    {
-                        "ledger_commitment_token": token,
-                        "prior_root_sha256": after_reservation_root,
-                        "route_set_root_sha256": route_root,
-                        "schema_version": "private-fixture-commitment-preparation-v1",
-                    }
-                )
-            ).hexdigest()
-            batch_transitions.append(
-                Day1BF1MBatchTransitionReceipt(
-                    phase=phase,
-                    window_index=cardinality.window_index,
-                    global_query_ordinal=global_ordinal,
-                    query_id=query_id,
-                    version_id=cardinality.version_id,
-                    output_plan_digest=cardinality.output_plan_digest,
-                    private_plan_digest=cardinality.private_plan_digest,
-                    execution_binding_digest=cardinality.execution_binding_digest,
-                    ledger_commitment_token=token,
-                    ledger_identity_sha256=ledger_identity,
-                    transition_ordinal=len(batch_transitions),
-                    ledger_root_before_sha256=prior_root,
-                    reservation_set_root_sha256=reservation_root,
-                    ledger_root_after_reservation_sha256=after_reservation_root,
-                    ledger_root_after_preparation_sha256=next_root,
-                    route_set_root_sha256=route_root,
-                    random_reservation_transition_verified=False,
-                    prepared_commitment_transition_verified=False,
-                    query_count=query_count,
-                )
-            )
-            prior_root = next_root
-            global_ordinal += query_count
-    return tuple(window_cardinalities), tuple(batch_transitions)
+        )
+    return tuple(window_cardinalities), tuple(window_batches)
 
 
 def _prepare_registry(
@@ -589,7 +522,7 @@ def _prepare_registry(
                 controller_registered_scratch_bytes_checkpoint_maximum=scratch_cap,
             ),
         )
-    window_cardinalities, batch_transitions = _fixture_registry_inputs(
+    window_cardinalities, window_batches = _fixture_registry_inputs(
         expected,
         candidate=selected_candidate,
         controller_phase_audits=selected_audits,
@@ -598,7 +531,7 @@ def _prepare_registry(
         contract=selected_contract,
         controller_phase_audits=selected_audits,
         window_cardinalities=iter(window_cardinalities),
-        batch_transitions=iter(batch_transitions),
+        window_batches=iter(window_batches),
         expected_f1m_objects=iter(expected),
         controlled_scratch_root=_CURRENT_CONTROLLED_SCRATCH,
     )
@@ -662,7 +595,7 @@ def _complete_transcript(
                 category="update-ciphertexts",
                 object_ordinal=0,
                 multiplicity=2,
-                f1m_binding=None,
+                f1m_size_class=None,
                 payload=payloads[0],
             )
             emit(
@@ -672,7 +605,7 @@ def _complete_transcript(
                 category="query-f1m-random-mask-ciphertexts",
                 object_ordinal=0,
                 multiplicity=random_route.multiplicity,
-                f1m_binding=random_route.f1m_binding.to_document(),
+                f1m_size_class=random_route.f1m_size_class.to_document(),
                 payload=payloads[1],
             )
             emit(
@@ -682,7 +615,7 @@ def _complete_transcript(
                 category="query-f1m-encrypted-zero-dummy-ciphertexts",
                 object_ordinal=0,
                 multiplicity=dummy_route.multiplicity,
-                f1m_binding=dummy_route.f1m_binding.to_document(),
+                f1m_size_class=dummy_route.f1m_size_class.to_document(),
                 payload=payloads[2],
             )
             if phase == candidate.retained_phases[0]:
@@ -693,7 +626,7 @@ def _complete_transcript(
                     category="evaluation-keys",
                     object_ordinal=0,
                     multiplicity=1,
-                    f1m_binding=None,
+                    f1m_size_class=None,
                     payload=payloads[3],
                 )
         emit(
@@ -1047,13 +980,13 @@ def test_resource_limits_have_no_implicit_defaults() -> None:
 def test_expected_f1m_registry_is_opaque_descriptor_backed_and_single_use() -> None:
     expected = _expected_f1m_objects("reference-a")
     contract = _contract(expected_f1m_objects=expected)
-    with pytest.raises(TypeError, match="controller-ledger-minted"):
+    with pytest.raises(TypeError, match="controller-minted"):
         Day1BExpectedF1MRegistryCapability()
     registry = _prepare_registry(expected, contract=contract)
     descriptor = describe_day1b_expected_f1m_registry(registry)
-    assert descriptor.binding_count == len(expected)
-    assert descriptor.binding_set_sha256 == (
-        canonical_day1b_expected_f1m_binding_set_sha256(expected)
+    assert descriptor.size_class_count == len(expected)
+    assert descriptor.size_class_set_sha256 == (
+        canonical_day1b_expected_f1m_size_class_set_sha256(expected)
     )
     assert descriptor.controller_registered_scratch_bytes_checkpoint_maximum == (
         contract.resource_limits.controller_registered_scratch_bytes_checkpoint_maximum
@@ -1102,7 +1035,7 @@ def test_registry_claim_failure_closes_only_authoritative_storage(tamper: str) -
 def test_invalid_registry_context_is_rejected_before_scratch_creation(invalid: str) -> None:
     contract = _contract()
     expected = _expected_f1m_objects(contract.candidate.candidate_id)
-    windows, batches = _fixture_registry_inputs(
+    windows, window_batches = _fixture_registry_inputs(
         expected,
         candidate=contract.candidate,
         controller_phase_audits=_phase_audits(),
@@ -1118,7 +1051,7 @@ def test_invalid_registry_context_is_rejected_before_scratch_creation(invalid: s
             contract=contract,
             controller_phase_audits=audits,
             window_cardinalities=iter(windows),
-            batch_transitions=iter(batches),
+            window_batches=iter(window_batches),
             expected_f1m_objects=iter(expected),
             controlled_scratch_root=_CURRENT_CONTROLLED_SCRATCH,
         )
@@ -1158,47 +1091,35 @@ def test_controlled_scratch_initialization_failures_close_anonymous_descriptors(
 
 
 def test_expected_f1m_registry_checks_controlled_scratch_cap_incrementally() -> None:
-    yielded_batches = 0
+    yielded_size_classes = 0
 
-    def batches() -> Iterable[Day1BF1MBatchTransitionReceipt]:
-        nonlocal yielded_batches
-        prior_root = hashlib.sha256(b"scale-empty-root").hexdigest()
-        ledger_identity = hashlib.sha256(b"scale-ledger").hexdigest()
+    def expected_size_classes() -> Iterable[Day1BControllerExpectedF1MObject]:
+        nonlocal yielded_size_classes
         for ordinal in range(100_000):
-            global_ordinal = 2_000_000 + ordinal
-            after_reservation_root = hashlib.sha256(
-                f"scale-reservation-root:{ordinal}".encode()
-            ).hexdigest()
-            next_root = hashlib.sha256(f"scale-root:{ordinal}".encode()).hexdigest()
-            yielded_batches += 1
-            yield Day1BF1MBatchTransitionReceipt(
+            yielded_size_classes += 1
+            yield Day1BControllerExpectedF1MObject(
                 phase="held-out",
                 window_index=2,
-                global_query_ordinal=global_ordinal,
-                query_id=canonical_day1b_f1m_query_id(
-                    invocation_id="6" * 64,
-                    global_query_ordinal=global_ordinal,
+                first_global_query_ordinal=2_000_000,
+                category="query-f1m-random-mask-ciphertexts",
+                object_ordinal=ordinal,
+                multiplicity=100_000,
+                f1m_size_class=Day1BF1MSizeClass(
+                    version_id="version-0001",
+                    output_plan_digest=hashlib.sha256(
+                        b"plan:reference-a:held-out"
+                    ).hexdigest(),
+                    component_id=f"component-{ordinal}",
+                    output_block_id="block-0",
+                    f1m_kind="random-zero-sum",
+                    private_plan_digest=hashlib.sha256(
+                        b"private:reference-a:held-out"
+                    ).hexdigest(),
+                    execution_binding_digest=hashlib.sha256(
+                        b"execution:reference-a:held-out"
+                    ).hexdigest(),
                 ),
-                version_id="version-0001",
-                output_plan_digest=hashlib.sha256(b"plan:reference-a:held-out").hexdigest(),
-                private_plan_digest=hashlib.sha256(b"private:reference-a:held-out").hexdigest(),
-                execution_binding_digest=hashlib.sha256(
-                    b"execution:reference-a:held-out"
-                ).hexdigest(),
-                ledger_commitment_token=hashlib.sha256(
-                    f"commitment:reference-a:{global_ordinal}".encode()
-                ).hexdigest(),
-                ledger_identity_sha256=ledger_identity,
-                transition_ordinal=ordinal,
-                ledger_root_before_sha256=prior_root,
-                reservation_set_root_sha256="8" * 64,
-                ledger_root_after_reservation_sha256=after_reservation_root,
-                ledger_root_after_preparation_sha256=next_root,
-                route_set_root_sha256="7" * 64,
-                random_reservation_transition_verified=False,
-                prepared_commitment_transition_verified=False,
             )
-            prior_root = next_root
 
     window = Day1BF1MWindowCardinality(
         phase="held-out",
@@ -1212,11 +1133,22 @@ def test_expected_f1m_registry_checks_controlled_scratch_cap_incrementally() -> 
         private_plan_digest=hashlib.sha256(b"private:reference-a:held-out").hexdigest(),
         execution_binding_digest=hashlib.sha256(b"execution:reference-a:held-out").hexdigest(),
         f1m_policy="uniform-random-or-zero",
-        returned_share_count=1,
-        overlap_masked_share_count=1,
-        expected_random_route_count=100_000,
+        returned_share_count=100_000,
+        overlap_masked_share_count=100_000,
+        expected_random_route_count=10_000_000_000,
         expected_dummy_route_count=0,
-        expected_route_subroot_sha256="9" * 64,
+        expected_size_class_subroot_sha256="9" * 64,
+    )
+    window_batch = Day1BF1MWindowBatch(
+        phase=window.phase,
+        window_index=window.window_index,
+        first_global_query_ordinal=window.first_global_query_ordinal,
+        query_count=window.query_count,
+        version_id=window.version_id,
+        output_plan_digest=window.output_plan_digest,
+        private_plan_digest=window.private_plan_digest,
+        execution_binding_digest=window.execution_binding_digest,
+        size_class_subroot_sha256=window.expected_size_class_subroot_sha256,
     )
     scratch_contract = _contract(expected_f1m_objects=())
     scratch_contract = replace(
@@ -1232,11 +1164,11 @@ def test_expected_f1m_registry_checks_controlled_scratch_cap_incrementally() -> 
             contract=scratch_contract,
             controller_phase_audits=_phase_audits(),
             window_cardinalities=iter((window,)),
-            batch_transitions=batches(),
-            expected_f1m_objects=(),
+            window_batches=iter((window_batch,)),
+            expected_f1m_objects=expected_size_classes(),
             controlled_scratch_root=_CURRENT_CONTROLLED_SCRATCH,
         )
-    assert 0 < yielded_batches < 100_000
+    assert 0 < yielded_size_classes < 100_000
     _assert_no_live_controlled_scratch()
 
 
@@ -1262,7 +1194,7 @@ def test_registry_route_cardinality_queries_use_bounded_indexes_without_temp_sor
     connection = connections[0]
     plans = (
         connection.execute(
-            "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM f1m_batch_transitions "
+            "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM f1m_window_batches "
             "WHERE phase=? AND window_index=?",
             ("tuning-prefix", 1),
         ).fetchall(),
@@ -1279,9 +1211,15 @@ def test_registry_route_cardinality_queries_use_bounded_indexes_without_temp_sor
         ).fetchall(),
         connection.execute(
             "EXPLAIN QUERY PLAN SELECT route_document FROM expected_f1m "
-            "WHERE ledger_commitment_token=? "
+            "WHERE phase=? AND window_index=? AND first_global_query_ordinal=? "
+            "AND multiplicity=? "
             "ORDER BY phase, window_index, object_ordinal, category_order",
-            (expected[0].f1m_binding.ledger_commitment_token,),
+            (
+                expected[0].phase,
+                expected[0].window_index,
+                expected[0].first_global_query_ordinal,
+                expected[0].multiplicity,
+            ),
         ).fetchall(),
     )
     details = tuple(str(row[3]) for plan in plans for row in plan)
@@ -1300,7 +1238,7 @@ def test_active_registry_uses_only_anonymous_controlled_scratch() -> None:
 
     _assert_no_live_controlled_scratch()
     descriptor = describe_day1b_expected_f1m_registry(registry)
-    assert descriptor.binding_count > 0
+    assert descriptor.size_class_count > 0
     assert descriptor.anonymous_scratch_creation_isolation_verified is False
     assert descriptor.pre_dispatch_execution_admissible is False
     abandon_day1b_expected_f1m_registry(registry)
@@ -1535,11 +1473,11 @@ def test_registry_descriptor_document_is_closed_and_round_trips() -> None:
         Day1BExpectedF1MRegistryDescriptor.from_document({**document, "forged": False})
     with pytest.raises(Day1BWorkerProtocolError, match="schema.*frozen"):
         Day1BExpectedF1MRegistryDescriptor.from_document({**document, "schema_version": "forged"})
-    malformed_counts = dict(document["phase_binding_counts"])
+    malformed_counts = dict(document["phase_size_class_counts"])
     malformed_counts["forged"] = 0
     with pytest.raises(Day1BWorkerProtocolError, match="phase keys.*exact"):
         Day1BExpectedF1MRegistryDescriptor.from_document(
-            {**document, "phase_binding_counts": malformed_counts}
+            {**document, "phase_size_class_counts": malformed_counts}
         )
     abandon_day1b_expected_f1m_registry(registry)
     _assert_no_live_controlled_scratch()
@@ -1799,13 +1737,15 @@ def test_sqlite_scratch_opens_only_one_launcher_visible_path_before_claim(
 def test_controller_registry_contract_types_are_explicit_public_api() -> None:
     expected_exports = {
         "DAY1B_WORKER_EXPECTED_F1M_REGISTRY_DESCRIPTOR_SCHEMA",
-        "DAY1B_WORKER_F1M_BATCH_TRANSITION_SCHEMA",
+        "DAY1B_WORKER_F1M_WINDOW_BATCH_SCHEMA",
+        "DAY1B_WORKER_F1M_SIZE_CLASS_SCHEMA",
         "DAY1B_WORKER_F1M_WINDOW_CARDINALITY_SCHEMA",
-        "Day1BF1MBatchTransitionReceipt",
+        "Day1BF1MWindowBatch",
+        "Day1BF1MSizeClass",
         "Day1BF1MWindowCardinality",
         "Day1BAnonymousScratchCapability",
         "Day1BWorkerPhaseReceipt",
-        "canonical_day1b_expected_f1m_route_subroot_sha256",
+        "canonical_day1b_expected_f1m_size_class_subroot_sha256",
         "canonical_day1b_f1m_cardinality_derivation_root_sha256",
         "canonical_day1b_f1m_query_id",
     }
@@ -1983,7 +1923,7 @@ def test_expected_f1m_ordinals_are_contiguous_from_zero_per_phase_category(
         replace(audit, realized_query_count=3) if audit.phase in {"tuning", "heldout"} else audit
         for audit in _phase_audits()
     )
-    original = _expected_f1m_objects("reference-a", object_count=3)
+    original = _expected_f1m_objects("reference-a", object_count=3, query_count=3)
     changed: list[Day1BControllerExpectedF1MObject] = []
     for item in original:
         offset = int(
@@ -1997,7 +1937,7 @@ def test_expected_f1m_ordinals_are_contiguous_from_zero_per_phase_category(
         expected_f1m_objects=expected,
         controller_phase_audits=audits,
     )
-    windows, batches = _fixture_registry_inputs(
+    windows, window_batches = _fixture_registry_inputs(
         expected,
         candidate=contract.candidate,
         controller_phase_audits=audits,
@@ -2008,7 +1948,7 @@ def test_expected_f1m_ordinals_are_contiguous_from_zero_per_phase_category(
             contract=contract,
             controller_phase_audits=audits,
             window_cardinalities=iter(windows),
-            batch_transitions=iter(batches),
+            window_batches=iter(window_batches),
             expected_f1m_objects=iter(expected),
             controlled_scratch_root=_CURRENT_CONTROLLED_SCRATCH,
         )
@@ -2024,7 +1964,7 @@ def test_expected_f1m_registry_rejects_nonretained_routes_and_impossible_caps() 
     warmup_contract = _contract(expected_f1m_objects=warmup_expected)
     with pytest.raises(
         Day1BWorkerProtocolError,
-        match="non-retained phase|absent from controller window|batch fields",
+        match="non-retained phase|absent from controller window|query range fields",
     ):
         _issue_invocation(warmup_contract, expected_f1m_objects=warmup_expected)
     _assert_no_live_controlled_scratch()
@@ -2073,7 +2013,7 @@ def test_all_serialized_count_is_exact_bound_and_not_a_boolean() -> None:
     with pytest.raises(Day1BWorkerProtocolError, match="all serialized.*F1-M"):
         replace(
             base,
-            expected_serialized_equivalence_class_count=(base.expected_f1m_binding_count - 1),
+            expected_serialized_equivalence_class_count=(base.expected_f1m_size_class_count - 1),
         )
     with pytest.raises(Day1BWorkerProtocolError, match="integer"):
         replace(base, expected_serialized_equivalence_class_count=True)
@@ -2144,7 +2084,7 @@ def test_expected_f1m_query_batches_cannot_exceed_controller_realized_queries() 
     _assert_no_live_controlled_scratch()
 
 
-def test_receipt_preserves_opaque_reservation_ledger_transition_facts() -> None:
+def test_receipt_preserves_weighted_window_batch_and_range_facts() -> None:
     contract = _contract()
     expected = _expected_f1m_objects(contract.candidate.candidate_id)
     registry = _prepare_registry(
@@ -2173,22 +2113,20 @@ def test_receipt_preserves_opaque_reservation_ledger_transition_facts() -> None:
         )
     )
     receipt = evidence.receipt
-    assert receipt.pre_dispatch_ledger_identity_sha256 == (
-        descriptor.pre_dispatch_ledger_identity_sha256
+    assert receipt.controller_f1m_window_batch_stream_sha256 == (
+        descriptor.controller_f1m_window_batch_stream_sha256
     )
-    assert receipt.pre_dispatch_ledger_root_before_sha256 == (
-        descriptor.pre_dispatch_ledger_root_before_sha256
+    assert receipt.controller_expected_f1m_phase_query_counts == (
+        descriptor.phase_query_counts
     )
-    assert receipt.pre_dispatch_ledger_root_after_preparation_sha256 == (
-        descriptor.pre_dispatch_ledger_root_after_preparation_sha256
-    )
-    assert receipt.pre_dispatch_batch_plan_sha256 == (descriptor.pre_dispatch_batch_plan_sha256)
+    assert receipt.weighted_query_range_coverage_verified is True
+    assert receipt.worker_observed_f1m_materialized_binding_count == 0
     assert receipt.pre_dispatch_context_sha256 == descriptor.pre_dispatch_context_sha256
     assert receipt.controller_registered_scratch_bytes_checkpoint_maximum == (
         descriptor.controller_registered_scratch_bytes_checkpoint_maximum
     )
     assert DAY1B_WORKER_RECEIPT_SCHEMA == (
-        "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v3"
+        "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v5"
     )
     assert 0 < receipt.controller_observed_registered_scratch_peak_bytes <= (
         receipt.controller_registered_scratch_bytes_checkpoint_maximum
@@ -2204,47 +2142,47 @@ def test_receipt_preserves_opaque_reservation_ledger_transition_facts() -> None:
     assert receipt.controller_expected_f1m_phase_dummy_route_counts == (
         descriptor.phase_dummy_route_counts
     )
-    assert receipt.persistent_random_reservations_verified is False
-    assert receipt.prepared_commitment_batches_verified is False
-    assert receipt.prepared_commitment_consumption_verified is False
-    assert receipt.prepared_commitment_consumption_transition_sha256 is None
-    assert receipt.common_query_preparation_verified is False
     assert receipt.production_execution_admissible is False
     document = receipt.to_document()
     assert document["controller_observed_registered_scratch_peak_bytes"] == (
         receipt.controller_observed_registered_scratch_peak_bytes
     )
     assert document["anonymous_scratch_creation_isolation_verified"] is False
-    assert "persistent_f1m_reservations_verified" not in document
-    assert "reservation_ledger_transition_sha256" not in document
+    assert document["weighted_query_range_coverage_verified"] is True
+    assert document["worker_observed_f1m_materialized_binding_count"] == 0
+    for forbidden in (
+        "pre_dispatch_ledger_identity_sha256",
+        "pre_dispatch_ledger_root_before_sha256",
+        "pre_dispatch_ledger_root_after_preparation_sha256",
+        "persistent_random_reservations_verified",
+        "prepared_commitment_batches_verified",
+        "prepared_commitment_consumption_verified",
+        "common_query_preparation_verified",
+    ):
+        assert forbidden not in document
     evidence.close()
 
 
 @pytest.mark.parametrize(
     "field",
     (
+        "query_id",
+        "ledger_commitment_token",
         "random_reservation_transition_verified",
         "prepared_commitment_transition_verified",
     ),
 )
-def test_private_registry_cannot_mint_verified_ledger_transitions(field: str) -> None:
+def test_window_batch_schema_cannot_claim_per_query_or_ledger_facts(field: str) -> None:
     contract = _contract()
     expected = _expected_f1m_objects(contract.candidate.candidate_id)
-    windows, batches = _fixture_registry_inputs(
+    windows, window_batches = _fixture_registry_inputs(
         expected,
         candidate=contract.candidate,
         controller_phase_audits=_phase_audits(),
     )
 
-    with pytest.raises(Day1BWorkerProtocolError, match="private fixture.*cannot verify"):
-        _test_only_prepare_day1b_expected_f1m_registry(
-            contract=contract,
-            controller_phase_audits=_phase_audits(),
-            window_cardinalities=iter(windows),
-            batch_transitions=iter((replace(batches[0], **{field: True}), *batches[1:])),
-            expected_f1m_objects=iter(expected),
-            controlled_scratch_root=_CURRENT_CONTROLLED_SCRATCH,
-        )
+    with pytest.raises(TypeError):
+        replace(window_batches[0], **{field: True})
     _assert_no_live_controlled_scratch()
 
 
@@ -2260,7 +2198,7 @@ def test_window_cardinality_uses_unique_output_shares_and_allows_zero_routes() -
         "output_plan_digest": "1" * 64,
         "private_plan_digest": "2" * 64,
         "execution_binding_digest": "3" * 64,
-        "expected_route_subroot_sha256": "4" * 64,
+        "expected_size_class_subroot_sha256": "4" * 64,
     }
     strong = Day1BF1MWindowCardinality(
         **common,
@@ -2289,10 +2227,10 @@ def test_window_cardinality_uses_unique_output_shares_and_allows_zero_routes() -
         replace(zero_route, expected_dummy_route_count=1)
 
 
-def test_registry_rejects_cardinality_subroot_batch_chain_and_input_root_splices() -> None:
+def test_registry_rejects_cardinality_subroot_batch_range_and_input_root_splices() -> None:
     contract = _contract()
     expected = _expected_f1m_objects(contract.candidate.candidate_id)
-    windows, batches = _fixture_registry_inputs(
+    windows, window_batches = _fixture_registry_inputs(
         expected,
         candidate=contract.candidate,
         controller_phase_audits=_phase_audits(),
@@ -2301,40 +2239,45 @@ def test_registry_rejects_cardinality_subroot_batch_chain_and_input_root_splices
     def prepare(
         *,
         selected_windows: tuple[Day1BF1MWindowCardinality, ...] = windows,
-        selected_batches: tuple[Day1BF1MBatchTransitionReceipt, ...] = batches,
+        selected_window_batches: tuple[Day1BF1MWindowBatch, ...] = window_batches,
     ) -> Day1BExpectedF1MRegistryCapability:
         return _test_only_prepare_day1b_expected_f1m_registry(
             contract=contract,
             controller_phase_audits=_phase_audits(),
             window_cardinalities=iter(selected_windows),
-            batch_transitions=iter(selected_batches),
+            window_batches=iter(selected_window_batches),
             expected_f1m_objects=iter(expected),
             controlled_scratch_root=_CURRENT_CONTROLLED_SCRATCH,
         )
 
-    with pytest.raises(Day1BWorkerProtocolError, match="window route subroot"):
+    with pytest.raises(Day1BWorkerProtocolError, match="window batch.*cover"):
         prepare(
             selected_windows=(
-                replace(windows[0], expected_route_subroot_sha256="f" * 64),
+                replace(windows[0], expected_size_class_subroot_sha256="f" * 64),
                 *windows[1:],
             )
         )
     _assert_no_live_controlled_scratch()
 
-    with pytest.raises(Day1BWorkerProtocolError, match="ledger roots.*chain"):
+    with pytest.raises(Day1BWorkerProtocolError, match="query range.*exact controller window"):
         prepare(
-            selected_batches=(
-                batches[0],
-                replace(batches[1], ledger_root_before_sha256="f" * 64),
+            selected_window_batches=(
+                replace(
+                    window_batches[0],
+                    first_global_query_ordinal=(
+                        window_batches[0].first_global_query_ordinal + 1
+                    ),
+                ),
+                *window_batches[1:],
             )
         )
     _assert_no_live_controlled_scratch()
 
-    with pytest.raises(Day1BWorkerProtocolError, match="batch route-set root"):
+    with pytest.raises(Day1BWorkerProtocolError, match="window batch.*cover"):
         prepare(
-            selected_batches=(
-                replace(batches[0], route_set_root_sha256="e" * 64),
-                batches[1],
+            selected_window_batches=(
+                replace(window_batches[0], size_class_subroot_sha256="e" * 64),
+                *window_batches[1:],
             )
         )
     _assert_no_live_controlled_scratch()
@@ -2375,8 +2318,8 @@ def test_registry_rejects_cardinality_subroot_batch_chain_and_input_root_splices
         expected_f1m_cardinality_derivation_root_sha256=(
             canonical_day1b_f1m_cardinality_derivation_root_sha256(
                 window_cardinalities=policy_windows,
-                batch_transitions=one_kind_batches,
-                expected_routes=one_kind,
+                window_batches=one_kind_batches,
+                expected_size_classes=one_kind,
             )
         ),
     )
@@ -2384,7 +2327,7 @@ def test_registry_rejects_cardinality_subroot_batch_chain_and_input_root_splices
         contract=policy_contract,
         controller_phase_audits=_phase_audits(),
         window_cardinalities=iter(policy_windows),
-        batch_transitions=iter(one_kind_batches),
+        window_batches=iter(one_kind_batches),
         expected_f1m_objects=iter(one_kind),
         controlled_scratch_root=_CURRENT_CONTROLLED_SCRATCH,
     )
@@ -2427,9 +2370,8 @@ def test_candidate_strategy_policy_is_bound_and_ordinary_fixture_remains_hold() 
     contract = _contract(candidate=candidate, expected_f1m_objects=expected)
     registry = _prepare_registry(expected, candidate=candidate)
     descriptor = describe_day1b_expected_f1m_registry(registry)
-    assert descriptor.common_query_preparation_verified is False
-    assert descriptor.persistent_random_reservations_verified is False
-    assert descriptor.prepared_commitment_batches_verified is False
+    assert descriptor.weighted_query_range_coverage_verified is True
+    assert descriptor.phase_query_counts == (0, 0, 1)
     assert descriptor.pre_dispatch_execution_admissible is False
     assert contract.candidate.f1m_policy == "overlap-only"
     abandon_day1b_expected_f1m_registry(registry)
@@ -2471,7 +2413,7 @@ def test_resource_specific_terminal_code_is_rejected_when_observation_is_under_c
     _assert_no_live_controlled_scratch()
 
 
-def test_launcher_terminal_missing_result_preserves_taxonomy_and_expected_ledger_set() -> None:
+def test_launcher_terminal_missing_result_preserves_taxonomy_and_expected_size_classes() -> None:
     contract = _contract()
     expected = _expected_f1m_objects(contract.candidate.candidate_id)
     evidence = claim_day1b_worker_evidence(
@@ -2488,17 +2430,16 @@ def test_launcher_terminal_missing_result_preserves_taxonomy_and_expected_ledger
     assert receipt.candidate.terminal_outcome == "missing"
     assert receipt.candidate.terminal_failure_code == "candidate-missing-result"
     assert receipt.candidate.receipt_origin == "controller-terminal-null-projection"
-    assert receipt.controller_expected_f1m_binding_count == len(expected)
+    assert receipt.controller_expected_f1m_size_class_count == len(expected)
     assert (
-        receipt.controller_expected_f1m_binding_set_sha256
-        == canonical_day1b_expected_f1m_binding_set_sha256(expected)
+        receipt.controller_expected_f1m_size_class_set_sha256
+        == canonical_day1b_expected_f1m_size_class_set_sha256(expected)
     )
-    assert receipt.worker_observed_f1m_binding_count == 0
+    assert receipt.worker_observed_f1m_size_class_count == 0
     assert receipt.controller_expected_serialized_equivalence_class_count == 7
     assert receipt.object_receipt_line_count == 0
-    assert receipt.persistent_random_reservations_verified is False
-    assert receipt.prepared_commitment_batches_verified is False
-    assert receipt.prepared_commitment_consumption_verified is False
+    assert receipt.worker_observed_f1m_materialized_binding_count == 0
+    assert receipt.weighted_query_range_coverage_verified is True
     evidence.close()
 
 
@@ -2842,8 +2783,8 @@ def test_controller_enums_reject_unhashable_values_as_protocol_errors() -> None:
         with pytest.raises(Day1BWorkerProtocolError, match="phase|category"):
             replace(binding, **{field: value})
 
-    with pytest.raises(Day1BWorkerProtocolError, match="F1-M binding categories"):
-        replace(base, f1m_binding_categories=([],))
+    with pytest.raises(Day1BWorkerProtocolError, match="F1-M size-class categories"):
+        replace(base, f1m_size_class_categories=([],))
 
 
 @pytest.mark.parametrize("forged", ([], {}))
@@ -2950,7 +2891,7 @@ def test_query_primitive_vector_must_match_controller_realized_query_presence() 
     _assert_no_live_controlled_scratch()
 
 
-def test_f1m_objects_require_controller_bound_multiplicity_and_unique_payload_digests() -> None:
+def test_f1m_objects_require_bound_multiplicity_and_allow_representative_payload_reuse() -> None:
     contract = _contract()
     transcript = _complete_transcript(contract)
     multiplicity = _rewrite_first_frame(
@@ -2960,7 +2901,7 @@ def test_f1m_objects_require_controller_bound_multiplicity_and_unique_payload_di
         predicate=lambda header: header["category"] == "query-f1m-random-mask-ciphertexts",
     )
 
-    with pytest.raises(Day1BWorkerProtocolError, match="expected ledger route"):
+    with pytest.raises(Day1BWorkerProtocolError, match="expected weighted size class"):
         _consume((multiplicity,), contract=contract)
 
     marker = b"reference-a:tuning-prefix:mask"
@@ -2974,11 +2915,12 @@ def test_f1m_objects_require_controller_bound_multiplicity_and_unique_payload_di
             and header["category"] == "query-f1m-random-mask-ciphertexts"
         ),
     )
-    with pytest.raises(Day1BWorkerProtocolError, match="F1-M.*payload digest"):
-        _consume((duplicate,), contract=contract)
+    evidence = claim_day1b_worker_evidence(_consume((duplicate,), contract=contract))
+    assert evidence.receipt.worker_observed_f1m_materialized_binding_count == 0
+    evidence.close()
 
 
-def test_f1m_payload_digest_uniqueness_is_invocation_global_across_categories() -> None:
+def test_f1m_representative_payload_digest_may_repeat_across_size_classes() -> None:
     contract = _contract()
     transcript = _complete_transcript(contract)
     duplicate_across_categories = _rewrite_first_frame(
@@ -2995,8 +2937,11 @@ def test_f1m_payload_digest_uniqueness_is_invocation_global_across_categories() 
         ),
     )
 
-    with pytest.raises(Day1BWorkerProtocolError, match="F1-M.*payload digest"):
+    evidence = claim_day1b_worker_evidence(
         _consume((duplicate_across_categories,), contract=contract)
+    )
+    assert evidence.receipt.worker_observed_f1m_materialized_binding_count == 0
+    evidence.close()
 
 
 def test_f1m_window_equivalence_class_charges_exact_query_multiplicity() -> None:
@@ -3028,8 +2973,8 @@ def test_f1m_window_equivalence_class_charges_exact_query_multiplicity() -> None
         )
     ) as evidence:
         receipt = evidence.receipt
-        assert receipt.worker_observed_f1m_binding_count == len(expected)
-        assert receipt.controller_expected_f1m_phase_query_batch_counts == (0, 3, 3)
+        assert receipt.worker_observed_f1m_size_class_count == len(expected)
+        assert receipt.controller_expected_f1m_phase_query_counts == (0, 3, 3)
         assert receipt.controller_expected_f1m_phase_random_route_counts == (0, 3, 3)
         assert receipt.controller_expected_f1m_phase_dummy_route_counts == (0, 3, 3)
         for phase in receipt.candidate.phases:
@@ -3039,7 +2984,7 @@ def test_f1m_window_equivalence_class_charges_exact_query_multiplicity() -> None
             f1m = {
                 category.category: category
                 for category in phase.serialized_categories
-                if category.category in DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES
+                if category.category in DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
             }
             assert {category.protocol_object_count for category in f1m.values()} == {3}
             assert {
@@ -3048,24 +2993,38 @@ def test_f1m_window_equivalence_class_charges_exact_query_multiplicity() -> None
             } == {1}
 
 
-def test_weighted_f1m_batch_cannot_claim_materialized_ledger_transitions() -> None:
+def test_weighted_f1m_window_batch_has_only_range_and_size_class_facts() -> None:
     contract = _contract()
     expected = _expected_f1m_objects(contract.candidate.candidate_id)
-    _windows, batches = _fixture_registry_inputs(
+    _windows, window_batches = _fixture_registry_inputs(
         expected,
         candidate=contract.candidate,
         controller_phase_audits=_phase_audits(),
     )
 
-    with pytest.raises(Day1BWorkerProtocolError, match="weighted.*materialized"):
-        replace(
-            batches[0],
-            query_count=2,
-            random_reservation_transition_verified=True,
-        )
+    document = window_batches[0].to_document()
+    assert set(document) == {
+        "execution_binding_digest",
+        "first_global_query_ordinal",
+        "output_plan_digest",
+        "phase",
+        "private_plan_digest",
+        "query_count",
+        "schema_version",
+        "size_class_subroot_sha256",
+        "version_id",
+        "window_index",
+    }
+    assert not {
+        "query_id",
+        "ledger_commitment_token",
+        "reservation_set_root_sha256",
+        "random_reservation_transition_verified",
+        "prepared_commitment_transition_verified",
+    } & set(document)
 
 
-def test_f1m_no_reuse_is_keyed_by_the_closed_adr0005_binding() -> None:
+def test_f1m_size_class_cannot_be_spliced_across_window_identities() -> None:
     contract = _contract()
     transcript = _complete_transcript(contract)
     reused_binding = _rewrite_first_frame(
@@ -3074,7 +3033,7 @@ def test_f1m_no_reuse_is_keyed_by_the_closed_adr0005_binding() -> None:
         lambda header, payload: (
             {
                 **header,
-                "f1m_binding": _f1m_binding(
+                "f1m_size_class": _f1m_size_class(
                     candidate_id="reference-a",
                     phase="tuning-prefix",
                     category="query-f1m-random-mask-ciphertexts",
@@ -3094,7 +3053,7 @@ def test_f1m_no_reuse_is_keyed_by_the_closed_adr0005_binding() -> None:
         _consume((reused_binding,), contract=contract)
 
 
-def test_f1m_worker_binding_must_match_controller_ledger_expected_route() -> None:
+def test_f1m_worker_size_class_must_match_controller_expected_descriptor() -> None:
     contract = _contract()
     transcript = _complete_transcript(contract)
     spliced = _rewrite_first_frame(
@@ -3103,9 +3062,9 @@ def test_f1m_worker_binding_must_match_controller_ledger_expected_route() -> Non
         lambda header, payload: (
             {
                 **header,
-                "f1m_binding": {
-                    **header["f1m_binding"],
-                    "ledger_commitment_token": "f" * 64,
+                "f1m_size_class": {
+                    **header["f1m_size_class"],
+                    "output_plan_digest": "f" * 64,
                 },
             },
             payload,
@@ -3113,7 +3072,7 @@ def test_f1m_worker_binding_must_match_controller_ledger_expected_route() -> Non
         predicate=lambda header: header["category"] == "query-f1m-random-mask-ciphertexts",
     )
 
-    with pytest.raises(Day1BWorkerProtocolError, match="controller.*expected|ledger.*route"):
+    with pytest.raises(Day1BWorkerProtocolError, match="controller.*expected|size class"):
         _consume((spliced,), contract=contract)
 
 
@@ -3121,7 +3080,10 @@ def test_f1m_controller_expected_route_set_rejects_worker_omission_and_extra() -
     base_expected = _expected_f1m_objects("reference-a")
     missing_from_controller = base_expected[1:]
     extra_contract = _contract(expected_f1m_objects=missing_from_controller)
-    with pytest.raises(Day1BWorkerProtocolError, match="unexpected.*F1-M|expected.*route"):
+    with pytest.raises(
+        Day1BWorkerProtocolError,
+        match="unexpected.*F1-M|expected.*weighted size class",
+    ):
         _consume(
             (_complete_transcript(extra_contract),),
             contract=extra_contract,
@@ -3137,7 +3099,7 @@ def test_f1m_controller_expected_route_set_rejects_worker_omission_and_extra() -
     omitted_contract = _contract(expected_f1m_objects=expected_with_unobserved)
     with pytest.raises(
         Day1BWorkerProtocolError,
-        match="missing.*F1-M|expected.*unobserved|batch fields|cardinality",
+        match="missing.*F1-M|expected.*unobserved|query range fields|cardinality",
     ):
         _consume(
             (_complete_transcript(omitted_contract),),
@@ -3146,22 +3108,20 @@ def test_f1m_controller_expected_route_set_rejects_worker_omission_and_extra() -
         )
 
 
-def test_controller_ledger_expected_batch_requires_shared_query_identity() -> None:
+def test_controller_expected_size_class_requires_shared_query_range() -> None:
     expected = list(_expected_f1m_objects("reference-a"))
     dummy = expected[1]
     document = dummy.to_document()
-    binding_document = dict(document["f1m_binding"])
-    binding_document["query_id"] = "query-spliced-across-one-batch"
-    document["f1m_binding"] = binding_document
+    document["first_global_query_ordinal"] = 1_000_001
     expected[1] = Day1BControllerExpectedF1MObject.from_document(document)
 
     closed = tuple(expected)
     contract = _contract(expected_f1m_objects=closed)
-    with pytest.raises(Day1BWorkerProtocolError, match="batch.*shared|query.*batch"):
+    with pytest.raises(Day1BWorkerProtocolError, match="query range|batch.*fields"):
         _issue_invocation(contract, expected_f1m_objects=closed)
 
 
-def test_f1m_batch_pairing_uses_query_identity_not_category_local_ordinal() -> None:
+def test_f1m_size_classes_pair_by_explicit_query_range_not_query_identity() -> None:
     mask = _expected_f1m_objects(
         "reference-a",
         phases=("tuning-prefix",),
@@ -3176,28 +3136,30 @@ def test_f1m_batch_pairing_uses_query_identity_not_category_local_ordinal() -> N
     spliced_dummy = replace(
         dummy,
         object_ordinal=0,
-        f1m_binding=replace(dummy.f1m_binding, query_id=mask.f1m_binding.query_id),
+        first_global_query_ordinal=mask.first_global_query_ordinal,
     )
     expected = (mask, spliced_dummy)
     contract = _contract(expected_f1m_objects=expected)
 
-    with pytest.raises(Day1BWorkerProtocolError, match="query.*batch|batch.*shared"):
-        _issue_invocation(contract, expected_f1m_objects=expected)
+    invocation = _issue_invocation(contract, expected_f1m_objects=expected)
+    abandon_day1b_worker_invocation(invocation)
 
 
 def test_expected_f1m_set_hash_streams_the_exact_canonical_closed_document() -> None:
     expected = _expected_f1m_objects("reference-a")
     closed_document = {
-        "schema_version": ("dynamic-cssc-publication-day1b-controller-expected-f1m-binding-set-v2"),
+        "schema_version": (
+            "dynamic-cssc-publication-day1b-controller-expected-f1m-size-class-set-v3"
+        ),
         "objects": [item.to_document() for item in expected],
     }
     assert (
-        canonical_day1b_expected_f1m_binding_set_sha256(expected)
+        canonical_day1b_expected_f1m_size_class_set_sha256(expected)
         == hashlib.sha256(_canonical_bytes(closed_document)).hexdigest()
     )
 
 
-def test_controller_ledger_expected_set_rejects_reused_random_no_reuse_key() -> None:
+def test_weighted_size_classes_may_share_representative_identity_without_no_reuse_claim() -> None:
     heldout_mask = _expected_f1m_objects(
         "reference-a",
         phases=("held-out",),
@@ -3211,9 +3173,8 @@ def test_controller_ledger_expected_set_rejects_reused_random_no_reuse_key() -> 
         ),
     )
     contract = _contract(expected_f1m_objects=closed)
-
-    with pytest.raises(Day1BWorkerProtocolError, match="reuse.*ADR-0005|no-reuse"):
-        _issue_invocation(contract, expected_f1m_objects=closed)
+    invocation = _issue_invocation(contract, expected_f1m_objects=closed)
+    abandon_day1b_worker_invocation(invocation)
     _assert_no_live_controlled_scratch()
 
 
@@ -3239,7 +3200,7 @@ def test_one_time_inventory_is_reported_once_per_candidate_cell() -> None:
         transcript,
         "serialized-object",
         lambda header, payload: (
-            {**header, "category": "evaluation-keys", "f1m_binding": None},
+            {**header, "category": "evaluation-keys", "f1m_size_class": None},
             payload,
         ),
         predicate=lambda header: (
@@ -3253,10 +3214,10 @@ def test_one_time_inventory_is_reported_once_per_candidate_cell() -> None:
         _consume((repeated_one_time,), contract=contract)
 
 
-def test_both_f1m_ciphertext_categories_require_binding_receipts() -> None:
+def test_both_f1m_ciphertext_categories_require_size_class_descriptors() -> None:
     base = _contract()
-    with pytest.raises(Day1BWorkerProtocolError, match="required.*F1-M.*binding"):
-        replace(base, f1m_binding_categories=())
+    with pytest.raises(Day1BWorkerProtocolError, match="required.*F1-M.*size-class"):
+        replace(base, f1m_size_class_categories=())
     without_random_mask = tuple(
         item
         for item in base.serialized_categories
@@ -3266,7 +3227,7 @@ def test_both_f1m_ciphertext_categories_require_binding_receipts() -> None:
         replace(
             base,
             serialized_categories=without_random_mask,
-            f1m_binding_categories=("query-f1m-encrypted-zero-dummy-ciphertexts",),
+            f1m_size_class_categories=("query-f1m-encrypted-zero-dummy-ciphertexts",),
         )
 
 
@@ -3296,11 +3257,11 @@ def test_positive_query_can_have_zero_f1m_routes_when_output_plan_has_no_shares(
     tuning = evidence.receipt.candidate.phases[1]
     assert tuning.outcome == "complete"
     assert tuning.query_primitive_counts == (1, 0)
-    assert evidence.receipt.controller_expected_f1m_binding_count == 0
+    assert evidence.receipt.controller_expected_f1m_size_class_count == 0
     evidence.close()
 
 
-def test_positive_query_accepts_exact_expected_routes_of_only_one_f1m_kind() -> None:
+def test_positive_query_accepts_exact_expected_size_classes_of_only_one_f1m_kind() -> None:
     expected = _expected_f1m_objects(
         "reference-a",
         phases=("held-out",),
@@ -3334,7 +3295,7 @@ def test_positive_query_accepts_exact_expected_routes_of_only_one_f1m_kind() -> 
                     category="query-f1m-random-mask-ciphertexts",
                     object_ordinal=0,
                     multiplicity=1,
-                    f1m_binding=_f1m_binding(
+                    f1m_size_class=_f1m_size_class(
                         candidate_id=candidate.candidate_id,
                         phase=phase,
                         category="query-f1m-random-mask-ciphertexts",
@@ -3609,6 +3570,7 @@ def test_large_object_cardinality_spools_metadata_instead_of_growing_receipt() -
         "reference-a",
         phases=("held-out",),
         object_count=object_count,
+        query_count=object_count,
         categories=("query-f1m-random-mask-ciphertexts",),
     )
     audits = tuple(
@@ -3649,8 +3611,8 @@ def test_large_object_cardinality_spools_metadata_instead_of_growing_receipt() -
                         phase=phase,
                         category="query-f1m-random-mask-ciphertexts",
                         object_ordinal=ordinal,
-                        multiplicity=1,
-                        f1m_binding=_f1m_binding(
+                        multiplicity=object_count,
+                        f1m_size_class=_f1m_size_class(
                             candidate_id="reference-a",
                             phase=phase,
                             category="query-f1m-random-mask-ciphertexts",
@@ -3703,7 +3665,7 @@ def test_large_object_cardinality_spools_metadata_instead_of_growing_receipt() -
     assert heldout.serialized_categories is not None
     random_masks = heldout.serialized_categories[2]
     assert random_masks.serialization_equivalence_class_count == object_count
-    assert random_masks.protocol_object_count == object_count
+    assert random_masks.protocol_object_count == object_count * object_count
     assert evidence.object_receipt_line_count == object_count
     assert len(_canonical_bytes(evidence.receipt.to_document())) < 20_000
     evidence.close()

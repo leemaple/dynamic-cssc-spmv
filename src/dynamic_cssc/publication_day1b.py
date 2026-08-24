@@ -13,7 +13,6 @@ import hashlib
 import json
 import os
 import re
-import sqlite3
 import stat
 import tempfile
 from collections.abc import Callable, Iterable, Iterator, Mapping
@@ -45,9 +44,9 @@ from dynamic_cssc.publication_artifact_install import (
 )
 from dynamic_cssc.publication_day1b_worker_protocol import (
     DAY1B_WORKER_EXECUTION_BASIS,
-    DAY1B_WORKER_F1M_BINDING_SCHEMA,
+    DAY1B_WORKER_F1M_SIZE_CLASS_SCHEMA,
     DAY1B_WORKER_RECEIPT_SCHEMA,
-    DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES,
+    DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES,
     Day1BClaimedWorkerEvidence,
     Day1BWorkerCandidateSpec,
     Day1BWorkerCellReceipt,
@@ -383,7 +382,7 @@ _OBJECT_RECEIPT_KEYS = frozenset(
 _OBJECT_KEYS = frozenset(
     {
         "charged_byte_count",
-        "f1m_binding",
+        "f1m_size_class",
         "multiplicity",
         "serialization_equivalence_class_ordinal",
         "serialized_byte_count",
@@ -501,10 +500,10 @@ _WORKER_RECEIPT_KEYS = frozenset(
         "schema_version",
         "candidate",
         "controller_schedule_phase_audits",
-        "controller_expected_f1m_binding_count",
-        "controller_expected_f1m_binding_set_sha256",
-        "controller_expected_f1m_phase_binding_counts",
-        "controller_expected_f1m_phase_query_batch_counts",
+        "controller_expected_f1m_size_class_count",
+        "controller_expected_f1m_size_class_set_sha256",
+        "controller_expected_f1m_phase_size_class_counts",
+        "controller_expected_f1m_phase_query_counts",
         "controller_expected_f1m_phase_dummy_route_counts",
         "controller_expected_f1m_phase_random_route_counts",
         "controller_f1m_cardinality_derivation_root_sha256",
@@ -517,20 +516,14 @@ _WORKER_RECEIPT_KEYS = frozenset(
         "object_receipt_line_count",
         "object_receipt_spool_sha256",
         "raw_protocol_object_bytes_retained",
-        "common_query_preparation_verified",
-        "persistent_random_reservations_verified",
-        "pre_dispatch_batch_plan_sha256",
+        "controller_f1m_window_batch_stream_sha256",
         "pre_dispatch_context_sha256",
-        "pre_dispatch_ledger_identity_sha256",
-        "pre_dispatch_ledger_root_after_preparation_sha256",
-        "pre_dispatch_ledger_root_before_sha256",
-        "prepared_commitment_batches_verified",
-        "prepared_commitment_consumption_transition_sha256",
-        "prepared_commitment_consumption_verified",
         "production_execution_admissible",
         "runtime_state_continuity_verified",
         "worker_declared_phase_audits_match_controller_schedule_audits",
-        "worker_observed_f1m_binding_count",
+        "worker_observed_f1m_materialized_binding_count",
+        "worker_observed_f1m_size_class_count",
+        "weighted_query_range_coverage_verified",
         "worker_candidate_cell_receipt_sha256",
     }
 )
@@ -571,16 +564,14 @@ _WORKER_CANDIDATE_KEYS = frozenset(
         "worker_declared_state_reset_count",
     }
 )
-_F1M_BINDING_KEYS = frozenset(
+_F1M_SIZE_CLASS_KEYS = frozenset(
     {
         "schema_version",
-        "query_id",
         "version_id",
         "output_plan_digest",
         "component_id",
         "output_block_id",
         "f1m_kind",
-        "ledger_commitment_token",
         "private_plan_digest",
         "execution_binding_digest",
     }
@@ -1321,7 +1312,7 @@ def _validate_preparatory_source_attestation(
         inventory.get("role") != EvidenceRole.DAY1B.value
         or inventory.get("source_git_sha") != source.git_sha
         or inventory.get("behavior_set_schema_version")
-        != "dynamic-cssc-day1b-preparatory-behavior-set-v8"
+        != "dynamic-cssc-day1b-preparatory-behavior-set-v9"
     ):
         raise ValueError(
             "preparatory source inventory must bind the DAY1B role, schema, and exact S1"
@@ -1878,28 +1869,10 @@ def _records_for_candidate_cell(
 
 
 class _UnitObjectReceiptArchive:
-    """Disk-backed unit spool and cross-invocation ADR-0005 no-reuse registry."""
+    """Disk-backed unit spool for weighted serialized-object receipts."""
 
     def __init__(self) -> None:
         self._file: BinaryIO = tempfile.TemporaryFile(mode="w+b")  # noqa: SIM115
-        self._registry = sqlite3.connect("")
-        self._registry.execute("PRAGMA journal_mode=OFF")
-        self._registry.execute("PRAGMA synchronous=OFF")
-        self._registry.execute("PRAGMA temp_store=FILE")
-        self._registry.execute(
-            "CREATE TABLE f1m_bindings (query_id TEXT NOT NULL, version_id TEXT NOT NULL, "
-            "output_plan_digest TEXT NOT NULL, component_id TEXT NOT NULL, "
-            "output_block_id TEXT NOT NULL, PRIMARY KEY(query_id, version_id, "
-            "output_plan_digest, component_id, output_block_id)) WITHOUT ROWID"
-        )
-        self._registry.execute(
-            "CREATE TABLE f1m_payload_digests (digest TEXT PRIMARY KEY NOT NULL) WITHOUT ROWID"
-        )
-        self._registry.execute(
-            "CREATE TABLE f1m_batch_plans (digest TEXT PRIMARY KEY NOT NULL) WITHOUT ROWID"
-        )
-        self._ledger_identity_sha256: str | None = None
-        self._ledger_root_after_preparation_sha256: str | None = None
         self._hasher = hashlib.sha256()
         self.line_count = 0
         self.byte_count = 0
@@ -1907,42 +1880,15 @@ class _UnitObjectReceiptArchive:
 
     def accept_candidate_receipt(self, receipt: Day1BWorkerCellReceipt) -> None:
         if self._sealed or type(receipt) is not Day1BWorkerCellReceipt:
-            raise ValueError("unit ledger registry requires one exact unsealed candidate receipt")
-        identity = _require_sha256(
-            receipt.pre_dispatch_ledger_identity_sha256,
-            "candidate-cell ledger identity",
+            raise ValueError("unit archive requires one exact unsealed candidate receipt")
+        if receipt.worker_observed_f1m_materialized_binding_count != 0:
+            raise ValueError("weighted Day1B receipt claims materialized F1-M bindings")
+        _require_sha256(
+            receipt.controller_f1m_window_batch_stream_sha256,
+            "candidate-cell F1-M window-batch stream",
         )
-        root_before = _require_sha256(
-            receipt.pre_dispatch_ledger_root_before_sha256,
-            "candidate-cell ledger root before",
-        )
-        root_after = _require_sha256(
-            receipt.pre_dispatch_ledger_root_after_preparation_sha256,
-            "candidate-cell ledger root after preparation",
-        )
-        batch_plan = _require_sha256(
-            receipt.pre_dispatch_batch_plan_sha256,
-            "candidate-cell batch plan",
-        )
-        if self._ledger_identity_sha256 is None:
-            self._ledger_identity_sha256 = identity
-        elif identity != self._ledger_identity_sha256:
-            raise ValueError("candidate-cell invocations splice different F1-M ledgers")
-        if (
-            self._ledger_root_after_preparation_sha256 is not None
-            and root_before != self._ledger_root_after_preparation_sha256
-        ):
-            raise ValueError("candidate-cell F1-M ledger transition chain is not contiguous")
-        try:
-            self._registry.execute(
-                "INSERT INTO f1m_batch_plans(digest) VALUES (?)",
-                (batch_plan,),
-            )
-        except sqlite3.IntegrityError as error:
-            raise ValueError(
-                "candidate-cell F1-M batch transition plan was reused within the unit"
-            ) from error
-        self._ledger_root_after_preparation_sha256 = root_after
+        if receipt.weighted_query_range_coverage_verified is not True:
+            raise ValueError("candidate-cell weighted query-range coverage is unverified")
 
     def write(self, line: bytes) -> int:
         if self._sealed or type(line) is not bytes or not line.endswith(b"\n"):
@@ -1957,46 +1903,33 @@ class _UnitObjectReceiptArchive:
         serialized_object = document.get("object")
         if type(category) is not str or type(serialized_object) is not dict:
             raise ValueError("worker object receipt line lost category/object identity")
-        f1m_binding = serialized_object.get("f1m_binding")
-        if category in DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES:
-            if type(f1m_binding) is not dict:
-                raise ValueError("F1-M object receipt lost its ADR-0005 binding")
-            no_reuse_key = tuple(
-                f1m_binding.get(field)
-                for field in (
-                    "query_id",
-                    "version_id",
-                    "output_plan_digest",
-                    "component_id",
-                    "output_block_id",
-                )
+        f1m_size_class = serialized_object.get("f1m_size_class")
+        if category in DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES:
+            size_class = _exact_object(
+                f1m_size_class,
+                _F1M_SIZE_CLASS_KEYS,
+                "unit F1-M object receipt size class",
             )
-            if any(type(value) is not str or not value for value in no_reuse_key):
-                raise ValueError("F1-M object receipt binding tuple is malformed")
-            try:
-                self._registry.execute(
-                    "INSERT INTO f1m_bindings VALUES (?, ?, ?, ?, ?)",
-                    no_reuse_key,
-                )
-            except sqlite3.IntegrityError as error:
-                raise ValueError(
-                    "F1-M ADR-0005 binding was reused across candidate-cell invocations"
-                ) from error
-            payload_digest = _require_sha256(
-                serialized_object.get("serialized_sha256"),
-                "F1-M serialized payload diagnostic digest",
+            if size_class["schema_version"] != DAY1B_WORKER_F1M_SIZE_CLASS_SCHEMA:
+                raise ValueError("F1-M object receipt size-class schema changed")
+            expected_kind = (
+                "random-zero-sum"
+                if category == "query-f1m-random-mask-ciphertexts"
+                else "encrypted-zero-dummy"
             )
-            try:
-                self._registry.execute(
-                    "INSERT INTO f1m_payload_digests(digest) VALUES (?)",
-                    (payload_digest,),
-                )
-            except sqlite3.IntegrityError as error:
-                raise ValueError(
-                    "F1-M serialized payload digest repeated across the Day1B unit"
-                ) from error
-        elif f1m_binding is not None:
-            raise ValueError("non-F1-M object receipt carries an F1-M binding")
+            if size_class["f1m_kind"] != expected_kind:
+                raise ValueError("F1-M object receipt size-class kind changed")
+            for field in ("version_id", "component_id", "output_block_id"):
+                if type(size_class[field]) is not str or not size_class[field]:
+                    raise ValueError(f"F1-M size class {field} is empty")
+            for field in (
+                "output_plan_digest",
+                "private_plan_digest",
+                "execution_binding_digest",
+            ):
+                _require_sha256(size_class[field], f"F1-M size class {field}")
+        elif f1m_size_class is not None:
+            raise ValueError("non-F1-M object receipt carries an F1-M size class")
         written = self._file.write(line)
         if written != len(line):
             raise OSError("unit object-receipt archive write was incomplete")
@@ -2031,7 +1964,6 @@ class _UnitObjectReceiptArchive:
         return observed
 
     def close(self) -> None:
-        self._registry.close()
         self._file.close()
 
 
@@ -2715,15 +2647,39 @@ def _verify_day1b_unit_view(
                     raise ValueError("Day1B worker controller audit splices its cell schedule")
             for field in (
                 "anonymous_scratch_creation_isolation_verified",
-                "common_query_preparation_verified",
-                "persistent_random_reservations_verified",
-                "prepared_commitment_batches_verified",
-                "prepared_commitment_consumption_verified",
                 "production_execution_admissible",
                 "runtime_state_continuity_verified",
             ):
                 if candidate_receipt[field] is not False:
                     raise ValueError("Day1B worker receipt overstates fixture/runtime authority")
+            if candidate_receipt["weighted_query_range_coverage_verified"] is not True:
+                raise ValueError("Day1B weighted query-range coverage is unverified")
+            _require_sha256(
+                candidate_receipt["controller_f1m_window_batch_stream_sha256"],
+                "worker F1-M window-batch stream",
+            )
+            if _strict_nonnegative_int(
+                candidate_receipt["worker_observed_f1m_materialized_binding_count"],
+                "worker materialized F1-M binding count",
+            ) != 0:
+                raise ValueError("weighted Day1B receipt claims materialized F1-M bindings")
+            expected_size_classes = _strict_nonnegative_int(
+                candidate_receipt["controller_expected_f1m_size_class_count"],
+                "controller expected F1-M size-class count",
+            )
+            observed_size_classes = _strict_nonnegative_int(
+                candidate_receipt["worker_observed_f1m_size_class_count"],
+                "worker observed F1-M size-class count",
+            )
+            if candidate["receipt_origin"] == "worker-complete-transcript":
+                if observed_size_classes != expected_size_classes:
+                    raise ValueError(
+                        "complete worker receipt does not cover every expected F1-M size class"
+                    )
+            elif observed_size_classes != 0:
+                raise ValueError(
+                    "controller-terminal worker receipt carries observed F1-M size classes"
+                )
             registered_scratch_cap = _strict_nonnegative_int(
                 candidate_receipt[
                     "controller_registered_scratch_bytes_checkpoint_maximum"
@@ -2886,7 +2842,6 @@ def _verify_day1b_unit_view(
     )
     spool_facts = {binding: _RollingObjectFacts() for binding in worker_receipts_by_binding}
     category_facts: dict[tuple[str, str, str], _RollingObjectFacts] = {}
-    f1m_registry = sqlite3.connect("")
 
     def consume_object_line(index: int, line: bytes, row: dict[str, object]) -> None:
         _exact_object(row, _OBJECT_RECEIPT_KEYS, f"object receipts[{index}]")
@@ -2924,46 +2879,32 @@ def _verify_day1b_unit_view(
         if multiplicity <= 0 or serialized_size <= 0 or charged != multiplicity * serialized_size:
             raise ValueError("Day1B object receipt charged-byte arithmetic changed")
         _require_sha256(serialized_object["serialized_sha256"], "serialized object digest")
-        f1m_binding = serialized_object["f1m_binding"]
-        if row["category"] in DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES:
-            binding = _exact_object(
-                f1m_binding,
-                _F1M_BINDING_KEYS,
-                f"object receipts[{index}].object.f1m_binding",
+        f1m_size_class = serialized_object["f1m_size_class"]
+        if row["category"] in DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES:
+            size_class = _exact_object(
+                f1m_size_class,
+                _F1M_SIZE_CLASS_KEYS,
+                f"object receipts[{index}].object.f1m_size_class",
             )
-            if binding["f1m_kind"] != (
+            if size_class["f1m_kind"] != (
                 "random-zero-sum"
                 if row["category"] == "query-f1m-random-mask-ciphertexts"
                 else "encrypted-zero-dummy"
             ):
-                raise ValueError("Day1B F1-M binding kind contradicts its category")
-            if binding["schema_version"] != DAY1B_WORKER_F1M_BINDING_SCHEMA:
-                raise ValueError("Day1B F1-M binding schema changed")
+                raise ValueError("Day1B F1-M size-class kind contradicts its category")
+            if size_class["schema_version"] != DAY1B_WORKER_F1M_SIZE_CLASS_SCHEMA:
+                raise ValueError("Day1B F1-M size-class schema changed")
+            for field in ("version_id", "component_id", "output_block_id"):
+                if type(size_class[field]) is not str or not size_class[field]:
+                    raise ValueError(f"Day1B F1-M size class {field} is empty")
             for field in (
                 "output_plan_digest",
-                "ledger_commitment_token",
                 "private_plan_digest",
                 "execution_binding_digest",
             ):
-                _require_sha256(binding[field], f"F1-M binding {field}")
-            no_reuse_key = tuple(
-                binding[field]
-                for field in (
-                    "query_id",
-                    "version_id",
-                    "output_plan_digest",
-                    "component_id",
-                    "output_block_id",
-                )
-            )
-            if any(type(value) is not str or not value for value in no_reuse_key):
-                raise ValueError("Day1B F1-M binding tuple is empty")
-            try:
-                f1m_registry.execute("INSERT INTO bindings VALUES (?, ?, ?, ?, ?)", no_reuse_key)
-            except sqlite3.IntegrityError as error:
-                raise ValueError("Day1B F1-M binding tuple is reused within the unit") from error
-        elif f1m_binding is not None:
-            raise ValueError("non-F1-M object receipt carries an F1-M binding")
+                _require_sha256(size_class[field], f"F1-M size class {field}")
+        elif f1m_size_class is not None:
+            raise ValueError("non-F1-M object receipt carries an F1-M size class")
         spool.add(
             line,
             charged_byte_count=charged,
@@ -2978,26 +2919,15 @@ def _verify_day1b_unit_view(
             spool_ordinal=spool_ordinal,
         )
 
-    try:
-        f1m_registry.execute("PRAGMA journal_mode=OFF")
-        f1m_registry.execute("PRAGMA synchronous=OFF")
-        f1m_registry.execute(
-            "CREATE TABLE bindings (query_id TEXT NOT NULL, version_id TEXT NOT NULL, "
-            "output_plan_digest TEXT NOT NULL, component_id TEXT NOT NULL, "
-            "output_block_id TEXT NOT NULL, PRIMARY KEY(query_id, version_id, "
-            "output_plan_digest, component_id, output_block_id)) WITHOUT ROWID"
-        )
-        object_stream = view.consume_canonical_jsonl(
-            _OBJECT_RECEIPT_FILENAME,
-            maximum_file_bytes=min(
-                output_limit,
-                max(1, expected_object_lines) * _DAY1B_OBJECT_RECEIPT_LINE_BYTES_MAXIMUM,
-            ),
-            maximum_line_bytes=_DAY1B_OBJECT_RECEIPT_LINE_BYTES_MAXIMUM,
-            consumer=consume_object_line,
-        )
-    finally:
-        f1m_registry.close()
+    object_stream = view.consume_canonical_jsonl(
+        _OBJECT_RECEIPT_FILENAME,
+        maximum_file_bytes=min(
+            output_limit,
+            max(1, expected_object_lines) * _DAY1B_OBJECT_RECEIPT_LINE_BYTES_MAXIMUM,
+        ),
+        maximum_line_bytes=_DAY1B_OBJECT_RECEIPT_LINE_BYTES_MAXIMUM,
+        consumer=consume_object_line,
+    )
     if (
         object_stream.line_count != expected_object_lines
         or object_stream.byte_count != member_sizes[_OBJECT_RECEIPT_FILENAME]
@@ -3456,8 +3386,8 @@ class _Day1BWorkerContractSeed:
     def bind(
         self,
         *,
-        expected_f1m_binding_set_sha256: str,
-        expected_f1m_binding_count: int,
+        expected_f1m_size_class_set_sha256: str,
+        expected_f1m_size_class_count: int,
         expected_serialized_equivalence_class_count: int,
         expected_f1m_cardinality_derivation_root_sha256: str,
     ) -> Day1BWorkerProtocolContract:
@@ -3475,9 +3405,9 @@ class _Day1BWorkerContractSeed:
             phase_ranges=self.phase_ranges,
             primitive_names=PRIMITIVE_NAMES,
             serialized_categories=SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
-            f1m_binding_categories=DAY1B_WORKER_REQUIRED_F1M_BINDING_CATEGORIES,
-            expected_f1m_binding_set_sha256=expected_f1m_binding_set_sha256,
-            expected_f1m_binding_count=expected_f1m_binding_count,
+            f1m_size_class_categories=DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES,
+            expected_f1m_size_class_set_sha256=expected_f1m_size_class_set_sha256,
+            expected_f1m_size_class_count=expected_f1m_size_class_count,
             expected_serialized_equivalence_class_count=(
                 expected_serialized_equivalence_class_count
             ),
@@ -3491,8 +3421,8 @@ class _Day1BWorkerContractSeed:
         if type(contract) is not Day1BWorkerProtocolContract:
             raise TypeError("worker launch contract must be exact typed protocol input")
         expected = self.bind(
-            expected_f1m_binding_set_sha256=contract.expected_f1m_binding_set_sha256,
-            expected_f1m_binding_count=contract.expected_f1m_binding_count,
+            expected_f1m_size_class_set_sha256=contract.expected_f1m_size_class_set_sha256,
+            expected_f1m_size_class_count=contract.expected_f1m_size_class_count,
             expected_serialized_equivalence_class_count=(
                 contract.expected_serialized_equivalence_class_count
             ),

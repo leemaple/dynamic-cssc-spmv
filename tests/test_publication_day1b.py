@@ -46,8 +46,8 @@ from dynamic_cssc.publication_day1b import (
 from dynamic_cssc.publication_day1b_worker_protocol import (
     DAY1B_WORKER_FRAME_SCHEMA,
     Day1BControllerExpectedF1MObject,
-    Day1BF1MBatchTransitionReceipt,
-    Day1BF1MBindingReceipt,
+    Day1BF1MSizeClass,
+    Day1BF1MWindowBatch,
     Day1BF1MWindowCardinality,
     Day1BWorkerPhaseAudit,
     Day1BWorkerPhaseReceipt,
@@ -55,10 +55,9 @@ from dynamic_cssc.publication_day1b_worker_protocol import (
     _require_test_invocation_issuer,
     _test_only_issue_day1b_worker_invocation,
     _test_only_prepare_day1b_expected_f1m_registry,
-    canonical_day1b_expected_f1m_binding_set_sha256,
-    canonical_day1b_expected_f1m_route_subroot_sha256,
+    canonical_day1b_expected_f1m_size_class_set_sha256,
+    canonical_day1b_expected_f1m_size_class_subroot_sha256,
     canonical_day1b_f1m_cardinality_derivation_root_sha256,
-    canonical_day1b_f1m_query_id,
     canonical_day1b_worker_window_audit_bytes,
     claim_day1b_worker_evidence,
     consume_day1b_worker_frames,
@@ -491,7 +490,7 @@ def _trace() -> _Day1BTraceInput:
 
 def _source() -> _Day1BPreparatorySourceAttestation:
     inventory = {
-        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v8",
+        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v9",
         "behavior_set_sha256": "c" * 64,
         "entries": [],
         "role": "day1b",
@@ -632,7 +631,7 @@ def _worker_transcript(
                     for route in expected_f1m_objects
                     if route.phase == phase and route.category == category
                 )
-                if category in contract.f1m_binding_categories:
+                if category in contract.f1m_size_class_categories:
                     category_counts.append(len(f1m_routes))
                     for route in f1m_routes:
                         identity = (
@@ -645,8 +644,8 @@ def _worker_transcript(
                             phase=phase,
                             category=category,
                             object_ordinal=route.object_ordinal,
-                            multiplicity=1,
-                            f1m_binding=route.f1m_binding.to_document(),
+                            multiplicity=route.multiplicity,
+                            f1m_size_class=route.f1m_size_class.to_document(),
                             payload=f"test-only:{identity}".encode("ascii"),
                         )
                     continue
@@ -668,7 +667,7 @@ def _worker_transcript(
                     category=category,
                     object_ordinal=0,
                     multiplicity=(1 if transaction == "one-time" else 2),
-                    f1m_binding=None,
+                    f1m_size_class=None,
                     payload=payload,
                 )
         candidate_index = FIXED_CANDIDATE_IDS.index(candidate.candidate_id)
@@ -707,12 +706,6 @@ class _StreamingExecutor:
         self.controlled_scratch_root = controlled_scratch_root
         self.controlled_scratch_root.mkdir()
         self.calls: list[tuple[Fraction, Fraction, str, int]] = []
-        self._ledger_identity_sha256 = hashlib.sha256(
-            b"private-day1b-core-fixture-ledger-v1"
-        ).hexdigest()
-        self._ledger_root_sha256 = hashlib.sha256(
-            b"private-day1b-core-fixture-empty-root-v1"
-        ).hexdigest()
         self.terminal_failure_codes: dict[int, str] = {}
         self.observation_overrides: dict[int, dict[str, int]] = {}
         self.emit_f1m_routes = False
@@ -726,9 +719,8 @@ class _StreamingExecutor:
         audits: tuple[Day1BWorkerPhaseAudit, ...],
     ) -> tuple[
         tuple[Day1BF1MWindowCardinality, ...],
-        tuple[Day1BF1MBatchTransitionReceipt, ...],
+        tuple[Day1BF1MWindowBatch, ...],
         tuple[Day1BControllerExpectedF1MObject, ...],
-        str,
     ]:
         audit_by_phase = dict(zip(("warmup", "tuning-prefix", "held-out"), audits, strict=True))
         first_query_by_phase: dict[str, int] = {}
@@ -738,9 +730,8 @@ class _StreamingExecutor:
             next_query += audit_by_phase[phase].realized_query_count
 
         cardinalities: list[Day1BF1MWindowCardinality] = []
-        transitions: list[Day1BF1MBatchTransitionReceipt] = []
+        window_batches: list[Day1BF1MWindowBatch] = []
         expected_f1m_objects: list[Day1BControllerExpectedF1MObject] = []
-        prior_root = self._ledger_root_sha256
         for phase in seed.candidate.retained_phases:
             audit = audit_by_phase[phase]
             phase_identity = f"{seed.invocation_id}:{phase}"
@@ -761,93 +752,49 @@ class _StreamingExecutor:
             }[phase]
             first_query = first_query_by_phase[phase]
             phase_routes: list[Day1BControllerExpectedF1MObject] = []
-            for offset in range(audit.realized_query_count):
-                global_query_ordinal = first_query + offset
-                query_id = canonical_day1b_f1m_query_id(
-                    invocation_id=seed.invocation_id,
-                    global_query_ordinal=global_query_ordinal,
-                )
-                commitment_token = hashlib.sha256(
-                    f"test-only-batch:{query_id}".encode("ascii")
-                ).hexdigest()
+            if audit.realized_query_count:
+                global_query_ordinal = first_query
                 if self.emit_f1m_routes:
-                    binding = Day1BF1MBindingReceipt(
-                        query_id=query_id,
+                    size_class = Day1BF1MSizeClass(
                         version_id=version_id,
                         output_plan_digest=output_plan_digest,
                         component_id="component-0",
                         output_block_id="block-0",
                         f1m_kind="random-zero-sum",
-                        ledger_commitment_token=commitment_token,
                         private_plan_digest=private_plan_digest,
                         execution_binding_digest=execution_binding_digest,
                     )
                     route = Day1BControllerExpectedF1MObject(
                         phase=phase,
                         window_index=window_index,
-                        global_query_ordinal=global_query_ordinal,
+                        first_global_query_ordinal=global_query_ordinal,
                         category="query-f1m-random-mask-ciphertexts",
-                        object_ordinal=offset,
-                        f1m_binding=binding,
+                        object_ordinal=0,
+                        f1m_size_class=size_class,
+                        multiplicity=audit.realized_query_count,
                     )
                     phase_routes.append(route)
                     expected_f1m_objects.append(route)
                     query_routes = (route,)
                 else:
                     query_routes = ()
-                route_root = canonical_day1b_expected_f1m_route_subroot_sha256(query_routes)
-                reservation_root = hashlib.sha256(
-                    _canonical_bytes(
-                        {
-                            "random_no_reuse_keys": [
-                                list(route.f1m_binding.no_reuse_key) for route in query_routes
-                            ],
-                            "schema_version": "private-core-fixture-reservation-v1",
-                        }
-                    )
-                ).hexdigest()
-                after_reservation = hashlib.sha256(
-                    _canonical_bytes(
-                        {
-                            "prior_root_sha256": prior_root,
-                            "reservation_set_root_sha256": reservation_root,
-                            "schema_version": "private-core-fixture-reserve-v1",
-                        }
-                    )
-                ).hexdigest()
-                after_preparation = hashlib.sha256(
-                    _canonical_bytes(
-                        {
-                            "ledger_commitment_token": commitment_token,
-                            "prior_root_sha256": after_reservation,
-                            "route_set_root_sha256": route_root,
-                            "schema_version": "private-core-fixture-prepare-v1",
-                        }
-                    )
-                ).hexdigest()
-                transitions.append(
-                    Day1BF1MBatchTransitionReceipt(
+                window_batches.append(
+                    Day1BF1MWindowBatch(
                         phase=phase,
                         window_index=window_index,
-                        global_query_ordinal=global_query_ordinal,
-                        query_id=query_id,
+                        first_global_query_ordinal=global_query_ordinal,
+                        query_count=audit.realized_query_count,
                         version_id=version_id,
                         output_plan_digest=output_plan_digest,
                         private_plan_digest=private_plan_digest,
                         execution_binding_digest=execution_binding_digest,
-                        ledger_commitment_token=commitment_token,
-                        ledger_identity_sha256=self._ledger_identity_sha256,
-                        transition_ordinal=len(transitions),
-                        ledger_root_before_sha256=prior_root,
-                        reservation_set_root_sha256=reservation_root,
-                        ledger_root_after_reservation_sha256=after_reservation,
-                        ledger_root_after_preparation_sha256=after_preparation,
-                        route_set_root_sha256=route_root,
-                        random_reservation_transition_verified=False,
-                        prepared_commitment_transition_verified=False,
+                        size_class_subroot_sha256=(
+                            canonical_day1b_expected_f1m_size_class_subroot_sha256(
+                                query_routes
+                            )
+                        ),
                     )
                 )
-                prior_root = after_preparation
             cardinalities.append(
                 Day1BF1MWindowCardinality(
                     phase=phase,
@@ -863,18 +810,19 @@ class _StreamingExecutor:
                     f1m_policy=seed.candidate.f1m_policy,
                     returned_share_count=int(self.emit_f1m_routes),
                     overlap_masked_share_count=int(self.emit_f1m_routes),
-                    expected_random_route_count=len(phase_routes),
+                    expected_random_route_count=sum(
+                        route.multiplicity for route in phase_routes
+                    ),
                     expected_dummy_route_count=0,
-                    expected_route_subroot_sha256=(
-                        canonical_day1b_expected_f1m_route_subroot_sha256(tuple(phase_routes))
+                    expected_size_class_subroot_sha256=(
+                        canonical_day1b_expected_f1m_size_class_subroot_sha256(tuple(phase_routes))
                     ),
                 )
             )
         return (
             tuple(cardinalities),
-            tuple(transitions),
+            tuple(window_batches),
             tuple(expected_f1m_objects),
-            prior_root,
         )
 
     def execute_candidate_cell(
@@ -885,19 +833,16 @@ class _StreamingExecutor:
     ) -> _Day1BWorkerLaunch:
         assert type(contract_seed) is _Day1BWorkerContractSeed
         audits = _worker_audits(windows)
-        (
-            cardinalities,
-            transitions,
-            expected_f1m_objects,
-            next_ledger_root,
-        ) = self._registry_inputs(contract_seed, audits)
-        expected_binding_sha256 = canonical_day1b_expected_f1m_binding_set_sha256(
+        cardinalities, window_batches, expected_f1m_objects = self._registry_inputs(
+            contract_seed, audits
+        )
+        expected_binding_sha256 = canonical_day1b_expected_f1m_size_class_set_sha256(
             expected_f1m_objects
         )
         cardinality_root_sha256 = canonical_day1b_f1m_cardinality_derivation_root_sha256(
             window_cardinalities=cardinalities,
-            batch_transitions=transitions,
-            expected_routes=expected_f1m_objects,
+            window_batches=window_batches,
+            expected_size_classes=expected_f1m_objects,
         )
         expected_serialized_count = (
             13 if contract_seed.candidate.candidate_role == "reference" else 7
@@ -905,8 +850,8 @@ class _StreamingExecutor:
         if self.omit_first_one_time:
             expected_serialized_count -= 1
         contract = contract_seed.bind(
-            expected_f1m_binding_set_sha256=expected_binding_sha256,
-            expected_f1m_binding_count=len(expected_f1m_objects),
+            expected_f1m_size_class_set_sha256=expected_binding_sha256,
+            expected_f1m_size_class_count=len(expected_f1m_objects),
             expected_serialized_equivalence_class_count=(
                 expected_serialized_count + len(expected_f1m_objects)
             ),
@@ -916,7 +861,7 @@ class _StreamingExecutor:
             contract=contract,
             controller_phase_audits=audits,
             window_cardinalities=iter(cardinalities),
-            batch_transitions=iter(transitions),
+            window_batches=iter(window_batches),
             expected_f1m_objects=iter(expected_f1m_objects),
             controlled_scratch_root=self.controlled_scratch_root,
         )
@@ -965,7 +910,6 @@ class _StreamingExecutor:
                     sum(audit.realized_window_count for audit in audits),
                 )
             )
-            self._ledger_root_sha256 = next_ledger_root
             return launch
         except BaseException:
             with suppress(BaseException):
@@ -1052,7 +996,7 @@ def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v8"),
+            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v9"),
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -1141,7 +1085,7 @@ def test_public_producer_checks_profile_before_catalog_trace_or_worker(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v8",
+            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v9",
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -1828,6 +1772,36 @@ def test_day1b_manifest_rejects_rehashed_trace_schema_downgrades(
     _rewrite_manifest_and_checksums(root, manifest)
 
     with pytest.raises(ValueError, match=message):
+        verify_existing_directory(
+            root,
+            verifier=lambda view: day1b_module._verify_day1b_unit_view(
+                view,
+                artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+            ),
+        )
+
+
+def test_day1b_verifier_rejects_rehashed_incomplete_weighted_size_class_receipt(
+    tmp_path: Path,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    root = tmp_path / "incomplete-weighted-size-classes"
+    shutil.copytree(bundle.output_dir, root)
+    manifest = json.loads((root / "publication-day1b-unit-manifest.json").read_bytes())
+    receipt = manifest["cell_execution_receipts"][0]["candidate_cell_receipts"][0]
+    expected_count = receipt["controller_expected_f1m_size_class_count"]
+    receipt["controller_expected_f1m_size_class_count"] = expected_count + 1
+    receipt["worker_candidate_cell_receipt_sha256"] = _sha(
+        {
+            key: value
+            for key, value in receipt.items()
+            if key != "worker_candidate_cell_receipt_sha256"
+        }
+    )
+    _rewrite_manifest_and_checksums(root, manifest)
+
+    with pytest.raises(ValueError, match="cover every expected F1-M size class"):
         verify_existing_directory(
             root,
             verifier=lambda view: day1b_module._verify_day1b_unit_view(
@@ -2525,7 +2499,6 @@ def test_fixture_adapter_abandons_capability_if_final_bookkeeping_fails(
 
     executor = _StreamingExecutor(tmp_path / "controlled-scratch")
     executor.calls = RejectingCalls()
-    prior_ledger_root = executor._ledger_root_sha256
     output_dir = tmp_path / "unit"
     with pytest.raises(RuntimeError) as raised:
         _produce_publication_day1b_unit_for_test(
@@ -2542,7 +2515,7 @@ def test_fixture_adapter_abandons_capability_if_final_bookkeeping_fails(
     try:
         assert raised.value is failure
         assert identifier not in worker_protocol._ISSUED_INVOCATIONS
-        assert executor._ledger_root_sha256 == prior_ledger_root
+        assert executor.calls == []
         assert not output_dir.exists()
     finally:
         if identifier in worker_protocol._ISSUED_INVOCATIONS:
@@ -2634,14 +2607,26 @@ def test_private_core_holds_on_protocol_corruption_without_output(tmp_path: Path
     assert not output_dir.exists()
 
 
-def test_private_core_holds_on_cross_invocation_ledger_root_splice(
+def test_private_core_holds_on_window_batch_subroot_splice(
     tmp_path: Path,
 ) -> None:
     class SplicingExecutor(_StreamingExecutor):
-        def execute_candidate_cell(self, **kwargs: object) -> _Day1BWorkerLaunch:
+        def _registry_inputs(
+            self,
+            seed: _Day1BWorkerContractSeed,
+            audits: tuple[Day1BWorkerPhaseAudit, ...],
+        ) -> tuple[
+            tuple[Day1BF1MWindowCardinality, ...],
+            tuple[Day1BF1MWindowBatch, ...],
+            tuple[Day1BControllerExpectedF1MObject, ...],
+        ]:
+            cardinalities, window_batches, expected = super()._registry_inputs(seed, audits)
             if len(self.calls) == 1:
-                self._ledger_root_sha256 = "f" * 64
-            return super().execute_candidate_cell(**kwargs)
+                window_batches = (
+                    replace(window_batches[0], size_class_subroot_sha256="f" * 64),
+                    *window_batches[1:],
+                )
+            return cardinalities, window_batches, expected
 
     output_dir = tmp_path / "unit"
     with pytest.raises(PublicationDay1BHold, match="candidate-cell worker evidence"):
@@ -2677,7 +2662,7 @@ def test_private_core_requires_one_time_key_in_first_retained_phase(
     assert not output_dir.exists()
 
 
-def test_unit_archive_rejects_replay_of_protocol_valid_f1m_evidence(
+def test_unit_archive_treats_weighted_f1m_receipts_as_size_classes_not_bindings(
     tmp_path: Path,
 ) -> None:
     trace = _trace()
@@ -2715,11 +2700,13 @@ def test_unit_archive_rejects_replay_of_protocol_valid_f1m_evidence(
                 line for line in lines if b'"category":"query-f1m-random-mask-ciphertexts"' in line
             ]
             assert len(f1m_lines) == 2
-            assert all(b'"query_id":"day1b-query-' in line for line in f1m_lines)
+            assert all(b'"f1m_size_class":' in line for line in f1m_lines)
+            assert all(b'"query_id"' not in line for line in f1m_lines)
+            assert all(b'"ledger_commitment_token"' not in line for line in f1m_lines)
             for line in lines:
                 archive.write(line)
-            with pytest.raises(ValueError, match="ADR-0005 binding was reused"):
-                for line in lines:
-                    archive.write(line)
+            for line in lines:
+                archive.write(line)
+            assert archive.line_count == 2 * len(lines)
     finally:
         archive.close()
