@@ -34,6 +34,17 @@ def test_openfhe_user_include_contract_is_complete() -> None:
     assert "${OpenFHE_INCLUDE}/binfhe" in cmake
 
 
+def test_openfhe_microbench_serialization_smoke_is_mandatory() -> None:
+    cmake = (ROOT / "cpp/CMakeLists.txt").read_text()
+    build_script = (ROOT / "scripts/build_cpp.sh").read_text()
+    source = (ROOT / "cpp/microbench.cpp").read_text()
+
+    assert "openfhe_microbench_serialization_smoke" in cmake
+    assert 'ctest --test-dir "$BUILD_DIR" --output-on-failure' in build_script
+    assert '#include "key/key-ser.h"' in source
+    assert '#include "scheme/bfvrns/bfvrns-ser.h"' in source
+
+
 def test_rotation_probe_reads_counts_from_bfvrns_parameters() -> None:
     probe = (ROOT / "cpp/rotation_probe.cpp").read_text()
     assert "dynamic_pointer_cast<CryptoParametersBFVRNS>" in probe
