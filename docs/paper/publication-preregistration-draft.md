@@ -527,6 +527,20 @@ the other. The current pytest-only capability issuer still reports creation
 isolation as false, so this measurement does not authorize production or lift
 the resource-policy `HOLD`.
 
+The reviewed next-path decoder schema is
+`dynamic-cssc-publication-day1b-resource-amendment-v1`. It is deliberately
+resource-only: its exact top-level contract contains the frozen numeric limits,
+canonical measurement-method tokens, no-retry protocol invariants, the
+permanently non-admissible pilot/report/review digests, and a binding to a
+previously reviewed schema-source Git SHA and DAY1B Behavior inventory. It has
+no authority or worker/runtime-identity field. Its semantic payload digest is
+computed after removing only that digest field; the eventual complete file is
+instead bound as an ordinary Git blob by the later DAY1B Behavior Set, avoiding
+a future-commit self-reference. The decoder's existence neither installs an
+amendment, supplies any measured value, reads a pilot report, nor changes the
+zero-argument production `HOLD`. Installing a real amendment remains a separate
+reviewed pre-`S1` path addition and DAY1B Behavior Set version bump.
+
 Production execution additionally requires the manual workflow's fixed,
 pre-provisioned `PUBLICATION_STRUCTURE_PILOT_SCRATCH_ROOT`. The path must be
 absolute and canonical, owned by the worker identity, mode `0700`, writable,

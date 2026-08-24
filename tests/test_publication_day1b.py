@@ -28,6 +28,7 @@ from dynamic_cssc.publication_artifact_install import (
     verify_existing_directory,
 )
 from dynamic_cssc.publication_day1b import (
+    DAY1B_RESOURCE_AMENDMENT_SCHEMA,
     DAY1B_UNIT_FRAGMENT_SCHEMA,
     DAY1B_UNIT_SCHEMA,
     PublicationDay1BHold,
@@ -182,6 +183,70 @@ def _pending_resource_policy_document() -> dict[str, object]:
             "worker_build_receipt_sha256": None,
         },
     }
+
+
+def _resource_amendment_document() -> dict[str, object]:
+    document: dict[str, object] = {
+        "amendment_identity": {
+            "resource_policy_amendment_id": "day1b-resource-amendment-001",
+        },
+        "limits": {
+            "cells_per_shard": 18,
+            "controller_registered_scratch_bytes_checkpoint_maximum": 100_000_000,
+            "infrastructure_preemption_whole_shard_rerun_limit": 1,
+            "job_cost_budget_usd_maximum": "25",
+            "job_wall_clock_seconds_maximum": 86_400,
+            "max_concurrency": 1,
+            "output_bytes_per_unit": 8_000_000_000,
+            "resident_memory_bytes_per_candidate_cell": 2_000_000_000,
+            "scratch_bytes_per_candidate_cell": 4_000_000_000,
+            "serialized_object_bytes_maximum": 1_000_000,
+            "serialized_object_receipt_count_maximum": 100_000,
+            "serialized_object_receipt_spool_bytes_maximum": 100_000_000,
+            "serialized_payload_bytes_per_cell_maximum": 1_000_000_000,
+            "shard_cost_budget_usd_maximum": "5.25",
+            "shard_wall_clock_seconds_maximum": 36_000,
+            "wall_clock_seconds_per_candidate_cell": 600,
+            "worker_frame_count_maximum": 200_000,
+        },
+        "measurement_methods": {
+            "controlled_scratch_high_water_measurement_method": (
+                "launcher-controlled-root-high-water-v1"
+            ),
+            "controlled_scratch_root_policy": "exclusive-inode-bound-root-v1",
+            "controller_scratch_observation_method": (
+                "anonymous-registry-spool-st-size-sum-v1"
+            ),
+            "infrastructure_preemption_classification_method": (
+                "repository-whole-shard-preemption-receipt-v1"
+            ),
+            "output_byte_observation_method": "installed-member-byte-sum-v1",
+            "resident_memory_observation_method": "launcher-process-rss-peak-v1",
+            "scratch_observation_method": "launcher-controlled-root-high-water-v1",
+            "wall_clock_observation_method": "launcher-monotonic-clock-v1",
+        },
+        "pilot_evidence": {
+            "review_receipt_sha256": "1" * 64,
+            "structure_pilot_checksums_sha256": "2" * 64,
+            "structure_pilot_report_sha256": "3" * 64,
+            "structure_pilot_source_git_sha": "4" * 40,
+        },
+        "protocol_invariants": {
+            "candidate_retry_count": 0,
+            "selective_candidate_retry_allowed": False,
+        },
+        "schema_source": {
+            "behavior_inventory_sha256": "5" * 64,
+            "git_sha": "6" * 40,
+        },
+        "schema_version": DAY1B_RESOURCE_AMENDMENT_SCHEMA,
+        "state": "RESOURCE-VALUES-FROZEN",
+    }
+    payload_sha256 = _sha(document)
+    document["amendment_identity"][
+        "resource_policy_amendment_payload_sha256"
+    ] = payload_sha256
+    return document
 
 
 def _trace_v6_history_row(*, timestamp: datetime, user_id: int) -> str:
@@ -1078,6 +1143,122 @@ def test_pending_resource_policy_rejects_every_attempt_to_fill_or_promote_it(
 
     with pytest.raises(ValueError, match="pending Day1B resource policy"):
         day1b_module._decode_pending_day1b_resource_policy(_canonical_bytes(document))
+
+
+def test_resource_amendment_decoder_is_resource_only_and_non_authorizing() -> None:
+    document = _resource_amendment_document()
+    content = _canonical_bytes(document)
+
+    decoded = day1b_module._decode_day1b_resource_amendment(content)
+
+    assert decoded.state == "RESOURCE-VALUES-FROZEN"
+    assert decoded.amendment_id == "day1b-resource-amendment-001"
+    assert decoded.canonical_sha256 == hashlib.sha256(content).hexdigest()
+    assert decoded.amendment_payload_sha256 == document["amendment_identity"][
+        "resource_policy_amendment_payload_sha256"
+    ]
+    assert decoded.schema_source_git_sha == "6" * 40
+    assert decoded.schema_source_behavior_inventory_sha256 == "5" * 64
+    assert decoded.structure_pilot_source_git_sha == "4" * 40
+    assert decoded.shard_cost_budget_usd_maximum == "5.25"
+    assert decoded.job_cost_budget_usd_maximum == "25"
+    assert decoded.resource_policy.cells_per_shard == 18
+    assert decoded.resource_policy.max_concurrency == 1
+    assert decoded.resource_policy.candidate_retry_count == 0
+    assert decoded.resource_policy.authority == (
+        "non-authorizing-resource-amendment-binding:"
+        f"{decoded.amendment_payload_sha256}"
+    )
+    assert set(document) == {
+        "amendment_identity",
+        "limits",
+        "measurement_methods",
+        "pilot_evidence",
+        "protocol_invariants",
+        "schema_source",
+        "schema_version",
+        "state",
+    }
+    assert "authority" not in document
+    assert "worker_runtime_identity" not in document
+    assert not hasattr(decoded, "dispatch_authorized")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "authority-field",
+        "worker-runtime-field",
+        "wrong-state",
+        "boolean-limit",
+        "zero-limit",
+        "output-over-ceiling",
+        "noncanonical-cost",
+        "cost-order",
+        "wall-clock-order",
+        "concurrency",
+        "retry",
+        "selective-retry",
+        "method-token",
+        "pilot-digest",
+        "schema-source",
+        "payload-digest",
+    ),
+)
+def test_resource_amendment_rejects_authority_and_nonclosed_values(
+    mutation: str,
+) -> None:
+    document = _resource_amendment_document()
+    limits = document["limits"]
+    protocol = document["protocol_invariants"]
+    if mutation == "authority-field":
+        document["authority"] = {"dispatch_authorized": False}
+    elif mutation == "worker-runtime-field":
+        document["worker_runtime_identity"] = {}
+    elif mutation == "wrong-state":
+        document["state"] = "DISPATCH-AUTHORIZED"
+    elif mutation == "boolean-limit":
+        limits["wall_clock_seconds_per_candidate_cell"] = True
+    elif mutation == "zero-limit":
+        limits["scratch_bytes_per_candidate_cell"] = 0
+    elif mutation == "output-over-ceiling":
+        limits["output_bytes_per_unit"] = 8_000_000_001
+    elif mutation == "noncanonical-cost":
+        limits["job_cost_budget_usd_maximum"] = "25.0"
+    elif mutation == "cost-order":
+        limits["job_cost_budget_usd_maximum"] = "5"
+    elif mutation == "wall-clock-order":
+        limits["job_wall_clock_seconds_maximum"] = 35_999
+    elif mutation == "concurrency":
+        limits["max_concurrency"] = 2
+    elif mutation == "retry":
+        protocol["candidate_retry_count"] = 1
+    elif mutation == "selective-retry":
+        protocol["selective_candidate_retry_allowed"] = True
+    elif mutation == "method-token":
+        document["measurement_methods"]["wall_clock_observation_method"] = "clock method"
+    elif mutation == "pilot-digest":
+        document["pilot_evidence"]["structure_pilot_report_sha256"] = "A" * 64
+    elif mutation == "schema-source":
+        document["schema_source"]["git_sha"] = "6" * 64
+    else:
+        document["amendment_identity"][
+            "resource_policy_amendment_payload_sha256"
+        ] = "f" * 64
+
+    with pytest.raises(ValueError):
+        day1b_module._decode_day1b_resource_amendment(_canonical_bytes(document))
+
+
+def test_resource_amendment_rejects_noncanonical_and_duplicate_json() -> None:
+    document = _resource_amendment_document()
+    noncanonical = json.dumps(document, indent=2, sort_keys=True).encode("ascii") + b"\n"
+    duplicate = b'{"schema_version":"x","schema_version":"x"}\n'
+
+    with pytest.raises(ValueError, match="top-level document is not exact"):
+        day1b_module._decode_day1b_resource_amendment(noncanonical)
+    with pytest.raises(ValueError, match="duplicate key"):
+        day1b_module._decode_day1b_resource_amendment(duplicate)
 
 
 @pytest.mark.parametrize(

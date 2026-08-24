@@ -325,6 +325,15 @@ observation. The controller measurement alone does not verify production
 scratch-root creation isolation, does not set either numeric limit, and does
 not authorize dispatch.
 
+The next-path `dynamic-cssc-publication-day1b-resource-amendment-v1` decoder is
+now defined as a resource-only seam. It accepts only canonical frozen limits,
+measurement-method tokens, no-retry invariants, pilot/review digests, and a
+previously reviewed schema-source Git/Behavior-inventory binding; authority and
+worker/runtime identity are structurally absent. Its non-self-referential
+semantic digest and immutable decoded record do not install values or lift the
+repository `HOLD`. A real amendment file still requires its own reviewed
+pre-`S1` path plus a DAY1B Behavior Set version bump.
+
 The final selector is recomputed from measured compute costs plus serialized
 communication at the primary bandwidth. Day 1A's normalized proxy selector is
 not carried forward as the publication decision. The primary held-out contrast

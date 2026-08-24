@@ -106,11 +106,15 @@ DAY1B_SERIALIZATION_LEDGER_SCHEMA = (
 )
 DAY1B_RESOURCE_POLICY_SCHEMA = "dynamic-cssc-publication-day1b-resource-policy-v1"
 DAY1B_PENDING_RESOURCE_POLICY_SCHEMA = "dynamic-cssc-publication-day1b-resource-policy-pending-v1"
+DAY1B_RESOURCE_AMENDMENT_SCHEMA = (
+    "dynamic-cssc-publication-day1b-resource-amendment-v1"
+)
 DAY1B_REPLAY_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-trace-replay-receipt-v1"
 DAY1B_ARTIFACT_VARIANT_SCHEMA = "dynamic-cssc-publication-day1b-artifact-variant-v1"
 
 _DAY1B_PENDING_RESOURCE_POLICY_PATH = "config/publication-day1b-resource-policy.json"
 _DAY1B_PENDING_RESOURCE_POLICY_BYTES_MAXIMUM = 32_768
+_DAY1B_RESOURCE_AMENDMENT_BYTES_MAXIMUM = 32_768
 _PENDING_RESOURCE_POLICY_KEYS = frozenset(
     {
         "amendment_identity",
@@ -212,6 +216,36 @@ _PENDING_WORKER_RUNTIME_IDENTITY_KEYS = frozenset(
         "worker_adapter_schema_version",
         "worker_build_receipt_sha256",
     }
+)
+_RESOURCE_AMENDMENT_KEYS = frozenset(
+    {
+        "amendment_identity",
+        "limits",
+        "measurement_methods",
+        "pilot_evidence",
+        "protocol_invariants",
+        "schema_source",
+        "schema_version",
+        "state",
+    }
+)
+_RESOURCE_AMENDMENT_IDENTITY_KEYS = frozenset(
+    {
+        "resource_policy_amendment_id",
+        "resource_policy_amendment_payload_sha256",
+    }
+)
+_RESOURCE_AMENDMENT_SCHEMA_SOURCE_KEYS = frozenset(
+    {
+        "behavior_inventory_sha256",
+        "git_sha",
+    }
+)
+_RESOURCE_AMENDMENT_STATE = "RESOURCE-VALUES-FROZEN"
+_RESOURCE_AMENDMENT_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}\Z")
+_RESOURCE_AMENDMENT_METHOD_TOKEN = re.compile(r"[a-z0-9][a-z0-9._:+/-]{0,127}\Z")
+_CANONICAL_POSITIVE_DECIMAL = re.compile(
+    r"(?:0\.[0-9]*[1-9]|[1-9][0-9]*(?:\.[0-9]*[1-9])?)\Z"
 )
 
 _PRODUCTION_TRACE_PROJECTION_TOKEN = object()
@@ -748,6 +782,28 @@ class PublicationDay1BResourcePolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class _Day1BResourceAmendment:
+    """One decoded resource-only amendment; never a dispatch capability."""
+
+    state: str
+    amendment_id: str
+    amendment_payload_sha256: str
+    canonical_sha256: str
+    schema_source_git_sha: str
+    schema_source_behavior_inventory_sha256: str
+    structure_pilot_source_git_sha: str
+    structure_pilot_report_sha256: str
+    structure_pilot_checksums_sha256: str
+    review_receipt_sha256: str
+    measurement_methods: tuple[tuple[str, str], ...]
+    shard_wall_clock_seconds_maximum: int
+    job_wall_clock_seconds_maximum: int
+    shard_cost_budget_usd_maximum: str
+    job_cost_budget_usd_maximum: str
+    resource_policy: PublicationDay1BResourcePolicy
+
+
+@dataclass(frozen=True, slots=True)
 class _PublicationScheduleAdapter:
     """Internal schedule seam with production and small typed-test adapters."""
 
@@ -1002,6 +1058,227 @@ def _require_git_sha(value: object, field: str) -> str:
     if type(value) is not str or _LOWER_GIT_SHA.fullmatch(value) is None:
         raise ValueError(f"{field} must be a lowercase 40-digit Git SHA")
     return value
+
+
+def _decode_day1b_resource_amendment(content: bytes) -> _Day1BResourceAmendment:
+    """Decode one canonical resource-only amendment without granting authority."""
+
+    if (
+        type(content) is not bytes
+        or not content
+        or len(content) > _DAY1B_RESOURCE_AMENDMENT_BYTES_MAXIMUM
+    ):
+        raise ValueError("Day1B resource amendment bytes are outside the closed bound")
+
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Day1B resource amendment contains a duplicate key")
+            result[key] = value
+        return result
+
+    try:
+        document = json.loads(
+            content.decode("utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=lambda token: (_ for _ in ()).throw(
+                ValueError(f"Day1B resource amendment contains {token}")
+            ),
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("Day1B resource amendment is not canonical UTF-8 JSON") from error
+    if (
+        type(document) is not dict
+        or set(document) != _RESOURCE_AMENDMENT_KEYS
+        or canonical_json_bytes(document) != content
+    ):
+        raise ValueError("Day1B resource amendment top-level document is not exact")
+
+    def exact_nested(field: str, keys: frozenset[str]) -> dict[str, object]:
+        value = document[field]
+        if type(value) is not dict or set(value) != keys:
+            raise ValueError(f"Day1B resource amendment {field} is not exact")
+        return value
+
+    identity = exact_nested("amendment_identity", _RESOURCE_AMENDMENT_IDENTITY_KEYS)
+    limits = exact_nested("limits", _PENDING_LIMIT_KEYS)
+    methods = exact_nested("measurement_methods", _PENDING_MEASUREMENT_METHOD_KEYS)
+    pilot = exact_nested("pilot_evidence", _PENDING_PILOT_EVIDENCE_KEYS)
+    protocol = exact_nested("protocol_invariants", _PENDING_PROTOCOL_INVARIANT_KEYS)
+    schema_source = exact_nested(
+        "schema_source", _RESOURCE_AMENDMENT_SCHEMA_SOURCE_KEYS
+    )
+
+    if (
+        document["schema_version"] != DAY1B_RESOURCE_AMENDMENT_SCHEMA
+        or document["state"] != _RESOURCE_AMENDMENT_STATE
+    ):
+        raise ValueError(
+            "Day1B resource amendment must freeze resource values without authorizing dispatch"
+        )
+    amendment_id = identity["resource_policy_amendment_id"]
+    if type(amendment_id) is not str or _RESOURCE_AMENDMENT_ID.fullmatch(amendment_id) is None:
+        raise ValueError("Day1B resource amendment ID is not one canonical token")
+    amendment_payload_sha256 = _require_sha256(
+        identity["resource_policy_amendment_payload_sha256"],
+        "Day1B resource amendment payload digest",
+    )
+    schema_source_git_sha = _require_git_sha(
+        schema_source["git_sha"], "Day1B resource amendment schema-source Git SHA"
+    )
+    schema_source_inventory_sha256 = _require_sha256(
+        schema_source["behavior_inventory_sha256"],
+        "Day1B resource amendment schema-source Behavior inventory digest",
+    )
+
+    positive_integer_limit_fields = _PENDING_LIMIT_KEYS - {
+        "infrastructure_preemption_whole_shard_rerun_limit",
+        "job_cost_budget_usd_maximum",
+        "shard_cost_budget_usd_maximum",
+    }
+    for field in positive_integer_limit_fields:
+        value = limits[field]
+        if type(value) is not int or value <= 0:
+            raise ValueError(
+                f"Day1B resource amendment limits.{field} must be a strict positive integer"
+            )
+    if limits["cells_per_shard"] != 18 or limits["max_concurrency"] != 1:
+        raise ValueError(
+            "Day1B resource amendment requires exactly 18 cells and concurrency one"
+        )
+    preemption_rerun_limit = limits[
+        "infrastructure_preemption_whole_shard_rerun_limit"
+    ]
+    if type(preemption_rerun_limit) is not int or preemption_rerun_limit not in {0, 1}:
+        raise ValueError(
+            "Day1B resource amendment whole-shard preemption reruns must be zero or one"
+        )
+    if limits["output_bytes_per_unit"] > _DAY1B_ARTIFACT_BYTES_HARD_MAXIMUM:
+        raise ValueError("Day1B resource amendment output limit exceeds the hard ceiling")
+    if (
+        limits["shard_wall_clock_seconds_maximum"]
+        < limits["wall_clock_seconds_per_candidate_cell"]
+        or limits["job_wall_clock_seconds_maximum"]
+        < limits["shard_wall_clock_seconds_maximum"]
+    ):
+        raise ValueError("Day1B resource amendment wall-clock budgets are not nested")
+
+    canonical_costs: dict[str, str] = {}
+    for field in ("shard_cost_budget_usd_maximum", "job_cost_budget_usd_maximum"):
+        value = limits[field]
+        if type(value) is not str or _CANONICAL_POSITIVE_DECIMAL.fullmatch(value) is None:
+            raise ValueError(
+                f"Day1B resource amendment limits.{field} must be one canonical "
+                "positive decimal string"
+            )
+        canonical_costs[field] = value
+    if Fraction(canonical_costs["job_cost_budget_usd_maximum"]) < Fraction(
+        canonical_costs["shard_cost_budget_usd_maximum"]
+    ):
+        raise ValueError("Day1B resource amendment cost budgets are not nested")
+
+    canonical_methods: list[tuple[str, str]] = []
+    for field in sorted(_PENDING_MEASUREMENT_METHOD_KEYS):
+        value = methods[field]
+        if (
+            type(value) is not str
+            or _RESOURCE_AMENDMENT_METHOD_TOKEN.fullmatch(value) is None
+        ):
+            raise ValueError(
+                f"Day1B resource amendment measurement_methods.{field} "
+                "must be one canonical method token"
+            )
+        canonical_methods.append((field, value))
+
+    structure_pilot_source_git_sha = _require_git_sha(
+        pilot["structure_pilot_source_git_sha"],
+        "Day1B resource amendment structure-pilot source Git SHA",
+    )
+    structure_pilot_report_sha256 = _require_sha256(
+        pilot["structure_pilot_report_sha256"],
+        "Day1B resource amendment structure-pilot report digest",
+    )
+    structure_pilot_checksums_sha256 = _require_sha256(
+        pilot["structure_pilot_checksums_sha256"],
+        "Day1B resource amendment structure-pilot checksums digest",
+    )
+    review_receipt_sha256 = _require_sha256(
+        pilot["review_receipt_sha256"],
+        "Day1B resource amendment outcome-blind review-receipt digest",
+    )
+    if (
+        type(protocol["candidate_retry_count"]) is not int
+        or protocol["candidate_retry_count"] != 0
+        or protocol["selective_candidate_retry_allowed"] is not False
+    ):
+        raise ValueError(
+            "Day1B resource amendment must retain the preregistered no-selective-retry rule"
+        )
+
+    digest_preimage = {
+        **document,
+        "amendment_identity": {
+            "resource_policy_amendment_id": amendment_id,
+        },
+    }
+    if _digest(digest_preimage) != amendment_payload_sha256:
+        raise ValueError("Day1B resource amendment payload digest is not self-binding")
+
+    resource_policy = PublicationDay1BResourcePolicy(
+        wall_clock_seconds_per_candidate_cell=limits[
+            "wall_clock_seconds_per_candidate_cell"
+        ],
+        resident_memory_bytes_per_candidate_cell=limits[
+            "resident_memory_bytes_per_candidate_cell"
+        ],
+        scratch_bytes_per_candidate_cell=limits["scratch_bytes_per_candidate_cell"],
+        serialized_object_bytes_maximum=limits["serialized_object_bytes_maximum"],
+        serialized_object_receipt_count_maximum=limits[
+            "serialized_object_receipt_count_maximum"
+        ],
+        serialized_object_receipt_spool_bytes_maximum=limits[
+            "serialized_object_receipt_spool_bytes_maximum"
+        ],
+        serialized_payload_bytes_per_cell_maximum=limits[
+            "serialized_payload_bytes_per_cell_maximum"
+        ],
+        worker_frame_count_maximum=limits["worker_frame_count_maximum"],
+        controller_registered_scratch_bytes_checkpoint_maximum=limits[
+            "controller_registered_scratch_bytes_checkpoint_maximum"
+        ],
+        output_bytes_per_unit=limits["output_bytes_per_unit"],
+        cells_per_shard=limits["cells_per_shard"],
+        max_concurrency=limits["max_concurrency"],
+        candidate_retry_count=protocol["candidate_retry_count"],
+        infrastructure_preemption_whole_shard_rerun_limit=preemption_rerun_limit,
+        authority=(
+            "non-authorizing-resource-amendment-binding:"
+            f"{amendment_payload_sha256}"
+        ),
+    )
+    return _Day1BResourceAmendment(
+        state=_RESOURCE_AMENDMENT_STATE,
+        amendment_id=amendment_id,
+        amendment_payload_sha256=amendment_payload_sha256,
+        canonical_sha256=hashlib.sha256(content).hexdigest(),
+        schema_source_git_sha=schema_source_git_sha,
+        schema_source_behavior_inventory_sha256=schema_source_inventory_sha256,
+        structure_pilot_source_git_sha=structure_pilot_source_git_sha,
+        structure_pilot_report_sha256=structure_pilot_report_sha256,
+        structure_pilot_checksums_sha256=structure_pilot_checksums_sha256,
+        review_receipt_sha256=review_receipt_sha256,
+        measurement_methods=tuple(canonical_methods),
+        shard_wall_clock_seconds_maximum=limits[
+            "shard_wall_clock_seconds_maximum"
+        ],
+        job_wall_clock_seconds_maximum=limits["job_wall_clock_seconds_maximum"],
+        shard_cost_budget_usd_maximum=canonical_costs[
+            "shard_cost_budget_usd_maximum"
+        ],
+        job_cost_budget_usd_maximum=canonical_costs["job_cost_budget_usd_maximum"],
+        resource_policy=resource_policy,
+    )
 
 
 def _fraction_text(value: Fraction) -> str:
@@ -3916,6 +4193,7 @@ def produce_publication_day1b_unit(
 
 
 __all__ = (
+    "DAY1B_RESOURCE_AMENDMENT_SCHEMA",
     "DAY1B_RESOURCE_POLICY_SCHEMA",
     "DAY1B_SERIALIZATION_LEDGER_SCHEMA",
     "DAY1B_UNIT_FRAGMENT_SCHEMA",
