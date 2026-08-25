@@ -46,13 +46,17 @@ both anchor documents around source attestation. The workflow records its
 actual clean profile-bearing source commit and the frozen Day 2 Behavior Set
 digest at run time; the profile contains no future source commit identity.
 
-The post-run anchor uses schema v3. In addition to the outer archive, raw
+The post-run anchor uses schema v6. In addition to the outer archive, raw
 measurement, profile, rotation-plan, and projection digests, it binds the exact
-`contract-bindings.json` digest. Final repository authority cross-checks the
-profile, rotation plan, and contract bindings against the pre-dispatch profile
-anchor, so bypassing the dispatch seam cannot splice different Day1A,
-registration, catalog, experiment-contract, or accounting identities into the
-archive.
+`contract-bindings.json`, generated-key inventory, runtime-isolation receipt,
+and serialized-object size-profile digests. It also carries the inspected
+generic ciphertext, F1-M random-zero-sum ciphertext, F1-M encrypted-zero-dummy
+ciphertext, rotation-key inventory, and multiplication-key byte lengths. Final
+repository authority cross-checks the profile, rotation plan, and contract
+bindings against the pre-dispatch profile anchor and exposes the post-run size
+facts read-only, so bypassing the dispatch seam cannot splice different Day1A,
+registration, catalog, experiment-contract, accounting, or serialization
+identities into the archive.
 
 ## Consequences
 

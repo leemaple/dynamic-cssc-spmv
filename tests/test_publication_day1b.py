@@ -35,6 +35,7 @@ from dynamic_cssc.publication_day1b import (
     PublicationDay1BResourcePolicy,
     PublicationDay1BUnitBundle,
     _Day1BPreparatorySourceAttestation,
+    _Day1BSerializedObjectSizeAuthority,
     _Day1BTraceInput,
     _Day1BWorkerContractSeed,
     _Day1BWorkerLaunch,
@@ -490,7 +491,7 @@ def _trace() -> _Day1BTraceInput:
 
 def _source() -> _Day1BPreparatorySourceAttestation:
     inventory = {
-        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v10",
+        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v11",
         "behavior_set_sha256": "c" * 64,
         "entries": [],
         "role": "day1b",
@@ -521,6 +522,20 @@ def _resource_policy() -> PublicationDay1BResourcePolicy:
         candidate_retry_count=0,
         infrastructure_preemption_whole_shard_rerun_limit=1,
         authority="test-only-outcome-blind-fixed-policy",
+    )
+
+
+def _size_authority() -> _Day1BSerializedObjectSizeAuthority:
+    return _Day1BSerializedObjectSizeAuthority(
+        source_git_sha="1" * 40,
+        day2_experiment_source_git_sha="2" * 40,
+        day2_outer_archive_sha256="3" * 64,
+        serialized_object_size_profile_sha256="4" * 64,
+        ciphertext_bytes=34567,
+        f1m_random_zero_sum_ciphertext_bytes=34568,
+        f1m_encrypted_zero_dummy_ciphertext_bytes=34569,
+        serialized_rotation_key_inventory_bytes=45678,
+        serialized_eval_mult_key_bytes=56789,
     )
 
 
@@ -977,11 +992,13 @@ def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
     ) == ()
     assert tuple(signature(day1b_module._repository_trace_anchor_authority).parameters) == ()
     assert tuple(signature(day1b_module._repository_day1b_resource_policy).parameters) == ()
-    assert tuple(signature(day1b_module._repository_day1b_execution_adapter).parameters) == ()
+    assert tuple(signature(day1b_module._repository_day1b_execution_adapter).parameters) == (
+        "size_authority",
+    )
     with pytest.raises(PublicationDay1BHold, match="central TRACE post-run anchor"):
         day1b_module._repository_trace_anchor_authority()
     with pytest.raises(PublicationDay1BHold, match="full OpenFHE Day1B runner"):
-        day1b_module._repository_day1b_execution_adapter()
+        day1b_module._repository_day1b_execution_adapter(_size_authority())
     calls: list[str] = []
 
     monkeypatch.setattr(
@@ -996,7 +1013,7 @@ def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v10"),
+            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v11"),
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -1051,8 +1068,23 @@ def test_repository_day1b_profile_gate_requires_complete_history(
         "verify_repository_anchor_history",
         lambda role, repository_root: valid_history,
     )
+    monkeypatch.setattr(
+        day1b_module,
+        "repository_day2_calibration_authority",
+        lambda: SimpleNamespace(
+            source_git_sha="2" * 40,
+            outer_archive_sha256="3" * 64,
+            serialized_object_size_profile_sha256="4" * 64,
+            ciphertext_bytes=34567,
+            f1m_random_zero_sum_ciphertext_bytes=34568,
+            f1m_encrypted_zero_dummy_ciphertext_bytes=34569,
+            serialized_rotation_key_inventory_bytes=45678,
+            serialized_eval_mult_key_bytes=56789,
+        ),
+    )
 
-    assert day1b_module._repository_day1b_profile_anchor_authority() == "1" * 40
+    size_authority = day1b_module._repository_day1b_profile_anchor_authority()
+    assert size_authority == _size_authority()
 
     missing_profile = SimpleNamespace(
         analysis_source_git_sha="1" * 40,
@@ -1085,7 +1117,7 @@ def test_public_producer_checks_profile_before_catalog_trace_or_worker(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v10",
+            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v11",
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -2263,6 +2295,7 @@ def test_core_rejects_noncapability_artifact_variant_before_worker_or_output(
             source_attestation=_source(),
             candidate_catalog=_catalog(),
             resource_policy=_resource_policy(),
+            size_authority=_size_authority(),
             execution_adapter=executor,
             repository_root=Path(__file__).resolve().parents[1],
             artifact_variant_token=invalid_token,
@@ -2299,6 +2332,7 @@ def test_artifact_variants_reject_crossed_source_and_trace_provenance_before_wor
                 source_attestation=source,
                 candidate_catalog=_catalog(),
                 resource_policy=_resource_policy(),
+                size_authority=_size_authority(),
                 execution_adapter=executor,
                 repository_root=Path(__file__).resolve().parents[1],
                 artifact_variant_token=token,
@@ -2737,6 +2771,7 @@ def test_unit_archive_treats_weighted_f1m_receipts_as_size_classes_not_bindings(
         candidate_catalog_sha256="e" * 64,
         resource_policy=resource_policy,
         resource_policy_sha256="f" * 64,
+        size_authority=_size_authority(),
     )
     executor = _StreamingExecutor(tmp_path / "controlled-scratch")
     executor.emit_f1m_routes = True

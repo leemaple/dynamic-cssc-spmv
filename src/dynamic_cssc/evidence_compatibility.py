@@ -206,6 +206,7 @@ _DAY2_BEHAVIOR_PATHS = (
     "cpp/CMakeLists.txt",
     "cpp/include/args.hpp",
     "cpp/microbench.cpp",
+    "docs/decisions/0013-anchor-day2-serialized-size-profile.md",
     "docs/paper/publication-preregistration-draft.md",
     "pyproject.toml",
     "requirements-ci.txt",
@@ -454,7 +455,12 @@ _DAY1B_RESOURCE_AMENDMENT_SCHEMA_SOURCE_BEHAVIOR_PATHS = (
 _DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     *_DAY1B_RESOURCE_AMENDMENT_SCHEMA_SOURCE_BEHAVIOR_PATHS,
     "config/publication-day1b-resource-amendment.json",
+    "docs/decisions/0013-anchor-day2-serialized-size-profile.md",
     "docs/reviews/day1b-resource-amendment-review-2026-08-25.md",
+    "src/dynamic_cssc/publication_day1b_aggregate_bounds.py",
+    "src/dynamic_cssc/publication_day1b_f1m_aggregation.py",
+    "tests/test_publication_day1b_aggregate_bounds.py",
+    "tests/test_publication_day1b_f1m_aggregation.py",
 )
 
 _ROLE_BEHAVIOR_PATHS: dict[EvidenceRole, tuple[str, ...] | None] = {
@@ -470,8 +476,8 @@ _ROLE_BEHAVIOR_PATHS: dict[EvidenceRole, tuple[str, ...] | None] = {
 _ROLE_BEHAVIOR_SCHEMAS = {
     EvidenceRole.ACQUISITION: "dynamic-cssc-acquisition-behavior-set-v2",
     EvidenceRole.TRACE: "dynamic-cssc-trace-behavior-set-v2",
-    EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v10",
-    EvidenceRole.DAY2: "dynamic-cssc-day2-behavior-set-v4",
+    EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v11",
+    EvidenceRole.DAY2: "dynamic-cssc-day2-behavior-set-v5",
     EvidenceRole.ANALYZER: "dynamic-cssc-publication-analyzer-behavior-set-v2",
     EvidenceRole.STRONG_CORRECTNESS: "dynamic-cssc-strong-correctness-behavior-set-v1",
     EvidenceRole.DAY1_REGISTRATION: "dynamic-cssc-day1-registration-behavior-set-v3",
@@ -984,7 +990,7 @@ def _singleton_data_anchor_records_at(
     *,
     relative_path: str,
     label: str,
-    schema_version: str,
+    schema_version: str | tuple[str, ...],
 ) -> tuple[bytes, ...]:
     entry = tree.get(relative_path)
     if entry is None:
@@ -1001,7 +1007,14 @@ def _singleton_data_anchor_records_at(
     )
     if set(document) != {"anchors", "schema_version"}:
         raise EvidenceCompatibilityError(f"{label} anchor-set keys must be exact")
-    if document["schema_version"] != schema_version:
+    allowed_schema_versions = (
+        (schema_version,) if type(schema_version) is str else schema_version
+    )
+    if (
+        not allowed_schema_versions
+        or any(type(value) is not str or not value for value in allowed_schema_versions)
+        or document["schema_version"] not in allowed_schema_versions
+    ):
         raise EvidenceCompatibilityError(f"{label} anchor-set schema is not frozen")
     anchors = document["anchors"]
     if type(anchors) is not list or len(anchors) > 1:
@@ -1018,14 +1031,38 @@ def _day2_post_run_anchor_records_at(
     source_git_sha: str,
     tree: dict[str, tuple[str, str, str]],
 ) -> tuple[bytes, ...]:
-    return _singleton_data_anchor_records_at(
+    records = _singleton_data_anchor_records_at(
         repository_root,
         source_git_sha,
         tree,
         relative_path=_DAY2_POST_RUN_ANCHOR_PATH,
         label="Day2 post-run",
-        schema_version="dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+        schema_version=(
+            "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+            "dynamic-cssc-day2-calibration-post-run-anchor-set-v6",
+        ),
     )
+    if _DAY2_POST_RUN_ANCHOR_PATH not in tree:
+        return records
+    content = _git(
+        repository_root,
+        "cat-file",
+        "blob",
+        tree[_DAY2_POST_RUN_ANCHOR_PATH][2],
+    )
+    document = _decode_canonical_json(
+        content,
+        f"{_DAY2_POST_RUN_ANCHOR_PATH}@{source_git_sha}",
+    )
+    if (
+        records
+        and document["schema_version"]
+        == "dynamic-cssc-day2-calibration-post-run-anchor-set-v4"
+    ):
+        raise EvidenceCompatibilityError(
+            "legacy Day2 post-run anchor set may only be empty"
+        )
+    return records
 
 
 def _day2_profile_anchor_records_at(

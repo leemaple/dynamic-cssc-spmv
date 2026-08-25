@@ -475,7 +475,7 @@ measurement-method field in this placeholder remains `null`; the separate
 amendment is the sole reviewed source of administrative limits and
 measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v10` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v11` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface, including the amendment and
 `docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
@@ -521,8 +521,13 @@ OpenFHE query once per scheduled arrival.
 The ordinary lifecycle still binds the common typed DAG to private global-column
 operands, fresh overlap-only F1-M masks, and a crash-persistent single-use
 commitment. The real OpenFHE smoke verifies that execution path, and formal Day 2
-supplies the anchored primitive timings and serialized ciphertext/key sizes used
-by weighted Day1B accounting. A weighted F1-M equivalence-class receipt proves
+supplies the anchored primitive timings and retains the exact serialized
+ciphertext/key sizes in `serialized-object-size-profile.json`, including
+separate fresh-encryption byte lengths for random-zero-sum and encrypted-zero
+dummy F1-M ciphertexts. Archive validation, post-run anchor v6, and the
+zero-argument repository authority bind those sizes before weighted Day1B
+accounting can consume them. A weighted F1-M
+equivalence-class receipt proves
 its size class, query range, and exact charged multiplicity; it does not claim
 that every fresh mask was materialized during the cost-model experiment. The
 execution basis is part of the worker input digest. Introducing the remaining

@@ -48,7 +48,7 @@ from dynamic_cssc.strategy_state import (
 )
 
 DAY1B_ACCOUNTING_SCHEMA = "dynamic-cssc-publication-day1b-accounting-v1"
-DAY1B_QUERY_WINDOW_SCHEMA = "dynamic-cssc-publication-day1b-query-window-accounting-v1"
+DAY1B_QUERY_WINDOW_SCHEMA = "dynamic-cssc-publication-day1b-query-window-accounting-v2"
 DAY1B_PHASE_ACCOUNTING_SCHEMA = "dynamic-cssc-publication-day1b-phase-accounting-v1"
 DAY1B_ACCOUNTING_EXECUTION_BASIS = "window-weighted-equivalence-v1"
 

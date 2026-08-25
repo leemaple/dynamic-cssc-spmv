@@ -62,6 +62,21 @@ def test_formal_probe_exports_only_evaluation_key_material_for_post_run_inventor
     assert "Serialize(keyPair_.secretKey" not in source
 
 
+def test_formal_probe_measures_both_f1m_ciphertext_categories_from_fresh_encryption() -> (
+    None
+):
+    source = (ROOT / "cpp" / "microbench.cpp").read_text(encoding="utf-8")
+
+    assert "f1mRandomZeroSum_[0] = 1" in source
+    assert "plaintextModulus_ - 1" in source
+    assert "context_->Encrypt(keyPair_.publicKey, f1mRandomPlaintext)" in source
+    assert "context_->Encrypt(keyPair_.publicKey, f1mDummyPlaintext)" in source
+    assert "Serial::Serialize(f1mRandomZeroSumCiphertext_" in source
+    assert "f1mEncryptedZeroDummyCiphertext_, f1mDummyStream" in source
+    assert '\\"f1m_random_zero_sum_ciphertext_bytes\\"' in source
+    assert '\\"f1m_encrypted_zero_dummy_ciphertext_bytes\\"' in source
+
+
 def test_formal_probe_checks_exact_signed_rotation_not_merely_a_permutation() -> None:
     source = (ROOT / "cpp" / "microbench.cpp").read_text(encoding="utf-8")
 

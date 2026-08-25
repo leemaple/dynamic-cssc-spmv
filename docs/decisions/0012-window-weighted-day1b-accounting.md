@@ -58,9 +58,14 @@ descriptors.
 F1-M correctness, route coverage, and no-reuse semantics remain separate
 algorithmic obligations under ADR 0005 and the single-use ordinary-query
 lifecycle. The real OpenFHE runner smoke verifies the complete typed execution
-path, while formal Day 2 measures the frozen primitive profiles and ciphertext/
-evaluation-key sizes used to price Day 1B's exact multiplicities. Day 1B may not
-substitute fixture bytes or an unanchored OpenFHE profile.
+path, while formal Day 2 measures the frozen primitive profiles and retains its
+category-specific ciphertext/evaluation-key sizes in the archive-bound
+serialized-object size profile used to price Day 1B's exact multiplicities.
+Random-zero-sum and encrypted-zero-dummy F1-M charges use their separately
+measured fresh-encryption byte lengths. The reviewed post-run anchor and
+zero-argument repository authority carry those exact sizes into Day1B. Day 1B
+may not substitute fixture bytes, caller values, or an unanchored OpenFHE
+profile.
 
 The execution basis is part of every worker input-binding digest. A worker or
 artifact that declares full query-arrival replay, omits the basis, changes a

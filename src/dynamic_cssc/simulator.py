@@ -85,15 +85,41 @@ class SimulationResult:
 class F1MRouteAccounting:
     """One per-query F1-M route class derived from the typed OutputPlan."""
 
+    result_id: str
+    result_ordinal: int
+    f1m_route_ordinal: int
     component_id: str
     output_block_id: str
     kind: Literal["random-zero-sum", "encrypted-zero-dummy"]
 
-    def to_document(self) -> dict[str, str]:
+    def __post_init__(self) -> None:
+        for field in ("result_id", "component_id", "output_block_id"):
+            value = getattr(self, field)
+            if type(value) is not str or not value:
+                raise ValueError(f"F1-M route {field} must be a nonempty string")
+        for field in ("result_ordinal", "f1m_route_ordinal"):
+            value = getattr(self, field)
+            if type(value) is not int or value < 0:
+                raise ValueError(f"F1-M route {field} must be a nonnegative strict integer")
+        if self.kind not in {"random-zero-sum", "encrypted-zero-dummy"}:
+            raise ValueError("F1-M route kind is not frozen")
+
+    @property
+    def category(self) -> str:
         return {
+            "random-zero-sum": "query-f1m-random-mask-ciphertexts",
+            "encrypted-zero-dummy": "query-f1m-encrypted-zero-dummy-ciphertexts",
+        }[self.kind]
+
+    def to_document(self) -> dict[str, str | int]:
+        return {
+            "category": self.category,
             "component_id": self.component_id,
+            "f1m_route_ordinal": self.f1m_route_ordinal,
             "f1m_kind": self.kind,
             "output_block_id": self.output_block_id,
+            "result_id": self.result_id,
+            "result_ordinal": self.result_ordinal,
         }
 
 
@@ -108,6 +134,27 @@ class QueryPlanAccounting:
     private_plan_digest: str
     returned_share_count: int
     f1m_routes: tuple[F1MRouteAccounting, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.returned_share_count) is not int or self.returned_share_count < 0:
+            raise ValueError("query-plan returned-share count must be nonnegative")
+        if type(self.f1m_routes) is not tuple or any(
+            type(route) is not F1MRouteAccounting for route in self.f1m_routes
+        ):
+            raise ValueError("query-plan F1-M routes must be an exact tuple")
+        if tuple(route.f1m_route_ordinal for route in self.f1m_routes) != tuple(
+            range(len(self.f1m_routes))
+        ):
+            raise ValueError("query-plan F1-M route ordinals must be contiguous from zero")
+        result_ordinals = tuple(route.result_ordinal for route in self.f1m_routes)
+        if (
+            result_ordinals != tuple(sorted(result_ordinals))
+            or len(set(result_ordinals)) != len(result_ordinals)
+            or any(ordinal >= self.returned_share_count for ordinal in result_ordinals)
+        ):
+            raise ValueError("query-plan result ordinals are not a canonical subset")
+        if len({route.result_id for route in self.f1m_routes}) != len(self.f1m_routes):
+            raise ValueError("query-plan F1-M result identities are not unique")
 
     @property
     def random_route_count(self) -> int:
@@ -127,7 +174,7 @@ class QueryPlanAccounting:
             "private_plan_digest": self.private_plan_digest,
             "random_route_count_per_query": self.random_route_count,
             "returned_share_count_per_query": self.returned_share_count,
-            "schema_version": "dynamic-cssc-window-query-plan-accounting-v1",
+            "schema_version": "dynamic-cssc-window-query-plan-accounting-v2",
             "version_id": self.version_id,
         }
 
@@ -252,14 +299,21 @@ def account_transition(transition: Transition) -> WindowAccounting:
     rotations = _rotation_counts_for_program(compiled.cloud_plan.program)
     if sum(rotations.values()) != counts.rotations:
         raise AssertionError("exact rotation counts must reconcile with the query DAG")
+    f1m_result_routes = tuple(
+        (result_ordinal, route)
+        for result_ordinal, route in enumerate(compiled.result_routes)
+        if route.f1m_ciphertext_id is not None
+    )
     routes = tuple(
         F1MRouteAccounting(
+            result_id=route.result_id,
+            result_ordinal=result_ordinal,
+            f1m_route_ordinal=f1m_route_ordinal,
             component_id=route.component_id,
             output_block_id=route.output_block_id,
             kind="random-zero-sum",
         )
-        for route in compiled.result_routes
-        if route.f1m_ciphertext_id is not None
+        for f1m_route_ordinal, (result_ordinal, route) in enumerate(f1m_result_routes)
     )
     if len(routes) * queries != metrics.blinding_mask_ciphertexts:
         raise AssertionError("ordinary F1-M route classes must reconcile with metrics")
@@ -345,6 +399,9 @@ def account_strong_transition(transition: StrongTransition) -> WindowAccounting:
     masked_share_ids = _masked_output_share_ids(transition.execution_bundle.output_plan)
     routes = tuple(
         F1MRouteAccounting(
+            result_id=route.result_id,
+            result_ordinal=result_ordinal,
+            f1m_route_ordinal=result_ordinal,
             component_id=route.component_id,
             output_block_id=route.output_block_id,
             kind=(
@@ -353,7 +410,7 @@ def account_strong_transition(transition: StrongTransition) -> WindowAccounting:
                 else "encrypted-zero-dummy"
             ),
         )
-        for route in transition.execution_bundle.result_routes
+        for result_ordinal, route in enumerate(transition.execution_bundle.result_routes)
     )
     if (
         sum(route.kind == "random-zero-sum" for route in routes) * queries

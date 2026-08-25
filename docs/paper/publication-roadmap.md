@@ -117,6 +117,16 @@ block contains all 14 primitives in the deterministic
 SHAKE256/Fisher--Yates order derived from seed `2026082302`, its block ordinal,
 and a calibration-only domain. Store every raw case timing, warm-up decision,
 host/compiler/OpenFHE identity, CPU affinity, and uncertainty summary.
+
+The formal archive also retains the probe's exact OpenFHE binary ciphertext
+lengths in `serialized-object-size-profile.json`: the generic probe ciphertext
+and separately freshly encrypted F1-M random-zero-sum and encrypted-zero-dummy
+ciphertexts under the same fixed BFVRNS context. It binds those values to the
+measured evaluation-key inventory and carries the profile digest and all byte
+values through post-run anchor v6. Day1B may consume those values only through
+the final repository Day2 authority; fixture lengths, ciphertext-count proxies,
+cross-category size assumptions, and caller-supplied sizes are inadmissible.
+
 The closed publication vocabulary is `client_merge`, `client_reorder_element`,
 `decrypt`, `deserialize_ciphertext`, `encode`, `encrypt`,
 `eval_add_ciphertext`, `eval_mult_plaintext_mask`,

@@ -310,16 +310,40 @@ class BenchmarkFixture {
             mask_[index] = (index % 2 == 0) ? 1 : 0;
             labels_[index] = static_cast<int64_t>(index);
         }
+        f1mRandomZeroSum_.assign(batchSize_, 0);
+        f1mEncryptedZeroDummy_.assign(batchSize_, 0);
+        if (batchSize_ < 2) {
+            throw std::runtime_error("F1-M serialized-size fixtures require two slots");
+        }
+        f1mRandomZeroSum_[0] = 1;
+        f1mRandomZeroSum_[1] = static_cast<int64_t>(plaintextModulus_ - 1);
         plaintext_ = context_->MakePackedPlaintext(ones_);
         maskPlaintext_ = context_->MakePackedPlaintext(mask_);
         const auto labelPlaintext = context_->MakePackedPlaintext(labels_);
+        const auto f1mRandomPlaintext = context_->MakePackedPlaintext(f1mRandomZeroSum_);
+        const auto f1mDummyPlaintext = context_->MakePackedPlaintext(f1mEncryptedZeroDummy_);
         ciphertext_ = context_->Encrypt(keyPair_.publicKey, plaintext_);
         ciphertext2_ = context_->Encrypt(keyPair_.publicKey, plaintext_);
         labelCiphertext_ = context_->Encrypt(keyPair_.publicKey, labelPlaintext);
+        f1mRandomZeroSumCiphertext_ =
+            context_->Encrypt(keyPair_.publicKey, f1mRandomPlaintext);
+        f1mEncryptedZeroDummyCiphertext_ =
+            context_->Encrypt(keyPair_.publicKey, f1mDummyPlaintext);
 
         std::stringstream ciphertextStream;
         Serial::Serialize(ciphertext_, ciphertextStream, SerType::BINARY);
         serializedCiphertext_ = ciphertextStream.str();
+        std::stringstream f1mRandomStream;
+        Serial::Serialize(f1mRandomZeroSumCiphertext_, f1mRandomStream, SerType::BINARY);
+        serializedF1mRandomZeroSumCiphertext_ = f1mRandomStream.str();
+        std::stringstream f1mDummyStream;
+        Serial::Serialize(
+            f1mEncryptedZeroDummyCiphertext_, f1mDummyStream, SerType::BINARY);
+        serializedF1mEncryptedZeroDummyCiphertext_ = f1mDummyStream.str();
+        if (serializedF1mRandomZeroSumCiphertext_.empty() ||
+            serializedF1mEncryptedZeroDummyCiphertext_.empty()) {
+            throw std::runtime_error("F1-M ciphertext serialization failed");
+        }
 
         std::stringstream rotationKeyStream;
         if (!context_->SerializeEvalAutomorphismKey(rotationKeyStream, SerType::BINARY)) {
@@ -346,6 +370,14 @@ class BenchmarkFixture {
 
     std::size_t ciphertextBytes() const {
         return serializedCiphertext_.size();
+    }
+
+    std::size_t f1mRandomZeroSumCiphertextBytes() const {
+        return serializedF1mRandomZeroSumCiphertext_.size();
+    }
+
+    std::size_t f1mEncryptedZeroDummyCiphertextBytes() const {
+        return serializedF1mEncryptedZeroDummyCiphertext_.size();
     }
 
     std::size_t rotationKeyBytes() const {
@@ -574,15 +606,21 @@ class BenchmarkFixture {
     std::vector<int64_t> ones_;
     std::vector<int64_t> mask_;
     std::vector<int64_t> labels_;
+    std::vector<int64_t> f1mRandomZeroSum_;
+    std::vector<int64_t> f1mEncryptedZeroDummy_;
     Plaintext plaintext_;
     Plaintext maskPlaintext_;
     Ciphertext<DCRTPoly> ciphertext_;
     Ciphertext<DCRTPoly> ciphertext2_;
     Ciphertext<DCRTPoly> labelCiphertext_;
+    Ciphertext<DCRTPoly> f1mRandomZeroSumCiphertext_;
+    Ciphertext<DCRTPoly> f1mEncryptedZeroDummyCiphertext_;
     Ciphertext<DCRTPoly> sink_;
     Plaintext decrypted_;
     DecryptResult decryptResult_;
     std::string serializedCiphertext_;
+    std::string serializedF1mRandomZeroSumCiphertext_;
+    std::string serializedF1mEncryptedZeroDummyCiphertext_;
     std::string serializedRotationKeys_;
     std::string serializedEvalMultKeys_;
     std::vector<std::uint64_t> clientLeft_;
@@ -773,6 +811,10 @@ int main(int argc, char** argv) {
         WriteIntArray(output, processAffinityCpuList);
         output << ",\n";
         output << "  \"ciphertext_bytes\": " << fixture.ciphertextBytes() << ",\n";
+        output << "  \"f1m_random_zero_sum_ciphertext_bytes\": "
+               << fixture.f1mRandomZeroSumCiphertextBytes() << ",\n";
+        output << "  \"f1m_encrypted_zero_dummy_ciphertext_bytes\": "
+               << fixture.f1mEncryptedZeroDummyCiphertextBytes() << ",\n";
         output << "  \"rotation_key_bytes\": " << fixture.rotationKeyBytes() << ",\n";
         output << "  \"eval_mult_key_bytes\": " << fixture.evalMultKeyBytes() << ",\n";
         output << "  \"operations\": {\n";

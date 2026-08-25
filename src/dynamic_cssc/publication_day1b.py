@@ -30,6 +30,10 @@ from dynamic_cssc.day1_registry import (
     RegisteredCandidate,
     repository_day1_candidate_catalog,
 )
+from dynamic_cssc.day2_calibration_authority import (
+    Day2CalibrationAuthorityError,
+    repository_day2_calibration_authority,
+)
 from dynamic_cssc.evidence_compatibility import (
     EvidenceCompatibilityError,
     EvidenceRole,
@@ -43,6 +47,12 @@ from dynamic_cssc.publication_artifact_install import (
     PublicationArtifactDirectory,
     install_verified_directory,
     quarantine_owned_directory,
+)
+from dynamic_cssc.publication_day1b_aggregate_bounds import (
+    SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
+)
+from dynamic_cssc.publication_day1b_f1m_aggregation import (
+    Day1BSerializedObjectSizeAuthority as _Day1BSerializedObjectSizeAuthority,
 )
 from dynamic_cssc.publication_day1b_worker_protocol import (
     DAY1B_WORKER_EXECUTION_BASIS,
@@ -583,21 +593,6 @@ _F1M_SIZE_CLASS_KEYS = frozenset(
         "execution_binding_digest",
     }
 )
-
-# Every complete physical record carries all categories, including explicit zero-object
-# categories. Transaction ownership is repository-defined, never supplied by an executor.
-SERIALIZED_PROTOCOL_OBJECT_CATEGORIES = (
-    ("update-column-index-synchronization", "update"),
-    ("update-publication-ciphertexts", "update"),
-    ("update-version-plan-metadata", "update"),
-    ("query-query-ciphertexts", "query"),
-    ("query-result-ciphertexts", "query"),
-    ("query-f1m-random-mask-ciphertexts", "query"),
-    ("query-f1m-encrypted-zero-dummy-ciphertexts", "query"),
-    ("query-version-plan-metadata", "query"),
-    ("one-time-evaluation-key-material", "one-time"),
-)
-
 
 class PublicationDay1BHold(RuntimeError):
     """A required pre-dispatch publication authority is not frozen."""
@@ -1319,7 +1314,7 @@ def _validate_preparatory_source_attestation(
         inventory.get("role") != EvidenceRole.DAY1B.value
         or inventory.get("source_git_sha") != source.git_sha
         or inventory.get("behavior_set_schema_version")
-        != "dynamic-cssc-day1b-preparatory-behavior-set-v10"
+        != "dynamic-cssc-day1b-preparatory-behavior-set-v11"
     ):
         raise ValueError(
             "preparatory source inventory must bind the DAY1B role, schema, and exact S1"
@@ -3384,6 +3379,11 @@ class _Day1BWorkerContractSeed:
     query_vector_sha256: str
     candidate_catalog_sha256: str
     resource_policy_sha256: str
+    day2_outer_archive_sha256: str
+    serialized_object_size_profile_sha256: str
+    ciphertext_bytes: int
+    f1m_random_zero_sum_ciphertext_bytes: int
+    f1m_encrypted_zero_dummy_ciphertext_bytes: int
     freshness: str
     rho: str
     candidate: Day1BWorkerCandidateSpec
@@ -3405,6 +3405,17 @@ class _Day1BWorkerContractSeed:
             query_vector_sha256=self.query_vector_sha256,
             candidate_catalog_sha256=self.candidate_catalog_sha256,
             resource_policy_sha256=self.resource_policy_sha256,
+            day2_outer_archive_sha256=self.day2_outer_archive_sha256,
+            serialized_object_size_profile_sha256=(
+                self.serialized_object_size_profile_sha256
+            ),
+            ciphertext_bytes=self.ciphertext_bytes,
+            f1m_random_zero_sum_ciphertext_bytes=(
+                self.f1m_random_zero_sum_ciphertext_bytes
+            ),
+            f1m_encrypted_zero_dummy_ciphertext_bytes=(
+                self.f1m_encrypted_zero_dummy_ciphertext_bytes
+            ),
             freshness=self.freshness,
             rho=self.rho,
             execution_basis=DAY1B_WORKER_EXECUTION_BASIS,
@@ -3470,6 +3481,7 @@ def _candidate_worker_contract_seed(
     candidate_catalog_sha256: str,
     resource_policy: PublicationDay1BResourcePolicy,
     resource_policy_sha256: str,
+    size_authority: _Day1BSerializedObjectSizeAuthority,
 ) -> _Day1BWorkerContractSeed:
     invocation_id = _digest(
         {
@@ -3485,6 +3497,17 @@ def _candidate_worker_contract_seed(
         query_vector_sha256=trace.query_vector_sha256,
         candidate_catalog_sha256=candidate_catalog_sha256,
         resource_policy_sha256=resource_policy_sha256,
+        day2_outer_archive_sha256=size_authority.day2_outer_archive_sha256,
+        serialized_object_size_profile_sha256=(
+            size_authority.serialized_object_size_profile_sha256
+        ),
+        ciphertext_bytes=size_authority.ciphertext_bytes,
+        f1m_random_zero_sum_ciphertext_bytes=(
+            size_authority.f1m_random_zero_sum_ciphertext_bytes
+        ),
+        f1m_encrypted_zero_dummy_ciphertext_bytes=(
+            size_authority.f1m_encrypted_zero_dummy_ciphertext_bytes
+        ),
         freshness=_fraction_text(freshness),
         rho=_fraction_text(program.rho),
         candidate=Day1BWorkerCandidateSpec(
@@ -3530,6 +3553,7 @@ def _produce_publication_day1b_unit(
     source_attestation: _Day1BPreparatorySourceAttestation,
     candidate_catalog: Day1CandidateCatalog,
     resource_policy: PublicationDay1BResourcePolicy,
+    size_authority: _Day1BSerializedObjectSizeAuthority,
     execution_adapter: _Day1BExecutionAdapter,
     repository_root: Path,
     artifact_variant_token: object,
@@ -3550,6 +3574,8 @@ def _produce_publication_day1b_unit(
     candidates = _validate_catalog(candidate_catalog)
     if type(resource_policy) is not PublicationDay1BResourcePolicy:
         raise TypeError("resource_policy must be an exact fixed policy")
+    if type(size_authority) is not _Day1BSerializedObjectSizeAuthority:
+        raise TypeError("size_authority must be exact Day 2 size authority")
     if not callable(getattr(execution_adapter, "execute_candidate_cell", None)):
         raise TypeError("execution_adapter must provide the candidate-cell streaming seam")
     artifact_variant, unit_schema, fragment_schema = _artifact_variant_contract(
@@ -3616,6 +3642,7 @@ def _produce_publication_day1b_unit(
                         candidate_catalog_sha256=candidate_catalog_sha256,
                         resource_policy=resource_policy,
                         resource_policy_sha256=resource_policy_sha256,
+                        size_authority=size_authority,
                     )
                     launch: _Day1BWorkerLaunch | None = None
                     invocation_consumed = False
@@ -3860,6 +3887,17 @@ def _produce_publication_day1b_unit_for_test(
         source_attestation=source_attestation,
         candidate_catalog=candidate_catalog,
         resource_policy=resource_policy,
+        size_authority=_Day1BSerializedObjectSizeAuthority(
+            source_git_sha=source_attestation.git_sha,
+            day2_experiment_source_git_sha="0" * 40,
+            day2_outer_archive_sha256="0" * 64,
+            serialized_object_size_profile_sha256="1" * 64,
+            ciphertext_bytes=64,
+            f1m_random_zero_sum_ciphertext_bytes=65,
+            f1m_encrypted_zero_dummy_ciphertext_bytes=66,
+            serialized_rotation_key_inventory_bytes=128,
+            serialized_eval_mult_key_bytes=256,
+        ),
         execution_adapter=execution_adapter,
         repository_root=Path(__file__).resolve().parents[2],
         artifact_variant_token=_TEST_ARTIFACT_VARIANT_TOKEN,
@@ -4042,15 +4080,19 @@ def _repository_day1b_resource_policy() -> PublicationDay1BResourcePolicy:
     return _require_repository_day1b_resource_policy(Path(__file__).resolve().parents[2])
 
 
-def _repository_day1b_execution_adapter() -> _Day1BExecutionAdapter:
+def _repository_day1b_execution_adapter(
+    size_authority: _Day1BSerializedObjectSizeAuthority,
+) -> _Day1BExecutionAdapter:
+    if type(size_authority) is not _Day1BSerializedObjectSizeAuthority:
+        raise TypeError("Day1B execution adapter requires exact Day 2 size authority")
     raise PublicationDay1BHold(
         "HOLD: the full OpenFHE Day1B runner and repository-owned streaming execution "
         "adapter are not installed"
     )
 
 
-def _repository_day1b_profile_anchor_authority() -> str:
-    """Require the unique post-registration profile before any held-out input."""
+def _repository_day1b_profile_anchor_authority() -> _Day1BSerializedObjectSizeAuthority:
+    """Require the registered profile and anchored Day 2 sizes before held-out input."""
 
     repository_root = Path(__file__).resolve().parents[2]
     try:
@@ -4073,7 +4115,36 @@ def _repository_day1b_profile_anchor_authority() -> str:
             "HOLD: Day1B requires the history-verified Day1A anchor and Day2 profile "
             "installation at its exact clean source"
         )
-    return source.git_sha
+    try:
+        day2_authority = repository_day2_calibration_authority()
+        after = verify_current_role_source(EvidenceRole.DAY1B, repository_root)
+    except (Day2CalibrationAuthorityError, EvidenceCompatibilityError) as error:
+        raise PublicationDay1BHold(
+            f"HOLD: Day1B anchored Day2 size authority is unavailable: {error}"
+        ) from error
+    if after != source:
+        raise PublicationDay1BHold(
+            "HOLD: Day1B source changed while admitting the Day 2 size profile"
+        )
+    return _Day1BSerializedObjectSizeAuthority(
+        source_git_sha=source.git_sha,
+        day2_experiment_source_git_sha=day2_authority.source_git_sha,
+        day2_outer_archive_sha256=day2_authority.outer_archive_sha256,
+        serialized_object_size_profile_sha256=(
+            day2_authority.serialized_object_size_profile_sha256
+        ),
+        ciphertext_bytes=day2_authority.ciphertext_bytes,
+        f1m_random_zero_sum_ciphertext_bytes=(
+            day2_authority.f1m_random_zero_sum_ciphertext_bytes
+        ),
+        f1m_encrypted_zero_dummy_ciphertext_bytes=(
+            day2_authority.f1m_encrypted_zero_dummy_ciphertext_bytes
+        ),
+        serialized_rotation_key_inventory_bytes=(
+            day2_authority.serialized_rotation_key_inventory_bytes
+        ),
+        serialized_eval_mult_key_bytes=day2_authority.serialized_eval_mult_key_bytes,
+    )
 
 
 def _repository_trace_anchor_authority() -> None:
@@ -4221,7 +4292,8 @@ def produce_publication_day1b_unit(
         source_attestation=source_attestation.attestation,
     )
     resource_policy = _repository_day1b_resource_policy()
-    if _repository_day1b_profile_anchor_authority() != source_attestation.git_sha:
+    size_authority = _repository_day1b_profile_anchor_authority()
+    if size_authority.source_git_sha != source_attestation.git_sha:
         raise PublicationDay1BHold(
             "HOLD: Day1B source changed across profile-anchor admission"
         )
@@ -4233,13 +4305,14 @@ def produce_publication_day1b_unit(
         ) from error
     trace = _load_repository_trace_input(trace_bundle_dir)
     _repository_trace_anchor_authority()
-    execution_adapter = _repository_day1b_execution_adapter()
+    execution_adapter = _repository_day1b_execution_adapter(size_authority)
     return _produce_publication_day1b_unit(
         trace=trace,
         output_dir=output_dir,
         source_attestation=preparatory_source_attestation,
         candidate_catalog=catalog,
         resource_policy=resource_policy,
+        size_authority=size_authority,
         execution_adapter=execution_adapter,
         repository_root=repository_root,
         artifact_variant_token=_PRODUCTION_ARTIFACT_VARIANT_TOKEN,

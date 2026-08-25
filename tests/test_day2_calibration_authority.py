@@ -107,6 +107,7 @@ PAYLOAD_FILENAMES = (
     "contract-bindings.json",
     "rotation-key-plan.json",
     "generated-key-inventory.json",
+    "serialized-object-size-profile.json",
     "operation-profile-set.json",
     "raw-measurement-blocks.json",
     "runtime-isolation-receipt.json",
@@ -243,12 +244,12 @@ def _artifact_behavior_inventory(source_sha: str) -> dict[str, object]:
         for path in repository_behavior_paths(EvidenceRole.DAY2)
     ]
     behavior_set = {
-        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v4",
+        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v5",
         "entries": entries,
         "role": "day2",
     }
     return {
-        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v4",
+        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v5",
         "behavior_set_sha256": _sha256(_canonical(behavior_set)),
         "entries": entries,
         "role": "day2",
@@ -468,6 +469,24 @@ def _valid_payloads() -> dict[str, object]:
         "contract-bindings.json": contract_bindings,
         "rotation-key-plan.json": rotation_plan,
         "generated-key-inventory.json": generated_key_inventory,
+        "serialized-object-size-profile.json": {
+            "schema_version": (
+                "dynamic-cssc-publication-day2-serialized-object-size-profile-v2"
+            ),
+            "ciphertext_serialization_format": "openfhe-sertype-binary-v1",
+            "ciphertext_measurement_method": (
+                "formal-probe-exact-serialized-byte-length-v1"
+            ),
+            "ciphertext_bytes": 34567,
+            "f1m_ciphertext_construction_profile": (
+                "fresh-bfvrns-encryption-fixed-context-v1"
+            ),
+            "f1m_random_zero_sum_ciphertext_bytes": 34568,
+            "f1m_encrypted_zero_dummy_ciphertext_bytes": 34569,
+            "generated_key_inventory_sha256": "PENDING",
+            "serialized_rotation_key_inventory_bytes": 12345,
+            "serialized_eval_mult_key_bytes": 23456,
+        },
         "operation-profile-set.json": {
             "schema_version": "dynamic-cssc-publication-operation-profile-set-v2",
             "primitive_names": list(PRIMITIVE_NAMES),
@@ -506,7 +525,7 @@ def _valid_payloads() -> dict[str, object]:
             "isolation_checks": list(authority_module.DAY2_RUNTIME_ISOLATION_CHECKS),
         },
         "producer-validation.json": {
-            "schema_version": "dynamic-cssc-publication-day2-producer-validation-v1",
+            "schema_version": "dynamic-cssc-publication-day2-producer-validation-v2",
             "status": "pass",
             "formal_authority_granted": False,
             "validator_source_sha256": "0" * 64,
@@ -517,6 +536,7 @@ def _valid_payloads() -> dict[str, object]:
             "operation_profile_set_sha256": "PENDING",
             "rotation_key_plan_sha256": "PENDING",
             "generated_key_inventory_sha256": "PENDING",
+            "serialized_object_size_profile_sha256": "PENDING",
             "runtime_isolation_receipt_sha256": "PENDING",
             "calibration_projection_sha256": "PENDING",
             "candidate_catalog_sha256": contract_bindings["candidate_catalog_sha256"],
@@ -529,6 +549,7 @@ def _valid_payloads() -> dict[str, object]:
 def _archive_bytes(
     *,
     mutate_payloads: object | None = None,
+    mutate_synchronized_payloads: object | None = None,
     extra_members: list[tuple[zipfile.ZipInfo | str, bytes]] | None = None,
     mutate_bound_payloads: object | None = None,
 ) -> tuple[bytes, dict[str, object]]:
@@ -542,6 +563,19 @@ def _archive_bytes(
     encoded["generated-key-inventory.json"] = _canonical(
         payloads["generated-key-inventory.json"]
     )
+    size_profile = payloads["serialized-object-size-profile.json"]
+    size_profile["generated_key_inventory_sha256"] = _sha256(
+        encoded["generated-key-inventory.json"]
+    )
+    size_profile["serialized_rotation_key_inventory_bytes"] = payloads[
+        "generated-key-inventory.json"
+    ]["serialized_rotation_key_bytes"]
+    size_profile["serialized_eval_mult_key_bytes"] = payloads[
+        "generated-key-inventory.json"
+    ]["serialized_eval_mult_key_bytes"]
+    if mutate_synchronized_payloads is not None:
+        mutate_synchronized_payloads(payloads)
+    encoded["serialized-object-size-profile.json"] = _canonical(size_profile)
     encoded["contract-bindings.json"] = _canonical(payloads["contract-bindings.json"])
     payloads["contract-bindings.json"]["day1a_rotation_inventory_sha256"] = payloads[
         "rotation-key-plan.json"
@@ -557,6 +591,9 @@ def _archive_bytes(
     validation["generated_key_inventory_sha256"] = _sha256(
         encoded["generated-key-inventory.json"]
     )
+    validation["serialized_object_size_profile_sha256"] = _sha256(
+        encoded["serialized-object-size-profile.json"]
+    )
     validation["runtime_isolation_receipt_sha256"] = _sha256(
         encoded["runtime-isolation-receipt.json"]
     )
@@ -568,7 +605,7 @@ def _archive_bytes(
         mutate_bound_payloads(payloads)
         encoded = {name: _canonical(payload) for name, payload in payloads.items()}
     manifest = {
-        "schema_version": "dynamic-cssc-publication-day2-calibration-evidence-v1",
+        "schema_version": "dynamic-cssc-publication-day2-calibration-evidence-v2",
         "evidence_scope": "isolated-14-primitive-fixed-host-calibration-only",
         "files": [
             {"path": name, "sha256": _sha256(encoded[name]), "bytes": len(encoded[name])}
@@ -651,7 +688,7 @@ def _valid_post_run_anchor(
 ) -> dict[str, object]:
     behavior_inventory = payloads["source-provenance.json"]["behavior_inventory"]
     return {
-        "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-v4",
+        "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-v6",
         "experiment_source_git_sha": "a" * 40,
         "experiment_behavior_set_schema_version": behavior_inventory["behavior_set_schema_version"],
         "experiment_behavior_set_sha256": behavior_inventory["behavior_set_sha256"],
@@ -666,6 +703,24 @@ def _valid_post_run_anchor(
         "generated_key_inventory_sha256": _sha256(
             _canonical(payloads["generated-key-inventory.json"])
         ),
+        "serialized_object_size_profile_sha256": _sha256(
+            _canonical(payloads["serialized-object-size-profile.json"])
+        ),
+        "ciphertext_bytes": payloads["serialized-object-size-profile.json"][
+            "ciphertext_bytes"
+        ],
+        "f1m_random_zero_sum_ciphertext_bytes": payloads[
+            "serialized-object-size-profile.json"
+        ]["f1m_random_zero_sum_ciphertext_bytes"],
+        "f1m_encrypted_zero_dummy_ciphertext_bytes": payloads[
+            "serialized-object-size-profile.json"
+        ]["f1m_encrypted_zero_dummy_ciphertext_bytes"],
+        "serialized_rotation_key_inventory_bytes": payloads[
+            "serialized-object-size-profile.json"
+        ]["serialized_rotation_key_inventory_bytes"],
+        "serialized_eval_mult_key_bytes": payloads[
+            "serialized-object-size-profile.json"
+        ]["serialized_eval_mult_key_bytes"],
         "runtime_isolation_receipt_sha256": _sha256(
             _canonical(payloads["runtime-isolation-receipt.json"])
         ),
@@ -1038,7 +1093,7 @@ def test_valid_archive_inspection_is_descriptive_and_binds_the_closed_evidence(
     )
     behavior_inventory = payloads["source-provenance.json"]["behavior_inventory"]
     assert inspection.artifact_behavior_inventory_sha256 == _sha256(_canonical(behavior_inventory))
-    assert inspection.behavior_set_schema_version == "dynamic-cssc-day2-behavior-set-v4"
+    assert inspection.behavior_set_schema_version == "dynamic-cssc-day2-behavior-set-v5"
     assert inspection.behavior_set_sha256 == behavior_inventory["behavior_set_sha256"]
 
 
@@ -1282,6 +1337,55 @@ def test_inspector_rejects_self_consistent_raw_profile_and_key_plan_attacks(
 ) -> None:
     archive_bytes, _ = _archive_bytes(mutate_payloads=mutator)
     archive_path = tmp_path / "day2.zip"
+    archive_path.write_bytes(archive_bytes)
+
+    with pytest.raises(Day2CalibrationAuthorityError, match=message):
+        inspect_day2_calibration_archive(
+            archive_path,
+            expected_outer_sha256=_sha256(archive_bytes),
+            github_metadata=_github_metadata(archive_bytes),
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutator", "message"),
+    [
+        (
+            lambda payloads: payloads["serialized-object-size-profile.json"].__setitem__(
+                "ciphertext_bytes", 0
+            ),
+            "serialized ciphertext bytes must be a positive strict integer",
+        ),
+        (
+            lambda payloads: payloads["serialized-object-size-profile.json"].__setitem__(
+                "f1m_random_zero_sum_ciphertext_bytes", 0
+            ),
+            "serialized F1-M random-zero-sum ciphertext bytes must be a positive strict integer",
+        ),
+        (
+            lambda payloads: payloads["serialized-object-size-profile.json"].__setitem__(
+                "f1m_encrypted_zero_dummy_ciphertext_bytes", 0
+            ),
+            (
+                "serialized F1-M encrypted-zero-dummy ciphertext bytes must be a "
+                "positive strict integer"
+            ),
+        ),
+        (
+            lambda payloads: payloads["serialized-object-size-profile.json"].__setitem__(
+                "serialized_rotation_key_inventory_bytes", 12346
+            ),
+            "serialized object size profile disagrees with measured evaluation-key sizes",
+        ),
+    ],
+)
+def test_inspector_rejects_self_consistent_invalid_serialized_size_profiles(
+    tmp_path: Path,
+    mutator: object,
+    message: str,
+) -> None:
+    archive_bytes, _ = _archive_bytes(mutate_synchronized_payloads=mutator)
+    archive_path = tmp_path / "day2-invalid-size-profile.zip"
     archive_path.write_bytes(archive_bytes)
 
     with pytest.raises(Day2CalibrationAuthorityError, match=message):
@@ -1571,7 +1675,7 @@ def test_synthetic_post_run_anchor_parser_accepts_one_evidence_only_binding() ->
         _canonical(
             {
                 "anchors": [anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v6",
             }
         )
     )
@@ -1643,7 +1747,7 @@ def test_anchor_parsers_reject_duplicate_extra_missing_and_malformed_identity_da
     valid_post_document = _canonical(
         {
             "anchors": [post_anchor],
-            "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+            "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v6",
         }
     )
     missing_post = deepcopy(post_anchor)
@@ -1671,31 +1775,31 @@ def test_anchor_parsers_reject_duplicate_extra_missing_and_malformed_identity_da
             {
                 "anchors": [post_anchor],
                 "caller_authority": True,
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v6",
             }
         ),
         _canonical(
             {
                 "anchors": [missing_post],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v6",
             }
         ),
         _canonical(
             {
                 "anchors": [post_anchor, post_anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v6",
             }
         ),
         _canonical(
             {
                 "anchors": [malformed_post],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v6",
             }
         ),
         _canonical(
             {
                 "anchors": [spliced_inventory_post],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v6",
             }
         ),
     )
@@ -1723,7 +1827,7 @@ def test_pre_dispatch_repository_seam_records_only_hardened_current_day2_source(
     attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="a" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v5",
         behavior_set_sha256="b" * 64,
         behavior_source_blob_sha256={},
         runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
@@ -1791,7 +1895,7 @@ def test_pre_dispatch_repository_seam_leaves_live_runtime_isolation_to_the_launc
     attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="a" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v5",
         behavior_set_sha256="b" * 64,
         behavior_source_blob_sha256={},
     )
@@ -1851,7 +1955,7 @@ def test_pre_dispatch_repository_seam_rejects_invalid_registration_profile_histo
     attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="a" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v5",
         behavior_set_sha256="b" * 64,
         behavior_source_blob_sha256={},
         runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
@@ -1914,7 +2018,7 @@ def test_pre_dispatch_repository_seam_rejects_anchor_race_during_attestation(
     attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="a" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v5",
         behavior_set_sha256="b" * 64,
         behavior_source_blob_sha256={},
         runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
@@ -1960,7 +2064,7 @@ def test_pre_dispatch_repository_seam_rejects_existing_post_run_binding(
     post_run_document = _canonical(
         {
             "anchors": [post_run_anchor],
-            "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+            "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v6",
         }
     )
     monkeypatch.setattr(
@@ -1993,14 +2097,14 @@ def test_post_run_repository_seam_verifies_s1_compatibility_before_minting(
         authority_module._POST_RUN_ANCHOR_PATH: _canonical(  # noqa: SLF001
             {
                 "anchors": [post_anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v6",
             }
         ),
     }
     attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="c" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v5",
         behavior_set_sha256=post_anchor["experiment_behavior_set_sha256"],
         behavior_source_blob_sha256={},
         runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
@@ -2084,14 +2188,14 @@ def test_post_run_repository_seam_rejects_invalid_registration_profile_history(
         authority_module._POST_RUN_ANCHOR_PATH: _canonical(  # noqa: SLF001
             {
                 "anchors": [post_anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v6",
             }
         ),
     }
     attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="c" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v5",
         behavior_set_sha256=post_anchor["experiment_behavior_set_sha256"],
         behavior_source_blob_sha256={},
         runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
@@ -2144,14 +2248,14 @@ def test_changed_day2_validator_behavior_cannot_install_a_post_run_anchor(
         authority_module._POST_RUN_ANCHOR_PATH: _canonical(  # noqa: SLF001
             {
                 "anchors": [post_anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v6",
             }
         ),
     }
     changed_attestation = RoleSourceAttestation(
         role=EvidenceRole.DAY2,
         git_sha="c" * 40,
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v5",
         behavior_set_sha256="d" * 64,
         behavior_source_blob_sha256={},
         runtime_execution_isolation_authority_state="synthetic-test-isolated-runtime-v1",
@@ -2202,7 +2306,7 @@ def test_validly_encoded_post_run_identity_tamper_cannot_cross_the_pre_dispatch_
         authority_module._POST_RUN_ANCHOR_PATH: _canonical(  # noqa: SLF001
             {
                 "anchors": [post_anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v6",
             }
         ),
     }
@@ -2231,7 +2335,7 @@ def test_post_run_anchor_alone_cannot_bypass_missing_pre_dispatch_authority(
         authority_module._POST_RUN_ANCHOR_PATH: _canonical(  # noqa: SLF001
             {
                 "anchors": [post_anchor],
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v6",
             }
         ),
     }
@@ -2264,7 +2368,7 @@ def test_pre_dispatch_profile_authority_freezes_profiles_day1a_and_contract_iden
     capability = authority_module._mint_repository_calibration_profile_authority(  # noqa: SLF001
         anchor=binding,
         experiment_source_git_sha="a" * 40,
-        experiment_behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
+        experiment_behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v5",
         experiment_behavior_set_sha256="b" * 64,
     )
 
@@ -2338,6 +2442,24 @@ def test_repository_minted_authority_is_read_only_and_validates_the_exact_projec
         outer_archive_sha256=_sha256(archive_bytes),
         raw_measurement_blocks_sha256=_sha256(_canonical(payloads["raw-measurement-blocks.json"])),
         calibration_projection_sha256=_sha256(_canonical(projection)),
+        serialized_object_size_profile_sha256=_sha256(
+            _canonical(payloads["serialized-object-size-profile.json"])
+        ),
+        ciphertext_bytes=payloads["serialized-object-size-profile.json"][
+            "ciphertext_bytes"
+        ],
+        f1m_random_zero_sum_ciphertext_bytes=payloads[
+            "serialized-object-size-profile.json"
+        ]["f1m_random_zero_sum_ciphertext_bytes"],
+        f1m_encrypted_zero_dummy_ciphertext_bytes=payloads[
+            "serialized-object-size-profile.json"
+        ]["f1m_encrypted_zero_dummy_ciphertext_bytes"],
+        serialized_rotation_key_inventory_bytes=payloads[
+            "serialized-object-size-profile.json"
+        ]["serialized_rotation_key_inventory_bytes"],
+        serialized_eval_mult_key_bytes=payloads["serialized-object-size-profile.json"][
+            "serialized_eval_mult_key_bytes"
+        ],
     )
 
     assert capability.source_git_sha == "a" * 40
@@ -2346,6 +2468,9 @@ def test_repository_minted_authority_is_read_only_and_validates_the_exact_projec
         _canonical(payloads["raw-measurement-blocks.json"])
     )
     assert capability.calibration_projection_sha256 == _sha256(_canonical(projection))
+    assert capability.ciphertext_bytes == 34567
+    assert capability.f1m_random_zero_sum_ciphertext_bytes == 34568
+    assert capability.f1m_encrypted_zero_dummy_ciphertext_bytes == 34569
     assert (
         capability.validate_calibration_projection(
             projection,

@@ -39,7 +39,7 @@ def _behavior_inventory(source_sha: str) -> dict[str, object]:
         for path in repository_behavior_paths(EvidenceRole.DAY2)
     ]
     behavior_set = {
-        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v4",
+        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v5",
         "entries": entries,
         "role": "day2",
     }
@@ -47,7 +47,7 @@ def _behavior_inventory(source_sha: str) -> dict[str, object]:
         "schema_version": "dynamic-cssc-evidence-behavior-inventory-v1",
         "role": "day2",
         "source_git_sha": source_sha,
-        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v4",
+        "behavior_set_schema_version": "dynamic-cssc-day2-behavior-set-v5",
         "behavior_set_sha256": _sha256(_canonical(behavior_set)),
         "entries": entries,
     }
@@ -68,11 +68,17 @@ def _inspection(inventory: dict[str, object]) -> Day2CalibrationInspection:
         operation_profile_set_sha256="5" * 64,
         rotation_key_plan_sha256="6" * 64,
         generated_key_inventory_sha256="7" * 64,
+        serialized_object_size_profile_sha256="a" * 64,
+        ciphertext_bytes=34567,
+        f1m_random_zero_sum_ciphertext_bytes=34568,
+        f1m_encrypted_zero_dummy_ciphertext_bytes=34569,
+        serialized_rotation_key_inventory_bytes=12345,
+        serialized_eval_mult_key_bytes=23456,
         runtime_isolation_receipt_sha256="8" * 64,
         contract_bindings_sha256="9" * 64,
         calibration_projection_sha256="b" * 64,
         artifact_behavior_inventory_sha256=_sha256(_canonical(inventory)),
-        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v4",
+        behavior_set_schema_version="dynamic-cssc-day2-behavior-set-v5",
         behavior_set_sha256=inventory["behavior_set_sha256"],
     )
 
@@ -117,15 +123,34 @@ def test_postrun_proposal_is_mechanical_atomic_and_non_authoritative(
         (output / "day2-calibration-post-run-anchor-proposal.json").read_bytes()
     )
     anchor = anchor_set["anchors"][0]
+    assert anchor_set["schema_version"] == (
+        "dynamic-cssc-day2-calibration-post-run-anchor-set-v6"
+    )
+    assert anchor["schema_version"] == (
+        "dynamic-cssc-day2-calibration-post-run-anchor-v6"
+    )
     assert anchor["outer_archive_sha256"] == inspection.outer_archive_sha256
     assert anchor["artifact_behavior_inventory"] == inventory
     assert anchor["runtime_isolation_receipt_sha256"] == (
         inspection.runtime_isolation_receipt_sha256
     )
+    assert anchor["serialized_object_size_profile_sha256"] == (
+        inspection.serialized_object_size_profile_sha256
+    )
+    assert anchor["ciphertext_bytes"] == inspection.ciphertext_bytes
+    assert anchor["f1m_random_zero_sum_ciphertext_bytes"] == (
+        inspection.f1m_random_zero_sum_ciphertext_bytes
+    )
+    assert anchor["f1m_encrypted_zero_dummy_ciphertext_bytes"] == (
+        inspection.f1m_encrypted_zero_dummy_ciphertext_bytes
+    )
     inspection_document = json.loads(
         (output / "day2-calibration-inspection.json").read_bytes()
     )
     assert inspection_document["formal_authority_granted"] is False
+    assert inspection_document["schema_version"] == (
+        "dynamic-cssc-day2-calibration-inspection-v3"
+    )
     assert "authority_granted" not in inspection_document
 
 

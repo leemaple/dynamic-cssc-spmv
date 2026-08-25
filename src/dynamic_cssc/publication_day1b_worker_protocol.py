@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 DAY1B_WORKER_FRAME_SCHEMA = "dynamic-cssc-publication-day1b-worker-frame-v2"
-DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v3"
+DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v5"
 DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v5"
 DAY1B_WORKER_WINDOW_AUDIT_SCHEMA = "dynamic-cssc-publication-day1b-worker-window-audit-v1"
 DAY1B_WORKER_F1M_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-f1m-binding-receipt-v1"
@@ -1001,6 +1001,11 @@ class Day1BWorkerProtocolContract:
     query_vector_sha256: str
     candidate_catalog_sha256: str
     resource_policy_sha256: str
+    day2_outer_archive_sha256: str
+    serialized_object_size_profile_sha256: str
+    ciphertext_bytes: int
+    f1m_random_zero_sum_ciphertext_bytes: int
+    f1m_encrypted_zero_dummy_ciphertext_bytes: int
     freshness: str
     rho: str
     execution_basis: str
@@ -1022,6 +1027,8 @@ class Day1BWorkerProtocolContract:
             "query_vector_sha256",
             "candidate_catalog_sha256",
             "resource_policy_sha256",
+            "day2_outer_archive_sha256",
+            "serialized_object_size_profile_sha256",
             "invocation_id",
             "expected_f1m_size_class_set_sha256",
             "expected_f1m_cardinality_derivation_root_sha256",
@@ -1116,12 +1123,24 @@ class Day1BWorkerProtocolContract:
             )
         if type(self.resource_limits) is not Day1BWorkerResourceLimits:
             raise Day1BWorkerProtocolError("resource_limits must be exact typed limits")
+        for field in (
+            "ciphertext_bytes",
+            "f1m_random_zero_sum_ciphertext_bytes",
+            "f1m_encrypted_zero_dummy_ciphertext_bytes",
+        ):
+            object_bytes = _strict_positive(getattr(self, field), field)
+            if object_bytes > self.resource_limits.serialized_object_bytes_maximum:
+                raise Day1BWorkerProtocolError(
+                    f"anchored {field} exceeds the serialized-object cap"
+                )
 
     def input_binding_document(self) -> dict[str, object]:
         return {
             "schema_version": DAY1B_WORKER_INPUT_BINDING_SCHEMA,
             "candidate_catalog_sha256": self.candidate_catalog_sha256,
             "candidate": self.candidate.to_document(),
+            "ciphertext_bytes": self.ciphertext_bytes,
+            "day2_outer_archive_sha256": self.day2_outer_archive_sha256,
             "event_schedule_sha256": self.event_schedule_sha256,
             "expected_f1m_size_class_count": self.expected_f1m_size_class_count,
             "expected_f1m_size_class_set_sha256": (self.expected_f1m_size_class_set_sha256),
@@ -1133,6 +1152,12 @@ class Day1BWorkerProtocolContract:
             ),
             "execution_basis": self.execution_basis,
             "freshness": self.freshness,
+            "f1m_encrypted_zero_dummy_ciphertext_bytes": (
+                self.f1m_encrypted_zero_dummy_ciphertext_bytes
+            ),
+            "f1m_random_zero_sum_ciphertext_bytes": (
+                self.f1m_random_zero_sum_ciphertext_bytes
+            ),
             "f1m_size_class_categories": list(self.f1m_size_class_categories),
             "phase_ranges": [phase.to_document() for phase in self.phase_ranges],
             "primitive_names": list(self.primitive_names),
@@ -1141,6 +1166,9 @@ class Day1BWorkerProtocolContract:
             "resource_limits": self.resource_limits.to_document(),
             "resource_policy_sha256": self.resource_policy_sha256,
             "rho": self.rho,
+            "serialized_object_size_profile_sha256": (
+                self.serialized_object_size_profile_sha256
+            ),
             "serialized_categories": [list(item) for item in self.serialized_categories],
             "trace_manifest_sha256": self.trace_manifest_sha256,
         }
