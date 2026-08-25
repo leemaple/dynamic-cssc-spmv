@@ -113,6 +113,18 @@ protocol-object multiplicities to that pre-dispatch document; the unit verifier
 also binds the opened primitive vectors to the physical record and every ledger
 row to the same logical/worker count pair.
 
+The three metadata categories use canonical fixed-width, big-endian binary
+framing rather than variable-length JSON. All records share an exact 16-byte
+header with magic `D1BMETA1`, record kind, zero flags, schema version, and total
+byte count. A ColumnIndex synchronization entry is 64 bytes; patch and full-sync
+use one fixed-position `entry_kind` byte and otherwise share the same layout and
+size-class identity. An update-side version-plan publication is 144 bytes and is
+materialized only for the actual version transitions counted above. A query-side
+version-plan binding is 136 bytes and retains its per-query multiplicity. Exact
+length, reserved-zero bytes, integer ranges, digest widths, and rejection of
+trailing bytes are part of the framing contract. This closes the prior metadata
+size-class ambiguity without treating distinct logical objects as byte-identical.
+
 The v3 unit manifest is also the unit-level authority for the Day 2 size tuple.
 It opens the Day 1B source Git identity, Day 2 experiment source identity, outer
 archive and serialized-size-profile digests, the ordinary ciphertext byte size,

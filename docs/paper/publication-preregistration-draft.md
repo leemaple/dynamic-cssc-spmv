@@ -475,7 +475,7 @@ measurement-method field in this placeholder remains `null`; the separate
 amendment is the sole reviewed source of administrative limits and
 measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v13` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v14` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface, including the amendment and
 `docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
@@ -494,7 +494,7 @@ SHA-256 verification of every serialized input, result, and one-time key bundle.
 Its provisional depth-2/0/0 profile remains explicitly `HOLD` for mixed-circuit
 parameter authority.
 
-The current v13 surface also contains a non-authorizing streaming accounting core. It
+The current v14 surface also contains a non-authorizing streaming accounting core. It
 advances one candidate state exactly once per exact Publication Window, derives
 at most one typed query plan per query-bearing window, applies the window's
 integer query multiplicity before the fixed 14-primitive mapping, and retains
@@ -507,7 +507,7 @@ the separate evidence path for real no-reuse enforcement. The accounting core
 does not mint a worker invocation, materialize per-query masks or ledger
 transitions, measure serialized OpenFHE sizes, or relax any dispatch gate.
 
-The v13 surface closes count authority separately from serialized-size
+The v14 surface closes count authority separately from serialized-size
 measurement. Before dispatch, the controller projects each deterministic replay
 into an open expected-count document containing the exact retained-phase
 update/query primitive vectors and all nine logical protocol-object
@@ -523,6 +523,17 @@ spools, serialization ledgers, and physical primitive-count records must all
 open the same controller preimage. The resulting schema family is Day 1B unit
 v3, serialization ledger v3, accounting/phase accounting v2, worker input
 binding v8, worker receipt v9, and controller expected-count documents v1.
+
+The v14 surface also freezes canonical big-endian binary framing for the three
+metadata categories used in primary communication accounting. A ColumnIndex
+synchronization entry is exactly 64 bytes; patch and full-sync differ only in a
+fixed-position one-byte enum and therefore share one size class. An update-side
+version-plan publication is exactly 144 bytes and occurs only for an actual
+version transition. A per-query version-plan binding is exactly 136 bytes.
+Magic, record kind, zero flags, numeric schema, total length, field ranges,
+digest widths, reserved bytes, and rejection of trailing data are all part of
+the canonical framing. These records freeze size classes only; they do not yet
+authorize or claim a production representative execution.
 
 Held-out dispatch remains forbidden until an outcome-blind amendment freezes
 the measured limits and methods, and a repository-owned production candidate-cell
