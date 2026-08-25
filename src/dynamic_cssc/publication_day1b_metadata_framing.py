@@ -21,7 +21,7 @@ from dynamic_cssc.publication_day1b_aggregate_bounds import (
 )
 
 DAY1B_METADATA_FRAMING_SCHEMA: Final = "dynamic-cssc-publication-day1b-metadata-framing-v1"
-DAY1B_METADATA_SIZE_CLASS_SCHEMA: Final = "dynamic-cssc-publication-day1b-metadata-size-class-v1"
+DAY1B_METADATA_SIZE_CLASS_SCHEMA: Final = "dynamic-cssc-publication-day1b-metadata-size-class-v2"
 DAY1B_METADATA_MAGIC: Final = b"D1BMETA1"
 DAY1B_METADATA_BINARY_SCHEMA_VERSION: Final = 1
 
@@ -340,16 +340,19 @@ def day1b_metadata_size_class_document(category: str) -> dict[str, object]:
 
     facts = {
         _COLUMN_INDEX_CATEGORY: (
+            "update",
             "column-index-synchronization",
             _COLUMN_INDEX_RECORD_KIND,
             DAY1B_COLUMN_INDEX_SYNCHRONIZATION_BYTES,
         ),
         _UPDATE_VERSION_CATEGORY: (
+            "update",
             "update-version-plan",
             _UPDATE_VERSION_RECORD_KIND,
             DAY1B_UPDATE_VERSION_PLAN_METADATA_BYTES,
         ),
         _QUERY_VERSION_CATEGORY: (
+            "query",
             "query-version-plan",
             _QUERY_VERSION_RECORD_KIND,
             DAY1B_QUERY_VERSION_PLAN_METADATA_BYTES,
@@ -359,7 +362,7 @@ def day1b_metadata_size_class_document(category: str) -> dict[str, object]:
         raise Day1BMetadataFramingError(
             "metadata size class requires one frozen Day 1B metadata category"
         )
-    record_kind, record_kind_code, byte_count = facts[category]
+    transaction, record_kind, record_kind_code, byte_count = facts[category]
     return {
         "binary_framing_schema": DAY1B_METADATA_FRAMING_SCHEMA,
         "category": category,
@@ -367,6 +370,7 @@ def day1b_metadata_size_class_document(category: str) -> dict[str, object]:
         "record_kind_code": record_kind_code,
         "schema_version": DAY1B_METADATA_SIZE_CLASS_SCHEMA,
         "serialized_byte_count": byte_count,
+        "transaction": transaction,
     }
 
 

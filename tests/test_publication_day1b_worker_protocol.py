@@ -2668,7 +2668,7 @@ def test_worker_input_binding_commits_to_aggregate_f1m_summary_roots() -> None:
     contract = _contract()
     document = contract.input_binding_document()
 
-    assert document["schema_version"].endswith("-v8")
+    assert document["schema_version"].endswith("-v9")
     assert Day1BWorkerProtocolContract.from_input_binding_document(document) == contract
     assert document["controller_expected_counts_document"] == (
         contract.controller_expected_counts.to_document()

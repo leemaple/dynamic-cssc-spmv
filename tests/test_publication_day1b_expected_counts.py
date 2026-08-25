@@ -12,7 +12,9 @@ from dynamic_cssc.publication_day1b_expected_counts import (
     Day1BControllerExpectedCounts,
     Day1BControllerExpectedCountsError,
     Day1BControllerExpectedPhaseCounts,
+    canonical_day1b_fixed_width_metadata_size_classes,
     require_formal_day1b_f1m_worker_zero,
+    require_formal_day1b_fixed_width_metadata_size_classes,
 )
 
 
@@ -42,6 +44,9 @@ def _expected_counts() -> Day1BControllerExpectedCounts:
         phases=(
             _phase("tuning-prefix", one_time_count=1),
             _phase("held-out", one_time_count=0),
+        ),
+        fixed_width_metadata_size_classes=(
+            canonical_day1b_fixed_width_metadata_size_classes()
         ),
     )
 
@@ -155,3 +160,56 @@ def test_expected_counts_digest_commits_to_controller_multiplicity() -> None:
     )
 
     assert changed.expected_counts_sha256 != expected.expected_counts_sha256
+
+
+def test_formal_expected_counts_bind_all_fixed_width_metadata_size_classes() -> None:
+    expected = _expected_counts()
+
+    require_formal_day1b_fixed_width_metadata_size_classes(expected)
+
+    assert tuple(
+        (
+            item.category,
+            item.transaction,
+            item.serialized_byte_count,
+        )
+        for item in expected.fixed_width_metadata_size_classes
+    ) == (
+        ("update-column-index-synchronization", "update", 64),
+        ("update-version-plan-metadata", "update", 144),
+        ("query-version-plan-metadata", "query", 136),
+    )
+
+
+def test_formal_expected_counts_reject_missing_metadata_size_class() -> None:
+    expected = _expected_counts()
+
+    with pytest.raises(
+        Day1BControllerExpectedCountsError,
+        match="formal fixed-width metadata size classes changed",
+    ):
+        require_formal_day1b_fixed_width_metadata_size_classes(
+            replace(
+                expected,
+                fixed_width_metadata_size_classes=(
+                    expected.fixed_width_metadata_size_classes[:-1]
+                ),
+            )
+        )
+
+
+@pytest.mark.parametrize("mutation", ("missing-transaction", "wrong-transaction"))
+def test_expected_counts_parser_rejects_metadata_descriptor_splice(
+    mutation: str,
+) -> None:
+    document = _expected_counts().to_document()
+    size_class = document["fixed_width_metadata_size_classes"][0]
+    if mutation == "missing-transaction":
+        del size_class["transaction"]
+        message = "keys are not exact"
+    else:
+        size_class["transaction"] = "query"
+        message = "differs from canonical framing"
+
+    with pytest.raises(Day1BControllerExpectedCountsError, match=message):
+        Day1BControllerExpectedCounts.from_document(document)

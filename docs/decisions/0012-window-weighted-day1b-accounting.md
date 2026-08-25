@@ -168,13 +168,25 @@ receipts.
 
 Opening the controller and route preimages advanced the F1-M controller summary
 to v4 and route coverage to v2. Adding the controller expected-count document
-advances the worker input binding to v8 and the enclosing worker receipt to v9;
-the expected-count and expected-phase-count documents begin at v1.
+advanced the enclosing worker receipt to v9. Binding the three fixed-width
+metadata size classes advances the expected-count document to v2, the worker
+input binding to v9, and the serialization ledger to v4; the unchanged
+expected-phase-count document remains v1.
 The retained unit, ledger, controller summary, context, route, worker-input, and
 worker-receipt schema identifiers are pairwise distinct so an exact-key parser
 cannot silently accept one document family as another.
 Those schema changes do not authorize execution or publication; the existing
 all-false unit authority boundary remains in force.
+
+The expected-count v2 preimage opens one canonical size-class digest, transaction,
+and serialized byte count for ColumnIndex synchronization (64 bytes), update
+version publication (144 bytes), and per-query version binding (136 bytes).
+Patch and full-sync ColumnIndex entries remain one class because their framing
+differs only at the fixed `entry_kind` byte. A complete ledger must carry the
+same class digest and charge exactly `multiplicity * serialized_byte_count`;
+the artifact parser independently checks every retained representative receipt
+against the category width. These checks bind preparatory accounting to framing
+without claiming that the production runner has emitted the representative.
 
 The representative receipt proves an accounting size class; it does not claim
 that billions of fresh masks were generated or consumed during the experiment.

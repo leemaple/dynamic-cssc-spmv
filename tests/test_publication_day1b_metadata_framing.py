@@ -115,8 +115,14 @@ def test_metadata_categories_have_three_distinct_size_classes() -> None:
             "record_kind_code",
             "schema_version",
             "serialized_byte_count",
+            "transaction",
         }
         for item in documents
+    )
+    assert tuple(item["transaction"] for item in documents) == (
+        "update",
+        "update",
+        "query",
     )
     assert len({day1b_metadata_size_class_sha256(item) for item in categories}) == 3
 

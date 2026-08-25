@@ -19,12 +19,20 @@ from dynamic_cssc.publication_day1b_accounting import PublicationDay1BAccounting
 from dynamic_cssc.publication_day1b_aggregate_bounds import (
     SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
 )
+from dynamic_cssc.publication_day1b_metadata_framing import (
+    DAY1B_FIXED_WIDTH_METADATA_CATEGORIES,
+    day1b_metadata_size_class_document,
+    day1b_metadata_size_class_sha256,
+)
 
 DAY1B_CONTROLLER_EXPECTED_COUNTS_SCHEMA = (
-    "dynamic-cssc-publication-day1b-controller-expected-counts-v1"
+    "dynamic-cssc-publication-day1b-controller-expected-counts-v2"
 )
 DAY1B_CONTROLLER_EXPECTED_PHASE_COUNTS_SCHEMA = (
     "dynamic-cssc-publication-day1b-controller-expected-phase-counts-v1"
+)
+DAY1B_CONTROLLER_EXPECTED_METADATA_SIZE_CLASS_SCHEMA = (
+    "dynamic-cssc-publication-day1b-controller-expected-metadata-size-class-v1"
 )
 
 _PHASES = ("warmup", "tuning-prefix", "held-out")
@@ -38,6 +46,92 @@ _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 class Day1BControllerExpectedCountsError(ValueError):
     """Raised when controller-owned expected counts are not one exact preimage."""
+
+
+@dataclass(frozen=True, slots=True)
+class Day1BControllerExpectedMetadataSizeClass:
+    """One canonical fixed-width metadata class bound into expected counts."""
+
+    category: str
+    transaction: str
+    serialized_byte_count: int
+    metadata_size_class_sha256: str
+
+    def __post_init__(self) -> None:
+        if type(self.category) is not str or self.category not in (
+            DAY1B_FIXED_WIDTH_METADATA_CATEGORIES
+        ):
+            raise Day1BControllerExpectedCountsError(
+                "controller metadata size-class category is not frozen"
+            )
+        canonical = day1b_metadata_size_class_document(self.category)
+        if (
+            self.transaction != canonical["transaction"]
+            or type(self.serialized_byte_count) is not int
+            or self.serialized_byte_count != canonical["serialized_byte_count"]
+            or self.metadata_size_class_sha256
+            != day1b_metadata_size_class_sha256(self.category)
+        ):
+            raise Day1BControllerExpectedCountsError(
+                "controller metadata size class differs from canonical framing"
+            )
+        _require_sha256(
+            self.metadata_size_class_sha256,
+            "controller metadata size-class digest",
+        )
+
+    @classmethod
+    def from_category(cls, category: str) -> Day1BControllerExpectedMetadataSizeClass:
+        document = day1b_metadata_size_class_document(category)
+        return cls(
+            category=category,
+            transaction=str(document["transaction"]),
+            serialized_byte_count=int(document["serialized_byte_count"]),
+            metadata_size_class_sha256=day1b_metadata_size_class_sha256(category),
+        )
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "category": self.category,
+            "metadata_size_class_sha256": self.metadata_size_class_sha256,
+            "schema_version": DAY1B_CONTROLLER_EXPECTED_METADATA_SIZE_CLASS_SCHEMA,
+            "serialized_byte_count": self.serialized_byte_count,
+            "transaction": self.transaction,
+        }
+
+    @classmethod
+    def from_document(
+        cls,
+        value: object,
+    ) -> Day1BControllerExpectedMetadataSizeClass:
+        expected_keys = {
+            "category",
+            "metadata_size_class_sha256",
+            "schema_version",
+            "serialized_byte_count",
+            "transaction",
+        }
+        if type(value) is not dict or set(value) != expected_keys:
+            raise Day1BControllerExpectedCountsError(
+                "controller metadata size-class keys are not exact"
+            )
+        if value["schema_version"] != (
+            DAY1B_CONTROLLER_EXPECTED_METADATA_SIZE_CLASS_SCHEMA
+        ):
+            raise Day1BControllerExpectedCountsError(
+                "controller metadata size-class schema changed"
+            )
+        result = cls(
+            category=value["category"],
+            transaction=value["transaction"],
+            serialized_byte_count=value["serialized_byte_count"],
+            metadata_size_class_sha256=value["metadata_size_class_sha256"],
+        )
+        if result.to_document() != value:
+            raise Day1BControllerExpectedCountsError(
+                "controller metadata size class is not its exact typed projection"
+            )
+        return result
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -197,6 +291,9 @@ class Day1BControllerExpectedCounts:
     primitive_names: tuple[str, ...]
     serialized_categories: tuple[tuple[str, str], ...]
     phases: tuple[Day1BControllerExpectedPhaseCounts, ...]
+    fixed_width_metadata_size_classes: tuple[
+        Day1BControllerExpectedMetadataSizeClass, ...
+    ] = ()
 
     def __post_init__(self) -> None:
         if type(self.candidate_id) is not str or not self.candidate_id:
@@ -245,6 +342,32 @@ class Day1BControllerExpectedCounts:
         ):
             raise Day1BControllerExpectedCountsError(
                 "controller expected-count category taxonomy is not closed"
+            )
+        if (
+            type(self.fixed_width_metadata_size_classes) is not tuple
+            or any(
+                type(item) is not Day1BControllerExpectedMetadataSizeClass
+                for item in self.fixed_width_metadata_size_classes
+            )
+        ):
+            raise Day1BControllerExpectedCountsError(
+                "controller metadata size classes must be one exact tuple"
+            )
+        metadata_categories = tuple(
+            item.category for item in self.fixed_width_metadata_size_classes
+        )
+        if (
+            len(metadata_categories) != len(set(metadata_categories))
+            or any(category not in category_names for category in metadata_categories)
+            or tuple(
+                category
+                for category in category_names
+                if category in metadata_categories
+            )
+            != metadata_categories
+        ):
+            raise Day1BControllerExpectedCountsError(
+                "controller metadata size classes retarget category order"
             )
         if (
             type(self.phases) is not tuple
@@ -310,6 +433,10 @@ class Day1BControllerExpectedCounts:
             "accounting_sha256": self.accounting_sha256,
             "candidate_id": self.candidate_id,
             "candidate_policy_sha256": self.candidate_policy_sha256,
+            "fixed_width_metadata_size_classes": [
+                item.to_document()
+                for item in self.fixed_width_metadata_size_classes
+            ],
             "phases": [phase.to_document() for phase in self.phases],
             "primitive_names": list(self.primitive_names),
             "schema_version": DAY1B_CONTROLLER_EXPECTED_COUNTS_SCHEMA,
@@ -322,6 +449,7 @@ class Day1BControllerExpectedCounts:
             "accounting_sha256",
             "candidate_id",
             "candidate_policy_sha256",
+            "fixed_width_metadata_size_classes",
             "phases",
             "primitive_names",
             "schema_version",
@@ -336,10 +464,12 @@ class Day1BControllerExpectedCounts:
                 "controller expected-count document schema changed"
             )
         phases = value["phases"]
+        metadata_size_classes = value["fixed_width_metadata_size_classes"]
         primitive_names = value["primitive_names"]
         categories = value["serialized_categories"]
         if (
             type(phases) is not list
+            or type(metadata_size_classes) is not list
             or type(primitive_names) is not list
             or type(categories) is not list
             or any(type(item) is not list or len(item) != 2 for item in categories)
@@ -356,6 +486,10 @@ class Day1BControllerExpectedCounts:
             phases=tuple(
                 Day1BControllerExpectedPhaseCounts.from_document(item)
                 for item in phases
+            ),
+            fixed_width_metadata_size_classes=tuple(
+                Day1BControllerExpectedMetadataSizeClass.from_document(item)
+                for item in metadata_size_classes
             ),
         )
         if result.to_document() != value:
@@ -375,6 +509,26 @@ class Day1BControllerExpectedCounts:
         raise Day1BControllerExpectedCountsError(
             "requested phase is not retained by the expected-count preimage"
         )
+
+    def metadata_size_class(
+        self,
+        category: str,
+    ) -> Day1BControllerExpectedMetadataSizeClass | None:
+        for item in self.fixed_width_metadata_size_classes:
+            if item.category == category:
+                return item
+        return None
+
+
+def canonical_day1b_fixed_width_metadata_size_classes() -> tuple[
+    Day1BControllerExpectedMetadataSizeClass, ...
+]:
+    """Return the exact three metadata size classes in taxonomy order."""
+
+    return tuple(
+        Day1BControllerExpectedMetadataSizeClass.from_category(category)
+        for category in DAY1B_FIXED_WIDTH_METADATA_CATEGORIES
+    )
 
 
 def derive_day1b_controller_expected_counts(
@@ -473,7 +627,31 @@ def derive_day1b_controller_expected_counts(
         primitive_names=primitive_names,
         serialized_categories=serialized_categories,
         phases=tuple(phases),
+        fixed_width_metadata_size_classes=(
+            canonical_day1b_fixed_width_metadata_size_classes()
+        ),
     )
+
+
+def require_formal_day1b_fixed_width_metadata_size_classes(
+    expected_counts: Day1BControllerExpectedCounts,
+) -> None:
+    """Require all three canonical metadata size classes on a formal preimage."""
+
+    if type(expected_counts) is not Day1BControllerExpectedCounts:
+        raise TypeError(
+            "formal metadata validation requires exact controller expected counts"
+        )
+    if expected_counts.serialized_categories != SERIALIZED_PROTOCOL_OBJECT_CATEGORIES:
+        raise Day1BControllerExpectedCountsError(
+            "formal metadata validation requires the exact Day 1B category taxonomy"
+        )
+    if expected_counts.fixed_width_metadata_size_classes != (
+        canonical_day1b_fixed_width_metadata_size_classes()
+    ):
+        raise Day1BControllerExpectedCountsError(
+            "formal fixed-width metadata size classes changed"
+        )
 
 
 def require_formal_day1b_f1m_worker_zero(
@@ -510,10 +688,14 @@ def require_formal_day1b_f1m_worker_zero(
 
 __all__ = (
     "DAY1B_CONTROLLER_EXPECTED_COUNTS_SCHEMA",
+    "DAY1B_CONTROLLER_EXPECTED_METADATA_SIZE_CLASS_SCHEMA",
     "DAY1B_CONTROLLER_EXPECTED_PHASE_COUNTS_SCHEMA",
     "Day1BControllerExpectedCounts",
     "Day1BControllerExpectedCountsError",
+    "Day1BControllerExpectedMetadataSizeClass",
     "Day1BControllerExpectedPhaseCounts",
+    "canonical_day1b_fixed_width_metadata_size_classes",
     "derive_day1b_controller_expected_counts",
+    "require_formal_day1b_fixed_width_metadata_size_classes",
     "require_formal_day1b_f1m_worker_zero",
 )

@@ -49,6 +49,12 @@ from dynamic_cssc.publication_day1b_f1m_aggregation import (
     Day1BF1MChargedSizeClass,
     Day1BF1MControllerSummary,
 )
+from dynamic_cssc.publication_day1b_metadata_framing import (
+    Day1BColumnIndexSynchronizationEntry,
+    Day1BQueryVersionPlanMetadata,
+    Day1BUpdateVersionPlanMetadata,
+    day1b_metadata_size_class_sha256,
+)
 from dynamic_cssc.publication_day1b_worker_protocol import (
     DAY1B_WORKER_FRAME_SCHEMA,
     Day1BControllerExpectedF1MObject,
@@ -497,7 +503,7 @@ def _trace() -> _Day1BTraceInput:
 
 def _source() -> _Day1BPreparatorySourceAttestation:
     inventory = {
-        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v15",
+        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v16",
         "behavior_set_sha256": "c" * 64,
         "entries": [],
         "role": "day1b",
@@ -616,6 +622,40 @@ def _worker_audits(windows: object) -> tuple[Day1BWorkerPhaseAudit, ...]:
     )
 
 
+def _fixed_width_metadata_payload(category: str) -> bytes | None:
+    if category == "update-column-index-synchronization":
+        return Day1BColumnIndexSynchronizationEntry(
+            version_ordinal=1,
+            window_index=2,
+            component_ordinal=3,
+            storage_object_ordinal=4,
+            lane_ordinal=5,
+            logical_row=6,
+            global_column_index=7,
+            entry_kind="patch",
+        ).to_bytes()
+    if category == "update-version-plan-metadata":
+        return Day1BUpdateVersionPlanMetadata(
+            window_index=2,
+            version_ordinal=1,
+            accepted_group_start=3,
+            accepted_group_end=4,
+            logical_state_sha256="a" * 64,
+            output_plan_sha256="b" * 64,
+            execution_binding_sha256="c" * 64,
+        ).to_bytes()
+    if category == "query-version-plan-metadata":
+        return Day1BQueryVersionPlanMetadata(
+            window_index=2,
+            global_query_ordinal=3,
+            version_ordinal=1,
+            query_vector_sha256="d" * 64,
+            output_plan_sha256="b" * 64,
+            execution_binding_sha256="c" * 64,
+        ).to_bytes()
+    return None
+
+
 def _worker_transcript(
     contract: Day1BWorkerProtocolContract,
     audits: tuple[Day1BWorkerPhaseAudit, ...],
@@ -694,7 +734,9 @@ def _worker_transcript(
                 identity = (
                     f"{contract.input_binding_sha256}:{candidate.candidate_id}:{phase}:{category}"
                 )
-                payload = f"test-only:{identity}".encode("ascii")
+                payload = _fixed_width_metadata_payload(category)
+                if payload is None:
+                    payload = f"test-only:{identity}".encode("ascii")
                 emit(
                     "serialized-object",
                     candidate_id=candidate.candidate_id,
@@ -1045,7 +1087,7 @@ def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v15"),
+            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v16"),
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -1149,7 +1191,7 @@ def test_public_producer_checks_profile_before_catalog_trace_or_worker(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v15",
+            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v16",
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -1523,6 +1565,7 @@ def test_day1b_schema_names_are_unambiguous_across_exact_key_contracts() -> None
         day1b_accounting.DAY1B_ACCOUNTING_SCHEMA,
         day1b_accounting.DAY1B_PHASE_ACCOUNTING_SCHEMA,
         expected_counts_module.DAY1B_CONTROLLER_EXPECTED_COUNTS_SCHEMA,
+        expected_counts_module.DAY1B_CONTROLLER_EXPECTED_METADATA_SIZE_CLASS_SCHEMA,
         expected_counts_module.DAY1B_CONTROLLER_EXPECTED_PHASE_COUNTS_SCHEMA,
     )
     assert len(set(retained_document_families)) == len(retained_document_families)
@@ -1702,6 +1745,12 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
             category[0]: index
             for index, category in enumerate(expected_document["serialized_categories"])
         }
+        expected_metadata_classes = {
+            item["category"]: item
+            for item in expected_document[
+                "fixed_width_metadata_size_classes"
+            ]
+        }
         expected_classes = {
             (item.phase, item.category): item.to_document() for item in summary.charged_size_classes
         }
@@ -1736,6 +1785,30 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
             assert row[
                 "controller_expected_worker_streamed_protocol_object_count"
             ] == expected_worker_count
+            expected_metadata_class = expected_metadata_classes.get(
+                row["category"]
+            )
+            if expected_metadata_class is None:
+                assert row[
+                    "controller_expected_fixed_width_size_class_sha256"
+                ] is None
+                assert row["controller_expected_serialized_byte_count"] is None
+            else:
+                expected_metadata_bytes = expected_metadata_class[
+                    "serialized_byte_count"
+                ]
+                assert row[
+                    "controller_expected_fixed_width_size_class_sha256"
+                ] == day1b_metadata_size_class_sha256(row["category"])
+                assert row[
+                    "controller_expected_serialized_byte_count"
+                ] == expected_metadata_bytes
+                assert row["charged_byte_count"] == (
+                    expected_worker_count * expected_metadata_bytes
+                )
+                assert row["serialization_equivalence_class_count"] == int(
+                    expected_worker_count > 0
+                )
             if row["category"] in worker_protocol.DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES:
                 assert row["charge_authority"] == ("controller-anchored-day2-size-class")
                 assert row["charged_byte_count"] == 0
@@ -2198,6 +2271,46 @@ def test_day1b_verifier_rejects_rehashed_open_input_binding_splice(
 
 
 @pytest.mark.parametrize(
+    "category",
+    (
+        "update-column-index-synchronization",
+        "update-version-plan-metadata",
+        "query-version-plan-metadata",
+    ),
+)
+def test_day1b_verifier_rejects_rehashed_metadata_size_class_byte_splice(
+    tmp_path: Path,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+    category: str,
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    root = tmp_path / category
+    shutil.copytree(bundle.output_dir, root)
+    manifest = json.loads((root / "publication-day1b-unit-manifest.json").read_bytes())
+    receipt = manifest["cell_execution_receipts"][0]["candidate_cell_receipts"][0]
+    input_document = receipt["input_binding_document"]
+    expected_document = input_document["controller_expected_counts_document"]
+    size_class = next(
+        item
+        for item in expected_document["fixed_width_metadata_size_classes"]
+        if item["category"] == category
+    )
+    size_class["serialized_byte_count"] += 1
+    input_document["controller_expected_counts_sha256"] = _sha(expected_document)
+    _rehash_open_input_receipt(receipt)
+    _rewrite_manifest_and_checksums(root, manifest)
+
+    with pytest.raises(ValueError, match="open exact input binding"):
+        verify_existing_directory(
+            root,
+            verifier=lambda view: day1b_module._verify_day1b_unit_view(
+                view,
+                artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+            ),
+        )
+
+
+@pytest.mark.parametrize(
     ("mutation", "message"),
     (
         ("unit-day2-scalar", "Day 2 authority"),
@@ -2311,6 +2424,8 @@ def test_day1b_verifier_rejects_rehashed_authority_policy_and_preimage_splices(
         ("controller-class", "controller F1-M charge document changed"),
         ("inclusive-total", "worker, controller, or inclusive totals"),
         ("ledger-v1", "serialization-ledger schema changed"),
+        ("metadata-class-root", "metadata ledger row differs"),
+        ("metadata-class-size", "metadata ledger row differs"),
         ("receipt-root", "input binding retargets"),
         ("non-f1m-controller-authority", "non-F1-M ledger row claims"),
         (
@@ -2364,6 +2479,19 @@ def test_day1b_verifier_rejects_rehashed_dual_source_ledger_splices(
                 not in worker_protocol.DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
             )
             target_row["charge_authority"] = "controller-anchored-day2-size-class"
+        elif mutation in {"metadata-class-root", "metadata-class-size"}:
+            target_ledger = ledgers[0]
+            target_row = next(
+                row
+                for row in target_ledger["categories"]
+                if row["controller_expected_serialized_byte_count"] is not None
+            )
+            if mutation == "metadata-class-root":
+                target_row[
+                    "controller_expected_fixed_width_size_class_sha256"
+                ] = "f" * 64
+            else:
+                target_row["controller_expected_serialized_byte_count"] += 1
         elif mutation == "f1m-worker-quantity":
             target_ledger = ledgers[0]
             target_row = next(
@@ -3324,10 +3452,56 @@ def test_mixed_retained_phase_outcome_keeps_complete_charge_and_nulls_failure(
 
 
 @pytest.mark.parametrize("outcome_path", ("controller-terminal", "mixed-failure"))
-def test_verifier_rejects_rehashed_incomplete_formal_f1m_worker_count_splice(
+def test_verifier_rejects_self_consistent_incomplete_formal_f1m_worker_count_splice(
     tmp_path: Path,
     outcome_path: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    original_derive = day1b_module.derive_day1b_controller_expected_counts
+    original_formal_check = day1b_module.require_formal_day1b_f1m_worker_zero
+
+    def derive_materialized_incomplete_phase(
+        **kwargs: object,
+    ) -> expected_counts_module.Day1BControllerExpectedCounts:
+        expected = original_derive(**kwargs)
+        category_names = tuple(
+            category for category, _transaction in expected.serialized_categories
+        )
+        f1m_indices = tuple(
+            category_names.index(category)
+            for category in (
+                worker_protocol.DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
+            )
+        )
+        phases = []
+        for phase in expected.phases:
+            if phase.phase != "held-out":
+                phases.append(phase)
+                continue
+            worker_counts = list(phase.worker_streamed_protocol_object_counts)
+            for category_index in f1m_indices:
+                logical_count = phase.logical_protocol_object_counts[category_index]
+                if logical_count > 0:
+                    worker_counts[category_index] = logical_count
+                    break
+            phases.append(
+                replace(
+                    phase,
+                    worker_streamed_protocol_object_counts=tuple(worker_counts),
+                )
+            )
+        return replace(expected, phases=tuple(phases))
+
+    monkeypatch.setattr(
+        day1b_module,
+        "derive_day1b_controller_expected_counts",
+        derive_materialized_incomplete_phase,
+    )
+    monkeypatch.setattr(
+        day1b_module,
+        "require_formal_day1b_f1m_worker_zero",
+        lambda _expected: None,
+    )
     executor = _StreamingExecutor(tmp_path / "controlled-scratch")
     candidate_cell_count = (
         len(FRESHNESS_VALUES) * len(RHO_VALUES) * len(FIXED_CANDIDATE_IDS)
@@ -3343,15 +3517,22 @@ def test_verifier_rejects_rehashed_incomplete_formal_f1m_worker_count_splice(
         }
     bundle = _produce_publication_day1b_unit_for_test(
         trace=_trace(),
-        output_dir=tmp_path / "original",
+        output_dir=tmp_path / "self-consistent-malicious-unit",
         source_attestation=_source(),
         candidate_catalog=_catalog(),
         resource_policy=_resource_policy(),
         execution_adapter=executor,
     )
-    root = tmp_path / outcome_path
-    shutil.copytree(bundle.output_dir, root)
-    manifest = json.loads((root / "publication-day1b-unit-manifest.json").read_bytes())
+    bypassed_verification = verify_existing_directory(
+        bundle.output_dir,
+        verifier=lambda view: day1b_module._verify_day1b_unit_view(
+            view,
+            artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+        ),
+    )
+    assert bypassed_verification.cardinality == (18, 252, 486, 486)
+
+    manifest = json.loads(bundle.manifest_path.read_bytes())
     receipt = None
     expected_phase = None
     f1m_indices = None
@@ -3397,28 +3578,37 @@ def test_verifier_rejects_rehashed_incomplete_formal_f1m_worker_count_splice(
             if phase["phase"] == "held-out"
         )
         assert held_out_receipt["outcome"] == "failed"
-    input_document = receipt["input_binding_document"]
-    expected_document = input_document["controller_expected_counts_document"]
     changed = False
     for category_index in f1m_indices:
         logical_count = expected_phase["logical_protocol_object_counts"][category_index]
         if logical_count > 0:
-            expected_phase["worker_streamed_protocol_object_counts"][
-                category_index
-            ] = logical_count
+            assert (
+                expected_phase["worker_streamed_protocol_object_counts"][
+                    category_index
+                ]
+                == logical_count
+            )
             changed = True
             break
     assert changed, "fixture must expose one positive held-out formal F1-M route count"
-    input_document["controller_expected_counts_sha256"] = _sha(expected_document)
-    _rehash_open_input_receipt(receipt)
-    _rewrite_manifest_and_checksums(root, manifest)
+
+    monkeypatch.setattr(
+        day1b_module,
+        "derive_day1b_controller_expected_counts",
+        original_derive,
+    )
+    monkeypatch.setattr(
+        day1b_module,
+        "require_formal_day1b_f1m_worker_zero",
+        original_formal_check,
+    )
 
     with pytest.raises(
         ValueError,
         match="formal F1-M worker multiplicity must remain zero",
     ):
         verify_existing_directory(
-            root,
+            bundle.output_dir,
             verifier=lambda view: day1b_module._verify_day1b_unit_view(
                 view,
                 artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,

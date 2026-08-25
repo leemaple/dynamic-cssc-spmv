@@ -63,6 +63,7 @@ from dynamic_cssc.publication_day1b_expected_counts import (
     Day1BControllerExpectedCounts,
     derive_day1b_controller_expected_counts,
     require_formal_day1b_f1m_worker_zero,
+    require_formal_day1b_fixed_width_metadata_size_classes,
 )
 from dynamic_cssc.publication_day1b_f1m_aggregation import (
     DAY1B_F1M_ACCOUNTING_BASIS,
@@ -79,6 +80,11 @@ from dynamic_cssc.publication_day1b_f1m_aggregation import (
 )
 from dynamic_cssc.publication_day1b_f1m_aggregation import (
     Day1BSerializedObjectSizeAuthority as _Day1BSerializedObjectSizeAuthority,
+)
+from dynamic_cssc.publication_day1b_metadata_framing import (
+    DAY1B_FIXED_WIDTH_METADATA_CATEGORIES,
+    day1b_metadata_size_class_document,
+    day1b_metadata_size_class_sha256,
 )
 from dynamic_cssc.publication_day1b_worker_protocol import (
     DAY1B_WORKER_EXECUTION_BASIS,
@@ -142,7 +148,7 @@ _TEST_DAY1B_UNIT_FRAGMENT_SCHEMA = (
     "dynamic-cssc-publication-day1b-unit-fragment-private-test-fixture-v1"
 )
 DAY1B_SERIALIZATION_LEDGER_SCHEMA = (
-    "dynamic-cssc-publication-day1b-serialized-protocol-object-ledger-v3"
+    "dynamic-cssc-publication-day1b-serialized-protocol-object-ledger-v4"
 )
 DAY1B_SERIALIZED_OBJECT_SIZE_AUTHORITY_SCHEMA = (
     "dynamic-cssc-publication-day1b-serialized-object-size-authority-v1"
@@ -421,7 +427,9 @@ _CATEGORY_LEDGER_KEYS = frozenset(
         "charged_byte_count",
         "controller_charged_byte_count",
         "controller_charged_size_class",
+        "controller_expected_fixed_width_size_class_sha256",
         "controller_expected_logical_protocol_object_count",
+        "controller_expected_serialized_byte_count",
         "controller_expected_worker_streamed_protocol_object_count",
         "object_receipt_spool_line_count",
         "object_receipt_spool_start_line",
@@ -1419,7 +1427,7 @@ def _validate_preparatory_source_attestation(
         inventory.get("role") != EvidenceRole.DAY1B.value
         or inventory.get("source_git_sha") != source.git_sha
         or inventory.get("behavior_set_schema_version")
-        != "dynamic-cssc-day1b-preparatory-behavior-set-v15"
+        != "dynamic-cssc-day1b-preparatory-behavior-set-v16"
     ):
         raise ValueError(
             "preparatory source inventory must bind the DAY1B role, schema, and exact S1"
@@ -1801,6 +1809,9 @@ def _serialized_ledger(
         != f1m_controller_summary.context.accounting_sha256
     ):
         raise ValueError("serialized ledger changed its controller count authority")
+    require_formal_day1b_fixed_width_metadata_size_classes(
+        controller_expected_counts
+    )
     if phase not in f1m_controller_summary.retained_phases:
         raise ValueError("serialized ledger phase is absent from the F1-M controller summary")
     expected_phase = controller_expected_counts.phase_counts(phase)
@@ -1836,6 +1847,39 @@ def _serialized_ledger(
                 "controller_expected_worker_streamed_protocol_object_count": worker_count,
             }
         )
+        metadata_size_class = controller_expected_counts.metadata_size_class(
+            expected_name
+        )
+        if metadata_size_class is None:
+            row.update(
+                {
+                    "controller_expected_fixed_width_size_class_sha256": None,
+                    "controller_expected_serialized_byte_count": None,
+                }
+            )
+        else:
+            expected_class_count = int(worker_count > 0)
+            if (
+                category.charged_byte_count
+                != worker_count * metadata_size_class.serialized_byte_count
+                or category.serialization_equivalence_class_count
+                != expected_class_count
+                or category.object_receipt_spool_line_count
+                != expected_class_count
+            ):
+                raise ValueError(
+                    "fixed-width metadata receipt differs from controller size class"
+                )
+            row.update(
+                {
+                    "controller_expected_fixed_width_size_class_sha256": (
+                        metadata_size_class.metadata_size_class_sha256
+                    ),
+                    "controller_expected_serialized_byte_count": (
+                        metadata_size_class.serialized_byte_count
+                    ),
+                }
+            )
         if expected_name in DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES:
             if (
                 category.charged_byte_count != 0
@@ -3057,6 +3101,9 @@ def _verify_day1b_unit_view(
             require_formal_day1b_f1m_worker_zero(
                 input_contract.controller_expected_counts
             )
+            require_formal_day1b_fixed_width_metadata_size_classes(
+                input_contract.controller_expected_counts
+            )
             if candidate["receipt_origin"] == "worker-complete-transcript":
                 phase_documents = {
                     phase.get("phase"): phase
@@ -3608,6 +3655,15 @@ def _verify_day1b_unit_view(
         if multiplicity <= 0 or serialized_size <= 0 or charged != multiplicity * serialized_size:
             raise ValueError("Day1B object receipt charged-byte arithmetic changed")
         _require_sha256(serialized_object["serialized_sha256"], "serialized object digest")
+        if row["category"] in DAY1B_FIXED_WIDTH_METADATA_CATEGORIES:
+            size_class = day1b_metadata_size_class_document(str(row["category"]))
+            if (
+                size_class["transaction"] != row["transaction"]
+                or size_class["serialized_byte_count"] != serialized_size
+            ):
+                raise ValueError(
+                    "Day1B metadata object receipt changed its fixed-width size class"
+                )
         f1m_size_class = serialized_object["f1m_size_class"]
         if row["category"] in DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES:
             size_class = _exact_object(
@@ -3849,6 +3905,48 @@ def _verify_day1b_unit_view(
                 raise ValueError(
                     "Day1B ledger category differs from controller expected multiplicity"
                 )
+            expected_metadata_size_class = (
+                controller_expected_counts.metadata_size_class(expected_pair[0])
+            )
+            documented_metadata_size = category[
+                "controller_expected_serialized_byte_count"
+            ]
+            documented_metadata_root = category[
+                "controller_expected_fixed_width_size_class_sha256"
+            ]
+            if expected_metadata_size_class is None:
+                if (
+                    documented_metadata_size is not None
+                    or documented_metadata_root is not None
+                ):
+                    raise ValueError(
+                        "non-metadata ledger row claims a fixed-width size class"
+                    )
+            else:
+                expected_metadata_class_count = int(
+                    controller_expected_worker_count > 0
+                )
+                if (
+                    documented_metadata_size
+                    != expected_metadata_size_class.serialized_byte_count
+                    or _require_sha256(
+                        documented_metadata_root,
+                        "ledger fixed-width metadata size-class digest",
+                    )
+                    != expected_metadata_size_class.metadata_size_class_sha256
+                    or documented_metadata_root
+                    != day1b_metadata_size_class_sha256(expected_pair[0])
+                    or expected_metadata_size_class.transaction
+                    != expected_pair[1]
+                    or charged_byte_count
+                    != controller_expected_worker_count
+                    * expected_metadata_size_class.serialized_byte_count
+                    or equivalence_class_count != expected_metadata_class_count
+                    or line_count != expected_metadata_class_count
+                ):
+                    raise ValueError(
+                        "Day1B metadata ledger row differs from its fixed-width size class"
+                    )
             key = (binding, str(record["phase"]), expected_pair[0])
             observed = category_facts.get(key)
             observed_count = 0 if observed is None else observed.line_count
@@ -4344,6 +4442,9 @@ class _Day1BWorkerContractSeed:
         if type(self.controller_expected_counts) is not Day1BControllerExpectedCounts:
             raise TypeError("worker seed requires one exact controller count preimage")
         require_formal_day1b_f1m_worker_zero(self.controller_expected_counts)
+        require_formal_day1b_fixed_width_metadata_size_classes(
+            self.controller_expected_counts
+        )
         summary = self.f1m_controller_summary
         expected_counts = self.controller_expected_counts
         context = summary.context
