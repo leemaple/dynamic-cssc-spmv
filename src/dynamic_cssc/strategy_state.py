@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from collections import Counter
 from dataclasses import dataclass, replace
 from math import ceil, isfinite
@@ -9,6 +10,7 @@ from dynamic_cssc.cssc import (
     LaneKind,
     PublishedComponent,
     SlotLocation,
+    _publish_validated_component,
     output_plan_for,
     publish_component,
 )
@@ -84,6 +86,24 @@ class FreeLane:
 
 
 @dataclass(frozen=True, slots=True)
+class _LanePatch:
+    location: SlotLocation
+    original_coordinate: Coordinate | None
+    original_kind: LaneKind
+    owner_row: int
+    coordinate: Coordinate | None
+    value: int
+    column_index: int
+    kind: LaneKind
+
+
+@dataclass(frozen=True, slots=True)
+class _ComponentInspection:
+    decoded: dict[Coordinate, int]
+    free_lanes: tuple[FreeLane, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class PackedCOOEntry:
     coordinate: Coordinate
     value: int
@@ -124,6 +144,37 @@ class StrongStrategyState:
     base: PublishedComponent
     delta: SegmentedDeltaState
     free_lanes: tuple[FreeLane, ...]
+
+
+_VALIDATED_PREDECESSOR_TOKEN = object()
+
+
+class _ValidatedPredecessor:
+    """One-use proof that an internal simulator owns an already checked state."""
+
+    __slots__ = ("_consumed", "_state")
+
+    def __init__(self, token: object, state: StrategyState | StrongStrategyState) -> None:
+        if token is not _VALIDATED_PREDECESSOR_TOKEN:
+            raise TypeError("validated predecessors are minted only by the state module")
+        self._state = state
+        self._consumed = False
+
+    def __bool__(self) -> bool:
+        raise TypeError("a validated predecessor is not a Boolean")
+
+    def consume(self, state: StrategyState | StrongStrategyState) -> None:
+        if self._consumed or state is not self._state:
+            raise ValueError("validated predecessor is stale, replayed, or for another state")
+        self._consumed = True
+
+
+def _validated_predecessor(
+    state: StrategyState | StrongStrategyState,
+) -> _ValidatedPredecessor:
+    if type(state) not in {StrategyState, StrongStrategyState}:
+        raise TypeError("validated predecessor state has the wrong type")
+    return _ValidatedPredecessor(_VALIDATED_PREDECESSOR_TOKEN, state)
 
 
 @dataclass(frozen=True, slots=True)
@@ -382,6 +433,24 @@ def _free_lanes(component: PublishedComponent) -> tuple[FreeLane, ...]:
     )
 
 
+_FREE_LANE_KIND_ORDER = {"tombstone": 0, "natural-padding": 1, "reserved": 2}
+
+
+def _free_lane_key(lane: FreeLane) -> tuple[int, int, SlotLocation]:
+    return (lane.row, _FREE_LANE_KIND_ORDER[lane.kind], lane.location)
+
+
+def _insert_free_lane(lanes: list[FreeLane], lane: FreeLane) -> None:
+    index = bisect_right(lanes, _free_lane_key(lane), key=_free_lane_key)
+    lanes.insert(index, lane)
+
+
+def _available_slot_key(
+    item: tuple[int, LaneKind, SlotLocation],
+) -> tuple[str, int]:
+    return item[2][1], item[2][2]
+
+
 def _reindex_component(component: PublishedComponent) -> PublishedComponent:
     placements: list[tuple[Coordinate, SlotLocation]] = []
     available: list[tuple[int, LaneKind, SlotLocation]] = []
@@ -423,42 +492,108 @@ def _reindex_component(component: PublishedComponent) -> PublishedComponent:
     )
 
 
-def _patch_lane(
+def _patch_lanes(
     component: PublishedComponent,
-    location: SlotLocation,
-    *,
-    coordinate: Coordinate | None,
-    value: int,
-    column_index: int,
-    kind: LaneKind,
+    patches: tuple[_LanePatch, ...],
 ) -> PublishedComponent:
-    if location[0] != component.component_id:
-        raise AssertionError("slot location belongs to another component")
-    found = False
+    """Apply one window's lane changes with one copy of each touched chunk."""
+
+    if not patches:
+        return component
+    by_chunk: dict[str, dict[int, _LanePatch]] = {}
+    for patch in patches:
+        if patch.location[0] != component.component_id:
+            raise AssertionError("slot location belongs to another component")
+        chunk_patches = by_chunk.setdefault(patch.location[1], {})
+        if patch.location[2] in chunk_patches:
+            raise AssertionError("one lane may have only one final patch per window")
+        chunk_patches[patch.location[2]] = patch
+
+    coordinate_slots = list(component._coordinate_slots)
+    available_slots = list(component._available_slots)
     blocks = []
+    found_chunks: set[str] = set()
     for block in component.blocks:
         chunks = []
-        extended_row: int | None = None
+        capacity_increments: Counter[int] = Counter()
         for chunk in block.chunks:
-            if chunk.chunk_id != location[1]:
+            chunk_patches = by_chunk.get(chunk.chunk_id)
+            if chunk_patches is None:
                 chunks.append(chunk)
                 continue
-            slot = location[2]
-            if not 0 <= slot < component.layout_spec.effective_slots:
-                raise AssertionError("slot location is outside the ciphertext")
+            found_chunks.add(chunk.chunk_id)
             values = list(chunk.values)
             columns = list(chunk.column_indices)
             coordinates = list(chunk.slot_coordinates)
             kinds = list(chunk.slot_kinds)
-            previous_kind = kinds[slot]
-            values[slot] = value
-            columns[slot] = column_index
-            coordinates[slot] = coordinate
-            kinds[slot] = kind
-            if previous_kind == "natural-padding" and kind == "actual":
-                extended_row = chunk.slot_owner_rows[slot]
-                if extended_row is None:
-                    raise AssertionError("natural padding must have a row owner")
+            for slot, patch in sorted(chunk_patches.items()):
+                if not 0 <= slot < component.layout_spec.effective_slots:
+                    raise AssertionError("slot location is outside the ciphertext")
+                if (
+                    kinds[slot] != patch.original_kind
+                    or coordinates[slot] != patch.original_coordinate
+                    or chunk.slot_owner_rows[slot] != patch.owner_row
+                ):
+                    raise AssertionError("lane patch does not match the validated base")
+                values[slot] = patch.value
+                columns[slot] = patch.column_index
+                coordinates[slot] = patch.coordinate
+                kinds[slot] = patch.kind
+                if patch.original_kind == "natural-padding" and patch.kind == "actual":
+                    capacity_increments[patch.owner_row] += 1
+
+                if patch.original_coordinate != patch.coordinate:
+                    if patch.original_coordinate is not None:
+                        coordinate_index = bisect_left(
+                            coordinate_slots,
+                            patch.original_coordinate,
+                            key=lambda entry: entry[0],
+                        )
+                        if (
+                            coordinate_index >= len(coordinate_slots)
+                            or coordinate_slots[coordinate_index]
+                            != (patch.original_coordinate, patch.location)
+                        ):
+                            raise AssertionError("coordinate index does not name the patched lane")
+                        coordinate_slots.pop(coordinate_index)
+                    if patch.coordinate is not None:
+                        coordinate_index = bisect_left(
+                            coordinate_slots,
+                            patch.coordinate,
+                            key=lambda entry: entry[0],
+                        )
+                        if (
+                            coordinate_index < len(coordinate_slots)
+                            and coordinate_slots[coordinate_index][0] == patch.coordinate
+                        ):
+                            raise AssertionError("patched coordinate already has a physical lane")
+                        coordinate_slots.insert(
+                            coordinate_index,
+                            (patch.coordinate, patch.location),
+                        )
+
+                original_available = patch.original_kind in _FREE_LANE_KIND_ORDER
+                final_available = patch.kind in _FREE_LANE_KIND_ORDER
+                if original_available:
+                    available_index = bisect_left(
+                        available_slots,
+                        _available_slot_key((patch.owner_row, patch.original_kind, patch.location)),
+                        key=_available_slot_key,
+                    )
+                    if (
+                        available_index >= len(available_slots)
+                        or available_slots[available_index][2] != patch.location
+                    ):
+                        raise AssertionError("available-lane index does not name the patched lane")
+                    available_slots.pop(available_index)
+                if final_available:
+                    item = (patch.owner_row, patch.kind, patch.location)
+                    available_index = bisect_left(
+                        available_slots,
+                        _available_slot_key(item),
+                        key=_available_slot_key,
+                    )
+                    available_slots.insert(available_index, item)
             chunks.append(
                 replace(
                     chunk,
@@ -466,13 +601,15 @@ def _patch_lane(
                     column_indices=tuple(columns),
                     slot_coordinates=tuple(coordinates),
                     slot_kinds=tuple(kinds),
+                    used_slots=sum(item == "actual" for item in kinds),
+                    reserved_slots=sum(item == "reserved" for item in kinds),
                 )
             )
-            found = True
         capacities = list(block.physical_row_capacities)
-        if extended_row is not None:
-            physical_row = block.row_map.index(extended_row)
-            capacities[physical_row] += 1
+        if capacity_increments:
+            physical_rows = {row: index for index, row in enumerate(block.row_map)}
+            for row, increment in capacity_increments.items():
+                capacities[physical_rows[row]] += increment
         blocks.append(
             replace(
                 block,
@@ -480,9 +617,14 @@ def _patch_lane(
                 chunks=tuple(chunks),
             )
         )
-    if not found:
-        raise AssertionError("slot location does not name an active chunk")
-    return _reindex_component(replace(component, blocks=tuple(blocks)))
+    if found_chunks != set(by_chunk):
+        raise AssertionError("lane patch does not name an active chunk")
+    return replace(
+        component,
+        blocks=tuple(blocks),
+        _coordinate_slots=tuple(coordinate_slots),
+        _available_slots=tuple(available_slots),
+    )
 
 
 def _chunk_block_ids(component: PublishedComponent) -> dict[str, str]:
@@ -504,8 +646,12 @@ def _point_patch_base(
     list[SlotLocation],
     Counter[str],
     list[Coordinate],
+    tuple[FreeLane, ...],
 ]:
     base = state.base
+    coordinate_slots = base.coord_to_slot
+    free_lanes = list(state.free_lanes)
+    patches: dict[SlotLocation, _LanePatch] = {}
     patched_chunks: set[tuple[str, str]] = set()
     ci_patch_locations: list[SlotLocation] = []
     absorbed: Counter[str] = Counter()
@@ -523,14 +669,42 @@ def _point_patch_base(
         update for update in updates if update.before == 0 and update.after != 0
     )
 
+    def record_patch(
+        *,
+        location: SlotLocation,
+        original_coordinate: Coordinate | None,
+        original_kind: LaneKind,
+        owner_row: int,
+        coordinate: Coordinate | None,
+        value: int,
+        column_index: int,
+        kind: LaneKind,
+    ) -> None:
+        previous = patches.get(location)
+        if previous is not None:
+            original_coordinate = previous.original_coordinate
+            original_kind = previous.original_kind
+        patches[location] = _LanePatch(
+            location=location,
+            original_coordinate=original_coordinate,
+            original_kind=original_kind,
+            owner_row=owner_row,
+            coordinate=coordinate,
+            value=value,
+            column_index=column_index,
+            kind=kind,
+        )
+
     for update in modifications:
         coordinate = (update.row, update.col)
-        location = base.coord_to_slot.get(coordinate)
+        location = coordinate_slots.get(coordinate)
         if location is None:
             raise AssertionError("a base modification must name an actual lane")
-        base = _patch_lane(
-            base,
-            location,
+        record_patch(
+            location=location,
+            original_coordinate=coordinate,
+            original_kind="actual",
+            owner_row=update.row,
             coordinate=coordinate,
             value=update.after,
             column_index=update.col,
@@ -540,16 +714,27 @@ def _point_patch_base(
 
     for update in deletions:
         coordinate = (update.row, update.col)
-        location = base.coord_to_slot.get(coordinate)
+        location = coordinate_slots.get(coordinate)
         if location is None:
             raise AssertionError("a base deletion must name an actual lane")
-        base = _patch_lane(
-            base,
-            location,
+        record_patch(
+            location=location,
+            original_coordinate=coordinate,
+            original_kind="actual",
+            owner_row=update.row,
             coordinate=None,
             value=0,
             column_index=update.col,
             kind="tombstone",
+        )
+        _insert_free_lane(
+            free_lanes,
+            FreeLane(
+                row=update.row,
+                kind="tombstone",
+                location=location,
+                retained_column=update.col,
+            ),
         )
         patched_chunks.add((location[0], location[1]))
 
@@ -557,27 +742,46 @@ def _point_patch_base(
     if allow_reserved:
         allowed_kinds.add("reserved")
     for update in insertions:
-        available = tuple(
-            item
-            for item in _free_lanes(base)
-            if item.row == update.row and item.kind in allowed_kinds
+        row_start = bisect_left(
+            free_lanes,
+            (update.row, 0),
+            key=lambda lane: (lane.row, _FREE_LANE_KIND_ORDER[lane.kind]),
         )
-        lane = next(
+        row_stop = bisect_right(
+            free_lanes,
+            (update.row, len(_FREE_LANE_KIND_ORDER) - 1),
+            key=lambda lane: (lane.row, _FREE_LANE_KIND_ORDER[lane.kind]),
+        )
+        lane_index = next(
             (
-                item
-                for item in available
-                if item.kind == "tombstone"
+                index
+                for index in range(row_start, row_stop)
+                if (item := free_lanes[index]).kind == "tombstone"
                 and item.retained_column == update.col
+                and item.kind in allowed_kinds
             ),
             None,
         )
-        lane = lane or next(iter(available), None)
-        if lane is None:
+        lane_index = lane_index if lane_index is not None else next(
+            (
+                index
+                for index in range(row_start, row_stop)
+                if free_lanes[index].kind in allowed_kinds
+            ),
+            None,
+        )
+        if lane_index is None:
             overflow.append((update.row, update.col))
             continue
-        base = _patch_lane(
-            base,
-            lane.location,
+        lane = free_lanes.pop(lane_index)
+        previous = patches.get(lane.location)
+        record_patch(
+            location=lane.location,
+            original_coordinate=(
+                previous.original_coordinate if previous is not None else None
+            ),
+            original_kind=(previous.original_kind if previous is not None else lane.kind),
+            owner_row=update.row,
             coordinate=(update.row, update.col),
             value=update.after,
             column_index=update.col,
@@ -587,7 +791,15 @@ def _point_patch_base(
         if lane.kind != "tombstone" or lane.retained_column != update.col:
             ci_patch_locations.append(lane.location)
         patched_chunks.add((lane.location[0], lane.location[1]))
-    return base, patched_chunks, ci_patch_locations, absorbed, overflow
+    base = _patch_lanes(base, tuple(patches.values()))
+    return (
+        base,
+        patched_chunks,
+        ci_patch_locations,
+        absorbed,
+        overflow,
+        tuple(free_lanes),
+    )
 
 
 def _physical_capacities_for(
@@ -605,7 +817,7 @@ def _rebuild_base_blocks(
     dirty_blocks: set[int],
     version_id: str,
 ) -> tuple[PublishedComponent, int, int, tuple[str, ...]]:
-    published = publish_component(
+    published = _publish_validated_component(
         logical,
         rows=state.config.rows,
         cols=state.config.cols,
@@ -851,10 +1063,15 @@ def _assert_strong_strategy_invariants(state: StrongStrategyState) -> None:
         state.config.matrix_value_bound,
     ):
         raise AssertionError("strong delta dimensions must match the strategy config")
-    _assert_component_invariants(state.base, state.config)
-    if state.free_lanes != _free_lanes(state.base):
+    base_inspection = _assert_component_invariants(state.base, state.config)
+    if state.free_lanes != base_inspection.free_lanes:
         raise AssertionError("free-lane metadata must match the base component")
-    if _decode_strong_layout(state) != state.logical:
+    decoded = dict(base_inspection.decoded)
+    for coordinate, value in decode_segmented_delta(state.delta).items():
+        if coordinate in decoded:
+            raise AssertionError("base and strong delta coordinates must be disjoint")
+        decoded[coordinate] = value
+    if decoded != state.logical:
         raise AssertionError("decoded base and strong delta must equal the logical matrix")
     _validate_logical(state.logical, state.config)
 
@@ -883,14 +1100,19 @@ def assert_strategy_invariants(state: StrategyState) -> None:
         raise AssertionError("delta component version must match the strategy version")
     if any(segment.version_id != state.version_id for segment in state.coo_segments):
         raise AssertionError("COO segment versions must match the strategy version")
-    for component in (state.base,) if state.delta is None else (state.base, state.delta):
-        _assert_component_invariants(component, state.config)
+    base_inspection = _assert_component_invariants(state.base, state.config)
+    delta_inspection = (
+        _assert_component_invariants(state.delta, state.config)
+        if state.delta is not None
+        else None
+    )
     if state.strategy not in {"Mini-CSSC-Delta", "PeriodicRepack"} and state.delta:
         raise AssertionError("only CSSC-delta strategies may own a delta component")
     if state.strategy != "Packed-COO-Client-Lane-Delta" and state.coo_segments:
         raise AssertionError("only Packed-COO may own fixed COO segments")
     segment_ids: set[str] = set()
     coo_coordinates: set[Coordinate] = set()
+    coo_decoded: dict[Coordinate, int] = {}
     for segment in state.coo_segments:
         if segment.segment_id in segment_ids:
             raise AssertionError("COO segment identifiers must be unique")
@@ -906,6 +1128,7 @@ def assert_strategy_invariants(state: StrategyState) -> None:
                 raise AssertionError("COO coordinates must have one physical owner")
             if entry.value != 0:
                 coo_coordinates.add(entry.coordinate)
+                coo_decoded[entry.coordinate] = entry.value
             row, col = entry.coordinate
             if not 0 <= row < state.config.rows or not 0 <= col < state.config.cols:
                 raise AssertionError("COO coordinate is outside the matrix")
@@ -914,25 +1137,26 @@ def assert_strategy_invariants(state: StrategyState) -> None:
                 or abs(entry.value) > state.config.matrix_value_bound
             ):
                 raise AssertionError("COO value violates the matrix value bound")
-    if state.delta_logical != (
-        _decode_component(state.delta) if state.delta is not None else {
-            entry.coordinate: entry.value
-            for segment in state.coo_segments
-            for entry in segment.entries
-            if entry is not None and entry.value != 0
-        }
-    ):
+    persistent_delta = (
+        delta_inspection.decoded if delta_inspection is not None else coo_decoded
+    )
+    if state.delta_logical != persistent_delta:
         raise AssertionError("persistent delta metadata must match its layout")
-    if state.free_lanes != _free_lanes(state.base):
+    if state.free_lanes != base_inspection.free_lanes:
         raise AssertionError("free-lane metadata must match the base component")
-    if decode_state(state) != state.logical:
+    decoded = dict(base_inspection.decoded)
+    for coordinate, value in persistent_delta.items():
+        if coordinate in decoded:
+            raise AssertionError("base and delta coordinates must be disjoint")
+        decoded[coordinate] = value
+    if decoded != state.logical:
         raise AssertionError("decoded components must equal the logical matrix")
     _validate_logical(state.logical, state.config)
 
 
 def _assert_component_invariants(
     component: PublishedComponent, config: StrategyConfig | StrongStrategyConfig
-) -> None:
+) -> _ComponentInspection:
     spec = component.layout_spec
     if (
         spec.rows,
@@ -947,79 +1171,105 @@ def _assert_component_invariants(
     ):
         raise AssertionError("component layout specification must match strategy config")
     scanned: dict[Coordinate, SlotLocation] = {}
+    decoded: dict[Coordinate, int] = {}
+    free_lanes: list[FreeLane] = []
+    available_slots: list[tuple[int, LaneKind, SlotLocation]] = []
     for block in component.blocks:
         materialized_width = {row: 0 for row in block.row_map}
         for chunk in block.chunks:
-            for slot, (kind, owner) in enumerate(
-                zip(chunk.slot_kinds, chunk.slot_owner_rows, strict=True)
-            ):
-                if kind not in {"actual", "tombstone", "reserved"}:
-                    continue
-                if owner not in materialized_width:
-                    raise AssertionError("materialized lane owner must belong to its block")
-                rank = chunk.start_column + slot // chunk.height
-                materialized_width[owner] = max(
-                    materialized_width[owner], rank + 1
+            lane_lengths = {
+                len(chunk.values),
+                len(chunk.column_indices),
+                len(chunk.slot_coordinates),
+                len(chunk.slot_owner_rows),
+                len(chunk.slot_kinds),
+            }
+            if lane_lengths != {config.effective_slots}:
+                raise AssertionError(
+                    "each component chunk must contain full-length lane arrays"
                 )
+            actual_count = 0
+            reserved_count = 0
+            for slot, (kind, value, col, coordinate, owner) in enumerate(
+                zip(
+                    chunk.slot_kinds,
+                    chunk.values,
+                    chunk.column_indices,
+                    chunk.slot_coordinates,
+                    chunk.slot_owner_rows,
+                    strict=True,
+                )
+            ):
+                location = (component.component_id, chunk.chunk_id, slot)
+                if kind in {"actual", "tombstone", "reserved"}:
+                    if owner not in materialized_width:
+                        raise AssertionError(
+                            "materialized lane owner must belong to its block"
+                        )
+                    rank = chunk.start_column + slot // chunk.height
+                    materialized_width[owner] = max(
+                        materialized_width[owner], rank + 1
+                    )
+                if kind == "actual":
+                    actual_count += 1
+                    if (
+                        owner is None
+                        or coordinate != (owner, col)
+                        or not 0 <= owner < config.rows
+                        or not 0 <= col < config.cols
+                        or not _is_strict_int(value)
+                        or value == 0
+                        or abs(value) > config.matrix_value_bound
+                    ):
+                        raise AssertionError("actual lane metadata is inconsistent")
+                    if coordinate in scanned:
+                        raise AssertionError(
+                            "actual coordinates must have one physical lane"
+                        )
+                    scanned[coordinate] = location
+                    decoded[coordinate] = value
+                elif kind == "tombstone":
+                    if (
+                        owner is None
+                        or coordinate is not None
+                        or value != 0
+                        or not 0 <= col < config.cols
+                    ):
+                        raise AssertionError(
+                            "tombstone must retain only its old ColumnIndex"
+                        )
+                    free_lanes.append(
+                        FreeLane(owner, kind, location, retained_column=col)
+                    )
+                    available_slots.append((owner, kind, location))
+                elif kind in {"natural-padding", "reserved"}:
+                    reserved_count += kind == "reserved"
+                    if owner is None or coordinate is not None or value != 0 or col != -1:
+                        raise AssertionError("free CSSC lane metadata is inconsistent")
+                    free_lanes.append(FreeLane(owner, kind, location))
+                    available_slots.append((owner, kind, location))
+                elif kind == "tail":
+                    if owner is not None or coordinate is not None or value != 0 or col != -1:
+                        raise AssertionError("tail lanes must be unowned and inert")
+                else:
+                    raise AssertionError(f"unknown component lane kind: {kind}")
+            if chunk.used_slots != actual_count or chunk.reserved_slots != reserved_count:
+                raise AssertionError("chunk lane counters must match its lane kinds")
         if block.physical_row_capacities != tuple(
             materialized_width[row] for row in block.row_map
         ):
             raise AssertionError(
                 "physical row capacities must match materialized lane ranks"
             )
-    for chunk in component.chunks:
-        lane_lengths = {
-            len(chunk.values),
-            len(chunk.column_indices),
-            len(chunk.slot_coordinates),
-            len(chunk.slot_owner_rows),
-            len(chunk.slot_kinds),
-        }
-        if lane_lengths != {config.effective_slots}:
-            raise AssertionError("each component chunk must contain full-length lane arrays")
-        for slot, (kind, value, col, coordinate, owner) in enumerate(
-            zip(
-                chunk.slot_kinds,
-                chunk.values,
-                chunk.column_indices,
-                chunk.slot_coordinates,
-                chunk.slot_owner_rows,
-                strict=True,
-            )
-        ):
-            location = (component.component_id, chunk.chunk_id, slot)
-            if kind == "actual":
-                if (
-                    owner is None
-                    or coordinate != (owner, col)
-                    or not 0 <= owner < config.rows
-                    or not 0 <= col < config.cols
-                    or not _is_strict_int(value)
-                    or value == 0
-                    or abs(value) > config.matrix_value_bound
-                ):
-                    raise AssertionError("actual lane metadata is inconsistent")
-                if coordinate in scanned:
-                    raise AssertionError("actual coordinates must have one physical lane")
-                scanned[coordinate] = location
-            elif kind == "tombstone":
-                if (
-                    owner is None
-                    or coordinate is not None
-                    or value != 0
-                    or not 0 <= col < config.cols
-                ):
-                    raise AssertionError("tombstone must retain only its old ColumnIndex")
-            elif kind in {"natural-padding", "reserved"}:
-                if owner is None or coordinate is not None or value != 0 or col != -1:
-                    raise AssertionError("free CSSC lane metadata is inconsistent")
-            elif kind == "tail":
-                if owner is not None or coordinate is not None or value != 0 or col != -1:
-                    raise AssertionError("tail lanes must be unowned and inert")
-            else:
-                raise AssertionError(f"unknown component lane kind: {kind}")
-    if component.coord_to_slot != scanned:
+    expected_coordinate_slots = tuple(sorted(scanned.items()))
+    if component._coordinate_slots != expected_coordinate_slots:
         raise AssertionError("component coordinate index must match its actual lanes")
+    if component._available_slots != tuple(available_slots):
+        raise AssertionError("component available-lane index must match its free lanes")
+    return _ComponentInspection(
+        decoded=decoded,
+        free_lanes=tuple(sorted(free_lanes, key=_free_lane_key)),
+    )
 
 
 def _validated_candidate(
@@ -1028,6 +1278,7 @@ def _validated_candidate(
     if not isinstance(window, PublicationWindow):
         raise ValueError("window must be a PublicationWindow")
     seen: set[Coordinate] = set()
+    row_deltas: Counter[int] = Counter()
     candidate = dict(state.logical)
     for update in window.updates:
         if not isinstance(update, NetUpdate):
@@ -1051,19 +1302,43 @@ def _validated_candidate(
             raise ValueError("update.before does not match the published logical state")
         if abs(update.after) > state.config.matrix_value_bound:
             raise ValueError("update.after violates the matrix value bound")
+        if update.before == 0:
+            row_deltas[update.row] += 1
+        elif update.after == 0:
+            row_deltas[update.row] -= 1
         if update.after == 0:
             candidate.pop(coordinate, None)
         else:
             candidate[coordinate] = update.after
-    return _validate_logical(candidate, state.config)
+    if row_deltas and state.config.max_row_nnz < state.config.cols:
+        affected_rows = set(row_deltas)
+        row_counts: Counter[int] = Counter(
+            row for row, _col in state.logical if row in affected_rows
+        )
+        if any(
+            row_counts[row] + delta > state.config.max_row_nnz
+            for row, delta in row_deltas.items()
+        ):
+            raise ValueError("logical state violates the row nonzero bound")
+    return candidate
 
 
 def advance_publication(
-    state: StrategyState, window: PublicationWindow
+    state: StrategyState,
+    window: PublicationWindow,
+    *,
+    _predecessor: _ValidatedPredecessor | None = None,
 ) -> Transition:
     """Atomically advance one strategy by one causally closed publication window."""
 
-    assert_strategy_invariants(state)
+    trusted_replay = False
+    if _predecessor is None:
+        assert_strategy_invariants(state)
+    elif type(_predecessor) is _ValidatedPredecessor:
+        _predecessor.consume(state)
+        trusted_replay = True
+    else:
+        raise TypeError("_predecessor must be a repository-minted capability")
     candidate = _validated_candidate(state, window)
     if not _is_strict_int(window.query_count) or window.query_count < 0:
         raise ValueError("window.query_count must be a nonnegative strict integer")
@@ -1083,7 +1358,7 @@ def advance_publication(
     version_ordinal = state.version_ordinal + 1
     version_id = f"v{version_ordinal:08d}"
     if state.strategy in {"PaddingReuse-CSSC", "ReservedSlack-CSSC"}:
-        patched, patched_chunks, ci_locations, absorbed, overflow = (
+        patched, patched_chunks, ci_locations, absorbed, overflow, free_lanes = (
             _point_patch_base(
                 state,
                 window.updates,
@@ -1118,18 +1393,20 @@ def advance_publication(
             ) = _rebuild_base_blocks(
                 state, patched, candidate, dirty_blocks, version_id
             )
+            free_lanes = _free_lanes(base)
         else:
-            base = _reindex_component(replace(patched, version_id=version_id))
+            base = replace(patched, version_id=version_id)
         new_state = replace(
             state,
             version_ordinal=version_ordinal,
             version_id=version_id,
             logical=dict(candidate),
             base=base,
-            free_lanes=_free_lanes(base),
+            free_lanes=free_lanes,
             repack_count=state.repack_count + bool(dirty_blocks),
         )
-        assert_strategy_invariants(new_state)
+        if not trusted_replay:
+            assert_strategy_invariants(new_state)
         facts = TransitionFacts(
             updates=len(window.updates),
             query_count=window.query_count,
@@ -1159,6 +1436,7 @@ def advance_publication(
                 candidate,
                 version_ordinal=version_ordinal,
                 version_id=version_id,
+                check_invariants=not trusted_replay,
             )
         return _advance_cssc_delta(
             state,
@@ -1166,6 +1444,7 @@ def advance_publication(
             candidate,
             version_ordinal=version_ordinal,
             version_id=version_id,
+            check_invariants=not trusted_replay,
         )
     if state.strategy == "Strict-LocalRepack":
         return _advance_local_repack(
@@ -1174,6 +1453,7 @@ def advance_publication(
             candidate,
             version_ordinal=version_ordinal,
             version_id=version_id,
+            check_invariants=not trusted_replay,
         )
     if state.strategy == "Packed-COO-Client-Lane-Delta":
         return _advance_packed_coo(
@@ -1182,6 +1462,7 @@ def advance_publication(
             candidate,
             version_ordinal=version_ordinal,
             version_id=version_id,
+            check_invariants=not trusted_replay,
         )
     raise NotImplementedError(
         f"publication transition is not implemented for {state.strategy}"
@@ -1209,6 +1490,7 @@ def _validated_strong_candidate(
         raise ValueError("window.reason must be a non-empty string")
 
     seen: set[Coordinate] = set()
+    row_deltas: Counter[int] = Counter()
     candidate = dict(state.logical)
     for update in window.updates:
         if not isinstance(update, NetUpdate):
@@ -1232,19 +1514,43 @@ def _validated_strong_candidate(
             raise ValueError("update.before does not match the published logical state")
         if abs(update.after) > state.config.matrix_value_bound:
             raise ValueError("update.after violates the matrix value bound")
+        if update.before == 0:
+            row_deltas[update.row] += 1
+        elif update.after == 0:
+            row_deltas[update.row] -= 1
         if update.after == 0:
             candidate.pop(coordinate, None)
         else:
             candidate[coordinate] = update.after
-    return _validate_logical(candidate, state.config)
+    if row_deltas and state.config.max_row_nnz < state.config.cols:
+        affected_rows = set(row_deltas)
+        row_counts: Counter[int] = Counter(
+            row for row, _col in state.logical if row in affected_rows
+        )
+        if any(
+            row_counts[row] + delta > state.config.max_row_nnz
+            for row, delta in row_deltas.items()
+        ):
+            raise ValueError("logical state violates the row nonzero bound")
+    return candidate
 
 
 def advance_strong_publication(
-    state: StrongStrategyState, window: PublicationWindow
+    state: StrongStrategyState,
+    window: PublicationWindow,
+    *,
+    _predecessor: _ValidatedPredecessor | None = None,
 ) -> StrongTransition:
     """Atomically advance the unregistered strong strategy by one publication window."""
 
-    _assert_strong_strategy_invariants(state)
+    trusted_replay = False
+    if _predecessor is None:
+        _assert_strong_strategy_invariants(state)
+    elif type(_predecessor) is _ValidatedPredecessor:
+        _predecessor.consume(state)
+        trusted_replay = True
+    else:
+        raise TypeError("_predecessor must be a repository-minted capability")
     candidate = _validated_strong_candidate(state, window)
     if not window.updates:
         bundle = _compile_strong_bundle(state.base, state.delta)
@@ -1274,7 +1580,14 @@ def advance_strong_publication(
         else:
             base_updates.append(update)
 
-    patched_base, patched_chunks, base_ci_locations, absorbed, overflow = (
+    (
+        patched_base,
+        patched_chunks,
+        base_ci_locations,
+        absorbed,
+        overflow,
+        free_lanes,
+    ) = (
         _point_patch_base(
             state,
             tuple(base_updates),
@@ -1292,7 +1605,7 @@ def advance_strong_publication(
         ),
         version_id=version_id,
     )
-    base = _reindex_component(replace(patched_base, version_id=version_id))
+    base = replace(patched_base, version_id=version_id)
     new_state = StrongStrategyState(
         config=state.config,
         version_ordinal=version_ordinal,
@@ -1300,9 +1613,10 @@ def advance_strong_publication(
         logical=dict(candidate),
         base=base,
         delta=delta_transition.state,
-        free_lanes=_free_lanes(base),
+        free_lanes=free_lanes,
     )
-    _assert_strong_strategy_invariants(new_state)
+    if not trusted_replay:
+        _assert_strong_strategy_invariants(new_state)
     bundle = _compile_strong_bundle(new_state.base, new_state.delta)
     component_ids = [new_state.base.component_id]
     if new_state.delta.segments:
@@ -1390,7 +1704,7 @@ def _publish_delta(
 ) -> PublishedComponent | None:
     if not delta_logical:
         return None
-    return publish_component(
+    return _publish_validated_component(
         delta_logical,
         rows=state.config.rows,
         cols=state.config.cols,
@@ -1408,15 +1722,19 @@ def _advance_cssc_delta(
     *,
     version_ordinal: int,
     version_id: str,
+    check_invariants: bool,
 ) -> Transition:
     base_updates, delta_updates = _split_base_and_delta_updates(
         state, window.updates
     )
-    patched, patched_chunks, ci_locations, absorbed, overflow = _point_patch_base(
-        state,
-        base_updates,
-        allow_reserved=False,
-    )
+    (
+        patched,
+        patched_chunks,
+        ci_locations,
+        absorbed,
+        overflow,
+        free_lanes,
+    ) = _point_patch_base(state, base_updates, allow_reserved=False)
     delta_logical = dict(state.delta_logical)
     delta_changed = False
     for update in delta_updates:
@@ -1456,7 +1774,7 @@ def _advance_cssc_delta(
         )
         delta_rebuilt_ciphertexts = 0
         delta_ci_sync = 0
-    base = _reindex_component(replace(patched, version_id=version_id))
+    base = replace(patched, version_id=version_id)
     new_state = replace(
         state,
         version_ordinal=version_ordinal,
@@ -1465,14 +1783,15 @@ def _advance_cssc_delta(
         base=base,
         delta=delta,
         delta_logical=dict(delta_logical),
-        free_lanes=_free_lanes(base),
+        free_lanes=free_lanes,
         windows_since_repack=(
             state.windows_since_repack + 1
             if state.strategy == "PeriodicRepack"
             else state.windows_since_repack
         ),
     )
-    assert_strategy_invariants(new_state)
+    if check_invariants:
+        assert_strategy_invariants(new_state)
     components = (base,) if delta is None else (base, delta)
     facts = TransitionFacts(
         updates=len(window.updates),
@@ -1499,6 +1818,7 @@ def _advance_local_repack(
     *,
     version_ordinal: int,
     version_id: str,
+    check_invariants: bool,
 ) -> Transition:
     dirty_blocks = {
         update.row // state.config.partition_rows
@@ -1521,7 +1841,8 @@ def _advance_local_repack(
         free_lanes=_free_lanes(base),
         repack_count=state.repack_count + bool(dirty_blocks),
     )
-    assert_strategy_invariants(new_state)
+    if check_invariants:
+        assert_strategy_invariants(new_state)
     return Transition(
         state=new_state,
         facts=TransitionFacts(
@@ -1543,8 +1864,9 @@ def _fold_periodic(
     *,
     version_ordinal: int,
     version_id: str,
+    check_invariants: bool,
 ) -> Transition:
-    base = publish_component(
+    base = _publish_validated_component(
         candidate,
         rows=state.config.rows,
         cols=state.config.cols,
@@ -1565,7 +1887,8 @@ def _fold_periodic(
         windows_since_repack=0,
         repack_count=state.repack_count + 1,
     )
-    assert_strategy_invariants(new_state)
+    if check_invariants:
+        assert_strategy_invariants(new_state)
     return Transition(
         state=new_state,
         facts=TransitionFacts(
@@ -1633,15 +1956,19 @@ def _advance_packed_coo(
     *,
     version_ordinal: int,
     version_id: str,
+    check_invariants: bool,
 ) -> Transition:
     base_updates, delta_updates = _split_base_and_delta_updates(
         state, window.updates
     )
-    patched, patched_chunks, ci_locations, absorbed, overflow = _point_patch_base(
-        state,
-        base_updates,
-        allow_reserved=False,
-    )
+    (
+        patched,
+        patched_chunks,
+        ci_locations,
+        absorbed,
+        overflow,
+        free_lanes,
+    ) = _point_patch_base(state, base_updates, allow_reserved=False)
     mutable_segments = [list(segment.entries) for segment in state.coo_segments]
     changed_segments: set[int] = set()
 
@@ -1722,7 +2049,7 @@ def _advance_packed_coo(
         for entry in segment.entries
         if entry is not None and entry.value != 0
     }
-    base = _reindex_component(replace(patched, version_id=version_id))
+    base = replace(patched, version_id=version_id)
     new_state = replace(
         state,
         version_ordinal=version_ordinal,
@@ -1731,9 +2058,10 @@ def _advance_packed_coo(
         base=base,
         delta_logical=delta_logical,
         coo_segments=segments,
-        free_lanes=_free_lanes(base),
+        free_lanes=free_lanes,
     )
-    assert_strategy_invariants(new_state)
+    if check_invariants:
+        assert_strategy_invariants(new_state)
     facts = TransitionFacts(
         updates=len(window.updates),
         query_count=window.query_count,

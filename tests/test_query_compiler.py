@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import builtins
 from collections.abc import Iterator, Mapping
 from dataclasses import replace
 
 import pytest
 
+from dynamic_cssc import query_compiler as query_compiler_module
 from dynamic_cssc.cloud_execution_plan import (
     AddCiphertexts,
     AddF1MMask,
@@ -490,6 +492,41 @@ def test_two_components_keep_cloud_results_separate_and_merge_at_reconstruction(
     assert compiled.cloud_counts.add_ciphertexts == 0
     assert compiled.cloud_counts.add_f1m_masks == 2
     assert _execute(compiled, (5, 7)) == (31,)
+
+
+def test_overlap_detection_uses_one_linear_multiplicity_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = 256
+    left = publish_component(
+        {(row, 0): 2 for row in range(rows)},
+        rows=rows,
+        cols=2,
+        effective_slots=rows,
+        version_id="v1",
+        component_prefix="left",
+    )
+    right = publish_component(
+        {(row, 1): 3 for row in range(rows)},
+        rows=rows,
+        cols=2,
+        effective_slots=rows,
+        version_id="v1",
+        component_prefix="right",
+    )
+    sum_calls = 0
+
+    def recording_sum(iterable, start=0):
+        nonlocal sum_calls
+        sum_calls += 1
+        return builtins.sum(iterable, start)
+
+    monkeypatch.setattr(query_compiler_module, "sum", recording_sum, raising=False)
+
+    compiled = compile_query((left, right), f1m_policy="overlap-only")
+
+    assert compiled.cloud_counts.add_f1m_masks == 2
+    assert sum_calls <= 4
 
 
 def test_chunks_merge_only_within_their_output_block_and_horizontal_blocks_stay_separate() -> None:

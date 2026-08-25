@@ -6,14 +6,19 @@ from inspect import Parameter, signature
 
 import pytest
 
+import dynamic_cssc.cssc as cssc_module
 import dynamic_cssc.simulator as simulator_module
+import dynamic_cssc.strategy_state as strategy_state_module
 from dynamic_cssc.events import NetUpdate, PublicationWindow
 from dynamic_cssc.simulator import (
     RotationInventory,
     SimulationConfig,
     SimulationTarget,
     simulate,
+    simulate_strong_reference,
+    simulate_strong_reference_causal,
     simulate_targets,
+    simulate_targets_causal,
 )
 from dynamic_cssc.strategy_state import STRATEGIES
 
@@ -88,6 +93,74 @@ def test_simulate_targets_owns_each_run_lifecycle_and_measures_only_the_suffix(
     )
     assert all(result.metrics.windows == 2 for result in results.values())
     assert all(result.metrics.queries == 2 for result in results.values())
+
+
+def test_simulate_targets_full_scans_only_the_initial_and_final_replay_states(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = 16
+    initial = {(row, col): 1 for row in range(rows) for col in range(8)}
+    windows = [
+        _window(
+            NetUpdate(
+                0,
+                0,
+                1 if index % 2 == 0 else 2,
+                2 if index % 2 == 0 else 1,
+            ),
+            index=index,
+            queries=1,
+        )
+        for index in range(20)
+    ]
+    config = _config(
+        rows=rows,
+        cols=33,
+        effective_slots=16,
+        partition_rows=16,
+        max_row_nnz=16,
+    )
+    counts = {"component": 0, "free": 0, "reindex": 0}
+    real_component = strategy_state_module._assert_component_invariants
+    real_free = strategy_state_module._free_lanes
+    real_reindex = strategy_state_module._reindex_component
+
+    def counted_component(*args: object, **kwargs: object) -> object:
+        counts["component"] += 1
+        return real_component(*args, **kwargs)  # type: ignore[arg-type]
+
+    def counted_free(*args: object, **kwargs: object) -> object:
+        counts["free"] += 1
+        return real_free(*args, **kwargs)  # type: ignore[arg-type]
+
+    def counted_reindex(*args: object, **kwargs: object) -> object:
+        counts["reindex"] += 1
+        return real_reindex(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        strategy_state_module,
+        "_assert_component_invariants",
+        counted_component,
+    )
+    monkeypatch.setattr(strategy_state_module, "_free_lanes", counted_free)
+    monkeypatch.setattr(
+        strategy_state_module,
+        "_reindex_component",
+        counted_reindex,
+    )
+
+    simulate_targets(
+        windows,
+        initial,
+        [SimulationTarget("padding", "PaddingReuse-CSSC", config)],
+        measure_from=0,
+    )
+
+    assert counts == {
+        "component": 2,
+        "free": 1,
+        "reindex": 0,
+    }
 
 
 def test_simulate_targets_rejects_duplicate_run_ids_before_initialization(
@@ -360,6 +433,69 @@ def test_each_ordinary_transition_compiles_all_active_sources_once(
     assert coo_call[1]["f1m_policy"] == "overlap-only"
 
 
+def test_causal_replay_reuses_exact_query_accounting_for_an_unchanged_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    real_compile = simulator_module.compile_query
+
+    def recording_compile(*args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        return real_compile(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(simulator_module, "compile_query", recording_compile)
+    windows = [
+        _window(
+            NetUpdate(0, 0, 1 if index % 2 == 0 else 2, 2 if index % 2 == 0 else 1),
+            index=index,
+            queries=1,
+        )
+        for index in range(10)
+    ]
+
+    simulate_targets_causal(
+        windows,
+        {(0, 0): 1},
+        [SimulationTarget("padding", "PaddingReuse-CSSC", _config())],
+        warmup_end=1,
+        tuning_end=4,
+    )
+
+    assert calls == 1
+
+
+def test_causal_replay_does_not_revalidate_a_proven_sparse_state_on_republish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    real_validate = cssc_module._validate_sparse_state
+
+    def recording_validate(*args: object, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        return real_validate(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(cssc_module, "_validate_sparse_state", recording_validate)
+    windows = [
+        _window(
+            NetUpdate(0, 0, 1 if index % 2 == 0 else 2, 2 if index % 2 == 0 else 1),
+            index=index,
+        )
+        for index in range(10)
+    ]
+
+    simulate_targets_causal(
+        windows,
+        {(0, 0): 1},
+        [SimulationTarget("strict", "Strict-LocalRepack", _config())],
+        warmup_end=1,
+        tuning_end=4,
+    )
+
+    assert calls == 1
+
+
 def test_simulate_advances_warmup_state_but_aggregates_only_the_measured_suffix() -> None:
     windows = [
         _window(NetUpdate(0, 1, 0, 2), index=0, queries=5),
@@ -400,6 +536,52 @@ def test_rotation_inventory_counts_only_suffix_queries_but_requires_warmup_dags(
     assert result.metrics.queries == 2
     assert result.rotation_inventory.measured_counts_by_exact_index == ((1, 2), (2, 2))
     assert result.rotation_inventory.required_indices == (1, 2)
+
+
+def test_causal_single_replay_is_exactly_equivalent_to_two_suffix_replays() -> None:
+    initial = {(0, 0): 1, (1, 0): 2}
+    windows = [
+        _window(NetUpdate(0, 0, 1, 2), index=0, queries=1),
+        _window(NetUpdate(0, 1, 0, 3), index=1, queries=2),
+        _window(NetUpdate(1, 0, 2, 0), index=2),
+        _window(NetUpdate(0, 1, 3, 4), index=3, queries=1),
+    ]
+    config = _config(effective_slots=128)
+    targets = [
+        SimulationTarget("padding", "PaddingReuse-CSSC", config),
+        SimulationTarget("mini", "Mini-CSSC-Delta", config),
+    ]
+
+    tuning, held_out = simulate_targets_causal(
+        windows,
+        initial,
+        targets,
+        warmup_end=1,
+        tuning_end=3,
+    )
+
+    assert tuning == simulate_targets(windows[:3], initial, targets, measure_from=1)
+    assert held_out == simulate_targets(windows, initial, targets, measure_from=3)
+
+    strong_tuning, strong_held_out = simulate_strong_reference_causal(
+        windows,
+        initial,
+        config,
+        warmup_end=1,
+        tuning_end=3,
+    )
+    assert strong_tuning == simulate_strong_reference(
+        windows[:3],
+        initial,
+        config,
+        measure_from=1,
+    )
+    assert strong_held_out == simulate_strong_reference(
+        windows,
+        initial,
+        config,
+        measure_from=3,
+    )
 
 
 def test_packed_coo_query_accounting_uses_client_lane_outputs() -> None:

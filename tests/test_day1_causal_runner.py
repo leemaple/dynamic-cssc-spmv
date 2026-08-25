@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
+from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
 
@@ -425,7 +426,7 @@ def test_tuning_selector_uses_only_finite_cost_then_canonical_id_for_ties() -> N
     assert selected.candidate_id == "a-policy"
 
 
-def test_cell_enforces_reference_and_ablation_roles_across_two_independent_replays(
+def test_cell_enforces_reference_and_ablation_roles_across_one_causal_replay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     catalog = _registered_catalog()
@@ -437,64 +438,79 @@ def test_cell_enforces_reference_and_ablation_roles_across_two_independent_repla
         _initial: dict[tuple[int, int], int],
         targets: list[SimulationTarget],
         *,
-        measure_from: int,
-    ) -> dict[str, SimulationResult]:
-        phase = "tuning" if len(replay_windows) == 4 else "held-out"
-        call_trace.append((f"ordinary-{phase}", len(replay_windows), measure_from))
+        warmup_end: int,
+        tuning_end: int,
+    ) -> tuple[dict[str, SimulationResult], dict[str, SimulationResult]]:
+        call_trace.append(("ordinary-causal", warmup_end, tuning_end))
+        assert len(replay_windows) == 10
         target_ids = {target.run_id for target in targets}
         assert "packed-coo-cloud-segmented-delta/segment-width=128" not in target_ids
-        assert ("packed-coo-client-lane-delta/capacity=128" in target_ids) is (phase == "held-out")
-        assert len(targets) == (12 if phase == "tuning" else 13)
-        tuning = len(replay_windows) == 4
-        results = {}
-        for target in targets:
-            score = 50
-            if tuning and target.strategy == "ReservedSlack-CSSC":
-                score = 1 if target.config.reserved_slack_beta == 0.05 else 20
-            if not tuning and target.strategy == "ReservedSlack-CSSC":
-                score = 7 if target.config.reserved_slack_beta == 0.05 else 20
-            if not tuning and target.strategy == "PeriodicRepack":
-                score = 1 if target.config.periodic_repack_windows == 1 else 30
-            if not tuning and target.strategy == "Packed-COO-Client-Lane-Delta":
-                score = 0
-            results[target.run_id] = SimulationResult(
-                StrategyMetrics(
-                    target.strategy,
-                    "reference",
-                    windows=len(replay_windows) - measure_from,
-                    update_encryptions=score,
-                    update_ciphertexts=score,
-                    rotations=1,
-                    source="persistent-state-predicted",
-                ),
-                {0: score},
-                RotationInventory(((-1, 1),), (-1, 99)),
-            )
-        return results
+        assert "packed-coo-client-lane-delta/capacity=128" in target_ids
+        assert len(targets) == 13
+
+        def phase_results(*, tuning: bool) -> dict[str, SimulationResult]:
+            results = {}
+            for target in targets:
+                score = 50
+                if tuning and target.strategy == "ReservedSlack-CSSC":
+                    score = 1 if target.config.reserved_slack_beta == 0.05 else 20
+                if not tuning and target.strategy == "ReservedSlack-CSSC":
+                    score = 7 if target.config.reserved_slack_beta == 0.05 else 20
+                if not tuning and target.strategy == "PeriodicRepack":
+                    score = 1 if target.config.periodic_repack_windows == 1 else 30
+                if not tuning and target.strategy == "Packed-COO-Client-Lane-Delta":
+                    score = 0
+                results[target.run_id] = SimulationResult(
+                    StrategyMetrics(
+                        target.strategy,
+                        "reference",
+                        windows=(
+                            tuning_end - warmup_end
+                            if tuning
+                            else len(replay_windows) - tuning_end
+                        ),
+                        update_encryptions=score,
+                        update_ciphertexts=score,
+                        rotations=1,
+                        source="persistent-state-predicted",
+                    ),
+                    {0: score},
+                    RotationInventory(((-1, 1),), (-1, 99)),
+                )
+            return results
+
+        return phase_results(tuning=True), phase_results(tuning=False)
 
     def fake_simulate_strong(
         replay_windows: list[PublicationWindow],
         _initial: dict[tuple[int, int], int],
         config: SimulationConfig,
         *,
-        measure_from: int,
-    ) -> SimulationResult:
-        phase = "tuning" if len(replay_windows) == 4 else "held-out"
-        call_trace.append((f"strong-{phase}", len(replay_windows), measure_from))
+        warmup_end: int,
+        tuning_end: int,
+    ) -> tuple[SimulationResult, SimulationResult]:
+        call_trace.append(("strong-causal", warmup_end, tuning_end))
+        assert len(replay_windows) == 10
         assert config.packed_coo_segment_capacity == 128
-        score = 10 if phase == "tuning" else 2
-        return SimulationResult(
-            StrategyMetrics(
-                "Packed-COO-Cloud-Segmented-Delta",
-                "reference",
-                windows=len(replay_windows) - measure_from,
-                update_encryptions=score,
-                update_ciphertexts=score,
-                rotations=2,
-                source="persistent-state-predicted",
-            ),
-            {0: score},
-            RotationInventory(((-2, 2),), (-2, 101)),
+
+        def phase_result(score: int, window_count: int) -> SimulationResult:
+            return SimulationResult(
+                StrategyMetrics(
+                    "Packed-COO-Cloud-Segmented-Delta",
+                    "reference",
+                    windows=window_count,
+                    update_encryptions=score,
+                    update_ciphertexts=score,
+                    rotations=2,
+                    source="persistent-state-predicted",
+                ),
+                {0: score},
+                RotationInventory(((-2, 2),), (-2, 101)),
+            )
+
+        return (
+            phase_result(10, tuning_end - warmup_end),
+            phase_result(2, len(replay_windows) - tuning_end),
         )
 
     real_select = select_tuned_fixed_candidate
@@ -527,11 +543,9 @@ def test_cell_enforces_reference_and_ablation_roles_across_two_independent_repla
     )
 
     assert call_trace == [
-        ("ordinary-tuning", 4, 1),
-        ("strong-tuning", 4, 1),
+        ("ordinary-causal", 1, 4),
+        ("strong-causal", 1, 4),
         ("freeze", -1, -1),
-        ("ordinary-held-out", 10, 4),
-        ("strong-held-out", 10, 4),
     ]
     assert result.selected_candidate_id == "reserved-slack/beta=0.05"
     assert result.oracle_candidate_id == "periodic-repack/windows=1"
@@ -584,12 +598,12 @@ def test_public_cell_interface_owns_repository_authority_and_fails_closed(
     )
     monkeypatch.setattr(
         run_day1_suite,
-        "simulate_targets",
+        "simulate_targets_causal",
         lambda *_args, **_kwargs: pytest.fail("simulation must not run without registration"),
     )
     monkeypatch.setattr(
         run_day1_suite,
-        "simulate_strong_reference",
+        "simulate_strong_reference_causal",
         lambda *_args, **_kwargs: pytest.fail(
             "strong simulation must not run without registration"
         ),
@@ -622,7 +636,7 @@ def test_public_cell_interface_owns_repository_authority_and_fails_closed(
         )
 
 
-def test_three_window_cell_runs_two_continuous_ordinary_and_strong_replays(
+def test_three_window_cell_runs_one_continuous_ordinary_and_strong_replay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     windows = [PublicationWindow(index, index, index + 1, (), 0, "fixture") for index in range(3)]
@@ -685,14 +699,66 @@ def test_three_window_cell_runs_two_continuous_ordinary_and_strong_replays(
         split=(Fraction(0), Fraction(1, 3), Fraction(2, 3)),
         costs=UnitCosts(),
         catalog=_registered_catalog(),
-        simulate_targets_fn=simulator_module.simulate_targets,
-        simulate_strong_fn=simulator_module.simulate_strong_reference,
+        simulate_targets_fn=simulator_module.simulate_targets_causal,
+        simulate_strong_fn=simulator_module.simulate_strong_reference_causal,
     )
 
-    assert init_count == 25
-    assert advance_count == 51
-    assert strong_init_count == 2
-    assert strong_advance_count == 4
+    assert init_count == 13
+    assert advance_count == 39
+    assert strong_init_count == 1
+    assert strong_advance_count == 3
+
+
+def test_integer_rho_scaling_is_exactly_equal_to_direct_causal_replay() -> None:
+    initial = {(0, 0): 1, (1, 0): 2}
+    unit_windows = [
+        PublicationWindow(
+            index,
+            index,
+            index + 1,
+            updates,
+            1,
+            "query",
+        )
+        for index, updates in enumerate(
+            (
+                (NetUpdate(0, 0, 1, 2),),
+                (NetUpdate(0, 1, 0, 3),),
+                (NetUpdate(1, 0, 2, 0),),
+                (NetUpdate(0, 1, 3, 4),),
+            )
+        )
+    ]
+    triple_windows = [replace(window, query_count=3) for window in unit_windows]
+    config = SimulationConfig(
+        rows=2,
+        cols=6,
+        effective_slots=128,
+        partition_rows=2,
+        matrix_value_bound=7,
+        max_row_nnz=6,
+        reserved_slack_beta=0.1,
+        periodic_repack_windows=4,
+        packed_coo_segment_capacity=128,
+    )
+    arguments = {
+        "initial_state": initial,
+        "base_config": config,
+        "split": (Fraction(1, 4), Fraction(1, 2), Fraction(1, 4)),
+        "costs": UnitCosts(),
+        "catalog": _registered_catalog(),
+        "simulate_targets_fn": simulator_module.simulate_targets_causal,
+        "simulate_strong_fn": simulator_module.simulate_strong_reference_causal,
+    }
+
+    unit = _evaluate_causal_cell(windows=unit_windows, **arguments)
+    direct_triple = _evaluate_causal_cell(windows=triple_windows, **arguments)
+
+    assert run_day1_suite._query_scaled_windows(unit_windows, triple_windows, 3)  # noqa: SLF001
+    assert (
+        run_day1_suite._rescale_causal_cell_queries(unit, 3, UnitCosts())  # noqa: SLF001
+        == direct_triple
+    )
 
 
 def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
