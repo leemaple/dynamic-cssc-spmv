@@ -90,9 +90,10 @@ def test_streamed_ordinary_compilation_reaches_the_canonical_runner_request(
     assert request["bindings"]["execution_binding_sha256"] == (
         execution.query_plan.execution_binding_digest
     )
-    assert request["bindings"]["ordinary_private_plan_sha256"] == (
+    assert request["bindings"]["query_private_plan_sha256"] == (
         execution.query_plan.private_plan_digest
     )
+    assert request["bindings"]["execution_kind"] == "ordinary"
 
 
 def test_layout_execution_rejects_absent_or_ambiguous_bundles() -> None:

@@ -18,8 +18,10 @@ from dynamic_cssc.openfhe_query_runner import (
     OPENFHE_QUERY_RESULT_SCHEMA,
     OpenFHEQueryRunnerError,
     build_ordinary_openfhe_query_request,
+    build_strong_openfhe_query_request,
     pre_admission_day2_openfhe_key_generation_plan,
     verify_ordinary_openfhe_query_result,
+    verify_strong_openfhe_query_result,
 )
 from dynamic_cssc.ordinary_query_lifecycle import (
     OrdinaryExecutionBundle,
@@ -27,12 +29,24 @@ from dynamic_cssc.ordinary_query_lifecycle import (
     bind_ordinary_execution,
     prepare_ordinary_query,
 )
-from dynamic_cssc.plaintext_oracle import execute_compiled_query
+from dynamic_cssc.plaintext_oracle import execute_cloud_plan, execute_compiled_query
 from dynamic_cssc.publication_day1b_key_framing import (
     DAY1B_COMBINED_EVALUATION_KEY_FRAMING_SCHEMA,
     Day1BCombinedEvaluationKeyFrame,
 )
 from dynamic_cssc.query_compiler import compile_query
+from dynamic_cssc.strong_execution import (
+    PreparedStrongQuery,
+    StrongExecutionBundle,
+    canonical_strong_query_preparation_bytes,
+    compile_strong_execution,
+    prepare_strong_query,
+)
+from dynamic_cssc.strong_packed_coo import (
+    StrongEntry,
+    advance_segmented_delta,
+    initialize_segmented_delta,
+)
 from scripts import run_openfhe_query_smoke as smoke
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -68,6 +82,42 @@ def _bundle_and_prepared(tmp_path: Path) -> tuple[OrdinaryExecutionBundle, Prepa
     return bundle, prepared
 
 
+def _strong_bundle_and_prepared(
+    tmp_path: Path,
+) -> tuple[StrongExecutionBundle, PreparedStrongQuery]:
+    base = publish_component(
+        {(0, 0): 2},
+        rows=2,
+        cols=4,
+        effective_slots=4,
+        version_id="strong-openfhe-version-1",
+        component_prefix="strong-openfhe-base",
+    )
+    empty = initialize_segmented_delta(
+        rows=2,
+        cols=4,
+        effective_slots=4,
+        segment_width=2,
+        matrix_value_bound=7,
+        version_id="strong-openfhe-version-0",
+    )
+    delta = advance_segmented_delta(
+        empty,
+        delta_updates=(),
+        overflow_entries=(StrongEntry(0, 1, 3), StrongEntry(1, 2, 4)),
+        version_id="strong-openfhe-version-1",
+    ).state
+    bundle = compile_strong_execution(base, delta)
+    prepared = prepare_strong_query(
+        bundle,
+        query_id="strong-openfhe-query-1",
+        vector=(5, 7, 11, 13),
+        modulus=65537,
+        ledger=SQLiteMaskBindingLedger(tmp_path / "strong-openfhe-ledger.sqlite3"),
+    )
+    return bundle, prepared
+
+
 def _canonical(value: object) -> bytes:
     return json.dumps(
         value,
@@ -78,27 +128,13 @@ def _canonical(value: object) -> bytes:
     ).encode("ascii")
 
 
-def _write_result_fixture(
+def _write_generic_result_fixture(
     tmp_path: Path,
-    bundle: OrdinaryExecutionBundle,
-    prepared: PreparedOrdinaryQuery,
     request_bytes: bytes,
+    returned: dict[str, tuple[int, ...]],
+    operation_counts: dict[str, int],
 ) -> tuple[Path, Path, dict[str, object]]:
     request = json.loads(request_bytes)
-    ciphertext_inputs = {
-        item["ciphertext_id"]: tuple(item["values"])
-        for item in request["ciphertext_values"]
-    }
-    returned = execute_compiled_query(
-        bundle.compiled,
-        expected_f1m_policy="overlap-only",
-        ciphertext_inputs=ciphertext_inputs,
-        plaintext_masks={
-            item["mask_id"]: tuple(item["values"])
-            for item in request["program"]["plaintext_masks"]
-        },
-        modulus=prepared.modulus,
-    )
     subjects: list[tuple[str, str]] = [
         ("one-time-evaluation-key-material", "evaluation-key-material")
     ]
@@ -180,17 +216,7 @@ def _write_result_fixture(
         "key_generation_plan": key_plan,
         "key_material_receipt": key_material_receipt,
         "openfhe": request["openfhe"],
-        "operation_counts": {
-            "add_f1m_mask": 2,
-            "decrypt": 2,
-            "encrypt": 6,
-            "eval_add_ciphertext": 0,
-            "eval_mult_plaintext_mask": 2,
-            "eval_rotate": 0,
-            "multiply_ciphertexts": 2,
-            "relinearize": 2,
-            "return_result": 2,
-        },
+        "operation_counts": operation_counts,
         "publication_authority": False,
         "request_sha256": hashlib.sha256(request_bytes).hexdigest(),
         "schema_version": OPENFHE_QUERY_RESULT_SCHEMA,
@@ -201,6 +227,35 @@ def _write_result_fixture(
     result_path = tmp_path / "result.json"
     result_path.write_bytes(_canonical(result))
     return result_path, object_root, result
+
+
+def _write_result_fixture(
+    tmp_path: Path,
+    bundle: OrdinaryExecutionBundle,
+    prepared: PreparedOrdinaryQuery,
+    request_bytes: bytes,
+) -> tuple[Path, Path, dict[str, object]]:
+    request = json.loads(request_bytes)
+    ciphertext_inputs = {
+        item["ciphertext_id"]: tuple(item["values"])
+        for item in request["ciphertext_values"]
+    }
+    returned = execute_compiled_query(
+        bundle.compiled,
+        expected_f1m_policy="overlap-only",
+        ciphertext_inputs=ciphertext_inputs,
+        plaintext_masks={
+            item["mask_id"]: tuple(item["values"])
+            for item in request["program"]["plaintext_masks"]
+        },
+        modulus=prepared.modulus,
+    )
+    return _write_generic_result_fixture(
+        tmp_path,
+        request_bytes,
+        returned,
+        runner_contract._expected_operation_counts(bundle.compiled.cloud_plan.program),
+    )
 
 
 def test_request_is_canonical_private_and_explicitly_non_authorizing(tmp_path: Path) -> None:
@@ -228,6 +283,67 @@ def test_request_is_canonical_private_and_explicitly_non_authorizing(tmp_path: P
         None,
         "random-zero-sum",
     }
+
+
+def test_strong_request_uses_the_same_generic_binding_language(tmp_path: Path) -> None:
+    bundle, prepared = _strong_bundle_and_prepared(tmp_path)
+
+    request_bytes = build_strong_openfhe_query_request(bundle, prepared)
+    request = json.loads(request_bytes)
+
+    assert request_bytes == _canonical(request)
+    assert request["schema_version"] == OPENFHE_QUERY_REQUEST_SCHEMA
+    assert request["bindings"] == {
+        "cloud_program_sha256": bundle.cloud_program_digest,
+        "execution_binding": request["bindings"]["execution_binding"],
+        "execution_binding_sha256": bundle.execution_binding_digest,
+        "execution_kind": "strong",
+        "query_preparation_sha256": hashlib.sha256(
+            canonical_strong_query_preparation_bytes(bundle, prepared)
+        ).hexdigest(),
+        "query_private_plan_sha256": bundle.private_plan_digest,
+    }
+    assert not any("ordinary" in key for key in request["bindings"])
+    assert {item["f1m_kind"] for item in request["ciphertext_values"]} == {
+        None,
+        "random-zero-sum",
+    }
+
+
+def test_strong_verifier_reconstructs_the_same_typed_result(tmp_path: Path) -> None:
+    bundle, prepared = _strong_bundle_and_prepared(tmp_path)
+    request_bytes = build_strong_openfhe_query_request(bundle, prepared)
+    request = json.loads(request_bytes)
+    returned = execute_cloud_plan(
+        bundle.cloud_plan,
+        ciphertext_inputs={
+            item["ciphertext_id"]: tuple(item["values"])
+            for item in request["ciphertext_values"]
+        },
+        plaintext_masks={
+            item["mask_id"]: tuple(item["values"])
+            for item in request["program"]["plaintext_masks"]
+        },
+        modulus=prepared.modulus,
+    )
+    result_path, object_root, _result = _write_generic_result_fixture(
+        tmp_path,
+        request_bytes,
+        returned,
+        runner_contract._expected_operation_counts(bundle.cloud_plan.program),
+    )
+
+    verified = verify_strong_openfhe_query_result(
+        bundle,
+        prepared,
+        request_bytes=request_bytes,
+        result_path=result_path,
+        object_root=object_root,
+        expected_output=(31, 44),
+    )
+
+    assert verified.reconstructed_output == (31, 44)
+    assert verified.publication_authority is False
 
 
 def test_verifier_binds_decryption_reconstruction_and_every_object(tmp_path: Path) -> None:

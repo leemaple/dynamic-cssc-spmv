@@ -46,8 +46,8 @@ constexpr std::uint32_t kMultiplicativeDepth = 2;
 constexpr std::uint32_t kEstimatorEvalAddCount = 0;
 constexpr std::uint32_t kEstimatorKeySwitchCount = 0;
 constexpr std::uint64_t kRequestByteMaximum = 128ULL * 1024ULL * 1024ULL;
-constexpr char kRequestSchema[] = "dynamic-cssc-full-openfhe-query-request-v3";
-constexpr char kResultSchema[] = "dynamic-cssc-full-openfhe-query-result-v3";
+constexpr char kRequestSchema[] = "dynamic-cssc-full-openfhe-query-request-v4";
+constexpr char kResultSchema[] = "dynamic-cssc-full-openfhe-query-result-v4";
 constexpr char kProgramSchema[] = "dynamic-cssc-cloud-program-v1";
 constexpr char kBindingSchema[] = "dynamic-cssc-execution-binding-v1";
 constexpr char kKeyGenerationPlanSchema[] =
@@ -386,22 +386,28 @@ void ValidateBindings(const json::Value& bindings, const json::Value& program) {
         {"cloud_program_sha256",
          "execution_binding",
          "execution_binding_sha256",
-         "ordinary_private_plan_sha256",
-         "ordinary_query_preparation_sha256"},
+         "execution_kind",
+         "query_preparation_sha256",
+         "query_private_plan_sha256"},
         "bindings");
     const auto cloudDigest = StringMember(
         bindings, "cloud_program_sha256", "cloud_program_sha256");
     const auto bindingDigest = StringMember(
         bindings, "execution_binding_sha256", "execution_binding_sha256");
     const auto privateDigest = StringMember(
-        bindings, "ordinary_private_plan_sha256", "ordinary_private_plan_sha256");
+        bindings, "query_private_plan_sha256", "query_private_plan_sha256");
     const auto preparationDigest = StringMember(
         bindings,
-        "ordinary_query_preparation_sha256",
-        "ordinary_query_preparation_sha256");
+        "query_preparation_sha256",
+        "query_preparation_sha256");
+    const auto executionKind = StringMember(
+        bindings, "execution_kind", "execution_kind");
     if (!LowerSha256(cloudDigest) || !LowerSha256(bindingDigest) ||
         !LowerSha256(privateDigest) || !LowerSha256(preparationDigest)) {
         Fail("binding digests must be lowercase SHA-256 values");
+    }
+    if (executionKind != "ordinary" && executionKind != "strong") {
+        Fail("execution kind changed");
     }
     if (HashUtil::HashString(CanonicalJson(program)) != cloudDigest) {
         Fail("cloud program digest differs from the canonical program");

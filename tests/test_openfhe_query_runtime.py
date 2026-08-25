@@ -15,6 +15,17 @@ from dynamic_cssc.ordinary_query_lifecycle import (
     prepare_ordinary_query,
 )
 from dynamic_cssc.query_compiler import compile_query
+from dynamic_cssc.strong_execution import (
+    StrongExecutionError,
+    authorize_strong_execution,
+    compile_strong_execution,
+    prepare_strong_query,
+)
+from dynamic_cssc.strong_packed_coo import (
+    StrongEntry,
+    advance_segmented_delta,
+    initialize_segmented_delta,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -85,6 +96,47 @@ def _build_provenance(root: Path) -> runtime.OpenFHEBuildProvenance:
         openfhe_cmake_cache_sha256="3" * 64,
         openfhe_compile_commands_sha256="4" * 64,
         openfhe_install_manifest_sha256="5" * 64,
+    )
+
+
+def _runtime_identity(tmp_path: Path) -> runtime.OpenFHERunnerBuildIdentity:
+    return runtime.OpenFHERunnerBuildIdentity(
+        runner_relative_path="build/cpp/openfhe_query_runner",
+        runner_sha256="1" * 64,
+        runner_byte_count=1,
+        runner_device=1,
+        runner_inode=2,
+        runner_mode=0o755,
+        runner_binary_format="elf-v1",
+        runner_binary_id="0" * 40,
+        runner_needed_load_names=("libOPENFHEpke.so",),
+        source_sha256=(("source", "2" * 64),),
+        compiler_path="/compiler",
+        compiler_sha256="6" * 64,
+        compiler_byte_count=1,
+        compiler_identity_sha256="3" * 64,
+        compiler_version="test-cxx 1.0",
+        compiler_target="test-target",
+        compiler_flags=("-O3",),
+        build_provenance=_build_provenance(tmp_path.resolve()),
+        linkage_inspection_format="test-linked-library-inspector-v1",
+        linked_libraries=(
+            runtime.OpenFHELinkedLibraryIdentity(
+                load_name="libOPENFHEpke.so",
+                resolved_path="/lib/libOPENFHEpke.so",
+                byte_count=1,
+                sha256="5" * 64,
+                device=1,
+                inode=3,
+                mode=0o755,
+                binary_format="elf-v1",
+                binary_id="7" * 40,
+                soname="libOPENFHEpke.so",
+                needed_load_names=("libOPENFHEcore.so",),
+            ),
+        ),
+        linked_system_library_load_names=(),
+        build_identity_sha256="4" * 64,
     )
 
 
@@ -443,44 +495,7 @@ def test_failed_launch_consumes_authorization_and_cleans_private_scratch(
         modulus=65537,
         ledger=ledger,
     )
-    identity = runtime.OpenFHERunnerBuildIdentity(
-        runner_relative_path="build/cpp/openfhe_query_runner",
-        runner_sha256="1" * 64,
-        runner_byte_count=1,
-        runner_device=1,
-        runner_inode=2,
-        runner_mode=0o755,
-        runner_binary_format="elf-v1",
-        runner_binary_id="0" * 40,
-        runner_needed_load_names=("libOPENFHEpke.so",),
-        source_sha256=(("source", "2" * 64),),
-        compiler_path="/compiler",
-        compiler_sha256="6" * 64,
-        compiler_byte_count=1,
-        compiler_identity_sha256="3" * 64,
-        compiler_version="test-cxx 1.0",
-        compiler_target="test-target",
-        compiler_flags=("-O3",),
-        build_provenance=_build_provenance(tmp_path.resolve()),
-        linkage_inspection_format="test-linked-library-inspector-v1",
-        linked_libraries=(
-            runtime.OpenFHELinkedLibraryIdentity(
-                load_name="libOPENFHEpke.so",
-                resolved_path="/lib/libOPENFHEpke.so",
-                byte_count=1,
-                sha256="5" * 64,
-                device=1,
-                inode=3,
-                mode=0o755,
-                binary_format="elf-v1",
-                binary_id="7" * 40,
-                soname="libOPENFHEpke.so",
-                needed_load_names=("libOPENFHEcore.so",),
-            ),
-        ),
-        linked_system_library_load_names=(),
-        build_identity_sha256="4" * 64,
-    )
+    identity = _runtime_identity(tmp_path)
 
     monkeypatch.setattr(
         runtime,
@@ -511,3 +526,73 @@ def test_failed_launch_consumes_authorization_and_cleans_private_scratch(
     assert not scratch.exists()
     with pytest.raises(OrdinaryQueryLifecycleError, match="consumption failed"):
         authorize_ordinary_execution(bundle, prepared, ledger=ledger)
+
+
+def test_failed_strong_launch_uses_same_cleanup_and_consumption_seam(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = publish_component(
+        {(0, 0): 2},
+        rows=1,
+        cols=4,
+        effective_slots=4,
+        version_id="runtime-strong-version-1",
+        component_prefix="runtime-strong-base",
+    )
+    empty = initialize_segmented_delta(
+        rows=1,
+        cols=4,
+        effective_slots=4,
+        segment_width=2,
+        matrix_value_bound=7,
+        version_id="runtime-strong-version-0",
+    )
+    delta = advance_segmented_delta(
+        empty,
+        delta_updates=(),
+        overflow_entries=(StrongEntry(0, 1, 3),),
+        version_id="runtime-strong-version-1",
+    ).state
+    bundle = compile_strong_execution(base, delta)
+    ledger = SQLiteMaskBindingLedger(tmp_path / "strong-mask-ledger.sqlite3")
+    prepared = prepare_strong_query(
+        bundle,
+        query_id="runtime-strong-query-1",
+        vector=(5, 7, 11, 13),
+        modulus=65537,
+        ledger=ledger,
+    )
+    identity = _runtime_identity(tmp_path)
+    monkeypatch.setattr(
+        runtime,
+        "capture_openfhe_runner_build_identity",
+        lambda _root, _relative: identity,
+    )
+
+    def fail_after_authorization(*_args: object, **_kwargs: object) -> object:
+        raise runtime.OpenFHEQueryRuntimeError("synthetic strong launch failure")
+
+    monkeypatch.setattr(runtime, "_run_process", fail_after_authorization)
+    scratch = tmp_path.resolve() / "owned-strong-runtime-scratch"
+
+    with pytest.raises(
+        runtime.OpenFHEQueryRuntimeError,
+        match="synthetic strong launch failure",
+    ):
+        runtime.execute_authorized_strong_openfhe_query(
+            bundle,
+            prepared,
+            ledger=ledger,
+            expected_output=(31,),
+            repository_root=ROOT,
+            runner_relative_path="build/cpp/openfhe_query_runner",
+            scratch_root=scratch,
+            timeout_seconds=10,
+            resident_memory_limit_bytes=1024 * 1024,
+            scratch_limit_bytes=1024 * 1024,
+        )
+
+    assert not scratch.exists()
+    with pytest.raises(StrongExecutionError, match="consumption failed"):
+        authorize_strong_execution(bundle, prepared, ledger=ledger)

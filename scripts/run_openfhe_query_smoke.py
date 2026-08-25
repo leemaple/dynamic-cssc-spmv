@@ -16,13 +16,24 @@ from dynamic_cssc.openfhe_query_runner import (
     pre_admission_day2_openfhe_key_generation_plan,
 )
 from dynamic_cssc.openfhe_query_runtime import (
+    ExecutedOpenFHEQuery,
     execute_authorized_openfhe_query,
+    execute_authorized_strong_openfhe_query,
 )
 from dynamic_cssc.ordinary_query_lifecycle import (
     bind_ordinary_execution,
     prepare_ordinary_query,
 )
 from dynamic_cssc.query_compiler import compile_query
+from dynamic_cssc.strong_execution import (
+    compile_strong_execution,
+    prepare_strong_query,
+)
+from dynamic_cssc.strong_packed_coo import (
+    StrongEntry,
+    advance_segmented_delta,
+    initialize_segmented_delta,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -60,6 +71,21 @@ def _day2_plan_smoke_bytes() -> bytes:
     ).encode("ascii")
 
 
+def _execution_document(execution: ExecutedOpenFHEQuery) -> dict[str, object]:
+    verified = execution.verified_result
+    return {
+        "key_material_receipt": verified.key_material_receipt.to_document(),
+        "operation_counts": dict(verified.operation_counts),
+        "publication_authority": verified.publication_authority,
+        "reconstructed_output": verified.reconstructed_output,
+        "request_sha256": verified.request_sha256,
+        "runtime_receipt": execution.runtime_receipt.to_document(),
+        "runtime_receipt_sha256": execution.runtime_receipt.receipt_sha256,
+        "second_batch_row_zero": verified.second_batch_row_zero,
+        "serialized_object_count": len(verified.serialized_objects),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--runner", required=True, type=Path)
@@ -74,8 +100,12 @@ def main() -> int:
         raise SystemExit("scratch-dir must be absolute")
     arguments.scratch_dir.mkdir(mode=0o700, parents=False, exist_ok=False)
     scratch_identity = arguments.scratch_dir.lstat()
-    runtime_scratch = arguments.scratch_dir / "runtime"
-    ledger = SQLiteMaskBindingLedger(arguments.scratch_dir / "mask-ledger.sqlite3")
+    ordinary_ledger = SQLiteMaskBindingLedger(
+        arguments.scratch_dir / "ordinary-mask-ledger.sqlite3"
+    )
+    strong_ledger = SQLiteMaskBindingLedger(
+        arguments.scratch_dir / "strong-mask-ledger.sqlite3"
+    )
     try:
         rotating_component = publish_component(
             {(0, 0): 2, (0, 1): 3, (0, 2): 4},
@@ -104,37 +134,77 @@ def main() -> int:
             query_id="openfhe-query-smoke-1",
             vector=(5, 7, 11, 13),
             modulus=65537,
-            ledger=ledger,
+            ledger=ordinary_ledger,
         )
-        execution = execute_authorized_openfhe_query(
+        key_generation_plan = pre_admission_day2_openfhe_key_generation_plan(
+            _day2_plan_smoke_bytes()
+        )
+        ordinary_execution = execute_authorized_openfhe_query(
             bundle,
             prepared,
-            ledger=ledger,
+            ledger=ordinary_ledger,
             expected_output=(153,),
             repository_root=ROOT,
             runner_relative_path=arguments.runner.as_posix(),
-            scratch_root=runtime_scratch,
+            scratch_root=arguments.scratch_dir / "ordinary-runtime",
             timeout_seconds=arguments.timeout_seconds,
             resident_memory_limit_bytes=arguments.resident_memory_limit_bytes,
             scratch_limit_bytes=arguments.scratch_limit_bytes,
-            key_generation_plan=pre_admission_day2_openfhe_key_generation_plan(
-                _day2_plan_smoke_bytes()
-            ),
+            key_generation_plan=key_generation_plan,
         )
-        verified = execution.verified_result
+
+        strong_base = publish_component(
+            {(0, 0): 2},
+            rows=2,
+            cols=4,
+            effective_slots=4,
+            version_id="openfhe-strong-smoke-version-1",
+            component_prefix="openfhe-strong-smoke-base",
+        )
+        empty_delta = initialize_segmented_delta(
+            rows=2,
+            cols=4,
+            effective_slots=4,
+            segment_width=2,
+            matrix_value_bound=7,
+            version_id="openfhe-strong-smoke-version-0",
+        )
+        strong_delta = advance_segmented_delta(
+            empty_delta,
+            delta_updates=(),
+            overflow_entries=(StrongEntry(0, 1, 3), StrongEntry(1, 2, 4)),
+            version_id="openfhe-strong-smoke-version-1",
+        ).state
+        strong_bundle = compile_strong_execution(strong_base, strong_delta)
+        strong_prepared = prepare_strong_query(
+            strong_bundle,
+            query_id="openfhe-strong-smoke-1",
+            vector=(5, 7, 11, 13),
+            modulus=65537,
+            ledger=strong_ledger,
+        )
+        strong_execution = execute_authorized_strong_openfhe_query(
+            strong_bundle,
+            strong_prepared,
+            ledger=strong_ledger,
+            expected_output=(31, 44),
+            repository_root=ROOT,
+            runner_relative_path=arguments.runner.as_posix(),
+            scratch_root=arguments.scratch_dir / "strong-runtime",
+            timeout_seconds=arguments.timeout_seconds,
+            resident_memory_limit_bytes=arguments.resident_memory_limit_bytes,
+            scratch_limit_bytes=arguments.scratch_limit_bytes,
+            key_generation_plan=key_generation_plan,
+        )
         print(
             json.dumps(
                 {
+                    "executions": {
+                        "ordinary": _execution_document(ordinary_execution),
+                        "strong": _execution_document(strong_execution),
+                    },
                     "formal_parameter_claim_allowed": False,
-                    "key_material_receipt": verified.key_material_receipt.to_document(),
-                    "operation_counts": dict(verified.operation_counts),
-                    "publication_authority": verified.publication_authority,
-                    "reconstructed_output": verified.reconstructed_output,
-                    "request_sha256": verified.request_sha256,
-                    "runtime_receipt": execution.runtime_receipt.to_document(),
-                    "runtime_receipt_sha256": execution.runtime_receipt.receipt_sha256,
-                    "second_batch_row_zero": verified.second_batch_row_zero,
-                    "serialized_object_count": len(verified.serialized_objects),
+                    "publication_authority": False,
                     "status": "verified-openfhe-runtime-smoke-only",
                 },
                 sort_keys=True,

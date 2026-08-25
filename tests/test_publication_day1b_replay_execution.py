@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
+from dataclasses import replace
 from decimal import Decimal
 from fractions import Fraction
 
 import pytest
 
+import dynamic_cssc.publication_day1b_replay_execution as replay_execution_module
 from dynamic_cssc.day1_registry import RegisteredCandidate
 from dynamic_cssc.publication_day1b_accounting import (
     Day1BAccountingDomain,
@@ -20,11 +23,11 @@ from dynamic_cssc.publication_day1b_layout_execution import (
 from dynamic_cssc.publication_day1b_replay_execution import (
     DAY1B_REPRESENTATIVE_SELECTION_RULE,
     Day1BCandidateReplayCapability,
-    Day1BQueryExecutionCollector,
     Day1BReplayExecutionError,
     abandon_day1b_candidate_replay_capability,
     claim_day1b_candidate_replay_capability,
     describe_day1b_candidate_replay_capability,
+    replay_and_seal_publication_day1b_candidate,
 )
 from dynamic_cssc.publication_schedule import (
     ExactPublicationWindow,
@@ -135,12 +138,14 @@ def _ablation_candidate() -> RegisteredCandidate:
     )
 
 
-def _collector() -> Day1BQueryExecutionCollector:
+def _collector(
+    candidate: RegisteredCandidate | None = None,
+) -> replay_execution_module._Day1BQueryExecutionCollector:
     content, digest = _query_vector()
-    return Day1BQueryExecutionCollector(
+    return replay_execution_module._Day1BQueryExecutionCollector(
+        candidate=_ordinary_candidate() if candidate is None else candidate,
         query_vector_canonical_bytes=content,
         query_vector_sha256=digest,
-        retained_phases=("tuning-prefix", "held-out"),
         modulus=65537,
     )
 
@@ -164,15 +169,14 @@ def _capture_pairs(
 
 
 def test_collector_seals_one_same_replay_ordinary_representative() -> None:
-    collector = _collector()
-    accounting = replay_publication_day1b_candidate_cell(
+    content, digest = _query_vector()
+    accounting, capability = replay_and_seal_publication_day1b_candidate(
         candidate=_ordinary_candidate(),
         windows=_windows(),
         domain=_domain(),
-        query_execution_sink=collector.accept,
+        query_vector_canonical_bytes=content,
+        query_vector_sha256=digest,
     )
-
-    capability = collector.finish(accounting)
     receipt = describe_day1b_candidate_replay_capability(capability)
 
     assert receipt.query_execution_binding_count == 2
@@ -185,6 +189,9 @@ def test_collector_seals_one_same_replay_ordinary_representative() -> None:
         DAY1B_REPRESENTATIVE_SELECTION_RULE
     )
     assert document["candidate_replay_continuity_verified"] is True
+    assert document["candidate_role"] == "reference"
+    assert document["retained_phases"] == ["tuning-prefix", "held-out"]
+    assert document["plaintext_modulus"] == 65537
     assert document["typed_query_layout_verified"] is True
     assert document["representative_expected_output_verified"] is True
     assert document["openfhe_execution_verified"] is False
@@ -200,22 +207,22 @@ def test_collector_seals_one_same_replay_ordinary_representative() -> None:
     assert representative.binding.retained_private_bundle_count == 1
     assert representative.binding.openfhe_execution_count == 0
     assert representative.expected_output == (3, 0, 0, 0)
+    assert capability._binding is None
     with pytest.raises(Day1BReplayExecutionError, match="absent or consumed"):
         claim_day1b_candidate_replay_capability(capability)
 
 
 def test_collector_derives_the_same_independent_oracle_for_strong() -> None:
-    collector = _collector()
-    accounting = replay_publication_day1b_candidate_cell(
+    content, digest = _query_vector()
+    _accounting, capability = replay_and_seal_publication_day1b_candidate(
         candidate=_strong_candidate(),
         windows=_windows(),
         domain=_strong_domain(),
-        query_execution_sink=collector.accept,
+        query_vector_canonical_bytes=content,
+        query_vector_sha256=digest,
     )
 
-    representative = claim_day1b_candidate_replay_capability(
-        collector.finish(accounting)
-    )
+    representative = claim_day1b_candidate_replay_capability(capability)
 
     assert representative.execution.execution_kind == "strong"
     assert representative.expected_output == (3, 0, 0, 0)
@@ -225,22 +232,15 @@ def test_collector_derives_the_same_independent_oracle_for_strong() -> None:
 
 def test_collector_selects_first_heldout_query_for_the_ablation() -> None:
     content, digest = _query_vector()
-    collector = Day1BQueryExecutionCollector(
-        query_vector_canonical_bytes=content,
-        query_vector_sha256=digest,
-        retained_phases=("held-out",),
-        modulus=65537,
-    )
-    accounting = replay_publication_day1b_candidate_cell(
+    _accounting, capability = replay_and_seal_publication_day1b_candidate(
         candidate=_ablation_candidate(),
         windows=_windows(),
         domain=_strong_domain(),
-        query_execution_sink=collector.accept,
+        query_vector_canonical_bytes=content,
+        query_vector_sha256=digest,
     )
 
-    representative = claim_day1b_candidate_replay_capability(
-        collector.finish(accounting)
-    )
+    representative = claim_day1b_candidate_replay_capability(capability)
 
     assert representative.binding.phase == "held-out"
     assert representative.descriptor.window_index == 2
@@ -265,23 +265,71 @@ def test_collector_rejects_a_missing_query_window_against_accounting() -> None:
         collector.finish(accounting)
 
 
-def test_collector_is_one_shot_and_capability_is_not_caller_constructible() -> None:
+def test_private_collector_rejects_accounting_candidate_retarget() -> None:
+    accounting, pairs = _capture_pairs(_ordinary_candidate())
     collector = _collector()
-    accounting = replay_publication_day1b_candidate_cell(
+    for pair in pairs:
+        collector.accept(*pair)
+
+    with pytest.raises(Day1BReplayExecutionError, match="does not close"):
+        collector.finish(
+            replace(
+                accounting,
+                candidate_id="periodic-repack/windows=4",
+                candidate_policy_sha256="f" * 64,
+            )
+        )
+
+
+def test_repository_wrapper_owns_role_accounting_modulus_and_typed_sink() -> None:
+    parameters = inspect.signature(
+        replay_and_seal_publication_day1b_candidate
+    ).parameters
+
+    assert tuple(parameters) == (
+        "candidate",
+        "windows",
+        "domain",
+        "query_vector_canonical_bytes",
+        "query_vector_sha256",
+        "query_window_sink",
+    )
+    for forbidden in (
+        "accounting",
+        "candidate_role",
+        "modulus",
+        "query_execution_sink",
+        "retained_phases",
+    ):
+        assert forbidden not in parameters
+
+    content, digest = _query_vector()
+    with pytest.raises(ValueError, match="frozen Day 1 policy"):
+        replay_and_seal_publication_day1b_candidate(
+            candidate=replace(_ordinary_candidate(), role="ablation"),
+            windows=_windows(),
+            domain=_domain(),
+            query_vector_canonical_bytes=content,
+            query_vector_sha256=digest,
+        )
+
+
+def test_collector_is_one_shot_and_capability_is_not_caller_constructible() -> None:
+    content, digest = _query_vector()
+    _accounting, capability = replay_and_seal_publication_day1b_candidate(
         candidate=_ordinary_candidate(),
         windows=_windows(),
         domain=_domain(),
-        query_execution_sink=collector.accept,
+        query_vector_canonical_bytes=content,
+        query_vector_sha256=digest,
     )
-    capability = collector.finish(accounting)
 
     with pytest.raises(TypeError, match="collector-minted"):
         Day1BCandidateReplayCapability()
     with pytest.raises(TypeError, match="not a caller boolean"):
         bool(capability)
-    with pytest.raises(Day1BReplayExecutionError, match="already finished"):
-        collector.finish(accounting)
     abandon_day1b_candidate_replay_capability(capability)
+    assert capability._binding is None
     with pytest.raises(Day1BReplayExecutionError, match="absent or consumed"):
         describe_day1b_candidate_replay_capability(capability)
 
@@ -289,17 +337,24 @@ def test_collector_is_one_shot_and_capability_is_not_caller_constructible() -> N
 def test_collector_rejects_noncanonical_or_rehashed_query_vector_bytes() -> None:
     content, digest = _query_vector()
     with pytest.raises(Day1BReplayExecutionError, match="not canonical JSON"):
-        Day1BQueryExecutionCollector(
+        replay_execution_module._Day1BQueryExecutionCollector(
+            candidate=_ordinary_candidate(),
             query_vector_canonical_bytes=content[:-1],
             query_vector_sha256=hashlib.sha256(content[:-1]).hexdigest(),
-            retained_phases=("tuning-prefix", "held-out"),
             modulus=65537,
         )
     with pytest.raises(Day1BReplayExecutionError, match="differ from their digest"):
-        Day1BQueryExecutionCollector(
+        replay_execution_module._Day1BQueryExecutionCollector(
+            candidate=_ordinary_candidate(),
             query_vector_canonical_bytes=content,
             query_vector_sha256="0" * 64,
-            retained_phases=("tuning-prefix", "held-out"),
             modulus=65537,
+        )
+    with pytest.raises(Day1BReplayExecutionError, match="frozen plaintext modulus"):
+        replay_execution_module._Day1BQueryExecutionCollector(
+            candidate=_ordinary_candidate(),
+            query_vector_canonical_bytes=content,
+            query_vector_sha256=digest,
+            modulus=97,
         )
     assert digest != "0" * 64

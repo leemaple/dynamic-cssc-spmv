@@ -222,9 +222,9 @@ controller still derives nonzero logical random/dummy route counts. The worker
 registry counts validate whatever descriptors were physically streamed; they
 are not a second authority for the controller's multiplicity-weighted charge.
 F1-M correctness, route coverage, and no-reuse semantics remain separate
-algorithmic obligations under ADR 0005 and the single-use ordinary-query
-lifecycle. The real OpenFHE runner smoke verifies the complete typed execution
-path, while formal Day 2 measures the frozen primitive profiles and retains its
+algorithmic obligations under ADR 0005 and the single-use ordinary and strong
+query lifecycles. The real OpenFHE runner smoke verifies both complete typed
+execution paths, while formal Day 2 measures the frozen primitive profiles and retains its
 category-specific ciphertext/evaluation-key sizes in the archive-bound
 serialized-object size profile used to price Day 1B's exact multiplicities.
 Random-zero-sum and encrypted-zero-dummy F1-M charges use their separately
@@ -238,24 +238,38 @@ artifact that declares full query-arrival replay, omits the basis, changes a
 multiplicity, leaves a query-range gap, overlaps ranges, or disagrees with the
 controller's schedule fails closed.
 
-The preparatory v25 source surface exposes the exact typed compilation used for
+The preparatory v26 source surface exposes the exact typed compilation used for
 each query-bearing window through a synchronous, output-only query-execution
-sink. The callback receives the existing compact descriptor and its ordinary or
-strong non-authorizing carrier together, while all three stream/accounting roots
-stay unchanged. The replay itself retains no carrier after the callback returns.
-The v25 collector commits those ordered pairs to a separate binding root,
-independently reconstructs the existing compact query-window root, and retains
-exactly one private typed carrier: the first query-bearing window in the first
-role-retained phase (tuning-prefix for reference candidates, held-out for the
-ablation). It reconstructs that representative's logical matrix directly from
-the carrier and evaluates the frozen query vector with the plaintext oracle
-only for that representative. Non-representative windows retain neither a
-private carrier nor logical state/output digests, so the work remains
-proportional to distinct layouts and
-performs no OpenFHE execution. The resulting process-local capability is
-single-use and its receipt explicitly denies worker, dispatch, formal,
-publication, complete-cost, and production authority. It still does not bind a
-Day 2 plan or invoke a runner; those remain later production-adapter gates.
+sink, but the only public sealing seam now owns that sink and the replay call.
+The caller supplies one exact frozen candidate, window stream, domain, and
+canonical query-vector bytes; it cannot separately supply typed carriers,
+accounting, candidate role, retained phases, or a plaintext modulus. The seam
+derives the candidate policy and role-retained phases, freezes the modulus at
+65,537, creates a private collector, and finishes it against the accounting
+returned by that same replay invocation.
+
+Every v26 query-execution binding commits the candidate ID, role, policy digest,
+retained phases, and modulus together with the compact descriptor and ordinary
+or strong carrier identities. The collector independently reconstructs the
+existing compact query-window root and retains exactly one private typed
+carrier: the first query-bearing window in the first role-retained phase
+(tuning-prefix for reference candidates, held-out for the ablation). It
+reconstructs that representative's logical matrix directly from the carrier
+and evaluates the frozen query vector with the plaintext oracle only for that
+representative. Non-representative windows retain neither a private carrier nor
+logical state/output digests, so the work remains proportional to distinct
+layouts and performs no OpenFHE execution. Claim or abandonment consumes the
+process-local capability and releases its carrier reference even on validation
+failure. Its receipt explicitly denies worker, dispatch, formal, publication,
+complete-cost, and production authority.
+
+The same v26 surface advances the native request/result language to v4 and the
+enclosing runtime receipt to v6. One private deep launcher now admits either an
+ordinary or strong execution capability, owns scratch and
+READY/DONE verification, and dispatches through thin kind-specific adapters.
+The native smoke executes and independently verifies both paths. It still does
+not bind a formal Day 2 plan or install a production candidate-cell adapter;
+those remain later gates.
 
 ## Consequences
 

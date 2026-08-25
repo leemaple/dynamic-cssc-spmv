@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import threading
 from collections import Counter
 from dataclasses import dataclass
 from typing import Literal
@@ -28,6 +30,14 @@ from dynamic_cssc.strong_packed_coo import (
 
 OperandSourceKind = Literal["base-chunk", "delta-page"]
 F1MOperandKind = Literal["random-zero-sum", "encrypted-zero-dummy"]
+STRONG_QUERY_PREPARATION_SCHEMA = (
+    "dynamic-cssc-common-strong-query-preparation-v1"
+)
+STRONG_EXECUTION_AUTHORIZATION_SCHEMA = (
+    "dynamic-cssc-common-strong-execution-authorization-v1"
+)
+
+_LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 
 class StrongExecutionError(ValueError):
@@ -126,6 +136,59 @@ class PreparedStrongQuery:
     f1m_operands: tuple[PreparedF1MOperand, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class StrongExecutionAuthorizationReceipt:
+    """Non-secret receipt for one consumed strong prepared-query batch."""
+
+    query_id: str
+    version_id: str
+    ledger_commitment_token: str
+    query_preparation_sha256: str
+    execution_binding_digest: str
+    authorization_transition_sha256: str
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "authorization_transition_sha256": self.authorization_transition_sha256,
+            "execution_binding_digest": self.execution_binding_digest,
+            "ledger_commitment_token": self.ledger_commitment_token,
+            "query_id": self.query_id,
+            "query_preparation_sha256": self.query_preparation_sha256,
+            "schema_version": STRONG_EXECUTION_AUTHORIZATION_SCHEMA,
+            "version_id": self.version_id,
+        }
+
+
+class StrongExecutionCapability:
+    """Opaque single-use authorization minted after strong ledger consumption."""
+
+    __slots__ = ("_binding", "_claimed", "_lock")
+
+    def __new__(cls) -> StrongExecutionCapability:
+        raise TypeError("strong execution capabilities are lifecycle-minted")
+
+    def __bool__(self) -> bool:
+        raise TypeError("strong execution capability is not a caller boolean")
+
+
+@dataclass(frozen=True, slots=True)
+class _StrongExecutionAuthorizationBinding:
+    receipt: StrongExecutionAuthorizationReceipt
+
+
+def _canonical_bytes(value: object) -> bytes:
+    try:
+        return json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    except (TypeError, ValueError) as error:
+        raise StrongExecutionError("strong query value is not canonical JSON") from error
+
+
 def _is_strict_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -182,14 +245,7 @@ def _private_plan_digest(
     output_plan_digest: str,
 ) -> str:
     payload = _canonical_private_plan_payload(specs, routes, output_plan_digest)
-    encoded = json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-        allow_nan=False,
-    ).encode("ascii")
-    return hashlib.sha256(encoded).hexdigest()
+    return hashlib.sha256(_canonical_bytes(payload)).hexdigest()
 
 
 def _compile(base: PublishedComponent, delta: SegmentedDeltaState) -> StrongExecutionBundle:
@@ -384,6 +440,14 @@ def _validate_prepared(bundle: StrongExecutionBundle, prepared: PreparedStrongQu
         or prepared.output_plan_digest != bundle.output_plan_digest
         or prepared.execution_binding_digest != bundle.execution_binding_digest
         or prepared.private_plan_digest != bundle.private_plan_digest
+        or type(prepared.query_id) is not str
+        or not prepared.query_id
+        or type(prepared.version_id) is not str
+        or not prepared.version_id
+        or type(prepared.ledger_commitment_token) is not str
+        or _LOWER_SHA256.fullmatch(prepared.ledger_commitment_token) is None
+        or not _is_strict_int(prepared.modulus)
+        or prepared.modulus < 2
     ):
         raise StrongExecutionError("prepared query does not match the execution bundle binding")
     vector = _validated_vector(prepared.vector, length=bundle.base.layout_spec.cols)
@@ -453,6 +517,150 @@ def _validate_prepared(bundle: StrongExecutionBundle, prepared: PreparedStrongQu
                     total += values_by_share[(share.component_id, share.output_block_id)][lane]
         if total % prepared.modulus:
             raise StrongExecutionError("random F1-M values must sum to zero per coordinate")
+
+
+def canonical_strong_query_preparation_payload(
+    bundle: StrongExecutionBundle,
+    prepared: PreparedStrongQuery,
+) -> dict[str, object]:
+    """Serialize private strong execution input; never publish this payload."""
+
+    _validate_bundle(bundle)
+    _validate_prepared(bundle, prepared)
+    return {
+        "bindings": {
+            "cloud_program_digest": prepared.cloud_program_digest,
+            "execution_binding_digest": prepared.execution_binding_digest,
+            "output_plan_digest": prepared.output_plan_digest,
+            "private_plan_digest": prepared.private_plan_digest,
+        },
+        "f1m_operands": [
+            {
+                "ciphertext_id": operand.ciphertext_id,
+                "component_id": operand.component_id,
+                "kind": operand.kind,
+                "output_block_id": operand.output_block_id,
+                "result_id": operand.result_id,
+                "values": list(operand.values),
+            }
+            for operand in prepared.f1m_operands
+        ],
+        "format": STRONG_QUERY_PREPARATION_SCHEMA,
+        "ledger_commitment_token": prepared.ledger_commitment_token,
+        "modulus": prepared.modulus,
+        "query_id": prepared.query_id,
+        "query_operands": [
+            {
+                "ciphertext_id": operand.ciphertext_id,
+                "values": list(operand.values),
+            }
+            for operand in prepared.query_operands
+        ],
+        "version_id": prepared.version_id,
+    }
+
+
+def canonical_strong_query_preparation_bytes(
+    bundle: StrongExecutionBundle,
+    prepared: PreparedStrongQuery,
+) -> bytes:
+    return _canonical_bytes(canonical_strong_query_preparation_payload(bundle, prepared))
+
+
+def authorize_strong_execution(
+    bundle: StrongExecutionBundle,
+    prepared: PreparedStrongQuery,
+    *,
+    ledger: PreparedF1MCommitmentLedger,
+) -> StrongExecutionCapability:
+    """Consume one strong prepared batch and mint its launch authorization."""
+
+    _validate_bundle(bundle)
+    _validate_prepared(bundle, prepared)
+    preparation_sha256 = hashlib.sha256(
+        canonical_strong_query_preparation_bytes(bundle, prepared)
+    ).hexdigest()
+    try:
+        ledger.verify_and_consume_prepared_f1m(
+            _prepared_f1m_commitments(prepared.f1m_operands),
+            commitment_token=prepared.ledger_commitment_token,
+            query_id=prepared.query_id,
+            version_id=prepared.version_id,
+            output_plan_digest=prepared.output_plan_digest,
+            private_plan_digest=bundle.private_plan_digest,
+            execution_binding_digest=bundle.execution_binding_digest,
+            modulus=prepared.modulus,
+        )
+    except (TypeError, ValueError, RuntimeError) as error:
+        raise StrongExecutionError(
+            "strong F1-M commitment consumption failed"
+        ) from error
+    transition = {
+        "execution_binding_digest": prepared.execution_binding_digest,
+        "ledger_commitment_token": prepared.ledger_commitment_token,
+        "query_id": prepared.query_id,
+        "query_preparation_sha256": preparation_sha256,
+        "schema_version": STRONG_EXECUTION_AUTHORIZATION_SCHEMA,
+        "transition": "prepared-to-consumed",
+        "version_id": prepared.version_id,
+    }
+    receipt = StrongExecutionAuthorizationReceipt(
+        query_id=prepared.query_id,
+        version_id=prepared.version_id,
+        ledger_commitment_token=prepared.ledger_commitment_token,
+        query_preparation_sha256=preparation_sha256,
+        execution_binding_digest=prepared.execution_binding_digest,
+        authorization_transition_sha256=hashlib.sha256(
+            _canonical_bytes(transition)
+        ).hexdigest(),
+    )
+    capability = object.__new__(StrongExecutionCapability)
+    object.__setattr__(
+        capability,
+        "_binding",
+        _StrongExecutionAuthorizationBinding(receipt=receipt),
+    )
+    object.__setattr__(capability, "_claimed", False)
+    object.__setattr__(capability, "_lock", threading.Lock())
+    return capability
+
+
+def claim_strong_execution(
+    capability: StrongExecutionCapability,
+    bundle: StrongExecutionBundle,
+    prepared: PreparedStrongQuery,
+) -> StrongExecutionAuthorizationReceipt:
+    """Consume a lifecycle-minted capability at one exact strong launch seam."""
+
+    if type(capability) is not StrongExecutionCapability:
+        raise TypeError("capability must be an exact strong lifecycle authorization")
+    lock = getattr(capability, "_lock", None)
+    if type(lock) is not type(threading.Lock()):
+        raise StrongExecutionError("strong execution capability is not authoritative")
+    with lock:
+        if getattr(capability, "_claimed", None) is not False:
+            raise StrongExecutionError("strong execution capability is absent or consumed")
+        object.__setattr__(capability, "_claimed", True)
+        binding = getattr(capability, "_binding", None)
+    if type(binding) is not _StrongExecutionAuthorizationBinding:
+        raise StrongExecutionError("strong execution capability is not authoritative")
+    _validate_bundle(bundle)
+    _validate_prepared(bundle, prepared)
+    receipt = binding.receipt
+    expected_preparation_sha256 = hashlib.sha256(
+        canonical_strong_query_preparation_bytes(bundle, prepared)
+    ).hexdigest()
+    if (
+        receipt.query_id != prepared.query_id
+        or receipt.version_id != prepared.version_id
+        or receipt.ledger_commitment_token != prepared.ledger_commitment_token
+        or receipt.query_preparation_sha256 != expected_preparation_sha256
+        or receipt.execution_binding_digest != prepared.execution_binding_digest
+    ):
+        raise StrongExecutionError(
+            "strong execution capability differs from its prepared query"
+        )
+    return receipt
 
 
 def execute_strong_plaintext(

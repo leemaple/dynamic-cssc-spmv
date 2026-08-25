@@ -19,9 +19,14 @@ from dynamic_cssc.mask_ledger import (
 )
 from dynamic_cssc.output_plan import canonical_output_plan_payload
 from dynamic_cssc.strong_execution import (
+    STRONG_EXECUTION_AUTHORIZATION_SCHEMA,
     PreparedQueryOperand,
+    StrongExecutionCapability,
     StrongExecutionError,
+    authorize_strong_execution,
     canonical_private_plan_payload,
+    canonical_strong_query_preparation_bytes,
+    claim_strong_execution,
     compile_strong_execution,
     execute_strong_plaintext,
     prepare_strong_query,
@@ -301,6 +306,36 @@ def test_every_return_uses_random_or_exact_zero_dummy_f1m_and_counts_from_dag() 
     assert bundle.cloud_counts.multiply_plaintext_masks == 3
     assert bundle.cloud_counts.add_f1m_masks == 3
     assert bundle.cloud_counts.returned_ciphertexts == 3
+
+
+def test_strong_preparation_mints_one_exact_launch_authorization() -> None:
+    bundle = _three_result_bundle()
+    ledger = _RecordingLedger()
+    prepared = prepare_strong_query(
+        bundle,
+        query_id="query-authorized",
+        vector=tuple(range(12)),
+        modulus=97,
+        ledger=ledger,
+    )
+
+    capability = authorize_strong_execution(bundle, prepared, ledger=ledger)
+    with pytest.raises(TypeError, match="lifecycle-minted"):
+        StrongExecutionCapability()
+    with pytest.raises(TypeError, match="not a caller boolean"):
+        bool(capability)
+
+    receipt = claim_strong_execution(capability, bundle, prepared)
+    document = receipt.to_document()
+
+    assert document["schema_version"] == STRONG_EXECUTION_AUTHORIZATION_SCHEMA
+    assert document["query_id"] == prepared.query_id
+    assert document["query_preparation_sha256"] == hashlib.sha256(
+        canonical_strong_query_preparation_bytes(bundle, prepared)
+    ).hexdigest()
+    assert ledger.consumed is True
+    with pytest.raises(StrongExecutionError, match="absent or consumed"):
+        claim_strong_execution(capability, bundle, prepared)
 
 
 def test_duplicate_random_mask_query_fails_closed(tmp_path: Path) -> None:

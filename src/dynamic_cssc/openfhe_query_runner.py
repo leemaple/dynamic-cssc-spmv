@@ -19,6 +19,8 @@ from pathlib import Path
 from dynamic_cssc.cloud_execution_plan import (
     AddCiphertexts,
     AddF1MMask,
+    CloudExecutionPlan,
+    CloudProgram,
     MultiplyCiphertexts,
     MultiplyPlaintextMask,
     Relinearize,
@@ -32,6 +34,7 @@ from dynamic_cssc.ordinary_query_lifecycle import (
     PreparedOrdinaryQuery,
     canonical_ordinary_query_preparation_bytes,
 )
+from dynamic_cssc.output_plan import OutputPlan
 from dynamic_cssc.plaintext_oracle import reconstruct_output
 from dynamic_cssc.publication_day1b_key_framing import (
     DAY1B_COMBINED_EVALUATION_KEY_CATEGORY,
@@ -41,9 +44,14 @@ from dynamic_cssc.publication_day1b_key_framing import (
     Day1BCombinedEvaluationKeyFrameStreamValidator,
     Day1BCombinedEvaluationKeyFramingError,
 )
+from dynamic_cssc.strong_execution import (
+    PreparedStrongQuery,
+    StrongExecutionBundle,
+    canonical_strong_query_preparation_bytes,
+)
 
-OPENFHE_QUERY_REQUEST_SCHEMA = "dynamic-cssc-full-openfhe-query-request-v3"
-OPENFHE_QUERY_RESULT_SCHEMA = "dynamic-cssc-full-openfhe-query-result-v3"
+OPENFHE_QUERY_REQUEST_SCHEMA = "dynamic-cssc-full-openfhe-query-request-v4"
+OPENFHE_QUERY_RESULT_SCHEMA = "dynamic-cssc-full-openfhe-query-result-v4"
 OPENFHE_QUERY_PARAMETER_PROFILE = "day1b-full-query-pre-admission-depth2-0-0-v1"
 OPENFHE_KEY_GENERATION_PLAN_SCHEMA = "dynamic-cssc-openfhe-key-generation-plan-v2"
 OPENFHE_QUERY_DERIVED_ROTATION_KEY_PLAN_SCHEMA = (
@@ -181,6 +189,25 @@ class VerifiedOpenFHEQueryResult:
     serialized_objects: tuple[OpenFHESerializedObjectReceipt, ...]
     second_batch_row_zero: bool
     publication_authority: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _OpenFHEResultRoute:
+    result_id: str
+    component_id: str
+    output_block_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedOpenFHEQueryView:
+    execution_kind: str
+    cloud_plan: CloudExecutionPlan
+    output_plan: OutputPlan
+    result_routes: tuple[_OpenFHEResultRoute, ...]
+    private_plan_sha256: str
+    query_preparation_sha256: str
+    ciphertext_values: tuple[dict[str, object], ...]
+    modulus: int
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -430,30 +457,32 @@ def _repository_openfhe_profile(repository_root: Path) -> dict[str, object]:
     }
 
 
-def _ordinary_ciphertext_values(
-    bundle: OrdinaryExecutionBundle,
-    prepared: PreparedOrdinaryQuery,
-) -> list[dict[str, object]]:
-    compiled = bundle.compiled
-    values = {spec.value_ciphertext_id: spec.values for spec in compiled.operand_specs}
-    values.update({operand.ciphertext_id: operand.values for operand in prepared.query_operands})
-    values.update({operand.ciphertext_id: operand.values for operand in prepared.f1m_operands})
-    f1m_kind = {operand.ciphertext_id: operand.kind for operand in prepared.f1m_operands}
-    expected = {operand.ciphertext_id for operand in compiled.cloud_plan.program.ciphertext_inputs}
+def _ciphertext_values(
+    *,
+    program: CloudProgram,
+    value_vectors: tuple[tuple[str, tuple[int, ...]], ...],
+    query_vectors: tuple[tuple[str, tuple[int, ...]], ...],
+    f1m_vectors: tuple[tuple[str, str, tuple[int, ...]], ...],
+) -> tuple[dict[str, object], ...]:
+    values = dict(value_vectors)
+    values.update(query_vectors)
+    values.update((ciphertext_id, vector) for ciphertext_id, _kind, vector in f1m_vectors)
+    f1m_kind = {ciphertext_id: kind for ciphertext_id, kind, _vector in f1m_vectors}
+    expected = {operand.ciphertext_id for operand in program.ciphertext_inputs}
     if set(values) != expected:
         raise OpenFHEQueryRunnerError(
-            "ordinary private values do not exactly cover ciphertext inputs"
+            "private values do not exactly cover ciphertext inputs"
         )
     result: list[dict[str, object]] = []
     for operand in sorted(
-        compiled.cloud_plan.program.ciphertext_inputs,
+        program.ciphertext_inputs,
         key=lambda item: item.ciphertext_id,
     ):
         vector = values[operand.ciphertext_id]
         if type(vector) is not tuple or len(vector) != operand.length or any(
             type(value) is not int for value in vector
         ):
-            raise OpenFHEQueryRunnerError("ordinary ciphertext input vector is not exact")
+            raise OpenFHEQueryRunnerError("ciphertext input vector is not exact")
         kind = f1m_kind.get(operand.ciphertext_id)
         if (operand.role == "f1m-mask") != (kind is not None):
             raise OpenFHEQueryRunnerError("F1-M kind does not match the ciphertext input role")
@@ -465,36 +494,106 @@ def _ordinary_ciphertext_values(
                 "values": list(vector),
             }
         )
-    return result
+    return tuple(result)
 
 
-def build_ordinary_openfhe_query_request(
+def _ordinary_query_view(
     bundle: OrdinaryExecutionBundle,
     prepared: PreparedOrdinaryQuery,
-    *,
-    repository_root: Path | None = None,
-    key_generation_plan: OpenFHEKeyGenerationPlan | None = None,
-) -> bytes:
-    """Build one private, non-authorizing request for the generic C++ runner."""
-
+) -> _PreparedOpenFHEQueryView:
     preparation_bytes = canonical_ordinary_query_preparation_bytes(bundle, prepared)
     compiled = bundle.compiled
-    root = (
-        Path(__file__).resolve().parents[2]
-        if repository_root is None
-        else repository_root
+    return _PreparedOpenFHEQueryView(
+        execution_kind="ordinary",
+        cloud_plan=compiled.cloud_plan,
+        output_plan=compiled.output_plan,
+        result_routes=tuple(
+            _OpenFHEResultRoute(
+                result_id=route.result_id,
+                component_id=route.component_id,
+                output_block_id=route.output_block_id,
+            )
+            for route in compiled.result_routes
+        ),
+        private_plan_sha256=bundle.private_plan_digest,
+        query_preparation_sha256=hashlib.sha256(preparation_bytes).hexdigest(),
+        ciphertext_values=_ciphertext_values(
+            program=compiled.cloud_plan.program,
+            value_vectors=tuple(
+                (spec.value_ciphertext_id, spec.values)
+                for spec in compiled.operand_specs
+            ),
+            query_vectors=tuple(
+                (operand.ciphertext_id, operand.values)
+                for operand in prepared.query_operands
+            ),
+            f1m_vectors=tuple(
+                (operand.ciphertext_id, operand.kind, operand.values)
+                for operand in prepared.f1m_operands
+            ),
+        ),
+        modulus=prepared.modulus,
     )
+
+
+def _strong_query_view(
+    bundle: StrongExecutionBundle,
+    prepared: PreparedStrongQuery,
+) -> _PreparedOpenFHEQueryView:
+    preparation_bytes = canonical_strong_query_preparation_bytes(bundle, prepared)
+    return _PreparedOpenFHEQueryView(
+        execution_kind="strong",
+        cloud_plan=bundle.cloud_plan,
+        output_plan=bundle.output_plan,
+        result_routes=tuple(
+            _OpenFHEResultRoute(
+                result_id=route.result_id,
+                component_id=route.component_id,
+                output_block_id=route.output_block_id,
+            )
+            for route in bundle.result_routes
+        ),
+        private_plan_sha256=bundle.private_plan_digest,
+        query_preparation_sha256=hashlib.sha256(preparation_bytes).hexdigest(),
+        ciphertext_values=_ciphertext_values(
+            program=bundle.cloud_plan.program,
+            value_vectors=tuple(
+                (spec.value_ciphertext_id, spec.values)
+                for spec in bundle.value_operand_specs
+            ),
+            query_vectors=tuple(
+                (operand.ciphertext_id, operand.values)
+                for operand in prepared.query_operands
+            ),
+            f1m_vectors=tuple(
+                (operand.ciphertext_id, operand.kind, operand.values)
+                for operand in prepared.f1m_operands
+            ),
+        ),
+        modulus=prepared.modulus,
+    )
+
+
+def _build_openfhe_query_request(
+    view: _PreparedOpenFHEQueryView,
+    *,
+    repository_root: Path | None,
+    key_generation_plan: OpenFHEKeyGenerationPlan | None,
+) -> bytes:
+    cloud_plan = view.cloud_plan
+    program = cloud_plan.program
+    root = Path(__file__).resolve().parents[2] if repository_root is None else repository_root
     profile = _repository_openfhe_profile(root)
-    if prepared.modulus != profile["plaintext_modulus"]:
+    if view.modulus != profile["plaintext_modulus"]:
         raise OpenFHEQueryRunnerError(
             "prepared query modulus differs from the repository OpenFHE profile"
         )
-    if compiled.cloud_plan.program.slot_count > profile["batch_size"]:
+    if program.slot_count > profile["batch_size"]:
         raise OpenFHEQueryRunnerError("typed query slot count exceeds the OpenFHE batch size")
-    execution_binding = canonical_execution_binding_payload(compiled.cloud_plan.binding)
+    execution_binding = canonical_execution_binding_payload(cloud_plan.binding)
     derived_key_plan = _query_derived_key_generation_plan(
-        cloud_program_sha256=compiled.cloud_program_digest,
-        rotation_entries=compiled.cloud_plan.program.rotation_catalog.entries,
+        cloud_program_sha256=cloud_plan.binding.cloud_program_digest,
+        rotation_entries=program.rotation_catalog.entries,
     )
     if key_generation_plan is None:
         key_plan = derived_key_plan
@@ -508,9 +607,7 @@ def build_ordinary_openfhe_query_request(
         )
         program_indices = {
             openfhe_index
-            for _logical_shift, openfhe_index in (
-                compiled.cloud_plan.program.rotation_catalog.entries
-            )
+            for _logical_shift, openfhe_index in program.rotation_catalog.entries
         }
         if not program_indices.issubset(key_plan.required_exact_indices):
             raise OpenFHEQueryRunnerError(
@@ -526,25 +623,57 @@ def build_ordinary_openfhe_query_request(
             )
     request = {
         "bindings": {
-            "cloud_program_sha256": compiled.cloud_program_digest,
+            "cloud_program_sha256": cloud_plan.binding.cloud_program_digest,
             "execution_binding": execution_binding,
-            "execution_binding_sha256": compiled.execution_binding_digest,
-            "ordinary_private_plan_sha256": bundle.private_plan_digest,
-            "ordinary_query_preparation_sha256": hashlib.sha256(
-                preparation_bytes
+            "execution_binding_sha256": hashlib.sha256(
+                _canonical_bytes(execution_binding)
             ).hexdigest(),
+            "execution_kind": view.execution_kind,
+            "query_preparation_sha256": view.query_preparation_sha256,
+            "query_private_plan_sha256": view.private_plan_sha256,
         },
-        "ciphertext_values": _ordinary_ciphertext_values(bundle, prepared),
+        "ciphertext_values": list(view.ciphertext_values),
         "key_generation_plan": key_plan.to_request_document(),
         "openfhe": profile,
-        "program": canonical_cloud_program_payload(compiled.cloud_plan.program),
+        "program": canonical_cloud_program_payload(program),
         "schema_version": OPENFHE_QUERY_REQUEST_SCHEMA,
     }
     return _canonical_bytes(request)
 
 
-def _expected_operation_counts(bundle: OrdinaryExecutionBundle) -> dict[str, int]:
-    program = bundle.compiled.cloud_plan.program
+def build_ordinary_openfhe_query_request(
+    bundle: OrdinaryExecutionBundle,
+    prepared: PreparedOrdinaryQuery,
+    *,
+    repository_root: Path | None = None,
+    key_generation_plan: OpenFHEKeyGenerationPlan | None = None,
+) -> bytes:
+    """Build one private, non-authorizing request for the generic C++ runner."""
+
+    return _build_openfhe_query_request(
+        _ordinary_query_view(bundle, prepared),
+        repository_root=repository_root,
+        key_generation_plan=key_generation_plan,
+    )
+
+
+def build_strong_openfhe_query_request(
+    bundle: StrongExecutionBundle,
+    prepared: PreparedStrongQuery,
+    *,
+    repository_root: Path | None = None,
+    key_generation_plan: OpenFHEKeyGenerationPlan | None = None,
+) -> bytes:
+    """Build one private, non-authorizing strong request for the same runner."""
+
+    return _build_openfhe_query_request(
+        _strong_query_view(bundle, prepared),
+        repository_root=repository_root,
+        key_generation_plan=key_generation_plan,
+    )
+
+
+def _expected_operation_counts(program: CloudProgram) -> dict[str, int]:
     counts: Counter[str] = Counter()
     for node in program.nodes:
         if isinstance(node, MultiplyCiphertexts):
@@ -844,9 +973,8 @@ def _verify_key_material_receipt(
     )
 
 
-def verify_ordinary_openfhe_query_result(
-    bundle: OrdinaryExecutionBundle,
-    prepared: PreparedOrdinaryQuery,
+def _verify_openfhe_query_result(
+    view: _PreparedOpenFHEQueryView,
     *,
     request_bytes: bytes,
     result_path: Path,
@@ -857,14 +985,13 @@ def verify_ordinary_openfhe_query_result(
 ) -> VerifiedOpenFHEQueryResult:
     """Verify one C++ result plus every retained serialized-object byte stream."""
 
-    expected_request = build_ordinary_openfhe_query_request(
-        bundle,
-        prepared,
+    expected_request = _build_openfhe_query_request(
+        view,
         repository_root=repository_root,
         key_generation_plan=key_generation_plan,
     )
     if request_bytes != expected_request:
-        raise OpenFHEQueryRunnerError("runner request differs from the canonical ordinary request")
+        raise OpenFHEQueryRunnerError("runner request differs from the canonical typed request")
     if not isinstance(result_path, Path) or not isinstance(object_root, Path):
         raise TypeError("result_path and object_root must be pathlib.Path values")
     raw = _read_bounded_exact_file(
@@ -918,11 +1045,11 @@ def verify_ordinary_openfhe_query_result(
         key: _strict_nonnegative(operation_counts[key], field=f"operation count {key}")
         for key in _OPERATION_COUNT_KEYS
     }
-    if observed_counts != _expected_operation_counts(bundle):
+    program = view.cloud_plan.program
+    if observed_counts != _expected_operation_counts(program):
         raise OpenFHEQueryRunnerError("OpenFHE operation counts differ from the typed DAG")
 
     decrypted = result["decrypted_results"]
-    program = bundle.compiled.cloud_plan.program
     if type(decrypted) is not list or len(decrypted) != len(program.result_ids):
         raise OpenFHEQueryRunnerError("OpenFHE decrypted result cardinality changed")
     decrypted_by_id: dict[str, tuple[int, ...]] = {}
@@ -937,24 +1064,24 @@ def verify_ordinary_openfhe_query_result(
             raise OpenFHEQueryRunnerError("OpenFHE decrypted result identity/length changed")
         vector = tuple(values)
         if any(
-            type(value) is not int or not 0 <= value < prepared.modulus for value in vector
+            type(value) is not int or not 0 <= value < view.modulus for value in vector
         ):
             raise OpenFHEQueryRunnerError("OpenFHE decrypted result is outside Z_t")
         decrypted_by_id[result_id] = vector
     returned_shares = {
         (route.component_id, route.output_block_id): decrypted_by_id[route.result_id]
-        for route in bundle.compiled.result_routes
+        for route in view.result_routes
     }
     reconstructed = reconstruct_output(
-        bundle.compiled.output_plan,
+        view.output_plan,
         returned_shares,
-        modulus=prepared.modulus,
+        modulus=view.modulus,
     )
     if (
         type(expected_output) is not tuple
         or any(type(value) is not int for value in expected_output)
         or len(expected_output) != len(reconstructed)
-        or reconstructed != tuple(value % prepared.modulus for value in expected_output)
+        or reconstructed != tuple(value % view.modulus for value in expected_output)
     ):
         raise OpenFHEQueryRunnerError("OpenFHE reconstructed output differs from the oracle")
 
@@ -1102,6 +1229,54 @@ def verify_ordinary_openfhe_query_result(
     )
 
 
+def verify_ordinary_openfhe_query_result(
+    bundle: OrdinaryExecutionBundle,
+    prepared: PreparedOrdinaryQuery,
+    *,
+    request_bytes: bytes,
+    result_path: Path,
+    object_root: Path,
+    expected_output: tuple[int, ...],
+    repository_root: Path | None = None,
+    key_generation_plan: OpenFHEKeyGenerationPlan | None = None,
+) -> VerifiedOpenFHEQueryResult:
+    """Verify one ordinary result through the generic typed-result module."""
+
+    return _verify_openfhe_query_result(
+        _ordinary_query_view(bundle, prepared),
+        request_bytes=request_bytes,
+        result_path=result_path,
+        object_root=object_root,
+        expected_output=expected_output,
+        repository_root=repository_root,
+        key_generation_plan=key_generation_plan,
+    )
+
+
+def verify_strong_openfhe_query_result(
+    bundle: StrongExecutionBundle,
+    prepared: PreparedStrongQuery,
+    *,
+    request_bytes: bytes,
+    result_path: Path,
+    object_root: Path,
+    expected_output: tuple[int, ...],
+    repository_root: Path | None = None,
+    key_generation_plan: OpenFHEKeyGenerationPlan | None = None,
+) -> VerifiedOpenFHEQueryResult:
+    """Verify one strong result through the same generic typed-result module."""
+
+    return _verify_openfhe_query_result(
+        _strong_query_view(bundle, prepared),
+        request_bytes=request_bytes,
+        result_path=result_path,
+        object_root=object_root,
+        expected_output=expected_output,
+        repository_root=repository_root,
+        key_generation_plan=key_generation_plan,
+    )
+
+
 __all__ = (
     "OPENFHE_QUERY_PARAMETER_PROFILE",
     "OPENFHE_QUERY_REQUEST_SCHEMA",
@@ -1117,6 +1292,8 @@ __all__ = (
     "OpenFHESerializedObjectReceipt",
     "VerifiedOpenFHEQueryResult",
     "build_ordinary_openfhe_query_request",
+    "build_strong_openfhe_query_request",
     "pre_admission_day2_openfhe_key_generation_plan",
     "verify_ordinary_openfhe_query_result",
+    "verify_strong_openfhe_query_result",
 )

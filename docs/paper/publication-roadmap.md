@@ -379,7 +379,7 @@ previously reviewed schema-source Git/Behavior-inventory binding; authority and
 worker/runtime identity are structurally absent. Its non-self-referential
 semantic digest and immutable decoded record do not lift the repository
 `HOLD`. The real amendment and its outcome-blind review receipt are now frozen
-as pre-`S1` DAY1B Behavior Set v23 members. The resource loader can project its
+as pre-`S1` DAY1B Behavior Set v26 members. The resource loader can project its
 non-authorizing budget, after which the independent profile, trace, worker, and
 anchor gates still fail closed.
 
@@ -398,22 +398,24 @@ implementation evidence only. It cannot dispatch until the trace and catalog
 authorities, repository execution adapter, and outcome-blind resource policy
 are installed, and it is not a 30-unit publication artifact.
 
-The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v23,
+The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v26,
 the unchanged empirical-null/authority-false `PENDING-FREEZE` placeholder, the
 separate reviewed resource-only amendment, and a manual no-input validation
 workflow. These freeze the current validator, protocol, administrative safety
 budgets, scheduling, provenance, and artifact-installation source surface; they
 do not create empirical resource results, authorize dispatch, publish an
-artifact, or grant a claim. A controller-owned pre-admission OpenFHE runtime now consumes the
-single-use ordinary-query authorization immediately before launch, owns and
-removes exclusive private scratch, binds the runner/source/compiler identity
-and resolved file-backed OpenFHE library bytes, verifies result and serialized-
-object bytes, and records resource observations with authority fields false.
+artifact, or grant a claim. A controller-owned pre-admission OpenFHE runtime now
+consumes single-use ordinary and strong query authorizations immediately before
+launch, owns and removes exclusive private scratch, binds the
+runner/source/compiler identity and resolved file-backed OpenFHE library bytes,
+verifies result and serialized-object bytes, and records resource observations
+with authority fields false. Thin kind-specific adapters share that private
+launcher and the v4 native request/result language.
 Its build-identity v3 subreceipt now includes stable runner/library filesystem
 identity, Mach-O UUID or ELF build ID, install-name/SONAME and dependency-name
 inventories, compiler bytes/version/target, CMake executable/version, complete
 runner CMake/Ninja inputs, and the pinned clean OpenFHE source plus package,
-build, compile-command, and install-manifest digests. Runtime receipt v5 makes
+build, compile-command, and install-manifest digests. Runtime receipt v6 makes
 that nested-language change explicit and adds an inherited-FD READY/DONE
 protocol. On Linux, the controller pauses the runner at each point, verifies
 the exact pre-admitted runner/library executable mapping closure from `/proc`,

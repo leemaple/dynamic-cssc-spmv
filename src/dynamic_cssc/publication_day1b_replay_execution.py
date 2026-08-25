@@ -13,30 +13,36 @@ import hashlib
 import json
 import re
 import threading
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Literal
 
 from dynamic_cssc.cssc import PublishedComponent
+from dynamic_cssc.day1_registry import RegisteredCandidate
 from dynamic_cssc.plaintext_oracle import direct_spmv
 from dynamic_cssc.publication_day1b_accounting import (
+    Day1BAccountingDomain,
     Day1BQueryWindowAccounting,
     PublicationDay1BAccounting,
+    _candidate_document,
+    replay_publication_day1b_candidate_cell,
 )
 from dynamic_cssc.publication_day1b_layout_execution import (
     Day1BQueryLayoutExecution,
 )
+from dynamic_cssc.publication_schedule import ExactPublicationWindow
 from dynamic_cssc.publication_traces import PUBLICATION_QUERY_VECTOR_SCHEMA
 from dynamic_cssc.strategy_state import PackedCOOEntry, PackedCOOSegment
 from dynamic_cssc.strong_packed_coo import decode_segmented_delta
 
 DAY1B_QUERY_EXECUTION_BINDING_SCHEMA = (
-    "dynamic-cssc-publication-day1b-query-execution-binding-v1"
+    "dynamic-cssc-publication-day1b-query-execution-binding-v2"
 )
 DAY1B_QUERY_EXECUTION_STREAM_SCHEMA = (
-    "dynamic-cssc-publication-day1b-query-execution-stream-v1"
+    "dynamic-cssc-publication-day1b-query-execution-stream-v2"
 )
 DAY1B_REPLAY_EXECUTION_RECEIPT_SCHEMA = (
-    "dynamic-cssc-publication-day1b-replay-execution-receipt-v1"
+    "dynamic-cssc-publication-day1b-replay-execution-receipt-v2"
 )
 DAY1B_REPRESENTATIVE_SELECTION_RULE = (
     "canonical-first-query-bearing-window-of-first-retained-phase-v1"
@@ -50,6 +56,7 @@ _RETAINED_PHASE_SETS = (
 )
 _LOGICAL_STATE_SCHEMA = "dynamic-cssc-publication-day1b-query-logical-state-v1"
 _EXPECTED_OUTPUT_SCHEMA = "dynamic-cssc-publication-day1b-query-expected-output-v1"
+_FROZEN_PLAINTEXT_MODULUS = 65537
 
 
 class Day1BReplayExecutionError(ValueError):
@@ -309,6 +316,10 @@ def _require_pair(
 
 @dataclass(frozen=True, slots=True)
 class Day1BQueryExecutionBinding:
+    candidate_id: str
+    candidate_role: str
+    candidate_policy_sha256: str
+    retained_phases: tuple[RetainedPhase, ...]
     phase: str
     window_index: int
     first_global_query_ordinal: int
@@ -321,12 +332,26 @@ class Day1BQueryExecutionBinding:
     execution_binding_sha256: str
     private_plan_sha256: str
     query_vector_sha256: str
+    plaintext_modulus: int
     logical_state_sha256: str | None
     expected_output_sha256: str | None
     retained_private_bundle_count: int
     openfhe_execution_count: int = 0
 
     def __post_init__(self) -> None:
+        expected_retained_phases = {
+            "reference": ("tuning-prefix", "held-out"),
+            "ablation": ("held-out",),
+        }.get(self.candidate_role)
+        if (
+            type(self.candidate_id) is not str
+            or not self.candidate_id
+            or self.retained_phases != expected_retained_phases
+            or self.plaintext_modulus != _FROZEN_PLAINTEXT_MODULUS
+        ):
+            raise Day1BReplayExecutionError(
+                "query execution candidate role/phases/modulus are not frozen"
+            )
         if self.phase not in {"warmup", "tuning-prefix", "held-out"}:
             raise Day1BReplayExecutionError("query execution phase is not frozen")
         for field in ("window_index", "first_global_query_ordinal"):
@@ -350,6 +375,7 @@ class Day1BQueryExecutionBinding:
             raise Day1BReplayExecutionError("query execution version is empty")
         for field in (
             "descriptor_sha256",
+            "candidate_policy_sha256",
             "cloud_program_sha256",
             "output_plan_sha256",
             "execution_binding_sha256",
@@ -372,6 +398,9 @@ class Day1BQueryExecutionBinding:
 
     def to_document(self) -> dict[str, object]:
         return {
+            "candidate_id": self.candidate_id,
+            "candidate_policy_sha256": self.candidate_policy_sha256,
+            "candidate_role": self.candidate_role,
             "cloud_program_sha256": self.cloud_program_sha256,
             "descriptor_sha256": self.descriptor_sha256,
             "execution_binding_sha256": self.execution_binding_sha256,
@@ -384,7 +413,9 @@ class Day1BQueryExecutionBinding:
             "output_plan_sha256": self.output_plan_sha256,
             "phase": self.phase,
             "private_plan_sha256": self.private_plan_sha256,
+            "plaintext_modulus": self.plaintext_modulus,
             "query_vector_sha256": self.query_vector_sha256,
+            "retained_phases": list(self.retained_phases),
             "retained_private_bundle_count": self.retained_private_bundle_count,
             "schema_version": DAY1B_QUERY_EXECUTION_BINDING_SCHEMA,
             "version_id": self.version_id,
@@ -400,6 +431,10 @@ def _binding_for_pair(
     descriptor: Day1BQueryWindowAccounting,
     execution: Day1BQueryLayoutExecution,
     *,
+    candidate_id: str,
+    candidate_role: str,
+    candidate_policy_sha256: str,
+    retained_phases: tuple[RetainedPhase, ...],
     query_vector: tuple[int, ...],
     query_vector_sha256: str,
     modulus: int,
@@ -423,6 +458,10 @@ def _binding_for_pair(
     plan = descriptor.query_plan
     return (
         Day1BQueryExecutionBinding(
+            candidate_id=candidate_id,
+            candidate_role=candidate_role,
+            candidate_policy_sha256=candidate_policy_sha256,
+            retained_phases=retained_phases,
             phase=descriptor.phase,
             window_index=descriptor.window_index,
             first_global_query_ordinal=descriptor.first_global_query_ordinal,
@@ -435,6 +474,7 @@ def _binding_for_pair(
             execution_binding_sha256=plan.execution_binding_digest,
             private_plan_sha256=plan.private_plan_digest,
             query_vector_sha256=query_vector_sha256,
+            plaintext_modulus=modulus,
             logical_state_sha256=logical_state_sha256,
             expected_output_sha256=expected_output_sha256,
             retained_private_bundle_count=int(retain_private_bundle),
@@ -446,13 +486,16 @@ def _binding_for_pair(
 @dataclass(frozen=True, slots=True)
 class Day1BReplayExecutionReceipt:
     candidate_id: str
+    candidate_role: str
     candidate_policy_sha256: str
+    retained_phases: tuple[RetainedPhase, ...]
     accounting_sha256: str
     window_stream_sha256: str
     query_window_stream_sha256: str
     query_execution_binding_stream_sha256: str
     query_execution_binding_count: int
     query_vector_sha256: str
+    plaintext_modulus: int
     representative_query_execution_binding_sha256: str
     representative_phase: str
     representative_window_index: int
@@ -463,6 +506,18 @@ class Day1BReplayExecutionReceipt:
     def __post_init__(self) -> None:
         if type(self.candidate_id) is not str or not self.candidate_id:
             raise Day1BReplayExecutionError("candidate replay identity is empty")
+        expected_retained_phases = {
+            "reference": ("tuning-prefix", "held-out"),
+            "ablation": ("held-out",),
+        }.get(self.candidate_role)
+        if (
+            self.retained_phases != expected_retained_phases
+            or self.plaintext_modulus != _FROZEN_PLAINTEXT_MODULUS
+            or self.representative_phase != self.retained_phases[0]
+        ):
+            raise Day1BReplayExecutionError(
+                "candidate replay role/phases/modulus are not frozen"
+            )
         for field in (
             "candidate_policy_sha256",
             "accounting_sha256",
@@ -493,6 +548,7 @@ class Day1BReplayExecutionReceipt:
             "accounting_sha256": self.accounting_sha256,
             "candidate_id": self.candidate_id,
             "candidate_policy_sha256": self.candidate_policy_sha256,
+            "candidate_role": self.candidate_role,
             "candidate_replay_continuity_verified": True,
             "complete_cost_claim_allowed": False,
             "formal_authority_granted": False,
@@ -518,6 +574,8 @@ class Day1BReplayExecutionReceipt:
             "typed_query_layout_verified": True,
             "representative_expected_output_verified": True,
             "openfhe_execution_verified": False,
+            "plaintext_modulus": self.plaintext_modulus,
+            "retained_phases": list(self.retained_phases),
             "window_stream_sha256": self.window_stream_sha256,
         }
 
@@ -589,27 +647,39 @@ def _live_capability_binding(
         if consume:
             object.__setattr__(capability, "_claimed", True)
         binding = getattr(capability, "_binding", None)
-    if type(binding) is not _ReplayCapabilityBinding:
-        raise Day1BReplayExecutionError("candidate replay capability is not authoritative")
-    representative = binding.representative
-    rebuilt, expected_output = _binding_for_pair(
-        representative.descriptor,
-        representative.execution,
-        query_vector=representative.query_vector,
-        query_vector_sha256=binding.receipt.query_vector_sha256,
-        modulus=representative.modulus,
-        retain_private_bundle=True,
-    )
-    if expected_output is None or (
-        rebuilt != representative.binding
-        or expected_output != representative.expected_output
-        or rebuilt.binding_sha256
-        != binding.receipt.representative_query_execution_binding_sha256
-        or representative.receipt is not binding.receipt
-    ):
-        raise Day1BReplayExecutionError(
-            "candidate replay capability differs from its representative binding"
+    try:
+        if type(binding) is not _ReplayCapabilityBinding:
+            raise Day1BReplayExecutionError(
+                "candidate replay capability is not authoritative"
+            )
+        representative = binding.representative
+        receipt = binding.receipt
+        rebuilt, expected_output = _binding_for_pair(
+            representative.descriptor,
+            representative.execution,
+            candidate_id=receipt.candidate_id,
+            candidate_role=receipt.candidate_role,
+            candidate_policy_sha256=receipt.candidate_policy_sha256,
+            retained_phases=receipt.retained_phases,
+            query_vector=representative.query_vector,
+            query_vector_sha256=receipt.query_vector_sha256,
+            modulus=representative.modulus,
+            retain_private_bundle=True,
         )
+        if expected_output is None or (
+            rebuilt != representative.binding
+            or expected_output != representative.expected_output
+            or rebuilt.binding_sha256
+            != receipt.representative_query_execution_binding_sha256
+            or representative.receipt is not receipt
+        ):
+            raise Day1BReplayExecutionError(
+                "candidate replay capability differs from its representative binding"
+            )
+    finally:
+        if consume:
+            with lock:
+                object.__setattr__(capability, "_binding", None)
     return binding
 
 
@@ -637,12 +707,15 @@ def abandon_day1b_candidate_replay_capability(
     _live_capability_binding(capability, consume=True)
 
 
-class Day1BQueryExecutionCollector:
+class _Day1BQueryExecutionCollector:
     """Stream all bindings and retain one canonical typed representative."""
 
     __slots__ = (
         "_binding_count",
         "_binding_stream_hasher",
+        "_candidate_id",
+        "_candidate_policy_sha256",
+        "_candidate_role",
         "_descriptor_stream_hasher",
         "_finished",
         "_modulus",
@@ -657,19 +730,30 @@ class Day1BQueryExecutionCollector:
     def __init__(
         self,
         *,
+        candidate: RegisteredCandidate,
         query_vector_canonical_bytes: bytes,
         query_vector_sha256: str,
-        retained_phases: tuple[RetainedPhase, ...],
         modulus: int,
     ) -> None:
+        if type(candidate) is not RegisteredCandidate:
+            raise TypeError("candidate must be an exact RegisteredCandidate")
+        candidate_document = _candidate_document(candidate)
+        retained_phases: tuple[RetainedPhase, ...] = (
+            ("held-out",)
+            if candidate.role == "ablation"
+            else ("tuning-prefix", "held-out")
+        )
         if retained_phases not in _RETAINED_PHASE_SETS:
             raise Day1BReplayExecutionError(
                 "retained phases must equal one frozen reference or ablation set"
             )
-        if type(modulus) is not int or modulus < 2:
+        if modulus != _FROZEN_PLAINTEXT_MODULUS:
             raise Day1BReplayExecutionError(
-                "representative modulus must be a strict integer of at least two"
+                "representative modulus must equal the frozen plaintext modulus"
             )
+        self._candidate_id = candidate.candidate_id
+        self._candidate_role = candidate.role
+        self._candidate_policy_sha256 = _sha256_document(candidate_document)
         self._query_vector = _decode_query_vector(
             query_vector_canonical_bytes,
             query_vector_sha256,
@@ -707,6 +791,10 @@ class Day1BQueryExecutionCollector:
         binding, expected_output = _binding_for_pair(
             descriptor,
             execution,
+            candidate_id=self._candidate_id,
+            candidate_role=self._candidate_role,
+            candidate_policy_sha256=self._candidate_policy_sha256,
+            retained_phases=self._retained_phases,
             query_vector=self._query_vector,
             query_vector_sha256=self._query_vector_sha256,
             modulus=self._modulus,
@@ -755,6 +843,9 @@ class Day1BQueryExecutionCollector:
         if (
             self._binding_count != accounting.realized_query_window_count
             or descriptor_root != accounting.query_window_stream_sha256
+            or accounting.candidate_id != self._candidate_id
+            or accounting.candidate_policy_sha256
+            != self._candidate_policy_sha256
             or representative is None
             or representative.binding.phase != self._retained_phases[0]
             or accounting.state_reset_count != 0
@@ -763,14 +854,17 @@ class Day1BQueryExecutionCollector:
                 "query execution stream does not close against complete accounting"
             )
         receipt = Day1BReplayExecutionReceipt(
-            candidate_id=accounting.candidate_id,
-            candidate_policy_sha256=accounting.candidate_policy_sha256,
+            candidate_id=self._candidate_id,
+            candidate_role=self._candidate_role,
+            candidate_policy_sha256=self._candidate_policy_sha256,
+            retained_phases=self._retained_phases,
             accounting_sha256=accounting.accounting_sha256,
             window_stream_sha256=accounting.window_stream_sha256,
             query_window_stream_sha256=accounting.query_window_stream_sha256,
             query_execution_binding_stream_sha256=binding_root,
             query_execution_binding_count=self._binding_count,
             query_vector_sha256=self._query_vector_sha256,
+            plaintext_modulus=self._modulus,
             representative_query_execution_binding_sha256=(
                 representative.binding.binding_sha256
             ),
@@ -802,6 +896,38 @@ class Day1BQueryExecutionCollector:
         return capability
 
 
+def replay_and_seal_publication_day1b_candidate(
+    *,
+    candidate: RegisteredCandidate,
+    windows: Iterable[ExactPublicationWindow],
+    domain: Day1BAccountingDomain,
+    query_vector_canonical_bytes: bytes,
+    query_vector_sha256: str,
+    query_window_sink: Callable[[Day1BQueryWindowAccounting], None] | None = None,
+) -> tuple[PublicationDay1BAccounting, Day1BCandidateReplayCapability]:
+    """Own one exact replay call and seal its role-derived representative.
+
+    Callers may observe the compact descriptor stream through ``query_window_sink``
+    but cannot submit a typed carrier stream or a separately sourced accounting
+    result.  The returned capability remains non-authorizing.
+    """
+
+    collector = _Day1BQueryExecutionCollector(
+        candidate=candidate,
+        query_vector_canonical_bytes=query_vector_canonical_bytes,
+        query_vector_sha256=query_vector_sha256,
+        modulus=_FROZEN_PLAINTEXT_MODULUS,
+    )
+    accounting = replay_publication_day1b_candidate_cell(
+        candidate=candidate,
+        windows=windows,
+        domain=domain,
+        query_window_sink=query_window_sink,
+        query_execution_sink=collector.accept,
+    )
+    return accounting, collector.finish(accounting)
+
+
 __all__ = (
     "DAY1B_QUERY_EXECUTION_BINDING_SCHEMA",
     "DAY1B_QUERY_EXECUTION_STREAM_SCHEMA",
@@ -809,11 +935,11 @@ __all__ = (
     "DAY1B_REPRESENTATIVE_SELECTION_RULE",
     "Day1BCandidateReplayCapability",
     "Day1BQueryExecutionBinding",
-    "Day1BQueryExecutionCollector",
     "Day1BReplayExecutionError",
     "Day1BReplayExecutionReceipt",
     "Day1BRepresentativeQuery",
     "abandon_day1b_candidate_replay_capability",
     "claim_day1b_candidate_replay_capability",
     "describe_day1b_candidate_replay_capability",
+    "replay_and_seal_publication_day1b_candidate",
 )

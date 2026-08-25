@@ -1,6 +1,6 @@
 """Controller-owned launcher for one authorized generic OpenFHE query.
 
-This module closes the boundary between the canonical ordinary-query lifecycle
+This module closes the seam between the canonical ordinary/strong lifecycles
 and the generic C++ OpenFHE runner.  It owns an exclusive scratch tree, consumes
 the prepared F1-M batch immediately before launch, observes the child process,
 verifies every result/object byte, and removes all private runtime material.
@@ -25,9 +25,11 @@ import stat
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import TypeAlias
 
 from dynamic_cssc.mask_ledger import PreparedF1MCommitmentLedger
 from dynamic_cssc.openfhe_query_runner import (
@@ -35,7 +37,9 @@ from dynamic_cssc.openfhe_query_runner import (
     OpenFHESerializedObjectReceipt,
     VerifiedOpenFHEQueryResult,
     build_ordinary_openfhe_query_request,
+    build_strong_openfhe_query_request,
     verify_ordinary_openfhe_query_result,
+    verify_strong_openfhe_query_result,
 )
 from dynamic_cssc.openfhe_runtime_admission import (
     AdmittedExecutableFile,
@@ -55,8 +59,15 @@ from dynamic_cssc.publication_day1b_key_framing import (
     DAY1B_COMBINED_EVALUATION_KEY_CATEGORY,
     DAY1B_COMBINED_EVALUATION_KEY_FRAMING_SCHEMA,
 )
+from dynamic_cssc.strong_execution import (
+    PreparedStrongQuery,
+    StrongExecutionAuthorizationReceipt,
+    StrongExecutionBundle,
+    authorize_strong_execution,
+    claim_strong_execution,
+)
 
-OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA = "dynamic-cssc-full-openfhe-runtime-receipt-v5"
+OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA = "dynamic-cssc-full-openfhe-runtime-receipt-v6"
 OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA = "dynamic-cssc-openfhe-runner-build-identity-v3"
 OPENFHE_SERIALIZED_PAYLOAD_SCHEMA = "dynamic-cssc-openfhe-serialized-payload-v2"
 OPENFHE_RUNTIME_CONTROL_PROTOCOL_SCHEMA = "dynamic-cssc-openfhe-runtime-control-v1"
@@ -91,6 +102,11 @@ _CONTROL_RECORDS = {
 
 class OpenFHEQueryRuntimeError(RuntimeError):
     """The runner identity, process observation, or private cleanup failed closed."""
+
+
+OpenFHEExecutionAuthorizationReceipt: TypeAlias = (
+    OrdinaryExecutionAuthorizationReceipt | StrongExecutionAuthorizationReceipt
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,7 +287,8 @@ class OpenFHESerializedPayload:
 @dataclass(frozen=True, slots=True)
 class OpenFHEQueryRuntimeReceipt:
     runner: OpenFHERunnerBuildIdentity
-    authorization: OrdinaryExecutionAuthorizationReceipt
+    execution_kind: str
+    authorization: OpenFHEExecutionAuthorizationReceipt
     request_sha256: str
     request_byte_count: int
     result_sha256: str
@@ -294,6 +311,14 @@ class OpenFHEQueryRuntimeReceipt:
     runtime_mapping_admission: OpenFHERuntimeMappingAdmission | None
 
     def to_document(self) -> dict[str, object]:
+        expected_authorization_type = {
+            "ordinary": OrdinaryExecutionAuthorizationReceipt,
+            "strong": StrongExecutionAuthorizationReceipt,
+        }.get(self.execution_kind)
+        if type(self.authorization) is not expected_authorization_type:
+            raise OpenFHEQueryRuntimeError(
+                "runtime execution kind differs from its lifecycle authorization"
+            )
         return {
             "authorization": self.authorization.to_document(),
             "cpu_affinity": None if self.cpu_affinity is None else list(self.cpu_affinity),
@@ -320,6 +345,7 @@ class OpenFHEQueryRuntimeReceipt:
                 self.runtime_mapping_admission is not None
             ),
             "dynamic_loader_environment_clear": True,
+            "execution_kind": self.execution_kind,
             "schema_version": OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA,
             "scratch_limit_bytes": self.scratch_limit_bytes,
             "serialized_object_bytes": self.serialized_object_bytes,
@@ -1714,24 +1740,28 @@ def _cpu_affinity() -> tuple[int, ...] | None:
         raise OpenFHEQueryRuntimeError("CPU affinity could not be observed") from error
 
 
-def execute_authorized_openfhe_query(
-    bundle: OrdinaryExecutionBundle,
-    prepared: PreparedOrdinaryQuery,
+def _execute_authorized_openfhe_query(
     *,
-    ledger: PreparedF1MCommitmentLedger,
-    expected_output: tuple[int, ...],
+    execution_kind: str,
+    request_builder: Callable[[Path], bytes],
+    authorize_and_claim: Callable[[], OpenFHEExecutionAuthorizationReceipt],
+    result_verifier: Callable[
+        [bytes, Path, Path],
+        VerifiedOpenFHEQueryResult,
+    ],
     repository_root: Path,
     runner_relative_path: str,
     scratch_root: Path,
     timeout_seconds: int,
     resident_memory_limit_bytes: int,
     scratch_limit_bytes: int,
-    key_generation_plan: OpenFHEKeyGenerationPlan | None = None,
 ) -> ExecutedOpenFHEQuery:
-    """Consume, launch, verify, observe, and clean one private query execution."""
+    """Deep launcher shared by the two typed lifecycle adapters."""
 
     root = _absolute_path(repository_root, field="repository_root")
     scratch = _absolute_path(scratch_root, field="scratch_root")
+    if execution_kind not in {"ordinary", "strong"}:
+        raise OpenFHEQueryRuntimeError("runtime execution kind is not closed")
     if (
         type(timeout_seconds) is not int
         or timeout_seconds <= 0
@@ -1746,12 +1776,7 @@ def execute_authorized_openfhe_query(
         raise OpenFHEQueryRuntimeError("scratch_root must be one absent path")
     runner_identity = capture_openfhe_runner_build_identity(root, runner_relative_path)
     runner = root.joinpath(*PurePosixPath(runner_relative_path).parts)
-    request_bytes = build_ordinary_openfhe_query_request(
-        bundle,
-        prepared,
-        repository_root=root,
-        key_generation_plan=key_generation_plan,
-    )
+    request_bytes = request_builder(root)
     scratch.mkdir(mode=0o700)
     scratch_identity = scratch.lstat()
     request_path = scratch / "request.json"
@@ -1764,16 +1789,7 @@ def execute_authorized_openfhe_query(
         _write_new_file(request_path, request_bytes)
         if _scratch_bytes(scratch) > scratch_limit_bytes:
             raise OpenFHEQueryRuntimeError("scratch-limit-exceeded-before-authorization")
-        authorization_capability = authorize_ordinary_execution(
-            bundle,
-            prepared,
-            ledger=ledger,
-        )
-        authorization = claim_ordinary_execution(
-            authorization_capability,
-            bundle,
-            prepared,
-        )
+        authorization = authorize_and_claim()
         observation = _run_process(
             runner,
             repository_root=root,
@@ -1792,16 +1808,7 @@ def execute_authorized_openfhe_query(
             field="OpenFHE result before verification",
             maximum=128 * 1024 * 1024,
         )
-        verified = verify_ordinary_openfhe_query_result(
-            bundle,
-            prepared,
-            request_bytes=request_bytes,
-            result_path=result_path,
-            object_root=object_root,
-            expected_output=expected_output,
-            repository_root=root,
-            key_generation_plan=key_generation_plan,
-        )
+        verified = result_verifier(request_bytes, result_path, object_root)
         result_after_verification = _read_direct_file(
             result_path,
             field="OpenFHE result after verification",
@@ -1820,6 +1827,7 @@ def execute_authorized_openfhe_query(
         os_identity = f"{platform.system()}-{platform.release()}-{platform.machine()}"
         receipt = OpenFHEQueryRuntimeReceipt(
             runner=runner_identity,
+            execution_kind=execution_kind,
             authorization=authorization,
             request_sha256=hashlib.sha256(request_bytes).hexdigest(),
             request_byte_count=len(request_bytes),
@@ -1864,6 +1872,122 @@ def execute_authorized_openfhe_query(
             raise OpenFHEQueryRuntimeError("controlled scratch cleanup failed") from error
 
 
+def execute_authorized_openfhe_query(
+    bundle: OrdinaryExecutionBundle,
+    prepared: PreparedOrdinaryQuery,
+    *,
+    ledger: PreparedF1MCommitmentLedger,
+    expected_output: tuple[int, ...],
+    repository_root: Path,
+    runner_relative_path: str,
+    scratch_root: Path,
+    timeout_seconds: int,
+    resident_memory_limit_bytes: int,
+    scratch_limit_bytes: int,
+    key_generation_plan: OpenFHEKeyGenerationPlan | None = None,
+) -> ExecutedOpenFHEQuery:
+    """Consume and execute one ordinary query through the shared launcher."""
+
+    def request_builder(root: Path) -> bytes:
+        return build_ordinary_openfhe_query_request(
+            bundle,
+            prepared,
+            repository_root=root,
+            key_generation_plan=key_generation_plan,
+        )
+
+    def authorize_and_claim() -> OrdinaryExecutionAuthorizationReceipt:
+        capability = authorize_ordinary_execution(bundle, prepared, ledger=ledger)
+        return claim_ordinary_execution(capability, bundle, prepared)
+
+    def result_verifier(
+        request_bytes: bytes,
+        result_path: Path,
+        object_root: Path,
+    ) -> VerifiedOpenFHEQueryResult:
+        return verify_ordinary_openfhe_query_result(
+            bundle,
+            prepared,
+            request_bytes=request_bytes,
+            result_path=result_path,
+            object_root=object_root,
+            expected_output=expected_output,
+            repository_root=repository_root,
+            key_generation_plan=key_generation_plan,
+        )
+
+    return _execute_authorized_openfhe_query(
+        execution_kind="ordinary",
+        request_builder=request_builder,
+        authorize_and_claim=authorize_and_claim,
+        result_verifier=result_verifier,
+        repository_root=repository_root,
+        runner_relative_path=runner_relative_path,
+        scratch_root=scratch_root,
+        timeout_seconds=timeout_seconds,
+        resident_memory_limit_bytes=resident_memory_limit_bytes,
+        scratch_limit_bytes=scratch_limit_bytes,
+    )
+
+
+def execute_authorized_strong_openfhe_query(
+    bundle: StrongExecutionBundle,
+    prepared: PreparedStrongQuery,
+    *,
+    ledger: PreparedF1MCommitmentLedger,
+    expected_output: tuple[int, ...],
+    repository_root: Path,
+    runner_relative_path: str,
+    scratch_root: Path,
+    timeout_seconds: int,
+    resident_memory_limit_bytes: int,
+    scratch_limit_bytes: int,
+    key_generation_plan: OpenFHEKeyGenerationPlan | None = None,
+) -> ExecutedOpenFHEQuery:
+    """Consume and execute one strong query through the shared launcher."""
+
+    def request_builder(root: Path) -> bytes:
+        return build_strong_openfhe_query_request(
+            bundle,
+            prepared,
+            repository_root=root,
+            key_generation_plan=key_generation_plan,
+        )
+
+    def authorize_and_claim() -> StrongExecutionAuthorizationReceipt:
+        capability = authorize_strong_execution(bundle, prepared, ledger=ledger)
+        return claim_strong_execution(capability, bundle, prepared)
+
+    def result_verifier(
+        request_bytes: bytes,
+        result_path: Path,
+        object_root: Path,
+    ) -> VerifiedOpenFHEQueryResult:
+        return verify_strong_openfhe_query_result(
+            bundle,
+            prepared,
+            request_bytes=request_bytes,
+            result_path=result_path,
+            object_root=object_root,
+            expected_output=expected_output,
+            repository_root=repository_root,
+            key_generation_plan=key_generation_plan,
+        )
+
+    return _execute_authorized_openfhe_query(
+        execution_kind="strong",
+        request_builder=request_builder,
+        authorize_and_claim=authorize_and_claim,
+        result_verifier=result_verifier,
+        repository_root=repository_root,
+        runner_relative_path=runner_relative_path,
+        scratch_root=scratch_root,
+        timeout_seconds=timeout_seconds,
+        resident_memory_limit_bytes=resident_memory_limit_bytes,
+        scratch_limit_bytes=scratch_limit_bytes,
+    )
+
+
 __all__ = (
     "OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA",
     "OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA",
@@ -1877,4 +2001,5 @@ __all__ = (
     "OpenFHESerializedPayload",
     "capture_openfhe_runner_build_identity",
     "execute_authorized_openfhe_query",
+    "execute_authorized_strong_openfhe_query",
 )

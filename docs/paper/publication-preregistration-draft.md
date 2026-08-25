@@ -475,7 +475,7 @@ measurement-method field in this placeholder remains `null`; the separate
 amendment is the sole reviewed source of administrative limits and
 measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v25` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v26` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface, including the amendment and
 `docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
@@ -483,17 +483,24 @@ workflow validation is not a
 dispatch receipt or evidence artifact: the workflow has no semantic inputs,
 does not fetch traces or held-out data, does not invoke the producer, uploads
 nothing, and cannot install an anchor. It now builds pinned OpenFHE 1.5.1 and
-runs a private, non-authorizing smoke through the canonical request, arbitrary
-typed query DAG, real BFV encryption/evaluation/decryption, controller-owned
-exclusive scratch, single-use ledger authorization, exact runner/source/compiler
+runs private, non-authorizing ordinary and strong smokes through the canonical
+v4 request, their arbitrary typed query DAGs, real BFV
+encryption/evaluation/decryption, controller-owned exclusive scratch,
+single-use kind-specific authorization, exact runner/source/compiler
 identity plus the resolved file-backed OpenFHE linked-library bytes, bounded
 resource observations, and retained binary object verifier.
-The v25 surface additionally commits every compact query-window descriptor and
-its exact same-replay ordinary or strong typed layout to an ordered binding
-root.  It retains only the first query-bearing layout in the candidate's first
-retained phase, independently reconstructs its logical matrix and plaintext
-SpMV result from the frozen query vector, and seals that representative behind
-a single-use process-local capability.  This proves neither an OpenFHE
+The v26 surface additionally exposes one repository-owned replay-and-seal
+wrapper. It derives the exact candidate policy, role-retained phases, and fixed
+65,537 plaintext modulus; internally owns the typed execution sink and closes
+it only against accounting returned by the same replay. Callers cannot provide
+a second carrier stream or accounting result, nor choose the candidate role,
+retained phases, or modulus. Every compact query-window binding commits that
+candidate context together with its exact same-replay ordinary or strong typed
+layout. The wrapper retains only the first query-bearing layout in the
+candidate's first retained phase, independently reconstructs its logical matrix
+and plaintext SpMV result from the frozen query vector, and seals that
+representative behind a single-use process-local capability whose carrier
+reference is released on claim or abandonment. This proves neither an OpenFHE
 execution nor worker, dispatch, formal, or publication authority; all such
 receipt fields remain explicitly false.
 The build-identity v3 subreceipt additionally binds stable filesystem identity,
@@ -502,9 +509,10 @@ for the runner and each resolved non-system library; compiler bytes, version,
 and target; the CMake executable and version; the runner CMake cache,
 `compile_commands.json`, complete Ninja graph, and rules; and the pinned
 OpenFHE repository/version, clean commit and tree, package config, build cache,
-compile commands, and install manifest. The enclosing runtime receipt is v5 so
+compile commands, and install manifest. The enclosing runtime receipt is v6 so
 the enlarged nested language cannot be mistaken for an older receipt. It also
-freezes an inherited-file-descriptor READY/DONE control protocol. On Linux the
+binds the ordinary/strong execution kind and freezes an
+inherited-file-descriptor READY/DONE control protocol. On Linux the
 controller reads the paused process's exact `/proc` executable mappings at
 both control points, admits only the pre-launch runner and resolved linked-file
 closure plus the fixed kernel pseudo-maps, rechecks every admitted file's
