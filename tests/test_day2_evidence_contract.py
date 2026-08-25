@@ -82,6 +82,8 @@ def test_formal_probe_checks_exact_signed_rotation_not_merely_a_permutation() ->
 
     assert "IsExactFrozenLabelRotation" in source
     assert "rotationIndex" in source
+    assert "rowSize = batchSize / 2" in source
+    assert "rowOffset = (slot / rowSize) * rowSize" in source
     assert "values[slot] != expected" in source
     assert "IsFrozenLabelPermutation" not in source
 

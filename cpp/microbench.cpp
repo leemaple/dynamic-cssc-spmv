@@ -263,16 +263,30 @@ bool IsExactFrozenLabelRotation(
     const std::vector<int64_t>& values,
     std::size_t batchSize,
     int32_t rotationIndex) {
-    if (values.size() != batchSize) {
+    // BFV packed plaintexts expose two independent rows.  EvalRotate by an
+    // index whose magnitude is smaller than one row rotates within each row;
+    // it is not a single cyclic rotation across all batchSize slots.  P0a
+    // measures this exact layout, and the formal Day 2 plan admits only those
+    // direct within-row indices.
+    if (values.size() != batchSize || batchSize < 2 || batchSize % 2 != 0) {
         return false;
     }
-    const auto signedBatchSize = static_cast<std::int64_t>(batchSize);
+    const auto rowSize = batchSize / 2;
+    const auto signedRowSize = static_cast<std::int64_t>(rowSize);
+    if (rotationIndex == 0 ||
+        std::abs(static_cast<std::int64_t>(rotationIndex)) >= signedRowSize) {
+        return false;
+    }
     const auto normalized =
-        (static_cast<std::int64_t>(rotationIndex) % signedBatchSize + signedBatchSize) %
-        signedBatchSize;
+        (static_cast<std::int64_t>(rotationIndex) % signedRowSize + signedRowSize) %
+        signedRowSize;
     for (std::size_t slot = 0; slot < batchSize; ++slot) {
+        const auto rowOffset = (slot / rowSize) * rowSize;
+        const auto rowSlot = slot % rowSize;
         const auto expected = static_cast<std::int64_t>(
-            (static_cast<std::int64_t>(slot) + normalized) % signedBatchSize);
+            rowOffset +
+            static_cast<std::size_t>(
+                (static_cast<std::int64_t>(rowSlot) + normalized) % signedRowSize));
         if (values[slot] != expected) {
             return false;
         }
@@ -757,6 +771,20 @@ int main(int argc, char** argv) {
                 return value == 0;
             })) {
             std::cerr << "at least one nonzero exact rotation index is required\n";
+            return 6;
+        }
+        if (batchSize < 2 || batchSize % 2 != 0) {
+            std::cerr << "batch size must contain two equal BFV packed rows\n";
+            return 6;
+        }
+        const auto rowSize = static_cast<std::int64_t>(batchSize / 2);
+        if (std::any_of(
+                rotationIndices.begin(),
+                rotationIndices.end(),
+                [rowSize](int32_t value) {
+                    return std::abs(static_cast<std::int64_t>(value)) >= rowSize;
+                })) {
+            std::cerr << "exact rotation indices must remain within one BFV packed row\n";
             return 6;
         }
         const auto originalRotationCount = rotationIndices.size();
