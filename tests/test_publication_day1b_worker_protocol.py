@@ -19,6 +19,7 @@ from typing import BinaryIO
 import pytest
 
 import dynamic_cssc.publication_day1b_worker_protocol as worker_protocol
+from dynamic_cssc.day2_calibration_authority import PRIMITIVE_NAMES
 from dynamic_cssc.publication_day1b_expected_counts import (
     Day1BControllerExpectedCounts,
     Day1BControllerExpectedPhaseCounts,
@@ -69,6 +70,24 @@ from dynamic_cssc.publication_day1b_worker_protocol import (
 )
 
 _CURRENT_CONTROLLED_SCRATCH: Path
+_FIXTURE_UPDATE_PRIMITIVE_COUNTS = (3, 4) + (0,) * (len(PRIMITIVE_NAMES) - 2)
+_FIXTURE_QUERY_PRIMITIVE_COUNTS = (5, 6) + (0,) * (len(PRIMITIVE_NAMES) - 2)
+_FIXTURE_SERIALIZED_CATEGORIES = (
+    ("update-ciphertexts", "update"),
+    ("query-ciphertexts", "query"),
+    ("query-f1m-random-mask-ciphertexts", "query"),
+    ("query-f1m-encrypted-zero-dummy-ciphertexts", "query"),
+    ("evaluation-keys", "one-time"),
+    ("unused-update-metadata-a", "update"),
+    ("unused-update-metadata-b", "update"),
+    ("unused-query-metadata-a", "query"),
+    ("unused-query-metadata-b", "query"),
+)
+
+
+def _fixture_category_counts(*counts: int) -> list[int]:
+    assert len(counts) == 5
+    return [*counts, 0, 0, 0, 0]
 
 
 @pytest.fixture(autouse=True)
@@ -291,13 +310,7 @@ def _contract(
         phase_random_route_counts=phase_random_route_counts,
         serialized_object_size_profile_sha256="8" * 64,
     )
-    serialized_categories = (
-        ("update-ciphertexts", "update"),
-        ("query-ciphertexts", "query"),
-        ("query-f1m-random-mask-ciphertexts", "query"),
-        ("query-f1m-encrypted-zero-dummy-ciphertexts", "query"),
-        ("evaluation-keys", "one-time"),
-    )
+    serialized_categories = _FIXTURE_SERIALIZED_CATEGORIES
     retain_non_f1m_fixture_counts = (
         expected_f1m_objects is None
         or selected_all_serialized_count > len(selected_expected)
@@ -311,12 +324,16 @@ def _contract(
             phase_random_route_counts[phase_index],
             phase_dummy_route_counts[phase_index],
             int(retain_non_f1m_fixture_counts and retained_index == 0),
+            0,
+            0,
+            0,
+            0,
         )
         expected_phases.append(
             Day1BControllerExpectedPhaseCounts(
                 phase=phase,
-                update_primitive_counts=(3, 4),
-                query_primitive_counts=(5, 6),
+                update_primitive_counts=_FIXTURE_UPDATE_PRIMITIVE_COUNTS,
+                query_primitive_counts=_FIXTURE_QUERY_PRIMITIVE_COUNTS,
                 logical_protocol_object_counts=logical,
                 worker_streamed_protocol_object_counts=logical,
             )
@@ -325,7 +342,7 @@ def _contract(
         candidate_id=selected_candidate.candidate_id,
         candidate_policy_sha256=selected_candidate.candidate_policy_digest,
         accounting_sha256=context.accounting_sha256,
-        primitive_names=("encrypt", "serialize_ciphertext"),
+        primitive_names=PRIMITIVE_NAMES,
         serialized_categories=serialized_categories,
         phases=tuple(expected_phases),
     )
@@ -350,7 +367,7 @@ def _contract(
             Day1BWorkerPhaseRange("tuning", 10, 40),
             Day1BWorkerPhaseRange("heldout", 40, 100),
         ),
-        primitive_names=("encrypt", "serialize_ciphertext"),
+        primitive_names=PRIMITIVE_NAMES,
         serialized_categories=serialized_categories,
         f1m_size_class_categories=DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES,
         f1m_controller_context=context,
@@ -794,10 +811,22 @@ def _complete_transcript(
             outcome="complete",
             failure_code=None,
             retained_measurement=retained,
-            update_primitive_counts=[3, 4] if retained else None,
-            query_primitive_counts=[5, 6] if retained else None,
+            update_primitive_counts=(
+                list(_FIXTURE_UPDATE_PRIMITIVE_COUNTS) if retained else None
+            ),
+            query_primitive_counts=(
+                list(_FIXTURE_QUERY_PRIMITIVE_COUNTS) if retained else None
+            ),
             serialized_category_object_counts=(
-                [1, 0, 1, 1, int(phase == candidate.retained_phases[0])] if retained else None
+                _fixture_category_counts(
+                    1,
+                    0,
+                    1,
+                    1,
+                    int(phase == candidate.retained_phases[0]),
+                )
+                if retained
+                else None
             ),
             phase_audit=audit.to_document(),
         )
@@ -3068,7 +3097,9 @@ def test_json_booleans_cannot_alias_protocol_integers() -> None:
             lambda header, payload: (
                 {
                     **header,
-                    "serialized_category_object_counts": [True, 0, 1, 1, 1],
+                    "serialized_category_object_counts": _fixture_category_counts(
+                        True, 0, 1, 1, 1
+                    ),
                 },
                 payload,
             ),
@@ -3207,7 +3238,13 @@ def test_query_primitive_vector_must_match_controller_realized_query_presence() 
     no_query_primitives = _rewrite_first_frame(
         _complete_transcript(contract),
         "phase-result",
-        lambda header, payload: ({**header, "query_primitive_counts": [0, 0]}, payload),
+        lambda header, payload: (
+            {
+                **header,
+                "query_primitive_counts": [0] * len(PRIMITIVE_NAMES),
+            },
+            payload,
+        ),
         predicate=lambda header: header["phase"] == "tuning-prefix",
     )
 
@@ -3595,7 +3632,7 @@ def test_positive_query_can_have_zero_f1m_routes_when_output_plan_has_no_shares(
     )
     tuning = evidence.receipt.candidate.phases[1]
     assert tuning.outcome == "complete"
-    assert tuning.query_primitive_counts == (5, 6)
+    assert tuning.query_primitive_counts == _FIXTURE_QUERY_PRIMITIVE_COUNTS
     assert evidence.receipt.controller_expected_f1m_size_class_count == 0
     evidence.close()
 
@@ -3669,9 +3706,9 @@ def test_positive_query_accepts_exact_expected_size_classes_of_only_one_f1m_kind
                     else None
                 ),
                 serialized_category_object_counts=(
-                    [0, 0, 1, 0, 0]
+                    _fixture_category_counts(0, 0, 1, 0, 0)
                     if phase == "held-out"
-                    else ([0, 0, 0, 0, 0] if retained else None)
+                    else (_fixture_category_counts(0, 0, 0, 0, 0) if retained else None)
                 ),
                 phase_audit=audit.to_document(),
             )
@@ -3999,9 +4036,9 @@ def test_large_object_cardinality_spools_metadata_instead_of_growing_receipt() -
                     else None
                 ),
                 serialized_category_object_counts=(
-                    [0, 0, object_count, 0, 0]
+                    _fixture_category_counts(0, 0, object_count, 0, 0)
                     if phase == "held-out"
-                    else ([0, 0, 0, 0, 0] if retained else None)
+                    else (_fixture_category_counts(0, 0, 0, 0, 0) if retained else None)
                 ),
                 phase_audit=audit.to_document(),
             )

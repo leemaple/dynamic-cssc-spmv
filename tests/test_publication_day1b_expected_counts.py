@@ -1,0 +1,133 @@
+from __future__ import annotations
+
+from dataclasses import replace
+
+import pytest
+
+from dynamic_cssc.day2_calibration_authority import PRIMITIVE_NAMES
+from dynamic_cssc.publication_day1b_aggregate_bounds import (
+    SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
+)
+from dynamic_cssc.publication_day1b_expected_counts import (
+    Day1BControllerExpectedCounts,
+    Day1BControllerExpectedCountsError,
+    Day1BControllerExpectedPhaseCounts,
+)
+
+
+def _phase(
+    phase: str,
+    *,
+    one_time_count: int,
+) -> Day1BControllerExpectedPhaseCounts:
+    logical = (2, 3, 1, 4, 4, 5, 6, 4, one_time_count)
+    worker = (2, 3, 1, 4, 4, 0, 0, 4, one_time_count)
+    return Day1BControllerExpectedPhaseCounts(
+        phase=phase,
+        update_primitive_counts=(1,) + (0,) * (len(PRIMITIVE_NAMES) - 1),
+        query_primitive_counts=(0, 1) + (0,) * (len(PRIMITIVE_NAMES) - 2),
+        logical_protocol_object_counts=logical,
+        worker_streamed_protocol_object_counts=worker,
+    )
+
+
+def _expected_counts() -> Day1BControllerExpectedCounts:
+    return Day1BControllerExpectedCounts(
+        candidate_id="padding-reuse",
+        candidate_policy_sha256="a" * 64,
+        accounting_sha256="b" * 64,
+        primitive_names=PRIMITIVE_NAMES,
+        serialized_categories=SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
+        phases=(
+            _phase("tuning-prefix", one_time_count=1),
+            _phase("held-out", one_time_count=0),
+        ),
+    )
+
+
+def test_expected_counts_round_trip_is_exact_and_digest_stable() -> None:
+    expected = _expected_counts()
+
+    reopened = Day1BControllerExpectedCounts.from_document(expected.to_document())
+
+    assert reopened == expected
+    assert reopened.expected_counts_sha256 == expected.expected_counts_sha256
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("update_primitive_counts", "query_primitive_counts"),
+)
+def test_phase_counts_reject_noncanonical_primitive_dimensions(field: str) -> None:
+    phase = _phase("held-out", one_time_count=0)
+
+    with pytest.raises(
+        Day1BControllerExpectedCountsError,
+        match=f"{len(PRIMITIVE_NAMES)} entries",
+    ):
+        replace(phase, **{field: (0,) * (len(PRIMITIVE_NAMES) - 1)})
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "logical_protocol_object_counts",
+        "worker_streamed_protocol_object_counts",
+    ),
+)
+def test_phase_counts_reject_noncanonical_category_dimensions(field: str) -> None:
+    phase = _phase("held-out", one_time_count=0)
+
+    with pytest.raises(
+        Day1BControllerExpectedCountsError,
+        match=f"{len(SERIALIZED_PROTOCOL_OBJECT_CATEGORIES)} entries",
+    ):
+        replace(
+            phase,
+            **{
+                field: (0,) * (len(SERIALIZED_PROTOCOL_OBJECT_CATEGORIES) - 1),
+            },
+        )
+
+
+def test_expected_counts_reject_partial_f1m_worker_multiplicity() -> None:
+    phase = _phase("held-out", one_time_count=0)
+    changed_worker = list(phase.worker_streamed_protocol_object_counts)
+    changed_worker[5] = 1
+
+    with pytest.raises(
+        Day1BControllerExpectedCountsError,
+        match="F1-M worker multiplicity",
+    ):
+        replace(
+            _expected_counts(),
+            phases=(
+                _phase("tuning-prefix", one_time_count=1),
+                replace(
+                    phase,
+                    worker_streamed_protocol_object_counts=tuple(changed_worker),
+                ),
+            ),
+        )
+
+
+def test_expected_counts_digest_commits_to_controller_multiplicity() -> None:
+    expected = _expected_counts()
+    held_out = expected.phases[1]
+    changed_logical = list(held_out.logical_protocol_object_counts)
+    changed_worker = list(held_out.worker_streamed_protocol_object_counts)
+    changed_logical[0] += 1
+    changed_worker[0] += 1
+    changed = replace(
+        expected,
+        phases=(
+            expected.phases[0],
+            replace(
+                held_out,
+                logical_protocol_object_counts=tuple(changed_logical),
+                worker_streamed_protocol_object_counts=tuple(changed_worker),
+            ),
+        ),
+    )
+
+    assert changed.expected_counts_sha256 != expected.expected_counts_sha256

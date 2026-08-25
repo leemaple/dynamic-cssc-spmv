@@ -14,6 +14,7 @@ import json
 import re
 from dataclasses import dataclass
 
+from dynamic_cssc.day2_calibration_authority import PRIMITIVE_NAMES
 from dynamic_cssc.publication_day1b_accounting import PublicationDay1BAccounting
 from dynamic_cssc.publication_day1b_aggregate_bounds import (
     SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
@@ -67,12 +68,21 @@ def _require_sha256(value: object, field: str) -> str:
     return value
 
 
-def _count_tuple(value: object, field: str) -> tuple[int, ...]:
+def _count_tuple(
+    value: object,
+    field: str,
+    *,
+    expected_length: int,
+) -> tuple[int, ...]:
     if type(value) is not tuple or not value or any(
         type(item) is not int or item < 0 for item in value
     ):
         raise Day1BControllerExpectedCountsError(
             f"{field} must be one nonempty tuple of strict nonnegative integers"
+        )
+    if len(value) != expected_length:
+        raise Day1BControllerExpectedCountsError(
+            f"{field} must contain exactly {expected_length} entries"
         )
     return value
 
@@ -95,18 +105,22 @@ class Day1BControllerExpectedPhaseCounts:
         update = _count_tuple(
             self.update_primitive_counts,
             "controller expected update primitive counts",
+            expected_length=len(PRIMITIVE_NAMES),
         )
         query = _count_tuple(
             self.query_primitive_counts,
             "controller expected query primitive counts",
+            expected_length=len(PRIMITIVE_NAMES),
         )
         logical = _count_tuple(
             self.logical_protocol_object_counts,
             "controller expected logical protocol-object counts",
+            expected_length=len(SERIALIZED_PROTOCOL_OBJECT_CATEGORIES),
         )
         worker = _count_tuple(
             self.worker_streamed_protocol_object_counts,
             "controller expected worker-streamed protocol-object counts",
+            expected_length=len(SERIALIZED_PROTOCOL_OBJECT_CATEGORIES),
         )
         if len(update) != len(query) or len(logical) != len(worker):
             raise Day1BControllerExpectedCountsError(
