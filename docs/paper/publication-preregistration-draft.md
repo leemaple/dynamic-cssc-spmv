@@ -475,7 +475,7 @@ measurement-method field in this placeholder remains `null`; the separate
 amendment is the sole reviewed source of administrative limits and
 measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v22` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v23` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface, including the amendment and
 `docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
@@ -503,8 +503,19 @@ closure plus the fixed kernel pseudo-maps, rechecks every admitted file's
 mode, size, and SHA-256 through a no-follow descriptor, binds raw map roots and process
 start-time identity, and requires identical executable mapping sets at DONE.
 Darwin records no mapping admission and remains non-authorizing. This runtime
-witness is still pre-admission evidence: it neither creates a production
-scratch capability nor authorizes a candidate-cell adapter.
+witness is still pre-admission evidence: by itself it neither creates a
+production scratch capability nor authorizes a candidate-cell adapter.
+The v23 surface separately adds one Linux-only production scratch-creation
+seam. Starting from an exact empty launcher-owned mode-0700 parent, it opens
+every path component through held no-follow directory descriptors, creates a
+128-bit exclusive mode-0700 child, opens the two fixed mode-0600 members with
+`openat(O_EXCL|O_NOFOLLOW)`, and opens SQLite through the held
+`/proc/self/fd` directory. It unlinks both names and removes the child directory
+before returning any handle. The typed receipt binds parent/filesystem/root and
+member identities, proves the SQLite connection refers to the held member, and
+sets all dispatch, publication, and formal-authority fields to false. Only an
+exact receipt-correlated capability may set scratch-creation isolation true;
+this fact remains insufficient for candidate execution or held-out dispatch.
 The smoke exercises multiplication without implicit
 relinearization, explicit relinearization, exact-index rotation, plaintext
 selection, ciphertext addition, reconstruction, tail-slot zero checks, and
@@ -519,7 +530,7 @@ runner independently require that same byte identity. Its provisional
 depth-2/0/0 profile remains explicitly `HOLD` for mixed-circuit
 parameter authority.
 
-The current v22 surface also contains a non-authorizing streaming accounting core. It
+The current v23 surface also contains a non-authorizing streaming accounting core. It
 advances one candidate state exactly once per exact Publication Window, derives
 at most one typed query plan per query-bearing window, applies the window's
 integer query multiplicity before the fixed 14-primitive mapping, and retains
@@ -532,7 +543,7 @@ the separate evidence path for real no-reuse enforcement. The accounting core
 does not mint a worker invocation, materialize per-query masks or ledger
 transitions, measure serialized OpenFHE sizes, or relax any dispatch gate.
 
-The v22 surface closes count authority separately from serialized-size
+The v23 surface closes count authority separately from serialized-size
 measurement. Before dispatch, the controller projects each deterministic replay
 into an open expected-count document containing the exact retained-phase
 update/query primitive vectors and all nine logical protocol-object
@@ -554,7 +565,7 @@ outcome. Thus a failed or controller-terminal null projection cannot preserve
 an otherwise self-consistent rehashed preimage that switches weighted F1-M back
 to materialized worker mode.
 
-The v22 surface also freezes canonical big-endian binary framing for the three
+The v23 surface also freezes canonical big-endian binary framing for the three
 metadata categories used in primary communication accounting. A ColumnIndex
 synchronization entry is exactly 64 bytes; patch and full-sync differ only in a
 fixed-position one-byte enum and therefore share one size class. An update-side
@@ -571,7 +582,7 @@ object receipt whose metadata byte count differs from 64, 144, or 136. This
 closes preparatory size-class pricing, but it does not yet authorize or claim a
 production representative execution.
 
-The v22 surface separately freezes the one-time evaluation-key object as an
+The v23 surface separately freezes the one-time evaluation-key object as an
 exact two-segment frame. Its 88-byte header is `D1BKEY01`, followed by the
 big-endian rotation-inventory length and 32-byte digest, then the big-endian
 evaluation-multiplication-key length and 32-byte digest. The payload is exactly

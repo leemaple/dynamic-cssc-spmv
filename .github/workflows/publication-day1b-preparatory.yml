@@ -82,6 +82,7 @@ jobs:
             tests/test_publication_day1b_expected_counts.py \
             tests/test_publication_day1b_key_framing.py \
             tests/test_publication_day1b_metadata_framing.py \
+            tests/test_publication_day1b_scratch.py \
             tests/test_publication_day1b_worker_protocol.py \
             tests/test_publication_day1b_workflow_contract.py \
             tests/test_query_accounting.py \
@@ -99,6 +100,8 @@ jobs:
             src/dynamic_cssc/publication_day1b_expected_counts.py \
             src/dynamic_cssc/publication_day1b_key_framing.py \
             src/dynamic_cssc/publication_day1b_metadata_framing.py \
+            src/dynamic_cssc/publication_day1b_scratch.py \
+            src/dynamic_cssc/publication_day1b_worker_protocol.py \
             src/dynamic_cssc/simulator.py \
             tests/test_evidence_compatibility.py \
             tests/test_openfhe_query_runner.py \
@@ -110,6 +113,8 @@ jobs:
             tests/test_publication_day1b_expected_counts.py \
             tests/test_publication_day1b_key_framing.py \
             tests/test_publication_day1b_metadata_framing.py \
+            tests/test_publication_day1b_scratch.py \
+            tests/test_publication_day1b_worker_protocol.py \
             tests/test_publication_day1b_workflow_contract.py \
             tests/test_query_accounting.py \
             tests/test_strong_day1_simulator.py
@@ -121,5 +126,6 @@ jobs:
           echo 'The generic OpenFHE query runtime passed a non-authorizing smoke.'
           echo 'Its typed D1BKEY01 key receipt remains pre-admission only.'
           echo 'Its Linux READY/DONE executable-map receipt remains pre-admission only.'
+          echo 'Linux launcher-owned pathless scratch creation remains pre-admission only.'
           echo 'The production Day1B candidate worker and admission receipt remain absent.'
           echo 'No publication execution or artifact production is permitted.'

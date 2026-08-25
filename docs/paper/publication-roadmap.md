@@ -379,7 +379,7 @@ previously reviewed schema-source Git/Behavior-inventory binding; authority and
 worker/runtime identity are structurally absent. Its non-self-referential
 semantic digest and immutable decoded record do not lift the repository
 `HOLD`. The real amendment and its outcome-blind review receipt are now frozen
-as pre-`S1` DAY1B Behavior Set v22 members. The resource loader can project its
+as pre-`S1` DAY1B Behavior Set v23 members. The resource loader can project its
 non-authorizing budget, after which the independent profile, trace, worker, and
 anchor gates still fail closed.
 
@@ -398,7 +398,7 @@ implementation evidence only. It cannot dispatch until the trace and catalog
 authorities, repository execution adapter, and outcome-blind resource policy
 are installed, and it is not a 30-unit publication artifact.
 
-The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v22,
+The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v23,
 the unchanged empirical-null/authority-false `PENDING-FREEZE` placeholder, the
 separate reviewed resource-only amendment, and a manual no-input validation
 workflow. These freeze the current validator, protocol, administrative safety
@@ -422,6 +422,14 @@ mapping roots and process start-time identity, and requires the
 same executable map set at DONE. Darwin produces no mapping admission. The
 receipt remains pre-admission and cannot substitute for a production scratch
 capability or candidate-cell adapter.
+The separate Linux production scratch seam now opens every parent component
+without following symlinks, creates an exclusive private child and two fixed
+members relative to held directory descriptors, opens SQLite through
+`/proc/self/fd`, then unlinks every member and removes the child before it
+returns an opaque single-use capability. Its exact identity receipt can set
+scratch-creation isolation true, but every authority and production-admission
+field remains false. This closes the launcher scratch-creation subgate only;
+the candidate-cell adapter and held-out dispatch remain on `HOLD`.
 The runner now generates the full supplied exact-index rotation inventory and
 eval-mult keys in one context/session, constructs the exact `D1BKEY01` frame,
 uses those keys in the same typed DAG, and returns a request/plan/segment/frame-
@@ -442,9 +450,9 @@ preregistered, non-empirical protocol invariant
 resource limit or authorize execution; every empirical numeric and method
 choice remains `null`.
 
-The remaining Day1B `HOLD` set is explicit: a production controlled-scratch
-high-water and creation-isolation capability, integration of the Linux
-READY/DONE mapping receipt into a production candidate-cell worker adapter,
+The remaining Day1B `HOLD` set is explicit: production integration of the
+controlled-scratch high-water and new creation-isolation capability, binding
+the Linux READY/DONE mapping receipt into a production candidate-cell worker adapter,
 consumption of the independently verified Day 2 plan capability, ADR 0012
 window-weighted equivalence accounting, the anchored Day 2 OpenFHE timing/size
 profile, the TRACE post-run anchor, and the Day-1 registration anchor. Full

@@ -132,11 +132,13 @@ DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/publication_day1b_f1m_aggregation.py",
     "src/dynamic_cssc/publication_day1b_key_framing.py",
     "src/dynamic_cssc/publication_day1b_metadata_framing.py",
+    "src/dynamic_cssc/publication_day1b_scratch.py",
     "tests/test_publication_day1b_aggregate_bounds.py",
     "tests/test_publication_day1b_expected_counts.py",
     "tests/test_publication_day1b_f1m_aggregation.py",
     "tests/test_publication_day1b_key_framing.py",
     "tests/test_publication_day1b_metadata_framing.py",
+    "tests/test_publication_day1b_scratch.py",
     "tests/test_openfhe_runtime_admission.py",
 )
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -2132,7 +2134,7 @@ def test_day1b_preparatory_behavior_inventory_is_exact_but_non_authorizing(
         DAY1B_PREPARATORY_BEHAVIOR_PATHS
     )
     assert inventory["behavior_set_schema_version"] == (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v22"
+        "dynamic-cssc-day1b-preparatory-behavior-set-v23"
     )
     assert inventory["role"] == "day1b"
     assert inventory["source_git_sha"] == source_git_sha

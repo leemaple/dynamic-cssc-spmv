@@ -6,6 +6,7 @@ import inspect
 import io
 import json
 import os
+import platform
 import sqlite3
 import tempfile
 import threading
@@ -57,6 +58,7 @@ from dynamic_cssc.publication_day1b_worker_protocol import (
     _test_only_issue_day1b_anonymous_scratch_capability,
     _test_only_issue_day1b_worker_invocation,
     _test_only_prepare_day1b_expected_f1m_registry,
+    abandon_day1b_anonymous_scratch_capability,
     abandon_day1b_expected_f1m_registry,
     abandon_day1b_worker_evidence,
     abandon_day1b_worker_invocation,
@@ -66,7 +68,9 @@ from dynamic_cssc.publication_day1b_worker_protocol import (
     canonical_day1b_worker_window_audit_bytes,
     claim_day1b_worker_evidence,
     consume_day1b_worker_frames,
+    describe_day1b_anonymous_scratch_capability,
     describe_day1b_expected_f1m_registry,
+    issue_day1b_anonymous_scratch_capability,
 )
 
 _CURRENT_CONTROLLED_SCRATCH: Path
@@ -1516,6 +1520,7 @@ def test_anonymous_scratch_capability_is_opaque_single_use_and_context_bound() -
         Day1BAnonymousScratchCapability()
 
     capability, contract, audits = _scratch_capability()
+    assert describe_day1b_anonymous_scratch_capability(capability) is None
     with pytest.raises(TypeError, match="not a caller boolean"):
         bool(capability)
     scratch = worker_protocol._ControlledScratch(
@@ -1557,6 +1562,58 @@ def test_anonymous_scratch_capability_is_opaque_single_use_and_context_bound() -
     _assert_no_live_controlled_scratch()
 
 
+@pytest.mark.skipif(
+    platform.system() != "Linux",
+    reason="production anonymous scratch uses Linux openat and /proc/self/fd",
+)
+def test_production_anonymous_scratch_capability_is_exact_and_pathless() -> None:
+    os.chmod(_CURRENT_CONTROLLED_SCRATCH, 0o700)
+    contract = _contract()
+    audits = _phase_audits()
+    capability = issue_day1b_anonymous_scratch_capability(
+        contract=contract,
+        controller_phase_audits=audits,
+        launcher_scratch_parent=_CURRENT_CONTROLLED_SCRATCH,
+    )
+    creation_receipt = describe_day1b_anonymous_scratch_capability(capability)
+    assert creation_receipt is not None
+    assert creation_receipt.to_document()["formal_authority_granted"] is False
+    assert creation_receipt.to_document()["production_execution_admissible"] is False
+    assert not tuple(_CURRENT_CONTROLLED_SCRATCH.iterdir())
+
+    scratch = worker_protocol._ControlledScratch(
+        capability,
+        contract=contract,
+        controller_phase_audits=audits,
+    )
+    assert scratch.anonymous_scratch_creation_isolation_verified is True
+    assert scratch.anonymous_scratch_creation_receipt is creation_receipt
+    with pytest.raises(Day1BWorkerProtocolError, match="consumed"):
+        describe_day1b_anonymous_scratch_capability(capability)
+
+    connection: sqlite3.Connection | None = None
+    spool: BinaryIO | None = None
+    try:
+        connection = scratch.create_sqlite_connection("binding-index.sqlite3")
+        spool = scratch.create_binary_file("object-receipts.jsonl")
+        connection.execute("CREATE TABLE witness(value INTEGER NOT NULL)")
+        connection.execute("INSERT INTO witness VALUES (11)")
+        connection.commit()
+        spool.write(b'{"object":"production-scratch-witness"}\n')
+        spool.flush()
+        scratch.require_within_cap()
+        assert connection.execute("SELECT value FROM witness").fetchall() == [(11,)]
+        assert scratch.peak_bytes > 0
+        assert not tuple(_CURRENT_CONTROLLED_SCRATCH.iterdir())
+    finally:
+        if connection is not None:
+            connection.close()
+        if spool is not None:
+            spool.close()
+        scratch.close()
+    _assert_no_live_controlled_scratch()
+
+
 def test_unclaimed_anonymous_scratch_capability_closes_both_handles_on_collection() -> None:
     capability, _contract_value, _audits = _scratch_capability()
     handles = tuple(item[1] for item in capability._binding.members)
@@ -1570,6 +1627,22 @@ def test_unclaimed_anonymous_scratch_capability_closes_both_handles_on_collectio
     assert all(file.closed for file in handles)
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         connection.execute("SELECT 1")
+    _assert_no_live_controlled_scratch()
+
+
+def test_abandoned_anonymous_scratch_capability_closes_every_handle() -> None:
+    capability, _contract_value, _audits = _scratch_capability()
+    handles = tuple(item[1] for item in capability._binding.members)
+    connection = capability._binding.sqlite_connection
+    assert connection is not None
+
+    abandon_day1b_anonymous_scratch_capability(capability)
+
+    assert all(file.closed for file in handles)
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("SELECT 1")
+    with pytest.raises(Day1BWorkerProtocolError, match="consumed"):
+        describe_day1b_anonymous_scratch_capability(capability)
     _assert_no_live_controlled_scratch()
 
 
@@ -2023,16 +2096,24 @@ def test_controller_registry_contract_types_are_explicit_public_api() -> None:
         "Day1BF1MWindowCardinality",
         "Day1BAnonymousScratchCapability",
         "Day1BWorkerPhaseReceipt",
+        "abandon_day1b_anonymous_scratch_capability",
         "canonical_day1b_expected_f1m_size_class_subroot_sha256",
         "canonical_day1b_f1m_cardinality_derivation_root_sha256",
         "canonical_day1b_f1m_query_id",
+        "describe_day1b_anonymous_scratch_capability",
+        "issue_day1b_anonymous_scratch_capability",
     }
 
     assert expected_exports <= set(worker_protocol.__all__)
     assert not any(
-        "scratch" in name and ("issue" in name or "mint" in name)
+        "scratch" in name and "mint" in name
         for name in worker_protocol.__all__
     )
+    assert {
+        name
+        for name in worker_protocol.__all__
+        if "scratch" in name and "issue" in name
+    } == {"issue_day1b_anonymous_scratch_capability"}
 
 
 def test_repeated_abandon_closes_every_anonymous_handle(

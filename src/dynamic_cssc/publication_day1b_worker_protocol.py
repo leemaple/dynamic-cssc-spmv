@@ -42,6 +42,12 @@ from dynamic_cssc.publication_day1b_key_framing import (
     Day1BCombinedEvaluationKeyFrameStreamValidator,
     Day1BCombinedEvaluationKeyFramingError,
 )
+from dynamic_cssc.publication_day1b_scratch import (
+    DAY1B_ANONYMOUS_SCRATCH_MEMBER_NAMES,
+    Day1BAnonymousScratchCreationError,
+    Day1BAnonymousScratchCreationReceipt,
+    open_linux_day1b_anonymous_scratch,
+)
 
 DAY1B_WORKER_FRAME_SCHEMA = "dynamic-cssc-publication-day1b-worker-frame-v2"
 DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v10"
@@ -1858,10 +1864,7 @@ class Day1BWorkerCellReceipt:
         return document
 
 
-_ANONYMOUS_SCRATCH_MEMBER_NAMES = (
-    "binding-index.sqlite3",
-    "object-receipts.jsonl",
-)
+_ANONYMOUS_SCRATCH_MEMBER_NAMES = DAY1B_ANONYMOUS_SCRATCH_MEMBER_NAMES
 _ANONYMOUS_SQLITE_APPLICATION_ID = int.from_bytes(b"DYCS", "big")
 
 
@@ -1871,6 +1874,7 @@ class _AnonymousScratchBinding:
     controller_registered_scratch_bytes_checkpoint_maximum: int
     members: tuple[tuple[str, BinaryIO, tuple[int, int]], ...]
     anonymous_scratch_creation_isolation_verified: bool
+    creation_receipt: Day1BAnonymousScratchCreationReceipt | None = None
     sqlite_connection: sqlite3.Connection | None = None
 
 
@@ -1938,6 +1942,37 @@ def _claim_anonymous_scratch_capability(
     return binding
 
 
+def describe_day1b_anonymous_scratch_capability(
+    capability: Day1BAnonymousScratchCapability,
+) -> Day1BAnonymousScratchCreationReceipt | None:
+    """Describe a still-live scratch creation receipt without consuming handles."""
+
+    if type(capability) is not Day1BAnonymousScratchCapability:
+        raise TypeError("anonymous scratch must be one exact launcher-minted capability")
+    presented = getattr(capability, "_binding", None)
+    with _ANONYMOUS_SCRATCH_LOCK:
+        active = _ISSUED_ANONYMOUS_SCRATCH.get(id(capability))
+        if (
+            active is None
+            or active[0]() is not capability
+            or active[1] is not presented
+            or type(presented) is not _AnonymousScratchBinding
+        ):
+            raise Day1BWorkerProtocolError(
+                "anonymous scratch capability is absent, unissued, or consumed"
+            )
+        return presented.creation_receipt
+
+
+def abandon_day1b_anonymous_scratch_capability(
+    capability: Day1BAnonymousScratchCapability,
+) -> None:
+    """Consume an unused scratch capability and close every held handle."""
+
+    binding = _claim_anonymous_scratch_capability(capability)
+    _close_anonymous_scratch_binding(binding)
+
+
 class _ControlledScratch:
     """Claimed launcher handles; this class performs no pathname mutation."""
 
@@ -1967,9 +2002,14 @@ class _ControlledScratch:
                 raise Day1BWorkerProtocolError(
                     "anonymous scratch capability differs from pre-dispatch context or cap"
                 )
-            if binding.anonymous_scratch_creation_isolation_verified:
+            creation_receipt = binding.creation_receipt
+            if (
+                type(binding.anonymous_scratch_creation_isolation_verified) is not bool
+                or binding.anonymous_scratch_creation_isolation_verified
+                != (type(creation_receipt) is Day1BAnonymousScratchCreationReceipt)
+            ):
                 raise Day1BWorkerProtocolError(
-                    "test-only anonymous scratch cannot verify creation isolation"
+                    "anonymous scratch creation-isolation receipt is not exact"
                 )
             if tuple(item[0] for item in binding.members) != _ANONYMOUS_SCRATCH_MEMBER_NAMES:
                 raise Day1BWorkerProtocolError(
@@ -1999,6 +2039,22 @@ class _ControlledScratch:
                 identities.add(observed_identity)
                 files[name] = file
                 expected_identities[name] = identity
+            if creation_receipt is not None:
+                receipt_members = {
+                    item.role: item for item in creation_receipt.members
+                }
+                for name, file, identity in binding.members:
+                    observed = os.fstat(file.fileno())
+                    receipt_member = receipt_members.get(name)
+                    if (
+                        receipt_member is None
+                        or (receipt_member.device, receipt_member.inode) != identity
+                        or receipt_member.mode != stat.S_IMODE(observed.st_mode)
+                        or receipt_member.owner_uid != observed.st_uid
+                    ):
+                        raise Day1BWorkerProtocolError(
+                            "anonymous scratch member differs from its creation receipt"
+                        )
         except BaseException:
             _close_anonymous_scratch_binding(binding)
             raise
@@ -2010,6 +2066,7 @@ class _ControlledScratch:
         self.anonymous_scratch_creation_isolation_verified = (
             binding.anonymous_scratch_creation_isolation_verified
         )
+        self.anonymous_scratch_creation_receipt = creation_receipt
         self._peak_bytes = 0
         self._closed = False
         self._lock = threading.Lock()
@@ -3233,6 +3290,47 @@ def _test_only_issue_day1b_anonymous_scratch_capability(
         ),
         members=tuple(members),
         anonymous_scratch_creation_isolation_verified=False,
+        creation_receipt=None,
+        sqlite_connection=sqlite_connection,
+    )
+    try:
+        return _mint_anonymous_scratch_capability(binding)
+    except BaseException:
+        _close_anonymous_scratch_binding(binding)
+        raise
+
+
+def issue_day1b_anonymous_scratch_capability(
+    *,
+    contract: Day1BWorkerProtocolContract,
+    controller_phase_audits: tuple[Day1BWorkerPhaseAudit, ...],
+    launcher_scratch_parent: Path,
+) -> Day1BAnonymousScratchCapability:
+    """Mint one Linux production scratch capability; execution remains unauthorized."""
+
+    if type(contract) is not Day1BWorkerProtocolContract:
+        raise TypeError("contract must be an exact Day1BWorkerProtocolContract")
+    _validate_controller_phase_audits(contract, controller_phase_audits)
+    pre_dispatch_context_sha256 = _pre_dispatch_context_sha256(
+        contract,
+        controller_phase_audits,
+    )
+    scratch_bytes_checkpoint_maximum = (
+        contract.resource_limits.controller_registered_scratch_bytes_checkpoint_maximum
+    )
+    try:
+        opened = open_linux_day1b_anonymous_scratch(launcher_scratch_parent)
+    except Day1BAnonymousScratchCreationError as error:
+        raise Day1BWorkerProtocolError(
+            "production anonymous scratch creation failed closed"
+        ) from error
+    members, sqlite_connection, creation_receipt = opened.transfer()
+    binding = _AnonymousScratchBinding(
+        pre_dispatch_context_sha256=pre_dispatch_context_sha256,
+        controller_registered_scratch_bytes_checkpoint_maximum=scratch_bytes_checkpoint_maximum,
+        members=members,
+        anonymous_scratch_creation_isolation_verified=True,
+        creation_receipt=creation_receipt,
         sqlite_connection=sqlite_connection,
     )
     try:
@@ -4711,6 +4809,7 @@ __all__ = (
     "Day1BWorkerProtocolError",
     "Day1BWorkerResourceLimits",
     "Day1BWorkerSerializedCategoryReceipt",
+    "abandon_day1b_anonymous_scratch_capability",
     "abandon_day1b_worker_evidence",
     "abandon_day1b_expected_f1m_registry",
     "abandon_day1b_worker_invocation",
@@ -4722,4 +4821,6 @@ __all__ = (
     "claim_day1b_worker_evidence",
     "consume_day1b_worker_frames",
     "describe_day1b_expected_f1m_registry",
+    "describe_day1b_anonymous_scratch_capability",
+    "issue_day1b_anonymous_scratch_capability",
 )

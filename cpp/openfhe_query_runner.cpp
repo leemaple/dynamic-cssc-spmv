@@ -235,9 +235,9 @@ void RequireExactKeys(
 const json::Value& Member(
     const json::Value& object,
     const char* name,
-    const std::string& field) {
+    const std::string_view field) {
     if (!object.IsObject() || !object.HasMember(name)) {
-        Fail(field + " is absent");
+        Fail(std::string(field) + " is absent");
     }
     return object[name];
 }
