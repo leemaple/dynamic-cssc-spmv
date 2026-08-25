@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
 
+import dynamic_cssc.day2_calibration_authority as day2_authority
+import dynamic_cssc.day2_openfhe_key_plan as day2_key_plan
 import dynamic_cssc.openfhe_query_runtime as runtime
 from dynamic_cssc.cssc import publish_component
+from dynamic_cssc.day2_openfhe_key_plan import Day2OpenFHEKeyPlanError
 from dynamic_cssc.mask_ledger import SQLiteMaskBindingLedger
 from dynamic_cssc.ordinary_query_lifecycle import (
     OrdinaryQueryLifecycleError,
@@ -28,6 +32,53 @@ from dynamic_cssc.strong_packed_coo import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _canonical_line(value: object) -> bytes:
+    return (
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("ascii")
+
+
+def _anchored_day2_key_plan() -> day2_key_plan.Day2OpenFHEKeyPlanCapability:
+    indices = (-2, -1, 1, 2)
+    content = _canonical_line(
+        {
+            "composite_decompositions": [],
+            "day1a_authority_receipt_sha256": "6" * 64,
+            "day1a_inventory_sha256": "7" * 64,
+            "effective_slots": 4096,
+            "eval_rotate_case_ids": [f"index={index}" for index in indices],
+            "inventory_source_schema_version": (
+                "dynamic-cssc-day1a-rotation-inventory-v1"
+            ),
+            "key_plan_kind": "direct-exact-index-v1",
+            "planned_exact_indices": list(indices),
+            "required_exact_indices": list(indices),
+            "schema_version": "dynamic-cssc-publication-rotation-key-plan-v2",
+        }
+    )
+    authority = day2_authority._mint_repository_calibration_authority(
+        source_git_sha="1" * 40,
+        outer_archive_sha256="2" * 64,
+        raw_measurement_blocks_sha256="3" * 64,
+        calibration_projection_sha256="4" * 64,
+        rotation_key_plan_sha256=hashlib.sha256(content).hexdigest(),
+        serialized_object_size_profile_sha256="5" * 64,
+        ciphertext_bytes=100,
+        f1m_random_zero_sum_ciphertext_bytes=101,
+        f1m_encrypted_zero_dummy_ciphertext_bytes=102,
+        serialized_rotation_key_inventory_bytes=103,
+        serialized_eval_mult_key_bytes=104,
+    )
+    return day2_key_plan._issue_from_day2_authority(authority, content)
 
 
 def _write(path: Path, content: bytes, *, executable: bool = False) -> None:
@@ -464,7 +515,7 @@ def test_process_controller_requires_exact_ready_done_handshake(
         )
 
 
-def test_failed_launch_consumes_authorization_and_cleans_private_scratch(
+def test_failed_anchored_launch_consumes_both_authorities_and_cleans_scratch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -495,6 +546,7 @@ def test_failed_launch_consumes_authorization_and_cleans_private_scratch(
         modulus=65537,
         ledger=ledger,
     )
+    key_plan_capability = _anchored_day2_key_plan()
     identity = _runtime_identity(tmp_path)
 
     monkeypatch.setattr(
@@ -510,11 +562,12 @@ def test_failed_launch_consumes_authorization_and_cleans_private_scratch(
     scratch = tmp_path.resolve() / "owned-runtime-scratch"
 
     with pytest.raises(runtime.OpenFHEQueryRuntimeError, match="synthetic launch failure"):
-        runtime.execute_authorized_openfhe_query(
+        runtime.execute_day2_anchored_openfhe_query(
             bundle,
             prepared,
             ledger=ledger,
             expected_output=(10,),
+            day2_key_plan_capability=key_plan_capability,
             repository_root=ROOT,
             runner_relative_path="build/cpp/openfhe_query_runner",
             scratch_root=scratch,
@@ -524,11 +577,14 @@ def test_failed_launch_consumes_authorization_and_cleans_private_scratch(
         )
 
     assert not scratch.exists()
+    assert key_plan_capability._binding is None
+    with pytest.raises(Day2OpenFHEKeyPlanError, match="absent or consumed"):
+        day2_key_plan.claim_day2_openfhe_key_plan(key_plan_capability)
     with pytest.raises(OrdinaryQueryLifecycleError, match="consumption failed"):
         authorize_ordinary_execution(bundle, prepared, ledger=ledger)
 
 
-def test_failed_strong_launch_uses_same_cleanup_and_consumption_seam(
+def test_failed_anchored_strong_launch_uses_same_consumption_seam(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -563,6 +619,7 @@ def test_failed_strong_launch_uses_same_cleanup_and_consumption_seam(
         modulus=65537,
         ledger=ledger,
     )
+    key_plan_capability = _anchored_day2_key_plan()
     identity = _runtime_identity(tmp_path)
     monkeypatch.setattr(
         runtime,
@@ -580,11 +637,12 @@ def test_failed_strong_launch_uses_same_cleanup_and_consumption_seam(
         runtime.OpenFHEQueryRuntimeError,
         match="synthetic strong launch failure",
     ):
-        runtime.execute_authorized_strong_openfhe_query(
+        runtime.execute_day2_anchored_strong_openfhe_query(
             bundle,
             prepared,
             ledger=ledger,
             expected_output=(31,),
+            day2_key_plan_capability=key_plan_capability,
             repository_root=ROOT,
             runner_relative_path="build/cpp/openfhe_query_runner",
             scratch_root=scratch,
@@ -594,5 +652,8 @@ def test_failed_strong_launch_uses_same_cleanup_and_consumption_seam(
         )
 
     assert not scratch.exists()
+    assert key_plan_capability._binding is None
+    with pytest.raises(Day2OpenFHEKeyPlanError, match="absent or consumed"):
+        day2_key_plan.claim_day2_openfhe_key_plan(key_plan_capability)
     with pytest.raises(StrongExecutionError, match="consumption failed"):
         authorize_strong_execution(bundle, prepared, ledger=ledger)

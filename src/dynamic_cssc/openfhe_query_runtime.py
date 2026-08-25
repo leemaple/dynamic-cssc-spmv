@@ -31,6 +31,12 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TypeAlias
 
+from dynamic_cssc.day2_openfhe_key_plan import (
+    ClaimedDay2OpenFHEKeyPlan,
+    Day2OpenFHEKeyPlanCapability,
+    Day2OpenFHEKeyPlanReceipt,
+    claim_day2_openfhe_key_plan,
+)
 from dynamic_cssc.mask_ledger import PreparedF1MCommitmentLedger
 from dynamic_cssc.openfhe_query_runner import (
     OpenFHEKeyGenerationPlan,
@@ -67,7 +73,7 @@ from dynamic_cssc.strong_execution import (
     claim_strong_execution,
 )
 
-OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA = "dynamic-cssc-full-openfhe-runtime-receipt-v6"
+OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA = "dynamic-cssc-full-openfhe-runtime-receipt-v7"
 OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA = "dynamic-cssc-openfhe-runner-build-identity-v3"
 OPENFHE_SERIALIZED_PAYLOAD_SCHEMA = "dynamic-cssc-openfhe-serialized-payload-v2"
 OPENFHE_RUNTIME_CONTROL_PROTOCOL_SCHEMA = "dynamic-cssc-openfhe-runtime-control-v1"
@@ -289,6 +295,7 @@ class OpenFHEQueryRuntimeReceipt:
     runner: OpenFHERunnerBuildIdentity
     execution_kind: str
     authorization: OpenFHEExecutionAuthorizationReceipt
+    day2_key_plan_authorization: Day2OpenFHEKeyPlanReceipt | None
     request_sha256: str
     request_byte_count: int
     result_sha256: str
@@ -319,7 +326,17 @@ class OpenFHEQueryRuntimeReceipt:
             raise OpenFHEQueryRuntimeError(
                 "runtime execution kind differs from its lifecycle authorization"
             )
+        if self.day2_key_plan_authorization is not None and (
+            type(self.day2_key_plan_authorization)
+            is not Day2OpenFHEKeyPlanReceipt
+        ):
+            raise OpenFHEQueryRuntimeError(
+                "runtime Day 2 key-plan authorization is not exact"
+            )
         return {
+            "anchored_day2_key_plan_verified": (
+                self.day2_key_plan_authorization is not None
+            ),
             "authorization": self.authorization.to_document(),
             "cpu_affinity": None if self.cpu_affinity is None else list(self.cpu_affinity),
             "elapsed_ns": self.elapsed_ns,
@@ -343,6 +360,11 @@ class OpenFHEQueryRuntimeReceipt:
             ),
             "runtime_state_continuity_verified": (
                 self.runtime_mapping_admission is not None
+            ),
+            "day2_key_plan_authorization": (
+                None
+                if self.day2_key_plan_authorization is None
+                else self.day2_key_plan_authorization.to_document()
             ),
             "dynamic_loader_environment_clear": True,
             "execution_kind": self.execution_kind,
@@ -1743,7 +1765,11 @@ def _cpu_affinity() -> tuple[int, ...] | None:
 def _execute_authorized_openfhe_query(
     *,
     execution_kind: str,
-    request_builder: Callable[[Path], bytes],
+    request_builder: Callable[
+        [Path, OpenFHEKeyGenerationPlan | None],
+        bytes,
+    ],
+    day2_key_plan_claim: Callable[[], ClaimedDay2OpenFHEKeyPlan] | None,
     authorize_and_claim: Callable[[], OpenFHEExecutionAuthorizationReceipt],
     result_verifier: Callable[
         [bytes, Path, Path],
@@ -1762,6 +1788,10 @@ def _execute_authorized_openfhe_query(
     scratch = _absolute_path(scratch_root, field="scratch_root")
     if execution_kind not in {"ordinary", "strong"}:
         raise OpenFHEQueryRuntimeError("runtime execution kind is not closed")
+    if day2_key_plan_claim is not None and not callable(day2_key_plan_claim):
+        raise OpenFHEQueryRuntimeError(
+            "runtime Day 2 key-plan claim must be callable or absent"
+        )
     if (
         type(timeout_seconds) is not int
         or timeout_seconds <= 0
@@ -1776,7 +1806,6 @@ def _execute_authorized_openfhe_query(
         raise OpenFHEQueryRuntimeError("scratch_root must be one absent path")
     runner_identity = capture_openfhe_runner_build_identity(root, runner_relative_path)
     runner = root.joinpath(*PurePosixPath(runner_relative_path).parts)
-    request_bytes = request_builder(root)
     scratch.mkdir(mode=0o700)
     scratch_identity = scratch.lstat()
     request_path = scratch / "request.json"
@@ -1786,6 +1815,18 @@ def _execute_authorized_openfhe_query(
         object_root.mkdir(mode=0o700)
         (scratch / "home").mkdir(mode=0o700)
         (scratch / "tmp").mkdir(mode=0o700)
+        if day2_key_plan_claim is None:
+            anchored_key_plan = None
+            key_plan_authorization = None
+        else:
+            claimed_key_plan = day2_key_plan_claim()
+            if type(claimed_key_plan) is not ClaimedDay2OpenFHEKeyPlan:
+                raise OpenFHEQueryRuntimeError(
+                    "runtime did not receive one exact claimed Day 2 key plan"
+                )
+            anchored_key_plan = claimed_key_plan.key_generation_plan
+            key_plan_authorization = claimed_key_plan.receipt
+        request_bytes = request_builder(root, anchored_key_plan)
         _write_new_file(request_path, request_bytes)
         if _scratch_bytes(scratch) > scratch_limit_bytes:
             raise OpenFHEQueryRuntimeError("scratch-limit-exceeded-before-authorization")
@@ -1809,6 +1850,15 @@ def _execute_authorized_openfhe_query(
             maximum=128 * 1024 * 1024,
         )
         verified = result_verifier(request_bytes, result_path, object_root)
+        if key_plan_authorization is not None and (
+            verified.key_material_receipt.rotation_key_plan_sha256
+            != key_plan_authorization.rotation_key_plan_sha256
+            or verified.key_material_receipt.required_exact_indices
+            != key_plan_authorization.required_exact_indices
+        ):
+            raise OpenFHEQueryRuntimeError(
+                "runtime key material differs from anchored Day 2 plan authority"
+            )
         result_after_verification = _read_direct_file(
             result_path,
             field="OpenFHE result after verification",
@@ -1829,6 +1879,7 @@ def _execute_authorized_openfhe_query(
             runner=runner_identity,
             execution_kind=execution_kind,
             authorization=authorization,
+            day2_key_plan_authorization=key_plan_authorization,
             request_sha256=hashlib.sha256(request_bytes).hexdigest(),
             request_byte_count=len(request_bytes),
             result_sha256=hashlib.sha256(result_after_verification).hexdigest(),
@@ -1872,7 +1923,7 @@ def _execute_authorized_openfhe_query(
             raise OpenFHEQueryRuntimeError("controlled scratch cleanup failed") from error
 
 
-def execute_authorized_openfhe_query(
+def _execute_ordinary_openfhe_query_adapter(
     bundle: OrdinaryExecutionBundle,
     prepared: PreparedOrdinaryQuery,
     *,
@@ -1884,17 +1935,47 @@ def execute_authorized_openfhe_query(
     timeout_seconds: int,
     resident_memory_limit_bytes: int,
     scratch_limit_bytes: int,
-    key_generation_plan: OpenFHEKeyGenerationPlan | None = None,
+    key_generation_plan: OpenFHEKeyGenerationPlan | None,
+    day2_key_plan_capability: Day2OpenFHEKeyPlanCapability | None,
 ) -> ExecutedOpenFHEQuery:
-    """Consume and execute one ordinary query through the shared launcher."""
+    if key_generation_plan is not None and day2_key_plan_capability is not None:
+        raise OpenFHEQueryRuntimeError(
+            "ordinary runtime cannot combine caller and anchored key plans"
+        )
+    if day2_key_plan_capability is not None and (
+        type(day2_key_plan_capability) is not Day2OpenFHEKeyPlanCapability
+    ):
+        raise TypeError(
+            "anchored ordinary runtime requires one exact Day 2 plan capability"
+        )
+    active_key_generation_plan = key_generation_plan
 
-    def request_builder(root: Path) -> bytes:
+    def request_builder(
+        root: Path,
+        anchored_plan: OpenFHEKeyGenerationPlan | None,
+    ) -> bytes:
+        nonlocal active_key_generation_plan
+        if day2_key_plan_capability is None:
+            if anchored_plan is not None:
+                raise OpenFHEQueryRuntimeError(
+                    "pre-admission ordinary runtime received anchored plan state"
+                )
+        else:
+            if type(anchored_plan) is not OpenFHEKeyGenerationPlan:
+                raise OpenFHEQueryRuntimeError(
+                    "anchored ordinary runtime did not claim its exact Day 2 plan"
+                )
+            active_key_generation_plan = anchored_plan
         return build_ordinary_openfhe_query_request(
             bundle,
             prepared,
             repository_root=root,
-            key_generation_plan=key_generation_plan,
+            key_generation_plan=active_key_generation_plan,
         )
+
+    def claim_key_plan() -> ClaimedDay2OpenFHEKeyPlan:
+        assert day2_key_plan_capability is not None
+        return claim_day2_openfhe_key_plan(day2_key_plan_capability)
 
     def authorize_and_claim() -> OrdinaryExecutionAuthorizationReceipt:
         capability = authorize_ordinary_execution(bundle, prepared, ledger=ledger)
@@ -1913,12 +1994,170 @@ def execute_authorized_openfhe_query(
             object_root=object_root,
             expected_output=expected_output,
             repository_root=repository_root,
-            key_generation_plan=key_generation_plan,
+            key_generation_plan=active_key_generation_plan,
         )
 
     return _execute_authorized_openfhe_query(
         execution_kind="ordinary",
         request_builder=request_builder,
+        day2_key_plan_claim=(
+            None if day2_key_plan_capability is None else claim_key_plan
+        ),
+        authorize_and_claim=authorize_and_claim,
+        result_verifier=result_verifier,
+        repository_root=repository_root,
+        runner_relative_path=runner_relative_path,
+        scratch_root=scratch_root,
+        timeout_seconds=timeout_seconds,
+        resident_memory_limit_bytes=resident_memory_limit_bytes,
+        scratch_limit_bytes=scratch_limit_bytes,
+    )
+
+
+def execute_authorized_openfhe_query(
+    bundle: OrdinaryExecutionBundle,
+    prepared: PreparedOrdinaryQuery,
+    *,
+    ledger: PreparedF1MCommitmentLedger,
+    expected_output: tuple[int, ...],
+    repository_root: Path,
+    runner_relative_path: str,
+    scratch_root: Path,
+    timeout_seconds: int,
+    resident_memory_limit_bytes: int,
+    scratch_limit_bytes: int,
+    key_generation_plan: OpenFHEKeyGenerationPlan | None = None,
+) -> ExecutedOpenFHEQuery:
+    """Execute one ordinary query through the non-anchored smoke seam."""
+
+    return _execute_ordinary_openfhe_query_adapter(
+        bundle,
+        prepared,
+        ledger=ledger,
+        expected_output=expected_output,
+        repository_root=repository_root,
+        runner_relative_path=runner_relative_path,
+        scratch_root=scratch_root,
+        timeout_seconds=timeout_seconds,
+        resident_memory_limit_bytes=resident_memory_limit_bytes,
+        scratch_limit_bytes=scratch_limit_bytes,
+        key_generation_plan=key_generation_plan,
+        day2_key_plan_capability=None,
+    )
+
+
+def execute_day2_anchored_openfhe_query(
+    bundle: OrdinaryExecutionBundle,
+    prepared: PreparedOrdinaryQuery,
+    *,
+    ledger: PreparedF1MCommitmentLedger,
+    expected_output: tuple[int, ...],
+    day2_key_plan_capability: Day2OpenFHEKeyPlanCapability,
+    repository_root: Path,
+    runner_relative_path: str,
+    scratch_root: Path,
+    timeout_seconds: int,
+    resident_memory_limit_bytes: int,
+    scratch_limit_bytes: int,
+) -> ExecutedOpenFHEQuery:
+    """Consume an anchored Day 2 plan inside one ordinary launch."""
+
+    return _execute_ordinary_openfhe_query_adapter(
+        bundle,
+        prepared,
+        ledger=ledger,
+        expected_output=expected_output,
+        repository_root=repository_root,
+        runner_relative_path=runner_relative_path,
+        scratch_root=scratch_root,
+        timeout_seconds=timeout_seconds,
+        resident_memory_limit_bytes=resident_memory_limit_bytes,
+        scratch_limit_bytes=scratch_limit_bytes,
+        key_generation_plan=None,
+        day2_key_plan_capability=day2_key_plan_capability,
+    )
+
+
+def _execute_strong_openfhe_query_adapter(
+    bundle: StrongExecutionBundle,
+    prepared: PreparedStrongQuery,
+    *,
+    ledger: PreparedF1MCommitmentLedger,
+    expected_output: tuple[int, ...],
+    repository_root: Path,
+    runner_relative_path: str,
+    scratch_root: Path,
+    timeout_seconds: int,
+    resident_memory_limit_bytes: int,
+    scratch_limit_bytes: int,
+    key_generation_plan: OpenFHEKeyGenerationPlan | None,
+    day2_key_plan_capability: Day2OpenFHEKeyPlanCapability | None,
+) -> ExecutedOpenFHEQuery:
+    if key_generation_plan is not None and day2_key_plan_capability is not None:
+        raise OpenFHEQueryRuntimeError(
+            "strong runtime cannot combine caller and anchored key plans"
+        )
+    if day2_key_plan_capability is not None and (
+        type(day2_key_plan_capability) is not Day2OpenFHEKeyPlanCapability
+    ):
+        raise TypeError(
+            "anchored strong runtime requires one exact Day 2 plan capability"
+        )
+    active_key_generation_plan = key_generation_plan
+
+    def request_builder(
+        root: Path,
+        anchored_plan: OpenFHEKeyGenerationPlan | None,
+    ) -> bytes:
+        nonlocal active_key_generation_plan
+        if day2_key_plan_capability is None:
+            if anchored_plan is not None:
+                raise OpenFHEQueryRuntimeError(
+                    "pre-admission strong runtime received anchored plan state"
+                )
+        else:
+            if type(anchored_plan) is not OpenFHEKeyGenerationPlan:
+                raise OpenFHEQueryRuntimeError(
+                    "anchored strong runtime did not claim its exact Day 2 plan"
+                )
+            active_key_generation_plan = anchored_plan
+        return build_strong_openfhe_query_request(
+            bundle,
+            prepared,
+            repository_root=root,
+            key_generation_plan=active_key_generation_plan,
+        )
+
+    def claim_key_plan() -> ClaimedDay2OpenFHEKeyPlan:
+        assert day2_key_plan_capability is not None
+        return claim_day2_openfhe_key_plan(day2_key_plan_capability)
+
+    def authorize_and_claim() -> StrongExecutionAuthorizationReceipt:
+        capability = authorize_strong_execution(bundle, prepared, ledger=ledger)
+        return claim_strong_execution(capability, bundle, prepared)
+
+    def result_verifier(
+        request_bytes: bytes,
+        result_path: Path,
+        object_root: Path,
+    ) -> VerifiedOpenFHEQueryResult:
+        return verify_strong_openfhe_query_result(
+            bundle,
+            prepared,
+            request_bytes=request_bytes,
+            result_path=result_path,
+            object_root=object_root,
+            expected_output=expected_output,
+            repository_root=repository_root,
+            key_generation_plan=active_key_generation_plan,
+        )
+
+    return _execute_authorized_openfhe_query(
+        execution_kind="strong",
+        request_builder=request_builder,
+        day2_key_plan_claim=(
+            None if day2_key_plan_capability is None else claim_key_plan
+        ),
         authorize_and_claim=authorize_and_claim,
         result_verifier=result_verifier,
         repository_root=repository_root,
@@ -1944,47 +2183,53 @@ def execute_authorized_strong_openfhe_query(
     scratch_limit_bytes: int,
     key_generation_plan: OpenFHEKeyGenerationPlan | None = None,
 ) -> ExecutedOpenFHEQuery:
-    """Consume and execute one strong query through the shared launcher."""
+    """Execute one strong query through the non-anchored smoke seam."""
 
-    def request_builder(root: Path) -> bytes:
-        return build_strong_openfhe_query_request(
-            bundle,
-            prepared,
-            repository_root=root,
-            key_generation_plan=key_generation_plan,
-        )
-
-    def authorize_and_claim() -> StrongExecutionAuthorizationReceipt:
-        capability = authorize_strong_execution(bundle, prepared, ledger=ledger)
-        return claim_strong_execution(capability, bundle, prepared)
-
-    def result_verifier(
-        request_bytes: bytes,
-        result_path: Path,
-        object_root: Path,
-    ) -> VerifiedOpenFHEQueryResult:
-        return verify_strong_openfhe_query_result(
-            bundle,
-            prepared,
-            request_bytes=request_bytes,
-            result_path=result_path,
-            object_root=object_root,
-            expected_output=expected_output,
-            repository_root=repository_root,
-            key_generation_plan=key_generation_plan,
-        )
-
-    return _execute_authorized_openfhe_query(
-        execution_kind="strong",
-        request_builder=request_builder,
-        authorize_and_claim=authorize_and_claim,
-        result_verifier=result_verifier,
+    return _execute_strong_openfhe_query_adapter(
+        bundle,
+        prepared,
+        ledger=ledger,
+        expected_output=expected_output,
         repository_root=repository_root,
         runner_relative_path=runner_relative_path,
         scratch_root=scratch_root,
         timeout_seconds=timeout_seconds,
         resident_memory_limit_bytes=resident_memory_limit_bytes,
         scratch_limit_bytes=scratch_limit_bytes,
+        key_generation_plan=key_generation_plan,
+        day2_key_plan_capability=None,
+    )
+
+
+def execute_day2_anchored_strong_openfhe_query(
+    bundle: StrongExecutionBundle,
+    prepared: PreparedStrongQuery,
+    *,
+    ledger: PreparedF1MCommitmentLedger,
+    expected_output: tuple[int, ...],
+    day2_key_plan_capability: Day2OpenFHEKeyPlanCapability,
+    repository_root: Path,
+    runner_relative_path: str,
+    scratch_root: Path,
+    timeout_seconds: int,
+    resident_memory_limit_bytes: int,
+    scratch_limit_bytes: int,
+) -> ExecutedOpenFHEQuery:
+    """Consume an anchored Day 2 plan inside one strong launch."""
+
+    return _execute_strong_openfhe_query_adapter(
+        bundle,
+        prepared,
+        ledger=ledger,
+        expected_output=expected_output,
+        repository_root=repository_root,
+        runner_relative_path=runner_relative_path,
+        scratch_root=scratch_root,
+        timeout_seconds=timeout_seconds,
+        resident_memory_limit_bytes=resident_memory_limit_bytes,
+        scratch_limit_bytes=scratch_limit_bytes,
+        key_generation_plan=None,
+        day2_key_plan_capability=day2_key_plan_capability,
     )
 
 
@@ -2002,4 +2247,6 @@ __all__ = (
     "capture_openfhe_runner_build_identity",
     "execute_authorized_openfhe_query",
     "execute_authorized_strong_openfhe_query",
+    "execute_day2_anchored_openfhe_query",
+    "execute_day2_anchored_strong_openfhe_query",
 )

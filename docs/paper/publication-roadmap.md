@@ -379,7 +379,7 @@ previously reviewed schema-source Git/Behavior-inventory binding; authority and
 worker/runtime identity are structurally absent. Its non-self-referential
 semantic digest and immutable decoded record do not lift the repository
 `HOLD`. The real amendment and its outcome-blind review receipt are now frozen
-as pre-`S1` DAY1B Behavior Set v27 members. The resource loader can project its
+as pre-`S1` DAY1B Behavior Set v28 members. The resource loader can project its
 non-authorizing budget, after which the independent profile, trace, worker, and
 anchor gates still fail closed.
 
@@ -398,7 +398,7 @@ implementation evidence only. It cannot dispatch until the trace and catalog
 authorities, repository execution adapter, and outcome-blind resource policy
 are installed, and it is not a 30-unit publication artifact.
 
-The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v27,
+The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v28,
 the unchanged empirical-null/authority-false `PENDING-FREEZE` placeholder, the
 separate reviewed resource-only amendment, and a manual no-input validation
 workflow. These freeze the current validator, protocol, administrative safety
@@ -415,7 +415,7 @@ Its build-identity v3 subreceipt now includes stable runner/library filesystem
 identity, Mach-O UUID or ELF build ID, install-name/SONAME and dependency-name
 inventories, compiler bytes/version/target, CMake executable/version, complete
 runner CMake/Ninja inputs, and the pinned clean OpenFHE source plus package,
-build, compile-command, and install-manifest digests. Runtime receipt v6 makes
+build, compile-command, and install-manifest digests. Runtime receipt v7 makes
 that nested-language change explicit and adds an inherited-FD READY/DONE
 protocol. On Linux, the controller pauses the runner at each point, verifies
 the exact pre-admitted runner/library executable mapping closure from `/proc`,
@@ -438,7 +438,7 @@ uses those keys in the same typed DAG, and returns a request/plan/segment/frame-
 bound receipt. Its rotation-plan hash now equals the exact LF-terminated
 `rotation-key-plan.json` member emitted by Day 2, and both Python and C++ reject
 alternate whitespace, ordering, or newline bytes. Query-derived plans and
-unanchored canonical Day 2 plan inputs remain pre-admission only. The v27
+unanchored canonical Day 2 plan inputs remain pre-admission only. The v28
 source now preserves the rotation-plan digest in final Day 2 authority and can
 mint one opaque single-use plan capability only for the exact post-run anchored
 byte preimage; every runtime, dispatch, cost, performance, publication, and
@@ -449,6 +449,14 @@ before catalog, trace, worker, or output access. The workflow performs only
 hash-locked source-contract tests, static validation, amendment validation, and
 a real non-authorizing runtime smoke; it neither invokes the producer nor
 fetches or uploads publication data.
+
+The v28 runtime adds separate ordinary and strong anchored entry points. They
+accept no caller-supplied plan object: the deep launcher consumes the opaque
+Day 2 plan capability before request construction, uses that exact plan for
+generation and verification, cross-checks the resulting key-material receipt,
+and records the plan receipt in runtime receipt v7. The manual native smoke
+remains explicitly non-anchored, and this integration still supplies neither a
+production candidate-cell adapter nor dispatch authority.
 
 The sole numeric exception in that pending document is the already
 preregistered, non-empirical protocol invariant

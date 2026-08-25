@@ -136,6 +136,7 @@ jobs:
           echo 'The reviewed amendment supplies administrative safety budgets only.'
           echo 'The ordinary and strong OpenFHE query paths passed a non-authorizing smoke.'
           echo 'The typed final-anchor Day2 key-plan capability remains unavailable without evidence.'
+          echo 'The anchored runtime consumes that capability internally and records its receipt.'
           echo 'Its typed D1BKEY01 key receipt remains pre-admission only.'
           echo 'Its Linux READY/DONE executable-map receipt remains pre-admission only.'
           echo 'Linux launcher-owned pathless scratch creation remains pre-admission only.'

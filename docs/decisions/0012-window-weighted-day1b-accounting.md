@@ -238,7 +238,7 @@ artifact that declares full query-arrival replay, omits the basis, changes a
 multiplicity, leaves a query-range gap, overlaps ranges, or disagrees with the
 controller's schedule fails closed.
 
-The preparatory v27 source surface exposes the exact typed compilation used for
+The preparatory v28 source surface exposes the exact typed compilation used for
 each query-bearing window through a synchronous, output-only query-execution
 sink, but the only public sealing seam now owns that sink and the replay call.
 The caller supplies one exact frozen candidate, window stream, domain, and
@@ -248,7 +248,7 @@ derives the candidate policy and role-retained phases, freezes the modulus at
 65,537, creates a private collector, and finishes it against the accounting
 returned by that same replay invocation.
 
-Every v27 query-execution binding commits the candidate ID, role, policy digest,
+Every v28 query-execution binding commits the candidate ID, role, policy digest,
 retained phases, and modulus together with the compact descriptor and ordinary
 or strong carrier identities. The collector independently reconstructs the
 existing compact query-window root and retains exactly one private typed
@@ -263,15 +263,18 @@ process-local capability and releases its carrier reference even on validation
 failure. Its receipt explicitly denies worker, dispatch, formal, publication,
 complete-cost, and production authority.
 
-The same v27 surface advances the native request/result language to v4 and the
-enclosing runtime receipt to v6. One private deep launcher now admits either an
-ordinary or strong execution capability, owns scratch and
+The same v28 surface retains the native request/result language at v4 and
+advances the enclosing runtime receipt to v7. One private deep launcher now
+admits either an ordinary or strong execution capability, owns scratch and
 READY/DONE verification, and dispatches through thin kind-specific adapters.
-The native smoke executes and independently verifies both paths. It still does
-not bind a formal Day 2 plan or install a production candidate-cell adapter;
-those remain later gates.
+Separate anchored entry points accept only the opaque single-use Day 2 plan
+capability, consume it inside the launcher before request construction, use its
+exact plan for key generation and verification, and bind the plan receipt into
+the runtime receipt. The native smoke still executes the explicitly
+non-anchored pre-admission paths. A production candidate-cell adapter and its
+scratch authority remain later gates.
 
-The v27 surface also preserves the formal Day 2 rotation-plan digest in the
+The v28 surface also preserves the formal Day 2 rotation-plan digest in the
 final read-only calibration authority and introduces a single-use key-plan
 capability. Its public issuer accepts only canonical plan bytes and obtains the
 final authority from the zero-argument repository seam before and after
