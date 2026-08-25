@@ -114,7 +114,7 @@ def test_preregistration_and_roadmap_keep_preparatory_inventory_non_authorizing(
     combined = preregistration + roadmap
 
     for required in (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v18",
+        "dynamic-cssc-day1b-preparatory-behavior-set-v19",
         "publication-day1b-preparatory.yml",
         "Source inventory is not dispatch authority",
         "controlled-scratch high-water",

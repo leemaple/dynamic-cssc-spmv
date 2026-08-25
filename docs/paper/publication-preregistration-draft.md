@@ -475,7 +475,7 @@ measurement-method field in this placeholder remains `null`; the separate
 amendment is the sole reviewed source of administrative limits and
 measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v18` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v19` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface, including the amendment and
 `docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
@@ -486,7 +486,8 @@ nothing, and cannot install an anchor. It now builds pinned OpenFHE 1.5.1 and
 runs a private, non-authorizing smoke through the canonical request, arbitrary
 typed query DAG, real BFV encryption/evaluation/decryption, controller-owned
 exclusive scratch, single-use ledger authorization, exact runner/source/compiler
-identity, bounded resource observations, and retained binary object verifier.
+identity plus the resolved file-backed OpenFHE linked-library bytes, bounded
+resource observations, and retained binary object verifier.
 The smoke exercises multiplication without implicit
 relinearization, explicit relinearization, exact-index rotation, plaintext
 selection, ciphertext addition, reconstruction, tail-slot zero checks, and
@@ -494,7 +495,7 @@ SHA-256 verification of every serialized input, result, and one-time key bundle.
 Its provisional depth-2/0/0 profile remains explicitly `HOLD` for mixed-circuit
 parameter authority.
 
-The current v18 surface also contains a non-authorizing streaming accounting core. It
+The current v19 surface also contains a non-authorizing streaming accounting core. It
 advances one candidate state exactly once per exact Publication Window, derives
 at most one typed query plan per query-bearing window, applies the window's
 integer query multiplicity before the fixed 14-primitive mapping, and retains

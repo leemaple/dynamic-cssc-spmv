@@ -77,8 +77,22 @@ printf '%s\\n' "$result"
     return runner
 
 
-def test_runner_build_identity_binds_binary_sources_compiler_and_flags(tmp_path: Path) -> None:
+def test_runner_build_identity_binds_binary_sources_compiler_flags_and_libraries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repository, runner_relative_path = _runner_repository(tmp_path)
+    library = repository / "lib" / "libOPENFHEpke.so"
+    _write(library, b"test-openfhe-shared-library-v1")
+    monkeypatch.setattr(
+        runtime,
+        "_inspect_linked_library_paths",
+        lambda _runner: (
+            "test-linked-library-inspector-v1",
+            (("libOPENFHEpke.so", library),),
+            ("test-system-library",),
+        ),
+    )
 
     identity = runtime.capture_openfhe_runner_build_identity(
         repository,
@@ -98,6 +112,12 @@ def test_runner_build_identity_binds_binary_sources_compiler_and_flags(tmp_path:
         "-Wpedantic",
     )
     assert set(dict(identity.source_sha256)) == set(runtime._SOURCE_PATHS)
+    assert identity.linkage_inspection_format == "test-linked-library-inspector-v1"
+    assert identity.linked_system_library_load_names == ("test-system-library",)
+    assert tuple(item.load_name for item in identity.linked_libraries) == (
+        "libOPENFHEpke.so",
+    )
+    assert identity.linked_libraries[0].resolved_path == str(library)
     assert identity.to_document()["schema_version"] == (
         runtime.OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA
     )
@@ -108,6 +128,57 @@ def test_runner_build_identity_binds_binary_sources_compiler_and_flags(tmp_path:
         runner_relative_path,
     )
     assert changed.build_identity_sha256 != identity.build_identity_sha256
+
+    library.write_bytes(b"test-openfhe-shared-library-v2")
+    changed_library = runtime.capture_openfhe_runner_build_identity(
+        repository,
+        runner_relative_path,
+    )
+    assert changed_library.build_identity_sha256 != changed.build_identity_sha256
+
+
+def test_linkage_parsers_resolve_physical_openfhe_and_retain_dyld_cache_names(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path.resolve()
+    runner = root / "bin" / "openfhe_query_runner"
+    linux_library = root / "linux" / "libOPENFHEpke.so.1"
+    darwin_library = root / "darwin" / "libOPENFHEpke.1.dylib"
+    _write(runner, b"test-runner", executable=True)
+    _write(linux_library, b"linux-openfhe")
+    _write(darwin_library, b"darwin-openfhe")
+    monkeypatch.setattr(runtime.shutil, "which", lambda *_args, **_kwargs: "/tool")
+
+    monkeypatch.setattr(
+        runtime,
+        "_linkage_tool_output",
+        lambda _arguments, **_kwargs: (
+            "linux-vdso.so.1 (0x0001)\n"
+            f"libOPENFHEpke.so.1 => {linux_library} (0x0002)\n"
+        ),
+    )
+    linux_format, linux_entries, linux_system = runtime._linux_linked_library_paths(runner)
+    assert linux_format == "linux-ldd-direct-and-transitive-v1"
+    assert linux_entries == (("libOPENFHEpke.so.1", linux_library),)
+    assert linux_system == ()
+
+    def darwin_output(arguments: tuple[str, ...], **_kwargs: object) -> str:
+        if "-L" in arguments:
+            return (
+                f"{runner}:\n"
+                "\t@rpath/libOPENFHEpke.1.dylib (compatibility version 1.0.0)\n"
+                "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\n"
+            )
+        return f"cmd LC_RPATH\npath {darwin_library.parent} (offset 12)\n"
+
+    monkeypatch.setattr(runtime, "_linkage_tool_output", darwin_output)
+    darwin_format, darwin_entries, darwin_system = runtime._darwin_linked_library_paths(
+        runner
+    )
+    assert darwin_format == "darwin-otool-direct-v1"
+    assert darwin_entries == (("@rpath/libOPENFHEpke.1.dylib", darwin_library),)
+    assert darwin_system == ("/usr/lib/libSystem.B.dylib",)
 
 
 def test_process_controller_enforces_stdout_and_fast_exit_scratch_limit(
@@ -192,6 +263,16 @@ def test_failed_launch_consumes_authorization_and_cleans_private_scratch(
         compiler_path="/compiler",
         compiler_identity_sha256="3" * 64,
         compiler_flags=("-O3",),
+        linkage_inspection_format="test-linked-library-inspector-v1",
+        linked_libraries=(
+            runtime.OpenFHELinkedLibraryIdentity(
+                load_name="libOPENFHEpke.so",
+                resolved_path="/lib/libOPENFHEpke.so",
+                byte_count=1,
+                sha256="5" * 64,
+            ),
+        ),
+        linked_system_library_load_names=(),
         build_identity_sha256="4" * 64,
     )
 

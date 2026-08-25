@@ -42,8 +42,8 @@ from dynamic_cssc.ordinary_query_lifecycle import (
     claim_ordinary_execution,
 )
 
-OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA = "dynamic-cssc-full-openfhe-runtime-receipt-v1"
-OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA = "dynamic-cssc-openfhe-runner-build-identity-v1"
+OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA = "dynamic-cssc-full-openfhe-runtime-receipt-v2"
+OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA = "dynamic-cssc-openfhe-runner-build-identity-v2"
 OPENFHE_SERIALIZED_PAYLOAD_SCHEMA = "dynamic-cssc-openfhe-serialized-payload-v1"
 
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -62,11 +62,28 @@ _CMAKE_CACHE_KEYS = (
 )
 _FIXED_TARGET_FLAGS = ("-std=c++17", "-Wall", "-Wextra", "-Wpedantic")
 _LOG_BYTES_MAXIMUM = 1024 * 1024
+_LINKED_LIBRARY_BYTES_MAXIMUM = 512 * 1024 * 1024
 _OBSERVATION_INTERVAL_SECONDS = 0.01
 
 
 class OpenFHEQueryRuntimeError(RuntimeError):
     """The runner identity, process observation, or private cleanup failed closed."""
+
+
+@dataclass(frozen=True, slots=True)
+class OpenFHELinkedLibraryIdentity:
+    load_name: str
+    resolved_path: str
+    byte_count: int
+    sha256: str
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "byte_count": self.byte_count,
+            "load_name": self.load_name,
+            "resolved_path": self.resolved_path,
+            "sha256": self.sha256,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +95,9 @@ class OpenFHERunnerBuildIdentity:
     compiler_path: str
     compiler_identity_sha256: str
     compiler_flags: tuple[str, ...]
+    linkage_inspection_format: str
+    linked_libraries: tuple[OpenFHELinkedLibraryIdentity, ...]
+    linked_system_library_load_names: tuple[str, ...]
     build_identity_sha256: str
 
     def to_document(self) -> dict[str, object]:
@@ -86,6 +106,11 @@ class OpenFHERunnerBuildIdentity:
             "compiler_flags": list(self.compiler_flags),
             "compiler_identity_sha256": self.compiler_identity_sha256,
             "compiler_path": self.compiler_path,
+            "linkage_inspection_format": self.linkage_inspection_format,
+            "linked_libraries": [item.to_document() for item in self.linked_libraries],
+            "linked_system_library_load_names": list(
+                self.linked_system_library_load_names
+            ),
             "runner_byte_count": self.runner_byte_count,
             "runner_relative_path": self.runner_relative_path,
             "runner_sha256": self.runner_sha256,
@@ -333,6 +358,207 @@ def _compiler_identity(compiler: Path) -> tuple[str, bytes]:
     return str(compiler), identity
 
 
+def _linkage_tool_output(arguments: tuple[str, ...], *, field: str) -> str:
+    try:
+        completed = subprocess.run(
+            arguments,
+            check=False,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"},
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise OpenFHEQueryRuntimeError(f"{field} probe failed") from error
+    output = completed.stdout + completed.stderr
+    if completed.returncode != 0 or not output or len(output) > _LOG_BYTES_MAXIMUM:
+        raise OpenFHEQueryRuntimeError(f"{field} probe is not exact")
+    try:
+        return output.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise OpenFHEQueryRuntimeError(f"{field} probe is not UTF-8") from error
+
+
+def _resolved_linked_path(value: str, *, field: str) -> Path:
+    candidate = Path(value)
+    if not candidate.is_absolute():
+        raise OpenFHEQueryRuntimeError(f"{field} is not an absolute resolved path")
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as error:
+        raise OpenFHEQueryRuntimeError(f"{field} cannot be resolved") from error
+    _reject_symlink_components(resolved, missing_leaf_allowed=False)
+    if not resolved.is_file():
+        raise OpenFHEQueryRuntimeError(f"{field} is not a regular file")
+    return resolved
+
+
+def _linux_linked_library_paths(
+    runner: Path,
+) -> tuple[str, tuple[tuple[str, Path], ...], tuple[str, ...]]:
+    executable = shutil.which("ldd", path="/usr/bin:/bin")
+    if executable is None:
+        raise OpenFHEQueryRuntimeError("ldd is unavailable")
+    output = _linkage_tool_output((executable, str(runner)), field="runner ldd identity")
+    entries: list[tuple[str, Path]] = []
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if "not found" in line:
+            raise OpenFHEQueryRuntimeError("runner has an unresolved linked library")
+        without_address = re.sub(r"\s+\([^)]*\)\s*$", "", line)
+        if "=>" in without_address:
+            load_name, target = (item.strip() for item in without_address.split("=>", 1))
+            if not load_name or not target:
+                raise OpenFHEQueryRuntimeError("runner ldd identity is malformed")
+        elif without_address.startswith("/"):
+            target = without_address
+            load_name = Path(target).name
+        elif without_address.startswith("linux-vdso"):
+            continue
+        else:
+            raise OpenFHEQueryRuntimeError("runner ldd identity contains an unknown row")
+        entries.append(
+            (
+                load_name,
+                _resolved_linked_path(target, field=f"linked library {load_name}"),
+            )
+        )
+    result = tuple(sorted(set(entries), key=lambda item: (item[0], str(item[1]))))
+    if not result:
+        raise OpenFHEQueryRuntimeError("runner linked-library inventory is empty")
+    return "linux-ldd-direct-and-transitive-v1", result, ()
+
+
+def _darwin_rpaths(otool: str, runner: Path) -> tuple[Path, ...]:
+    output = _linkage_tool_output(
+        (otool, "-l", str(runner)),
+        field="runner LC_RPATH identity",
+    )
+    raw_paths: list[str] = []
+    awaiting_path = False
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if line == "cmd LC_RPATH":
+            awaiting_path = True
+            continue
+        if awaiting_path and line.startswith("path "):
+            raw_paths.append(line[5:].split(" (offset ", 1)[0])
+            awaiting_path = False
+    resolved: list[Path] = []
+    for value in raw_paths:
+        expanded = value.replace("@loader_path", str(runner.parent)).replace(
+            "@executable_path", str(runner.parent)
+        )
+        candidate = Path(expanded)
+        if not candidate.is_absolute():
+            raise OpenFHEQueryRuntimeError("runner LC_RPATH is not absolute after expansion")
+        try:
+            directory = candidate.resolve(strict=True)
+        except OSError as error:
+            raise OpenFHEQueryRuntimeError("runner LC_RPATH cannot be resolved") from error
+        if not directory.is_dir():
+            raise OpenFHEQueryRuntimeError("runner LC_RPATH is not a directory")
+        resolved.append(directory)
+    return tuple(sorted(set(resolved), key=str))
+
+
+def _darwin_linked_library_paths(
+    runner: Path,
+) -> tuple[str, tuple[tuple[str, Path], ...], tuple[str, ...]]:
+    executable = shutil.which("otool", path="/usr/bin:/bin")
+    if executable is None:
+        raise OpenFHEQueryRuntimeError("otool is unavailable")
+    output = _linkage_tool_output(
+        (executable, "-L", str(runner)),
+        field="runner otool identity",
+    )
+    rpaths = _darwin_rpaths(executable, runner)
+    entries: list[tuple[str, Path]] = []
+    system_load_names: list[str] = []
+    lines = tuple(line.strip() for line in output.splitlines() if line.strip())
+    if not lines or not lines[0].endswith(":"):
+        raise OpenFHEQueryRuntimeError("runner otool identity is malformed")
+    for line in lines[1:]:
+        load_name = line.split(" (compatibility version ", 1)[0].strip()
+        candidates: tuple[Path, ...]
+        if load_name.startswith("@rpath/"):
+            suffix = load_name.removeprefix("@rpath/")
+            candidates = tuple(directory / suffix for directory in rpaths)
+        elif load_name.startswith("@loader_path/"):
+            candidates = (runner.parent / load_name.removeprefix("@loader_path/"),)
+        elif load_name.startswith("@executable_path/"):
+            candidates = (runner.parent / load_name.removeprefix("@executable_path/"),)
+        else:
+            candidates = (Path(load_name),)
+        existing = tuple(candidate for candidate in candidates if candidate.exists())
+        if not existing:
+            if load_name.startswith(("/usr/lib/", "/System/Library/")):
+                system_load_names.append(load_name)
+                continue
+            raise OpenFHEQueryRuntimeError(
+                f"linked library {load_name} cannot be resolved through LC_RPATH"
+            )
+        if len(existing) != 1:
+            raise OpenFHEQueryRuntimeError(
+                f"linked library {load_name} resolves to multiple physical files"
+            )
+        entries.append(
+            (
+                load_name,
+                _resolved_linked_path(str(existing[0]), field=f"linked library {load_name}"),
+            )
+        )
+    result = tuple(sorted(set(entries), key=lambda item: (item[0], str(item[1]))))
+    if not result:
+        raise OpenFHEQueryRuntimeError("runner file-backed linked-library inventory is empty")
+    return (
+        "darwin-otool-direct-v1",
+        result,
+        tuple(sorted(set(system_load_names))),
+    )
+
+
+def _inspect_linked_library_paths(
+    runner: Path,
+) -> tuple[str, tuple[tuple[str, Path], ...], tuple[str, ...]]:
+    system = platform.system()
+    if system == "Linux":
+        return _linux_linked_library_paths(runner)
+    if system == "Darwin":
+        return _darwin_linked_library_paths(runner)
+    raise OpenFHEQueryRuntimeError("runner linked-library inspection OS is unsupported")
+
+
+def _linked_library_identity(
+    runner: Path,
+) -> tuple[str, tuple[OpenFHELinkedLibraryIdentity, ...], tuple[str, ...]]:
+    inspection_format, paths, system_load_names = _inspect_linked_library_paths(runner)
+    identities: list[OpenFHELinkedLibraryIdentity] = []
+    for load_name, path in paths:
+        content = _read_direct_file(
+            path,
+            field=f"linked library {load_name}",
+            maximum=_LINKED_LIBRARY_BYTES_MAXIMUM,
+        )
+        identities.append(
+            OpenFHELinkedLibraryIdentity(
+                load_name=load_name,
+                resolved_path=str(path),
+                byte_count=len(content),
+                sha256=hashlib.sha256(content).hexdigest(),
+            )
+        )
+    linked_libraries = tuple(identities)
+    if not any(
+        "openfhe" in f"{item.load_name} {item.resolved_path}".lower()
+        for item in linked_libraries
+    ):
+        raise OpenFHEQueryRuntimeError("runner is not linked to a file-backed OpenFHE library")
+    return inspection_format, linked_libraries, system_load_names
+
+
 def capture_openfhe_runner_build_identity(
     repository_root: Path,
     runner_relative_path: str,
@@ -375,10 +601,14 @@ def capture_openfhe_runner_build_identity(
             *_FIXED_TARGET_FLAGS,
         ]
     )
+    linkage_format, linked_libraries, linked_system_libraries = _linked_library_identity(runner)
     build_binding = {
         "cmake_cache": cache,
         "compiler_flags": list(compiler_flags),
         "compiler_identity_sha256": hashlib.sha256(compiler_version).hexdigest(),
+        "linkage_inspection_format": linkage_format,
+        "linked_libraries": [item.to_document() for item in linked_libraries],
+        "linked_system_library_load_names": list(linked_system_libraries),
         "runner_byte_count": len(runner_content),
         "runner_relative_path": runner_relative_path,
         "runner_sha256": hashlib.sha256(runner_content).hexdigest(),
@@ -393,6 +623,9 @@ def capture_openfhe_runner_build_identity(
         compiler_path=compiler_path,
         compiler_identity_sha256=str(build_binding["compiler_identity_sha256"]),
         compiler_flags=compiler_flags,
+        linkage_inspection_format=linkage_format,
+        linked_libraries=linked_libraries,
+        linked_system_library_load_names=linked_system_libraries,
         build_identity_sha256=hashlib.sha256(_canonical_bytes(build_binding)).hexdigest(),
     )
 
@@ -781,6 +1014,7 @@ __all__ = (
     "ExecutedOpenFHEQuery",
     "OpenFHEQueryRuntimeError",
     "OpenFHEQueryRuntimeReceipt",
+    "OpenFHELinkedLibraryIdentity",
     "OpenFHERunnerBuildIdentity",
     "OpenFHESerializedPayload",
     "capture_openfhe_runner_build_identity",
