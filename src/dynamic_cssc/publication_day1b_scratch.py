@@ -33,6 +33,7 @@ DAY1B_ANONYMOUS_SCRATCH_MEMBER_NAMES = (
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _ROOT_NAME_ATTEMPTS = 16
 _PATH_TYPE = type(Path())
+_DirectoryIdentity = tuple[int, int, int, int]
 
 
 class Day1BAnonymousScratchCreationError(RuntimeError):
@@ -295,18 +296,17 @@ def _fd_identity_count(identity: tuple[int, int]) -> int:
     return count
 
 
-def _same_directory_identity(before: os.stat_result, after: os.stat_result) -> bool:
+def _directory_identity(value: os.stat_result) -> _DirectoryIdentity:
     return (
-        before.st_dev,
-        before.st_ino,
-        stat.S_IMODE(before.st_mode),
-        before.st_uid,
-    ) == (
-        after.st_dev,
-        after.st_ino,
-        stat.S_IMODE(after.st_mode),
-        after.st_uid,
+        value.st_dev,
+        value.st_ino,
+        stat.S_IMODE(value.st_mode),
+        value.st_uid,
     )
+
+
+def _same_directory_identity(before: os.stat_result, after: os.stat_result) -> bool:
+    return _directory_identity(before) == _directory_identity(after)
 
 
 def _exclusive_root(parent_descriptor: int) -> str:
@@ -326,11 +326,64 @@ def _exclusive_root(parent_descriptor: int) -> str:
     )
 
 
+def _remove_exact_ephemeral_root(
+    *,
+    parent_descriptor: int,
+    root_descriptor: int,
+    root_name: str,
+    expected_root_identity: _DirectoryIdentity,
+) -> None:
+    """Remove the held root only while its visible name still names that inode."""
+
+    try:
+        held = os.fstat(root_descriptor)
+        visible = os.stat(
+            root_name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+    except OSError as error:
+        raise Day1BAnonymousScratchCreationError(
+            "ephemeral scratch root name is unavailable before exact removal"
+        ) from error
+    if (
+        not stat.S_ISDIR(held.st_mode)
+        or not stat.S_ISDIR(visible.st_mode)
+        or _directory_identity(held) != expected_root_identity
+        or _directory_identity(visible) != expected_root_identity
+    ):
+        raise Day1BAnonymousScratchCreationError(
+            "ephemeral scratch root name changed before exact removal"
+        )
+    try:
+        os.rmdir(root_name, dir_fd=parent_descriptor)
+        removed = os.fstat(root_descriptor)
+    except OSError as error:
+        raise Day1BAnonymousScratchCreationError(
+            "exact ephemeral scratch root could not be removed"
+        ) from error
+    if (
+        _directory_identity(removed) != expected_root_identity
+        or removed.st_nlink != 0
+    ):
+        raise Day1BAnonymousScratchCreationError(
+            "held ephemeral scratch root did not become unlinked"
+        )
+    try:
+        os.stat(root_name, dir_fd=parent_descriptor, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    raise Day1BAnonymousScratchCreationError(
+        "ephemeral anonymous scratch root remained visible after removal"
+    )
+
+
 def _cleanup_created_root(
     *,
     parent_descriptor: int | None,
     root_descriptor: int | None,
     root_name: str | None,
+    root_identity: _DirectoryIdentity | None,
     files: list[tuple[str, BinaryIO, tuple[int, int]]],
     connection: sqlite3.Connection | None,
 ) -> None:
@@ -348,9 +401,22 @@ def _cleanup_created_root(
     for _name, file, _identity in files:
         with suppress(BaseException):
             file.close()
-    if parent_descriptor is not None and root_name is not None:
-        with suppress(OSError):
-            os.rmdir(root_name, dir_fd=parent_descriptor)
+    if (
+        parent_descriptor is not None
+        and root_descriptor is not None
+        and root_name is not None
+        and root_identity is not None
+    ):
+        # Cleanup is deliberately identity guarded.  If another same-UID actor
+        # replaced the random name, preserve that foreign directory rather than
+        # treating name equality as ownership.
+        with suppress(Day1BAnonymousScratchCreationError):
+            _remove_exact_ephemeral_root(
+                parent_descriptor=parent_descriptor,
+                root_descriptor=root_descriptor,
+                root_name=root_name,
+                expected_root_identity=root_identity,
+            )
 
 
 def open_linux_day1b_anonymous_scratch(
@@ -374,6 +440,7 @@ def open_linux_day1b_anonymous_scratch(
     parent_descriptor: int | None = None
     root_descriptor: int | None = None
     root_name: str | None = None
+    root_identity: _DirectoryIdentity | None = None
     connection: sqlite3.Connection | None = None
     files: list[tuple[str, BinaryIO, tuple[int, int]]] = []
     success = False
@@ -406,6 +473,7 @@ def open_linux_day1b_anonymous_scratch(
             dir_fd=parent_descriptor,
         )
         root = os.fstat(root_descriptor)
+        root_identity = _directory_identity(root)
         visible_root = os.stat(root_name, dir_fd=parent_descriptor, follow_symlinks=False)
         if (
             not stat.S_ISDIR(root.st_mode)
@@ -498,16 +566,14 @@ def open_linux_day1b_anonymous_scratch(
             )
 
         assert root_name is not None
+        assert root_identity is not None
         root_name_sha256 = hashlib.sha256(root_name.encode("ascii")).hexdigest()
-        os.rmdir(root_name, dir_fd=parent_descriptor)
-        try:
-            os.stat(root_name, dir_fd=parent_descriptor, follow_symlinks=False)
-        except FileNotFoundError:
-            pass
-        else:  # pragma: no cover - operating-system contract
-            raise Day1BAnonymousScratchCreationError(
-                "ephemeral anonymous scratch root remained visible after removal"
-            )
+        _remove_exact_ephemeral_root(
+            parent_descriptor=parent_descriptor,
+            root_descriptor=root_descriptor,
+            root_name=root_name,
+            expected_root_identity=root_identity,
+        )
         root_name = None
         parent_after = os.fstat(parent_descriptor)
         visible_parent_after = os.stat(launcher_scratch_parent, follow_symlinks=False)
@@ -557,6 +623,7 @@ def open_linux_day1b_anonymous_scratch(
                 parent_descriptor=parent_descriptor,
                 root_descriptor=root_descriptor,
                 root_name=root_name,
+                root_identity=root_identity,
                 files=files,
                 connection=connection,
             )

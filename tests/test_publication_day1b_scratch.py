@@ -201,3 +201,102 @@ def test_linux_anonymous_scratch_cleans_exact_members_after_sqlite_failure(
     with pytest.raises(Day1BAnonymousScratchCreationError, match="failed closed"):
         open_linux_day1b_anonymous_scratch(parent)
     assert not tuple(parent.iterdir())
+
+
+@_LINUX_ONLY
+def test_linux_anonymous_scratch_rejects_root_substitution_before_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "launcher-owned"
+    parent.mkdir(mode=0o700)
+    os.chmod(parent, 0o700)
+    original_remove = scratch_module._remove_exact_ephemeral_root
+    captured: list[tuple[str, str, tuple[int, int, int, int]]] = []
+
+    def substitute_then_remove(
+        *,
+        parent_descriptor: int,
+        root_descriptor: int,
+        root_name: str,
+        expected_root_identity: tuple[int, int, int, int],
+    ) -> None:
+        if not captured:
+            moved_name = f"{root_name}.moved"
+            os.rename(
+                root_name,
+                moved_name,
+                src_dir_fd=parent_descriptor,
+                dst_dir_fd=parent_descriptor,
+            )
+            os.mkdir(root_name, 0o700, dir_fd=parent_descriptor)
+            captured.append((root_name, moved_name, expected_root_identity))
+        original_remove(
+            parent_descriptor=parent_descriptor,
+            root_descriptor=root_descriptor,
+            root_name=root_name,
+            expected_root_identity=expected_root_identity,
+        )
+
+    monkeypatch.setattr(
+        scratch_module,
+        "_remove_exact_ephemeral_root",
+        substitute_then_remove,
+    )
+    with pytest.raises(Day1BAnonymousScratchCreationError, match="name changed"):
+        open_linux_day1b_anonymous_scratch(parent)
+
+    assert len(captured) == 1
+    root_name, moved_name, expected_identity = captured[0]
+    replacement = (parent / root_name).stat(follow_symlinks=False)
+    moved = (parent / moved_name).stat(follow_symlinks=False)
+    assert (moved.st_dev, moved.st_ino, stat.S_IMODE(moved.st_mode), moved.st_uid) == (
+        expected_identity
+    )
+    assert moved.st_nlink > 0
+    assert replacement.st_ino != moved.st_ino
+    assert not tuple((parent / root_name).iterdir())
+    assert not tuple((parent / moved_name).iterdir())
+    (parent / root_name).rmdir()
+    (parent / moved_name).rmdir()
+
+
+@_LINUX_ONLY
+def test_linux_anonymous_scratch_cleanup_preserves_replacement_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "launcher-owned"
+    parent.mkdir(mode=0o700)
+    os.chmod(parent, 0o700)
+    captured: list[tuple[str, str, tuple[int, int]]] = []
+
+    def substitute_then_fail(
+        *_args: object,
+        **_kwargs: object,
+    ) -> sqlite3.Connection:
+        (root_path,) = tuple(parent.iterdir())
+        before = root_path.stat(follow_symlinks=False)
+        moved_name = f"{root_path.name}.moved"
+        root_path.rename(parent / moved_name)
+        root_path.mkdir(mode=0o700)
+        captured.append(
+            (root_path.name, moved_name, (before.st_dev, before.st_ino))
+        )
+        raise sqlite3.OperationalError("injected SQLite failure after substitution")
+
+    monkeypatch.setattr(scratch_module.sqlite3, "connect", substitute_then_fail)
+    with pytest.raises(Day1BAnonymousScratchCreationError, match="failed closed"):
+        open_linux_day1b_anonymous_scratch(parent)
+
+    assert len(captured) == 1
+    root_name, moved_name, expected_identity = captured[0]
+    replacement = (parent / root_name).stat(follow_symlinks=False)
+    moved = (parent / moved_name).stat(follow_symlinks=False)
+    assert (moved.st_dev, moved.st_ino) == expected_identity
+    assert moved.st_nlink > 0
+    assert replacement.st_ino != moved.st_ino
+    assert not tuple((parent / root_name).iterdir())
+    assert not tuple((parent / moved_name).iterdir())
+    (parent / root_name).rmdir()
+    (parent / moved_name).rmdir()
