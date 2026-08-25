@@ -980,6 +980,13 @@ def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
         candidate.candidate_id for candidate in _registered_catalog().selection_candidates
     )
     assert shard_status["ablation_candidate_ids"] == ["packed-coo-client-lane-delta/capacity=128"]
+    assert set(shard_status["cells"][0]) == {
+        "cell_checksums_sha256",
+        "event_window_trace_sha256",
+        "relative_path",
+        "rho_fraction",
+        "rho_id",
+    }
     assert shard_status["deferred_reference_baselines"] == []
     assert shard_status["security_claim_allowed"] is False
     assert shard_status["formal_performance_claim"] is False

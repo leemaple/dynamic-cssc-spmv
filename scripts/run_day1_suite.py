@@ -1224,8 +1224,6 @@ def run_suite(args: argparse.Namespace) -> int:
                 "relative_path": output_dir.relative_to(args.output_dir).as_posix(),
                 "rho_id": rho_id,
                 "rho_fraction": str(ratio),
-                "causal_evaluation_mode": evaluation_mode,
-                "query_scaling_source_rho_fraction": query_scaling_source_rho,
                 "event_window_trace_sha256": trace_sha256,
                 "cell_checksums_sha256": _sha256_file(output_dir / "SHA256SUMS"),
             }
