@@ -475,7 +475,7 @@ measurement-method field in this placeholder remains `null`; the separate
 amendment is the sole reviewed source of administrative limits and
 measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v20` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v21` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface, including the amendment and
 `docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
@@ -488,6 +488,17 @@ typed query DAG, real BFV encryption/evaluation/decryption, controller-owned
 exclusive scratch, single-use ledger authorization, exact runner/source/compiler
 identity plus the resolved file-backed OpenFHE linked-library bytes, bounded
 resource observations, and retained binary object verifier.
+The build-identity v3 subreceipt additionally binds stable filesystem identity,
+Mach-O UUID or ELF build ID, declared install name/SONAME and dependency names
+for the runner and each resolved non-system library; compiler bytes, version,
+and target; the CMake executable and version; the runner CMake cache,
+`compile_commands.json`, complete Ninja graph, and rules; and the pinned
+OpenFHE repository/version, clean commit and tree, package config, build cache,
+compile commands, and install manifest. The enclosing runtime receipt is v4 so
+the enlarged nested language cannot be mistaken for an older receipt. These
+are immutable pre-launch build facts, not a claim about the process mappings
+observed at READY or DONE; that independent runtime-mapping admission remains
+on `HOLD`.
 The smoke exercises multiplication without implicit
 relinearization, explicit relinearization, exact-index rotation, plaintext
 selection, ciphertext addition, reconstruction, tail-slot zero checks, and
@@ -499,7 +510,7 @@ frame while keeping context/public-key bytes outside that frame.
 Its provisional depth-2/0/0 profile remains explicitly `HOLD` for mixed-circuit
 parameter authority.
 
-The current v20 surface also contains a non-authorizing streaming accounting core. It
+The current v21 surface also contains a non-authorizing streaming accounting core. It
 advances one candidate state exactly once per exact Publication Window, derives
 at most one typed query plan per query-bearing window, applies the window's
 integer query multiplicity before the fixed 14-primitive mapping, and retains
@@ -512,7 +523,7 @@ the separate evidence path for real no-reuse enforcement. The accounting core
 does not mint a worker invocation, materialize per-query masks or ledger
 transitions, measure serialized OpenFHE sizes, or relax any dispatch gate.
 
-The v20 surface closes count authority separately from serialized-size
+The v21 surface closes count authority separately from serialized-size
 measurement. Before dispatch, the controller projects each deterministic replay
 into an open expected-count document containing the exact retained-phase
 update/query primitive vectors and all nine logical protocol-object
@@ -534,7 +545,7 @@ outcome. Thus a failed or controller-terminal null projection cannot preserve
 an otherwise self-consistent rehashed preimage that switches weighted F1-M back
 to materialized worker mode.
 
-The v20 surface also freezes canonical big-endian binary framing for the three
+The v21 surface also freezes canonical big-endian binary framing for the three
 metadata categories used in primary communication accounting. A ColumnIndex
 synchronization entry is exactly 64 bytes; patch and full-sync differ only in a
 fixed-position one-byte enum and therefore share one size class. An update-side
@@ -551,7 +562,7 @@ object receipt whose metadata byte count differs from 64, 144, or 136. This
 closes preparatory size-class pricing, but it does not yet authorize or claim a
 production representative execution.
 
-The v20 surface separately freezes the one-time evaluation-key object as an
+The v21 surface separately freezes the one-time evaluation-key object as an
 exact two-segment frame. Its 88-byte header is `D1BKEY01`, followed by the
 big-endian rotation-inventory length and 32-byte digest, then the big-endian
 evaluation-multiplication-key length and 32-byte digest. The payload is exactly

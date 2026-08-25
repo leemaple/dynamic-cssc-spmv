@@ -47,8 +47,8 @@ from dynamic_cssc.publication_day1b_key_framing import (
     DAY1B_COMBINED_EVALUATION_KEY_FRAMING_SCHEMA,
 )
 
-OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA = "dynamic-cssc-full-openfhe-runtime-receipt-v3"
-OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA = "dynamic-cssc-openfhe-runner-build-identity-v2"
+OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA = "dynamic-cssc-full-openfhe-runtime-receipt-v4"
+OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA = "dynamic-cssc-openfhe-runner-build-identity-v3"
 OPENFHE_SERIALIZED_PAYLOAD_SCHEMA = "dynamic-cssc-openfhe-serialized-payload-v2"
 
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -61,9 +61,13 @@ _SOURCE_PATHS = (
 )
 _CMAKE_CACHE_KEYS = (
     "CMAKE_BUILD_TYPE",
+    "CMAKE_COMMAND",
     "CMAKE_CXX_COMPILER",
     "CMAKE_CXX_FLAGS",
     "CMAKE_CXX_FLAGS_RELEASE",
+    "CMAKE_GENERATOR",
+    "CMAKE_HOME_DIRECTORY",
+    "OpenFHE_DIR",
 )
 _FIXED_TARGET_FLAGS = ("-std=c++17", "-Wall", "-Wextra", "-Wpedantic")
 _LOG_BYTES_MAXIMUM = 1024 * 1024
@@ -81,13 +85,77 @@ class OpenFHELinkedLibraryIdentity:
     resolved_path: str
     byte_count: int
     sha256: str
+    device: int
+    inode: int
+    mode: int
+    binary_format: str
+    binary_id: str
+    soname: str | None
+    needed_load_names: tuple[str, ...]
 
     def to_document(self) -> dict[str, object]:
         return {
+            "binary_format": self.binary_format,
+            "binary_id": self.binary_id,
             "byte_count": self.byte_count,
+            "device": self.device,
+            "inode": self.inode,
             "load_name": self.load_name,
+            "mode": self.mode,
+            "needed_load_names": list(self.needed_load_names),
             "resolved_path": self.resolved_path,
             "sha256": self.sha256,
+            "soname": self.soname,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class OpenFHEBuildProvenance:
+    cmake_path: str
+    cmake_sha256: str
+    cmake_byte_count: int
+    cmake_version: str
+    cmake_identity_sha256: str
+    cmake_cache_sha256: str
+    compile_commands_sha256: str
+    build_ninja_sha256: str
+    rules_ninja_sha256: str
+    openfhe_directory: str
+    openfhe_config_sha256: str
+    openfhe_repository: str
+    openfhe_version: str
+    openfhe_package_version: str
+    openfhe_source_cmake_sha256: str
+    openfhe_source_commit: str
+    openfhe_source_tree: str
+    openfhe_source_clean: bool
+    openfhe_cmake_cache_sha256: str
+    openfhe_compile_commands_sha256: str
+    openfhe_install_manifest_sha256: str
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "build_ninja_sha256": self.build_ninja_sha256,
+            "cmake_byte_count": self.cmake_byte_count,
+            "cmake_cache_sha256": self.cmake_cache_sha256,
+            "cmake_identity_sha256": self.cmake_identity_sha256,
+            "cmake_path": self.cmake_path,
+            "cmake_sha256": self.cmake_sha256,
+            "cmake_version": self.cmake_version,
+            "compile_commands_sha256": self.compile_commands_sha256,
+            "openfhe_cmake_cache_sha256": self.openfhe_cmake_cache_sha256,
+            "openfhe_compile_commands_sha256": self.openfhe_compile_commands_sha256,
+            "openfhe_config_sha256": self.openfhe_config_sha256,
+            "openfhe_directory": self.openfhe_directory,
+            "openfhe_install_manifest_sha256": self.openfhe_install_manifest_sha256,
+            "openfhe_repository": self.openfhe_repository,
+            "openfhe_package_version": self.openfhe_package_version,
+            "openfhe_source_clean": self.openfhe_source_clean,
+            "openfhe_source_cmake_sha256": self.openfhe_source_cmake_sha256,
+            "openfhe_source_commit": self.openfhe_source_commit,
+            "openfhe_source_tree": self.openfhe_source_tree,
+            "openfhe_version": self.openfhe_version,
+            "rules_ninja_sha256": self.rules_ninja_sha256,
         }
 
 
@@ -96,10 +164,21 @@ class OpenFHERunnerBuildIdentity:
     runner_relative_path: str
     runner_sha256: str
     runner_byte_count: int
+    runner_device: int
+    runner_inode: int
+    runner_mode: int
+    runner_binary_format: str
+    runner_binary_id: str
+    runner_needed_load_names: tuple[str, ...]
     source_sha256: tuple[tuple[str, str], ...]
     compiler_path: str
+    compiler_sha256: str
+    compiler_byte_count: int
     compiler_identity_sha256: str
+    compiler_version: str
+    compiler_target: str
     compiler_flags: tuple[str, ...]
+    build_provenance: OpenFHEBuildProvenance
     linkage_inspection_format: str
     linked_libraries: tuple[OpenFHELinkedLibraryIdentity, ...]
     linked_system_library_load_names: tuple[str, ...]
@@ -108,15 +187,26 @@ class OpenFHERunnerBuildIdentity:
     def to_document(self) -> dict[str, object]:
         return {
             "build_identity_sha256": self.build_identity_sha256,
+            "build_provenance": self.build_provenance.to_document(),
+            "compiler_byte_count": self.compiler_byte_count,
             "compiler_flags": list(self.compiler_flags),
             "compiler_identity_sha256": self.compiler_identity_sha256,
             "compiler_path": self.compiler_path,
+            "compiler_sha256": self.compiler_sha256,
+            "compiler_target": self.compiler_target,
+            "compiler_version": self.compiler_version,
             "linkage_inspection_format": self.linkage_inspection_format,
             "linked_libraries": [item.to_document() for item in self.linked_libraries],
             "linked_system_library_load_names": list(
                 self.linked_system_library_load_names
             ),
             "runner_byte_count": self.runner_byte_count,
+            "runner_binary_format": self.runner_binary_format,
+            "runner_binary_id": self.runner_binary_id,
+            "runner_device": self.runner_device,
+            "runner_inode": self.runner_inode,
+            "runner_mode": self.runner_mode,
+            "runner_needed_load_names": list(self.runner_needed_load_names),
             "runner_relative_path": self.runner_relative_path,
             "runner_sha256": self.runner_sha256,
             "schema_version": OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA,
@@ -349,28 +439,87 @@ def _parse_cmake_cache(content: bytes) -> dict[str, str]:
     return values
 
 
-def _compiler_identity(compiler: Path) -> tuple[str, bytes]:
+def _stable_status_tuple(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _stable_file_content(
+    path: Path,
+    *,
+    field: str,
+    maximum: int,
+) -> tuple[bytes, os.stat_result]:
+    try:
+        before = path.lstat()
+    except OSError as error:
+        raise OpenFHEQueryRuntimeError(f"{field} identity cannot be inspected") from error
+    content = _read_direct_file(path, field=field, maximum=maximum)
+    try:
+        after = path.lstat()
+    except OSError as error:
+        raise OpenFHEQueryRuntimeError(f"{field} identity cannot be re-inspected") from error
+    if _stable_status_tuple(before) != _stable_status_tuple(after):
+        raise OpenFHEQueryRuntimeError(f"{field} identity changed while hashing")
+    return content, after
+
+
+def _compiler_identity(
+    compiler: Path,
+) -> tuple[str, bytes, bytes, str, str]:
     compiler = _absolute_path(compiler, field="CMake C++ compiler")
     try:
         compiler = compiler.resolve(strict=True)
     except OSError as error:
         raise OpenFHEQueryRuntimeError("C++ compiler path cannot be resolved") from error
     _reject_symlink_components(compiler, missing_leaf_allowed=False)
+    content, status = _stable_file_content(
+        compiler,
+        field="C++ compiler",
+        maximum=256 * 1024 * 1024,
+    )
+
+    def probe(argument: str, field: str) -> bytes:
+        try:
+            completed = subprocess.run(
+                (str(compiler), argument),
+                check=False,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"},
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise OpenFHEQueryRuntimeError(f"C++ compiler {field} probe failed") from error
+        identity = completed.stdout + completed.stderr
+        if completed.returncode != 0 or not identity or len(identity) > _LOG_BYTES_MAXIMUM:
+            raise OpenFHEQueryRuntimeError(f"C++ compiler {field} probe is not exact")
+        return identity
+
+    identity = probe("--version", "version")
+    target_bytes = probe("-dumpmachine", "target")
     try:
-        completed = subprocess.run(
-            (str(compiler), "--version"),
-            check=False,
-            stdin=subprocess.DEVNULL,
-            capture_output=True,
-            env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"},
-            timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError) as error:
-        raise OpenFHEQueryRuntimeError("C++ compiler identity probe failed") from error
-    identity = completed.stdout + completed.stderr
-    if completed.returncode != 0 or not identity or len(identity) > _LOG_BYTES_MAXIMUM:
-        raise OpenFHEQueryRuntimeError("C++ compiler identity probe is not exact")
-    return str(compiler), identity
+        after = compiler.lstat()
+    except OSError as error:
+        raise OpenFHEQueryRuntimeError(
+            "C++ compiler changed after identity probes"
+        ) from error
+    if _stable_status_tuple(after) != _stable_status_tuple(status):
+        raise OpenFHEQueryRuntimeError("C++ compiler changed during identity probes")
+    try:
+        version = identity.decode("utf-8").splitlines()[0]
+        target = target_bytes.decode("utf-8").strip()
+    except UnicodeDecodeError as error:
+        raise OpenFHEQueryRuntimeError("C++ compiler identity is not UTF-8") from error
+    if not version or not target or "\n" in target or "\r" in target:
+        raise OpenFHEQueryRuntimeError("C++ compiler version/target identity is malformed")
+    return str(compiler), identity, content, version, target
 
 
 def _linkage_tool_output(arguments: tuple[str, ...], *, field: str) -> str:
@@ -392,6 +541,91 @@ def _linkage_tool_output(arguments: tuple[str, ...], *, field: str) -> str:
         return output.decode("utf-8")
     except UnicodeDecodeError as error:
         raise OpenFHEQueryRuntimeError(f"{field} probe is not UTF-8") from error
+
+
+def _binary_metadata(
+    path: Path,
+    *,
+    expected_status: os.stat_result,
+) -> tuple[str, str, str | None, tuple[str, ...]]:
+    system = platform.system()
+    if system == "Linux":
+        readelf = shutil.which("readelf", path="/usr/bin:/bin")
+        if readelf is None:
+            raise OpenFHEQueryRuntimeError("readelf is unavailable")
+        notes = _linkage_tool_output(
+            (readelf, "-n", str(path)),
+            field=f"binary notes {path.name}",
+        )
+        dynamic = _linkage_tool_output(
+            (readelf, "-d", str(path)),
+            field=f"binary dynamic section {path.name}",
+        )
+        build_ids = tuple(
+            item.lower() for item in re.findall(r"Build ID:\s*([0-9A-Fa-f]+)", notes)
+        )
+        if len(build_ids) != 1:
+            raise OpenFHEQueryRuntimeError("ELF binary does not have one exact build ID")
+        sonames = tuple(re.findall(r"\(SONAME\).*\[([^]]+)\]", dynamic))
+        if len(sonames) > 1:
+            raise OpenFHEQueryRuntimeError("ELF binary has multiple SONAME values")
+        needed = tuple(sorted(set(re.findall(r"\(NEEDED\).*\[([^]]+)\]", dynamic))))
+        binary_format = "elf-v1"
+        binary_id = build_ids[0]
+        soname = sonames[0] if sonames else None
+    elif system == "Darwin":
+        dwarfdump = shutil.which("dwarfdump", path="/usr/bin:/bin")
+        otool = shutil.which("otool", path="/usr/bin:/bin")
+        if dwarfdump is None or otool is None:
+            raise OpenFHEQueryRuntimeError("Darwin binary identity tools are unavailable")
+        uuid_output = _linkage_tool_output(
+            (dwarfdump, "--uuid", str(path)),
+            field=f"Mach-O UUID {path.name}",
+        )
+        uuids = tuple(
+            item.replace("-", "").lower()
+            for item in re.findall(r"UUID:\s*([0-9A-Fa-f-]{36})", uuid_output)
+        )
+        if len(uuids) != 1 or len(uuids[0]) != 32:
+            raise OpenFHEQueryRuntimeError("Mach-O binary does not have one exact UUID")
+        linked_output = _linkage_tool_output(
+            (otool, "-L", str(path)),
+            field=f"Mach-O dependencies {path.name}",
+        )
+        linked_lines = tuple(
+            line.strip() for line in linked_output.splitlines() if line.strip()
+        )
+        if not linked_lines or not linked_lines[0].endswith(":"):
+            raise OpenFHEQueryRuntimeError("Mach-O dependency identity is malformed")
+        needed = tuple(
+            sorted(
+                {
+                    line.split(" (compatibility version ", 1)[0].strip()
+                    for line in linked_lines[1:]
+                }
+            )
+        )
+        id_output = _linkage_tool_output(
+            (otool, "-D", str(path)),
+            field=f"Mach-O install name {path.name}",
+        )
+        id_lines = tuple(line.strip() for line in id_output.splitlines() if line.strip())
+        if not id_lines or not id_lines[0].endswith(":") or len(id_lines) > 2:
+            raise OpenFHEQueryRuntimeError("Mach-O install-name identity is malformed")
+        binary_format = "mach-o-v1"
+        binary_id = uuids[0]
+        soname = id_lines[1] if len(id_lines) == 2 else None
+        if soname is not None:
+            needed = tuple(item for item in needed if item != soname)
+    else:
+        raise OpenFHEQueryRuntimeError("binary identity OS is unsupported")
+    try:
+        after = path.lstat()
+    except OSError as error:
+        raise OpenFHEQueryRuntimeError("binary changed after identity inspection") from error
+    if _stable_status_tuple(after) != _stable_status_tuple(expected_status):
+        raise OpenFHEQueryRuntimeError("binary changed during identity inspection")
+    return binary_format, binary_id, soname, needed
 
 
 def _resolved_linked_path(value: str, *, field: str) -> Path:
@@ -552,10 +786,14 @@ def _linked_library_identity(
     inspection_format, paths, system_load_names = _inspect_linked_library_paths(runner)
     identities: list[OpenFHELinkedLibraryIdentity] = []
     for load_name, path in paths:
-        content = _read_direct_file(
+        content, status = _stable_file_content(
             path,
             field=f"linked library {load_name}",
             maximum=_LINKED_LIBRARY_BYTES_MAXIMUM,
+        )
+        binary_format, binary_id, soname, needed = _binary_metadata(
+            path,
+            expected_status=status,
         )
         identities.append(
             OpenFHELinkedLibraryIdentity(
@@ -563,6 +801,13 @@ def _linked_library_identity(
                 resolved_path=str(path),
                 byte_count=len(content),
                 sha256=hashlib.sha256(content).hexdigest(),
+                device=status.st_dev,
+                inode=status.st_ino,
+                mode=stat.S_IMODE(status.st_mode),
+                binary_format=binary_format,
+                binary_id=binary_id,
+                soname=soname,
+                needed_load_names=needed,
             )
         )
     linked_libraries = tuple(identities)
@@ -572,6 +817,226 @@ def _linked_library_identity(
     ):
         raise OpenFHEQueryRuntimeError("runner is not linked to a file-backed OpenFHE library")
     return inspection_format, linked_libraries, system_load_names
+
+
+def _git_source_output(
+    source_root: Path,
+    arguments: tuple[str, ...],
+    *,
+    field: str,
+    allow_empty: bool = False,
+) -> str:
+    git = shutil.which("git", path="/usr/bin:/bin")
+    if git is None:
+        raise OpenFHEQueryRuntimeError("git is unavailable for OpenFHE identity")
+    try:
+        completed = subprocess.run(
+            (git, "-C", str(source_root), *arguments),
+            check=False,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"},
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise OpenFHEQueryRuntimeError(f"OpenFHE {field} probe failed") from error
+    output = completed.stdout + completed.stderr
+    if (
+        completed.returncode != 0
+        or len(output) > _LOG_BYTES_MAXIMUM
+        or (not output and not allow_empty)
+    ):
+        raise OpenFHEQueryRuntimeError(f"OpenFHE {field} probe is not exact")
+    try:
+        return output.decode("utf-8").strip()
+    except UnicodeDecodeError as error:
+        raise OpenFHEQueryRuntimeError(f"OpenFHE {field} probe is not UTF-8") from error
+
+
+def _build_file_sha256(
+    path: Path,
+    *,
+    field: str,
+    maximum: int = 256 * 1024 * 1024,
+) -> str:
+    content, _status = _stable_file_content(path, field=field, maximum=maximum)
+    return hashlib.sha256(content).hexdigest()
+
+
+def _cmake_set_value(content: bytes, name: str, *, field: str) -> str:
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise OpenFHEQueryRuntimeError(f"{field} is not UTF-8") from error
+    pattern = re.compile(
+        rf'^\s*set\(\s*{re.escape(name)}\s+(?:"([^"]+)"|([^\s)]+))\s*\)\s*$',
+        re.MULTILINE,
+    )
+    values = tuple(match.group(1) or match.group(2) for match in pattern.finditer(text))
+    if len(values) != 1 or not values[0]:
+        raise OpenFHEQueryRuntimeError(f"{field} lacks one exact {name} value")
+    return values[0]
+
+
+def _capture_build_provenance(
+    root: Path,
+    build_root: Path,
+    cache: dict[str, str],
+    cache_content: bytes,
+) -> OpenFHEBuildProvenance:
+    if cache["CMAKE_GENERATOR"] != "Ninja":
+        raise OpenFHEQueryRuntimeError("runner build generator is not exact Ninja")
+    try:
+        cmake_home = Path(cache["CMAKE_HOME_DIRECTORY"]).resolve(strict=True)
+    except OSError as error:
+        raise OpenFHEQueryRuntimeError(
+            "runner CMake source directory cannot be resolved"
+        ) from error
+    if cmake_home != (root / "cpp").resolve(strict=True):
+        raise OpenFHEQueryRuntimeError("runner CMake source directory changed")
+    cmake = _resolved_linked_path(cache["CMAKE_COMMAND"], field="CMake executable")
+    cmake_content, cmake_status = _stable_file_content(
+        cmake,
+        field="CMake executable",
+        maximum=256 * 1024 * 1024,
+    )
+    cmake_version_output = _linkage_tool_output(
+        (str(cmake), "--version"),
+        field="CMake version identity",
+    )
+    try:
+        cmake_after = cmake.lstat()
+    except OSError as error:
+        raise OpenFHEQueryRuntimeError(
+            "CMake executable changed after identity probe"
+        ) from error
+    if _stable_status_tuple(cmake_after) != _stable_status_tuple(cmake_status):
+        raise OpenFHEQueryRuntimeError("CMake executable changed during identity probe")
+    cmake_version = cmake_version_output.splitlines()[0]
+
+    try:
+        openfhe_directory = Path(cache["OpenFHE_DIR"]).resolve(strict=True)
+    except OSError as error:
+        raise OpenFHEQueryRuntimeError("OpenFHE package directory cannot be resolved") from error
+    _reject_symlink_components(openfhe_directory, missing_leaf_allowed=False)
+    if not openfhe_directory.is_dir():
+        raise OpenFHEQueryRuntimeError("OpenFHE package directory is not a directory")
+    install_root = openfhe_directory.parent.parent
+    openfhe_root = install_root.parent
+    source_root = openfhe_root / "source"
+    openfhe_build = openfhe_root / "build"
+    try:
+        manifest_document = json.loads(
+            _read_direct_file(
+                root / "config/params_manifest.json",
+                field="OpenFHE parameter manifest",
+            )
+        )
+    except (UnicodeDecodeError, ValueError) as error:
+        raise OpenFHEQueryRuntimeError("OpenFHE parameter manifest is invalid") from error
+    if type(manifest_document) is not dict:
+        raise OpenFHEQueryRuntimeError("OpenFHE parameter manifest identity changed")
+    openfhe_manifest = manifest_document.get("openfhe")
+    if type(openfhe_manifest) is not dict:
+        raise OpenFHEQueryRuntimeError("OpenFHE parameter manifest identity changed")
+    expected_commit = openfhe_manifest.get("commit")
+    repository = openfhe_manifest.get("repository")
+    version = openfhe_manifest.get("version")
+    if not all(type(value) is str and value for value in (expected_commit, repository, version)):
+        raise OpenFHEQueryRuntimeError("OpenFHE parameter manifest identity changed")
+    source_remote = _git_source_output(
+        source_root,
+        ("config", "--get", "remote.origin.url"),
+        field="source repository",
+    )
+    commit = _git_source_output(source_root, ("rev-parse", "HEAD"), field="source commit")
+    tree = _git_source_output(
+        source_root,
+        ("rev-parse", "HEAD^{tree}"),
+        field="source tree",
+    )
+    dirty = _git_source_output(
+        source_root,
+        ("status", "--porcelain=v1", "--untracked-files=all"),
+        field="source status",
+        allow_empty=True,
+    )
+    source_cmake_content, _source_cmake_status = _stable_file_content(
+        source_root / "CMakeLists.txt",
+        field="OpenFHE source CMakeLists",
+        maximum=16 * 1024 * 1024,
+    )
+    source_version = ".".join(
+        _cmake_set_value(
+            source_cmake_content,
+            f"OPENFHE_VERSION_{part}",
+            field="OpenFHE source CMakeLists",
+        )
+        for part in ("MAJOR", "MINOR", "PATCH")
+    )
+    package_config_content, _package_config_status = _stable_file_content(
+        openfhe_directory / "OpenFHEConfig.cmake",
+        field="OpenFHE package config",
+        maximum=16 * 1024 * 1024,
+    )
+    package_version = _cmake_set_value(
+        package_config_content,
+        "BASE_OPENFHE_VERSION",
+        field="OpenFHE package config",
+    )
+    if (
+        source_remote != repository
+        or commit != expected_commit
+        or source_version != version
+        or package_version != version
+        or dirty
+    ):
+        raise OpenFHEQueryRuntimeError(
+            "OpenFHE repository/version/commit/cleanliness changed"
+        )
+    return OpenFHEBuildProvenance(
+        cmake_path=str(cmake),
+        cmake_sha256=hashlib.sha256(cmake_content).hexdigest(),
+        cmake_byte_count=len(cmake_content),
+        cmake_version=cmake_version,
+        cmake_identity_sha256=hashlib.sha256(
+            cmake_content + cmake_version_output.encode("utf-8")
+        ).hexdigest(),
+        cmake_cache_sha256=hashlib.sha256(cache_content).hexdigest(),
+        compile_commands_sha256=_build_file_sha256(
+            build_root / "compile_commands.json",
+            field="runner compile commands",
+        ),
+        build_ninja_sha256=_build_file_sha256(
+            build_root / "build.ninja",
+            field="runner Ninja build graph",
+        ),
+        rules_ninja_sha256=_build_file_sha256(
+            build_root / "CMakeFiles/rules.ninja",
+            field="runner Ninja rules",
+        ),
+        openfhe_directory=str(openfhe_directory),
+        openfhe_config_sha256=hashlib.sha256(package_config_content).hexdigest(),
+        openfhe_repository=source_remote,
+        openfhe_version=source_version,
+        openfhe_package_version=package_version,
+        openfhe_source_cmake_sha256=hashlib.sha256(source_cmake_content).hexdigest(),
+        openfhe_source_commit=commit,
+        openfhe_source_tree=tree,
+        openfhe_source_clean=True,
+        openfhe_cmake_cache_sha256=_build_file_sha256(
+            openfhe_build / "CMakeCache.txt",
+            field="OpenFHE CMake cache",
+        ),
+        openfhe_compile_commands_sha256=_build_file_sha256(
+            openfhe_build / "compile_commands.json",
+            field="OpenFHE compile commands",
+        ),
+        openfhe_install_manifest_sha256=_build_file_sha256(
+            openfhe_build / "install_manifest.txt",
+            field="OpenFHE install manifest",
+        ),
+    )
 
 
 def capture_openfhe_runner_build_identity(
@@ -592,10 +1057,19 @@ def capture_openfhe_runner_build_identity(
     ):
         raise OpenFHEQueryRuntimeError("runner_relative_path must be one normalized relative path")
     runner = root.joinpath(*relative.parts)
-    runner_content = _read_direct_file(runner, field="OpenFHE runner")
-    mode = runner.lstat().st_mode
-    if mode & 0o111 == 0:
+    runner_content, runner_status = _stable_file_content(
+        runner,
+        field="OpenFHE runner",
+        maximum=256 * 1024 * 1024,
+    )
+    if runner_status.st_mode & 0o111 == 0:
         raise OpenFHEQueryRuntimeError("OpenFHE runner is not executable")
+    runner_format, runner_binary_id, runner_soname, runner_needed = _binary_metadata(
+        runner,
+        expected_status=runner_status,
+    )
+    if runner_soname is not None:
+        raise OpenFHEQueryRuntimeError("OpenFHE executable unexpectedly has a SONAME")
     source_entries = tuple(
         (
             source,
@@ -605,10 +1079,18 @@ def capture_openfhe_runner_build_identity(
         )
         for source in _SOURCE_PATHS
     )
-    cache = _parse_cmake_cache(
-        _read_direct_file(runner.parent / "CMakeCache.txt", field="runner CMake cache")
+    cache_content = _read_direct_file(
+        runner.parent / "CMakeCache.txt",
+        field="runner CMake cache",
     )
-    compiler_path, compiler_version = _compiler_identity(Path(cache["CMAKE_CXX_COMPILER"]))
+    cache = _parse_cmake_cache(cache_content)
+    (
+        compiler_path,
+        compiler_identity,
+        compiler_content,
+        compiler_version,
+        compiler_target,
+    ) = _compiler_identity(Path(cache["CMAKE_CXX_COMPILER"]))
     compiler_flags = tuple(
         [
             *shlex.split(cache["CMAKE_CXX_FLAGS"]),
@@ -616,15 +1098,32 @@ def capture_openfhe_runner_build_identity(
             *_FIXED_TARGET_FLAGS,
         ]
     )
+    build_provenance = _capture_build_provenance(
+        root,
+        runner.parent,
+        cache,
+        cache_content,
+    )
     linkage_format, linked_libraries, linked_system_libraries = _linked_library_identity(runner)
     build_binding = {
-        "cmake_cache": cache,
+        "build_provenance": build_provenance.to_document(),
+        "compiler_byte_count": len(compiler_content),
         "compiler_flags": list(compiler_flags),
-        "compiler_identity_sha256": hashlib.sha256(compiler_version).hexdigest(),
+        "compiler_identity_sha256": hashlib.sha256(compiler_identity).hexdigest(),
+        "compiler_path": compiler_path,
+        "compiler_sha256": hashlib.sha256(compiler_content).hexdigest(),
+        "compiler_target": compiler_target,
+        "compiler_version": compiler_version,
         "linkage_inspection_format": linkage_format,
         "linked_libraries": [item.to_document() for item in linked_libraries],
         "linked_system_library_load_names": list(linked_system_libraries),
+        "runner_binary_format": runner_format,
+        "runner_binary_id": runner_binary_id,
         "runner_byte_count": len(runner_content),
+        "runner_device": runner_status.st_dev,
+        "runner_inode": runner_status.st_ino,
+        "runner_mode": stat.S_IMODE(runner_status.st_mode),
+        "runner_needed_load_names": list(runner_needed),
         "runner_relative_path": runner_relative_path,
         "runner_sha256": hashlib.sha256(runner_content).hexdigest(),
         "schema_version": OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA,
@@ -634,10 +1133,21 @@ def capture_openfhe_runner_build_identity(
         runner_relative_path=runner_relative_path,
         runner_sha256=str(build_binding["runner_sha256"]),
         runner_byte_count=len(runner_content),
+        runner_device=runner_status.st_dev,
+        runner_inode=runner_status.st_ino,
+        runner_mode=stat.S_IMODE(runner_status.st_mode),
+        runner_binary_format=runner_format,
+        runner_binary_id=runner_binary_id,
+        runner_needed_load_names=runner_needed,
         source_sha256=source_entries,
         compiler_path=compiler_path,
+        compiler_sha256=str(build_binding["compiler_sha256"]),
+        compiler_byte_count=len(compiler_content),
         compiler_identity_sha256=str(build_binding["compiler_identity_sha256"]),
+        compiler_version=compiler_version,
+        compiler_target=compiler_target,
         compiler_flags=compiler_flags,
+        build_provenance=build_provenance,
         linkage_inspection_format=linkage_format,
         linked_libraries=linked_libraries,
         linked_system_library_load_names=linked_system_libraries,
@@ -1035,6 +1545,7 @@ __all__ = (
     "OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA",
     "OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA",
     "ExecutedOpenFHEQuery",
+    "OpenFHEBuildProvenance",
     "OpenFHEQueryRuntimeError",
     "OpenFHEQueryRuntimeReceipt",
     "OpenFHELinkedLibraryIdentity",

@@ -379,7 +379,7 @@ previously reviewed schema-source Git/Behavior-inventory binding; authority and
 worker/runtime identity are structurally absent. Its non-self-referential
 semantic digest and immutable decoded record do not lift the repository
 `HOLD`. The real amendment and its outcome-blind review receipt are now frozen
-as pre-`S1` DAY1B Behavior Set v20 members. The resource loader can project its
+as pre-`S1` DAY1B Behavior Set v21 members. The resource loader can project its
 non-authorizing budget, after which the independent profile, trace, worker, and
 anchor gates still fail closed.
 
@@ -398,7 +398,7 @@ implementation evidence only. It cannot dispatch until the trace and catalog
 authorities, repository execution adapter, and outcome-blind resource policy
 are installed, and it is not a 30-unit publication artifact.
 
-The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v20,
+The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v21,
 the unchanged empirical-null/authority-false `PENDING-FREEZE` placeholder, the
 separate reviewed resource-only amendment, and a manual no-input validation
 workflow. These freeze the current validator, protocol, administrative safety
@@ -409,6 +409,14 @@ single-use ordinary-query authorization immediately before launch, owns and
 removes exclusive private scratch, binds the runner/source/compiler identity
 and resolved file-backed OpenFHE library bytes, verifies result and serialized-
 object bytes, and records resource observations with authority fields false.
+Its build-identity v3 subreceipt now includes stable runner/library filesystem
+identity, Mach-O UUID or ELF build ID, install-name/SONAME and dependency-name
+inventories, compiler bytes/version/target, CMake executable/version, complete
+runner CMake/Ninja inputs, and the pinned clean OpenFHE source plus package,
+build, compile-command, and install-manifest digests. Runtime receipt v4 makes
+that nested-language change explicit. READY/DONE process mappings remain a
+separate production-admission requirement rather than an inferred consequence
+of these build-time facts.
 The runner now generates the full supplied exact-index rotation inventory and
 eval-mult keys in one context/session, constructs the exact `D1BKEY01` frame,
 uses those keys in the same typed DAG, and returns a request/plan/segment/frame-

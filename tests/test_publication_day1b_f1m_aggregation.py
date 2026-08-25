@@ -222,7 +222,7 @@ def _context(
     return Day1BF1MControllerContext(
         publication_source_git_sha="1" * 40,
         trace_source_git_sha="2" * 40,
-        publication_behavior_set_schema_version=("dynamic-cssc-day1b-preparatory-behavior-set-v20"),
+        publication_behavior_set_schema_version=("dynamic-cssc-day1b-preparatory-behavior-set-v21"),
         publication_behavior_inventory_sha256="5" * 64,
         terminal_registration_sha256="6" * 64,
         day1_registration_anchor_sha256="7" * 64,
