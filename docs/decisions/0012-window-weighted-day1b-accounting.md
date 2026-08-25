@@ -188,6 +188,16 @@ the artifact parser independently checks every retained representative receipt
 against the category width. These checks bind preparatory accounting to framing
 without claiming that the production runner has emitted the representative.
 
+The single one-time evaluation-key taxonomy category is also frozen as one
+combined frame, not split into new accounting categories. The frame has an
+88-byte `D1BKEY01` header containing the big-endian length and SHA-256 of the
+full rotation-key inventory, followed by the big-endian length and SHA-256 of
+the eval-mult key set; the two raw segments follow in that order. Its size class
+binds both measured Day 2 segment lengths and the Day 2 archive/profile roots.
+No crypto context, public key, label, or optional payload is admissible. The
+existing generic OpenFHE context-bearing key bundle remains non-authorizing and
+must be replaced at the production-adapter seam before runtime admission.
+
 The representative receipt proves an accounting size class; it does not claim
 that billions of fresh masks were generated or consumed during the experiment.
 Consequently, a batch with multiplicity greater than one is forbidden from
