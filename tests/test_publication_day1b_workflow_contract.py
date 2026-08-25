@@ -15,6 +15,7 @@ EXPECTED_TEST_PATHS = (
     "tests/test_publication_day1b_accounting.py",
     "tests/test_publication_day1b_expected_counts.py",
     "tests/test_publication_day1b_key_framing.py",
+    "tests/test_publication_day1b_layout_execution.py",
     "tests/test_publication_day1b_metadata_framing.py",
     "tests/test_publication_day1b_scratch.py",
     "tests/test_publication_day1b_worker_protocol.py",
@@ -119,7 +120,7 @@ def test_preregistration_and_roadmap_keep_preparatory_inventory_non_authorizing(
     combined = preregistration + roadmap
 
     for required in (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v23",
+        "dynamic-cssc-day1b-preparatory-behavior-set-v24",
         "publication-day1b-preparatory.yml",
         "Source inventory is not dispatch authority",
         "controlled-scratch high-water",

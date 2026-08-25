@@ -21,6 +21,9 @@ from typing import Literal, cast
 from dynamic_cssc.day1_registry import RegisteredCandidate
 from dynamic_cssc.events import NetUpdate, PublicationWindow
 from dynamic_cssc.metrics import StrategyMetrics
+from dynamic_cssc.publication_day1b_layout_execution import (
+    Day1BQueryLayoutExecution,
+)
 from dynamic_cssc.publication_primitive_accounting import (
     PublicationPrimitiveAccounting,
     publication_primitive_accounting,
@@ -34,8 +37,8 @@ from dynamic_cssc.selection import (
 from dynamic_cssc.simulator import (
     QueryPlanAccounting,
     WindowAccounting,
-    account_strong_transition,
-    account_transition,
+    account_strong_transition_with_bundle,
+    account_transition_with_compiled,
 )
 from dynamic_cssc.strategy_state import (
     StrategyKind,
@@ -639,14 +642,20 @@ def replay_publication_day1b_candidate_cell(
     windows: Iterable[ExactPublicationWindow],
     domain: Day1BAccountingDomain = PUBLICATION_DAY1B_ACCOUNTING_DOMAIN,
     query_window_sink: Callable[[Day1BQueryWindowAccounting], None] | None = None,
+    query_execution_sink: (
+        Callable[[Day1BQueryWindowAccounting, Day1BQueryLayoutExecution], None]
+        | None
+    ) = None,
 ) -> PublicationDay1BAccounting:
-    """Replay one candidate continuously and stream one descriptor per query window."""
+    """Replay continuously and stream compact and typed query-window views."""
 
     candidate_document = _candidate_document(candidate)
     if type(domain) is not Day1BAccountingDomain:
         raise TypeError("domain must be an exact Day1BAccountingDomain")
     if query_window_sink is not None and not callable(query_window_sink):
         raise TypeError("query_window_sink must be callable or None")
+    if query_execution_sink is not None and not callable(query_execution_sink):
+        raise TypeError("query_execution_sink must be callable or None")
     try:
         iterator = iter(windows)
     except TypeError as error:
@@ -708,13 +717,19 @@ def replay_publication_day1b_candidate_cell(
             if type(state) is not StrongStrategyState:
                 raise AssertionError("strong candidate state type changed")
             transition = advance_strong_publication(state, adapted)
-            accounting = account_strong_transition(transition)
+            accounting, strong_bundle = account_strong_transition_with_bundle(
+                transition
+            )
+            ordinary_compilation = None
             state = transition.state
         else:
             if type(state) is not StrategyState:
                 raise AssertionError("ordinary candidate state type changed")
             transition = advance_publication(state, adapted)
-            accounting = account_transition(transition)
+            accounting, ordinary_compilation = account_transition_with_compiled(
+                transition
+            )
+            strong_bundle = None
             state = transition.state
 
         accumulator = phase_accumulators[phase]
@@ -752,7 +767,29 @@ def replay_publication_day1b_candidate_cell(
             query_hasher.add(document)
             if query_window_sink is not None:
                 query_window_sink(descriptor)
-        elif accounting.query_plan is not None or accounting.rotations_per_query:
+            if query_execution_sink is not None:
+                query_execution_sink(
+                    descriptor,
+                    Day1BQueryLayoutExecution(
+                        phase=descriptor.phase,
+                        window_index=descriptor.window_index,
+                        accepted_group_start=descriptor.accepted_group_start,
+                        accepted_group_end=descriptor.accepted_group_end,
+                        first_global_query_ordinal=(
+                            descriptor.first_global_query_ordinal
+                        ),
+                        query_count=descriptor.query_count,
+                        query_plan=descriptor.query_plan,
+                        ordinary_compilation=ordinary_compilation,
+                        strong_bundle=strong_bundle,
+                    )
+                )
+        elif (
+            accounting.query_plan is not None
+            or accounting.rotations_per_query
+            or ordinary_compilation is not None
+            or strong_bundle is not None
+        ):
             raise AssertionError("zero-query window created query accounting")
 
         global_query_ordinal += window.query_count

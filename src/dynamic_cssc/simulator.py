@@ -8,7 +8,7 @@ from .cloud_execution_plan import CloudProgram, Rotate
 from .events import PublicationWindow
 from .metrics import StrategyMetrics
 from .output_plan import OutputPlan, canonical_output_plan_payload
-from .query_compiler import compile_query
+from .query_compiler import CompiledQuery, compile_query
 from .strategy_state import (
     STRATEGIES,
     StrategyKind,
@@ -20,6 +20,7 @@ from .strategy_state import (
     initialize_strategy,
     initialize_strong_strategy,
 )
+from .strong_execution import StrongExecutionBundle
 
 STRONG_REFERENCE_STRATEGY = "Packed-COO-Cloud-Segmented-Delta"
 STRONG_REFERENCE_SEGMENT_WIDTH = 128
@@ -234,6 +235,19 @@ def _masked_output_share_ids(output_plan: OutputPlan) -> frozenset[tuple[str, st
 def account_transition(transition: Transition) -> WindowAccounting:
     """Adapt one successful persistent transition to the fixed accounting schema."""
 
+    accounting, _compiled = account_transition_with_compiled(transition)
+    return accounting
+
+
+def account_transition_with_compiled(
+    transition: Transition,
+) -> tuple[WindowAccounting, CompiledQuery | None]:
+    """Return ordinary accounting plus its exact query-bearing compilation.
+
+    The second value is a streaming-only carrier.  It is absent for a zero-query
+    window and grants no execution or publication authority.
+    """
+
     state = transition.state
     facts = transition.facts
     value_updates = facts.value_patch_chunks
@@ -259,7 +273,7 @@ def account_transition(transition: Transition) -> WindowAccounting:
     )
     queries = facts.query_count
     if queries == 0:
-        return WindowAccounting(metrics, (), None)
+        return WindowAccounting(metrics, (), None), None
 
     components = (state.base,) if state.delta is None else (state.base, state.delta)
     compiled = compile_query(
@@ -317,23 +331,39 @@ def account_transition(transition: Transition) -> WindowAccounting:
     )
     if len(routes) * queries != metrics.blinding_mask_ciphertexts:
         raise AssertionError("ordinary F1-M route classes must reconcile with metrics")
-    return WindowAccounting(
-        metrics,
-        tuple(sorted(rotations.items())),
-        QueryPlanAccounting(
-            version_id=compiled.cloud_plan.binding.version_id,
-            cloud_program_digest=compiled.cloud_program_digest,
-            output_plan_digest=compiled.output_plan_digest,
-            execution_binding_digest=compiled.execution_binding_digest,
-            private_plan_digest=compiled.private_plan_digest,
-            returned_share_count=len(compiled.result_routes),
-            f1m_routes=routes,
+    return (
+        WindowAccounting(
+            metrics,
+            tuple(sorted(rotations.items())),
+            QueryPlanAccounting(
+                version_id=compiled.cloud_plan.binding.version_id,
+                cloud_program_digest=compiled.cloud_program_digest,
+                output_plan_digest=compiled.output_plan_digest,
+                execution_binding_digest=compiled.execution_binding_digest,
+                private_plan_digest=compiled.private_plan_digest,
+                returned_share_count=len(compiled.result_routes),
+                f1m_routes=routes,
+            ),
         ),
+        compiled,
     )
 
 
 def account_strong_transition(transition: StrongTransition) -> WindowAccounting:
     """Adapt one strong transition and its actual query DAG to accounting metrics."""
+
+    accounting, _bundle = account_strong_transition_with_bundle(transition)
+    return accounting
+
+
+def account_strong_transition_with_bundle(
+    transition: StrongTransition,
+) -> tuple[WindowAccounting, StrongExecutionBundle | None]:
+    """Return strong accounting plus its exact query-bearing execution bundle.
+
+    The second value is a streaming-only carrier.  It is absent for a zero-query
+    window and grants no execution or publication authority.
+    """
 
     facts = transition.facts
     if facts.rebuilt_ciphertexts != 0:
@@ -358,7 +388,7 @@ def account_strong_transition(transition: StrongTransition) -> WindowAccounting:
     )
     queries = facts.query_count
     if queries == 0:
-        return WindowAccounting(metrics, (), None)
+        return WindowAccounting(metrics, (), None), None
 
     counts = transition.execution_bundle.cloud_counts
     analysis = transition.execution_bundle.output_analysis
@@ -419,18 +449,21 @@ def account_strong_transition(transition: StrongTransition) -> WindowAccounting:
         != metrics.blinding_dummy_ciphertexts
     ):
         raise AssertionError("strong F1-M route classes must reconcile with metrics")
-    return WindowAccounting(
-        metrics,
-        tuple(sorted(rotations.items())),
-        QueryPlanAccounting(
-            version_id=transition.state.version_id,
-            cloud_program_digest=transition.execution_bundle.cloud_program_digest,
-            output_plan_digest=transition.execution_bundle.output_plan_digest,
-            execution_binding_digest=(transition.execution_bundle.execution_binding_digest),
-            private_plan_digest=transition.execution_bundle.private_plan_digest,
-            returned_share_count=len(transition.execution_bundle.result_routes),
-            f1m_routes=routes,
+    return (
+        WindowAccounting(
+            metrics,
+            tuple(sorted(rotations.items())),
+            QueryPlanAccounting(
+                version_id=transition.state.version_id,
+                cloud_program_digest=transition.execution_bundle.cloud_program_digest,
+                output_plan_digest=transition.execution_bundle.output_plan_digest,
+                execution_binding_digest=(transition.execution_bundle.execution_binding_digest),
+                private_plan_digest=transition.execution_bundle.private_plan_digest,
+                returned_share_count=len(transition.execution_bundle.result_routes),
+                f1m_routes=routes,
+            ),
         ),
+        transition.execution_bundle,
     )
 
 

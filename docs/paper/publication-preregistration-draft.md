@@ -475,7 +475,7 @@ measurement-method field in this placeholder remains `null`; the separate
 amendment is the sole reviewed source of administrative limits and
 measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v23` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v24` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface, including the amendment and
 `docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
@@ -530,7 +530,7 @@ runner independently require that same byte identity. Its provisional
 depth-2/0/0 profile remains explicitly `HOLD` for mixed-circuit
 parameter authority.
 
-The current v23 surface also contains a non-authorizing streaming accounting core. It
+The v23 surface also contains a non-authorizing streaming accounting core. It
 advances one candidate state exactly once per exact Publication Window, derives
 at most one typed query plan per query-bearing window, applies the window's
 integer query multiplicity before the fixed 14-primitive mapping, and retains
@@ -542,6 +542,16 @@ reservation, or transition claim; the ordinary single-query lifecycle smoke is
 the separate evidence path for real no-reuse enforcement. The accounting core
 does not mint a worker invocation, materialize per-query masks or ledger
 transitions, measure serialized OpenFHE sizes, or relax any dispatch gate.
+
+The v24 increment adds a second, streaming-only callback at that same replay
+boundary. For each query-bearing window it receives the existing compact
+descriptor together with the exact ordinary `CompiledQuery` or strong execution
+bundle that produced it, and cross-checks the version, plan digests, result
+cardinality, and F1-M routes. The carrier is not retained by the replay and has
+no authority, admission, or dispatch field. With the callback absent or present,
+the accounting, complete window-stream, and query-window-stream roots are
+identical. The production adapter remains uninstalled and all worker
+runtime/admission flags remain false.
 
 The v23 surface closes count authority separately from serialized-size
 measurement. Before dispatch, the controller projects each deterministic replay

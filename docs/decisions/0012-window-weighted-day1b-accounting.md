@@ -238,6 +238,15 @@ artifact that declares full query-arrival replay, omits the basis, changes a
 multiplicity, leaves a query-range gap, overlaps ranges, or disagrees with the
 controller's schedule fails closed.
 
+The preparatory v24 source surface exposes the exact typed compilation used for
+each query-bearing window through a synchronous, output-only query-execution
+sink. The callback receives the existing compact descriptor and its ordinary or
+strong non-authorizing carrier together, while all three stream/accounting roots
+stay unchanged. The replay itself retains no carrier after the callback returns.
+This is a transport seam for the later production adapter; it does not mint a
+worker invocation, bind a Day 2 plan, execute OpenFHE, or change any authority
+or admission flag.
+
 ## Consequences
 
 - Candidate state evolution and causal selection are unchanged.

@@ -81,6 +81,7 @@ jobs:
             tests/test_publication_day1b_accounting.py \
             tests/test_publication_day1b_expected_counts.py \
             tests/test_publication_day1b_key_framing.py \
+            tests/test_publication_day1b_layout_execution.py \
             tests/test_publication_day1b_metadata_framing.py \
             tests/test_publication_day1b_scratch.py \
             tests/test_publication_day1b_worker_protocol.py \
@@ -99,6 +100,7 @@ jobs:
             src/dynamic_cssc/publication_day1b_accounting.py \
             src/dynamic_cssc/publication_day1b_expected_counts.py \
             src/dynamic_cssc/publication_day1b_key_framing.py \
+            src/dynamic_cssc/publication_day1b_layout_execution.py \
             src/dynamic_cssc/publication_day1b_metadata_framing.py \
             src/dynamic_cssc/publication_day1b_scratch.py \
             src/dynamic_cssc/publication_day1b_worker_protocol.py \
@@ -112,6 +114,7 @@ jobs:
             tests/test_publication_day1b_accounting.py \
             tests/test_publication_day1b_expected_counts.py \
             tests/test_publication_day1b_key_framing.py \
+            tests/test_publication_day1b_layout_execution.py \
             tests/test_publication_day1b_metadata_framing.py \
             tests/test_publication_day1b_scratch.py \
             tests/test_publication_day1b_worker_protocol.py \
