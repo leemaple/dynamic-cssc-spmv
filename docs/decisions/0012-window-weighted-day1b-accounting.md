@@ -48,6 +48,92 @@ and charged byte count. Receipt/frame/resource caps govern materialized
 equivalence classes and controller scratch, not the logical multiplicity being
 priced.
 
+In particular, `serialized_payload_bytes_per_cell_maximum` is the physical
+worker-stream ceiling reviewed in the resource amendment. It must never be
+compared with the multiplicity-weighted logical F1-M charge. That charge is an
+exact derived metric whose closed semantic envelope comes from the accepted-group
+count, frozen rho, OutputPlan route cardinality, retained phases, and anchored
+Day 2 ciphertext sizes; it does not allocate or retain the priced bytes. Applying
+an administrative payload cap to it would censor high-rho cells while consuming
+no corresponding resource.
+
+The exact identity is
+
+```text
+logical_charged_byte_count
+  = sum over retained phase p and F1-M kind k of
+      anchored_ciphertext_bytes(k)
+      * sum over query windows w in p of routes_k(w) * query_count(w).
+```
+
+All factors are strict integers bound respectively by the Day 2 serialized-size
+profile, typed query-plan route stream, and frozen event schedule. The resulting
+totals can exceed `2^53`; JSON producers and consumers must preserve exact integer
+semantics and must not pass charge totals through IEEE-754 binary64 values.
+
+`HELDOUT_RECORD_SCHEMA` remains
+`dynamic-cssc-publication-heldout-record-v4`. Its frozen measurement kind has
+always required component-complete protocol serialization, including all five
+query-transaction categories. Before this decision, the preparatory Day 1B
+producer incorrectly omitted the two F1-M categories from the physical record's
+`query_serialized_bytes`; the dual-source ledger now substitutes their exact
+controller-anchored charges and validates the record total as the sum of all
+five categories. This is a conformance correction, not a redefinition of v4.
+At the correction point the Day 1 registration, Day 2 post-run, and Day 2
+profile anchor sets are all empty, and no admissible Day 1B artifact carries the
+omission. Tests freeze that precondition before the first anchor installation.
+
+The worker receipt gains an open, exact-key input-binding document, so its shape
+change propagates through the enclosing exact-key unit contract. Production and
+private-fixture Day 1B unit schemas therefore advance from v1 to v2 together.
+The heldout fragment schemas stay at v1 because their shape and already-declared
+record semantics do not change. The serialization ledger is independently
+self-describing and advances from v1 to v2 for its new dual-source fields.
+
+The v2 unit manifest is also the unit-level authority for the Day 2 size tuple.
+It opens the Day 1B source Git identity, Day 2 experiment source identity, outer
+archive and serialized-size-profile digests, the ordinary ciphertext byte size,
+the two category-specific F1-M ciphertext byte sizes, and the rotation/evaluation
+key byte sizes. Every one of the 252 worker contracts, including
+controller-terminal null projections, must equal that unit document for the
+archive, profile, and three contract-visible ciphertext sizes. Every retained
+controller charge must independently equal the same unit authority; agreement
+between a ledger and its own worker contract is not sufficient.
+
+The v2 candidate catalog opens the ordered policy preimage for all 14 candidates:
+candidate identity and role, strategy, packed-COO capacity, periodic-repack
+period, reserved-slack beta, and the digest of exactly those six fields. The
+opened list must reproduce the repository's 13-reference/one-ablation canonical
+roster and order. Each worker candidate specification must then reproduce the
+opened strategy, digest, role-derived retained phases, and strategy-derived F1-M
+policy. A self-consistent worker contract cannot substitute a different policy
+behind a stale catalog digest.
+
+Controller lineage and route coverage are retained as open, exact-key preimages,
+not unexplained roots. The controller-context document binds source, behavior,
+registration and trace anchors, worker identities, unit/cell/candidate facts,
+the preparatory trace source Git identity, the complete three-phase audit, and
+schedule/query/accounting commitments. Each of the 252 opened contexts must
+reproduce the unit manifest's trace source Git identity; a rehashed manifest
+cannot retarget that identity while retaining its worker evidence. The
+route-coverage document binds that context, the Day 2 archive/profile, and the
+per-phase query-window, query, random-route, and dummy-route counts. These small
+documents are independently recomputable from the frozen trace, policy, and
+repository code. The only intentionally unexpanded route payload is the
+per-window route stream itself: `element_stream_sha256` commits to that stream,
+but the unit artifact does not retain enough rows to replay the stream from the
+hash alone. Charge classes are nevertheless recomputed from the opened phase
+counts and unit Day 2 size authority for every receipt, including terminal
+receipts.
+
+Opening those preimages advances the F1-M controller summary to v4, route
+coverage to v2, worker input binding to v7, and enclosing worker receipt to v8.
+The retained unit, ledger, controller summary, context, route, worker-input, and
+worker-receipt schema identifiers are pairwise distinct so an exact-key parser
+cannot silently accept one document family as another.
+Those schema changes do not authorize execution or publication; the existing
+all-false unit authority boundary remains in force.
+
 The representative receipt proves an accounting size class; it does not claim
 that billions of fresh masks were generated or consumed during the experiment.
 Consequently, a batch with multiplicity greater than one is forbidden from
@@ -55,6 +141,10 @@ setting either materialized-ledger transition flag. Receipt-level phase
 random/dummy route totals are logical totals (the sum of exact multiplicities),
 whereas binding and equivalence-class counts remain counts of materialized
 descriptors.
+In particular, a worker may materialize zero F1-M descriptors while the
+controller still derives nonzero logical random/dummy route counts. The worker
+registry counts validate whatever descriptors were physically streamed; they
+are not a second authority for the controller's multiplicity-weighted charge.
 F1-M correctness, route coverage, and no-reuse semantics remain separate
 algorithmic obligations under ADR 0005 and the single-use ordinary-query
 lifecycle. The real OpenFHE runner smoke verifies the complete typed execution

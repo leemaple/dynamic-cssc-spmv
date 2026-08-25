@@ -5,6 +5,9 @@ module hashes that complete controller stream, reconciles its exact query ranges
 and collapses only the communication charge into at most one anchored ciphertext
 size class per retained phase and F1-M kind.  It never claims that repeated masks
 or ciphertext payloads were materialized by the experiment.
+
+Logical charges are exact Python integers and may exceed the IEEE-754 exact
+integer range.  Evidence consumers must therefore retain integer JSON semantics.
 """
 
 from __future__ import annotations
@@ -30,12 +33,13 @@ from dynamic_cssc.publication_traces import PUBLICATION_SOURCE_PARTITION_COUNT
 DAY1B_F1M_CHARGED_SIZE_CLASS_SCHEMA: Final = (
     "dynamic-cssc-publication-day1b-f1m-charged-size-class-v2"
 )
+DAY1B_F1M_CHARGED_SIZE_CLASS_SET_SCHEMA: Final = (
+    "dynamic-cssc-publication-day1b-f1m-charged-size-class-set-v1"
+)
 DAY1B_F1M_CONTROLLER_SUMMARY_SCHEMA: Final = (
-    "dynamic-cssc-publication-day1b-f1m-controller-summary-v3"
+    "dynamic-cssc-publication-day1b-f1m-controller-summary-v4"
 )
-DAY1B_F1M_ROUTE_COVERAGE_SCHEMA: Final = (
-    "dynamic-cssc-publication-day1b-f1m-route-coverage-v2"
-)
+DAY1B_F1M_ROUTE_COVERAGE_SCHEMA: Final = "dynamic-cssc-publication-day1b-f1m-route-coverage-v2"
 DAY1B_F1M_CONTROLLER_CONTEXT_SCHEMA: Final = (
     "dynamic-cssc-publication-day1b-f1m-controller-context-v2"
 )
@@ -121,9 +125,7 @@ def _canonical_fraction_text(value: object, field: str) -> str:
     try:
         fraction = Fraction(value)
     except (ValueError, ZeroDivisionError) as error:
-        raise Day1BF1MAggregationError(
-            f"{field} must be an exact positive rational"
-        ) from error
+        raise Day1BF1MAggregationError(f"{field} must be an exact positive rational") from error
     if fraction <= 0:
         raise Day1BF1MAggregationError(f"{field} must be an exact positive rational")
     denominator = fraction.denominator
@@ -189,13 +191,9 @@ class Day1BSerializedObjectSizeAuthority:
             "f1m_encrypted_zero_dummy_ciphertext_bytes": (
                 self.f1m_encrypted_zero_dummy_ciphertext_bytes
             ),
-            "f1m_random_zero_sum_ciphertext_bytes": (
-                self.f1m_random_zero_sum_ciphertext_bytes
-            ),
+            "f1m_random_zero_sum_ciphertext_bytes": (self.f1m_random_zero_sum_ciphertext_bytes),
             "serialized_eval_mult_key_bytes": self.serialized_eval_mult_key_bytes,
-            "serialized_object_size_profile_sha256": (
-                self.serialized_object_size_profile_sha256
-            ),
+            "serialized_object_size_profile_sha256": (self.serialized_object_size_profile_sha256),
             "serialized_rotation_key_inventory_bytes": (
                 self.serialized_rotation_key_inventory_bytes
             ),
@@ -264,9 +262,7 @@ class Day1BF1MCompletePhaseAudit:
         return {
             "accepted_group_end": self.accepted_group_end,
             "accepted_group_start": self.accepted_group_start,
-            "consumed_window_audit_stream_sha256": (
-                self.consumed_window_audit_stream_sha256
-            ),
+            "consumed_window_audit_stream_sha256": (self.consumed_window_audit_stream_sha256),
             "phase": self.phase,
             "realized_query_count": self.realized_query_count,
             "realized_set_count": self.realized_set_count,
@@ -284,23 +280,17 @@ class Day1BF1MCompleteScheduleAudit:
         if (
             type(self.phase_audits) is not tuple
             or tuple(audit.phase for audit in self.phase_audits) != _PHASES
-            or any(
-                type(audit) is not Day1BF1MCompletePhaseAudit
-                for audit in self.phase_audits
-            )
+            or any(type(audit) is not Day1BF1MCompletePhaseAudit for audit in self.phase_audits)
         ):
             raise Day1BF1MAggregationError(
                 "complete schedule audit must contain the exact three phases"
             )
-        if (
-            self.phase_audits[0].accepted_group_start != 0
-            or any(
-                before.accepted_group_end != after.accepted_group_start
-                for before, after in zip(
-                    self.phase_audits,
-                    self.phase_audits[1:],
-                    strict=False,
-                )
+        if self.phase_audits[0].accepted_group_start != 0 or any(
+            before.accepted_group_end != after.accepted_group_start
+            for before, after in zip(
+                self.phase_audits,
+                self.phase_audits[1:],
+                strict=False,
             )
         ):
             raise Day1BF1MAggregationError(
@@ -328,9 +318,7 @@ class Day1BF1MCompleteScheduleAudit:
         return _sha256(
             {
                 "phase_audits": [audit.to_document() for audit in self.phase_audits],
-                "schema_version": (
-                    "dynamic-cssc-publication-day1b-complete-phase-audit-root-v1"
-                ),
+                "schema_version": ("dynamic-cssc-publication-day1b-complete-phase-audit-root-v1"),
             }
         )
 
@@ -340,6 +328,7 @@ class Day1BF1MControllerContext:
     """Closed lineage, candidate-cell, and complete-schedule binding."""
 
     publication_source_git_sha: str
+    trace_source_git_sha: str
     publication_behavior_set_schema_version: str
     publication_behavior_inventory_sha256: str
     terminal_registration_sha256: str
@@ -384,6 +373,10 @@ class Day1BF1MControllerContext:
             self.publication_source_git_sha,
             "F1-M context publication source Git SHA",
         )
+        _require_git_sha(
+            self.trace_source_git_sha,
+            "F1-M context trace source Git SHA",
+        )
         _nonempty(
             self.publication_behavior_set_schema_version,
             "F1-M context Behavior Set schema",
@@ -412,28 +405,22 @@ class Day1BF1MControllerContext:
             _require_sha256(getattr(self, field), f"F1-M context {field}")
         for field in ("dataset_id", "dataset_release", "semantics", "candidate_id"):
             _nonempty(getattr(self, field), f"F1-M context {field}")
-        if (
-            type(self.source_partition) is not int
-            or self.source_partition not in range(PUBLICATION_SOURCE_PARTITION_COUNT)
+        if type(self.source_partition) is not int or self.source_partition not in range(
+            PUBLICATION_SOURCE_PARTITION_COUNT
         ):
             raise Day1BF1MAggregationError(
                 "F1-M context source partition is outside the frozen domain"
             )
-        if (
-            type(self.cell_ordinal) is not int
-            or self.cell_ordinal not in range(DAY1B_CELLS_PER_UNIT)
+        if type(self.cell_ordinal) is not int or self.cell_ordinal not in range(
+            DAY1B_CELLS_PER_UNIT
         ):
-            raise Day1BF1MAggregationError(
-                "F1-M context cell ordinal is outside the frozen unit"
-            )
+            raise Day1BF1MAggregationError("F1-M context cell ordinal is outside the frozen unit")
         _canonical_fraction_text(self.freshness, "F1-M context freshness")
         _canonical_fraction_text(self.rho, "F1-M context rho")
         if self.candidate_role not in {"reference", "ablation"}:
             raise Day1BF1MAggregationError("F1-M context candidate role is not frozen")
         expected_retained = (
-            ("tuning-prefix", "held-out")
-            if self.candidate_role == "reference"
-            else ("held-out",)
+            ("tuning-prefix", "held-out") if self.candidate_role == "reference" else ("held-out",)
         )
         if self.retained_phases != expected_retained:
             raise Day1BF1MAggregationError(
@@ -443,20 +430,16 @@ class Day1BF1MControllerContext:
             type(self.phase_boundaries) is not tuple
             or tuple(boundary.phase for boundary in self.phase_boundaries) != _PHASES
             or any(
-                type(boundary) is not Day1BF1MPhaseBoundary
-                for boundary in self.phase_boundaries
+                type(boundary) is not Day1BF1MPhaseBoundary for boundary in self.phase_boundaries
             )
         ):
             raise Day1BF1MAggregationError("F1-M context phase boundaries are not exact")
-        if (
-            self.phase_boundaries[0].accepted_group_start != 0
-            or any(
-                before.accepted_group_end != after.accepted_group_start
-                for before, after in zip(
-                    self.phase_boundaries,
-                    self.phase_boundaries[1:],
-                    strict=False,
-                )
+        if self.phase_boundaries[0].accepted_group_start != 0 or any(
+            before.accepted_group_end != after.accepted_group_start
+            for before, after in zip(
+                self.phase_boundaries,
+                self.phase_boundaries[1:],
+                strict=False,
             )
         ):
             raise Day1BF1MAggregationError(
@@ -486,16 +469,11 @@ class Day1BF1MControllerContext:
                 "F1-M context phase boundaries do not cover all accepted groups"
             )
         if sum(self.phase_window_counts) != self.complete_window_count:
-            raise Day1BF1MAggregationError(
-                "F1-M context phase window counts do not reconcile"
-            )
+            raise Day1BF1MAggregationError("F1-M context phase window counts do not reconcile")
         if sum(self.phase_query_counts) != self.total_query_count:
-            raise Day1BF1MAggregationError(
-                "F1-M context phase query counts do not reconcile"
-            )
+            raise Day1BF1MAggregationError("F1-M context phase query counts do not reconcile")
         if (
-            self.query_window_count + self.zero_query_window_count
-            != self.complete_window_count
+            self.query_window_count + self.zero_query_window_count != self.complete_window_count
             or self.query_window_count > self.total_query_count
         ):
             raise Day1BF1MAggregationError(
@@ -517,34 +495,22 @@ class Day1BF1MControllerContext:
             "candidate_role": self.candidate_role,
             "cell_binding_sha256": self.cell_binding_sha256,
             "cell_ordinal": self.cell_ordinal,
-            "complete_phase_audit_root_sha256": (
-                self.complete_phase_audit_root_sha256
-            ),
+            "complete_phase_audit_root_sha256": (self.complete_phase_audit_root_sha256),
             "complete_window_count": self.complete_window_count,
             "complete_window_stream_sha256": self.complete_window_stream_sha256,
             "dataset_id": self.dataset_id,
             "dataset_release": self.dataset_release,
-            "day1_registration_anchor_sha256": (
-                self.day1_registration_anchor_sha256
-            ),
+            "day1_registration_anchor_sha256": (self.day1_registration_anchor_sha256),
             "event_schedule_sha256": self.event_schedule_sha256,
             "first_query_ordinal": 0,
             "first_window_ordinal": 0,
             "freshness": self.freshness,
             "last_query_ordinal_exclusive": self.total_query_count,
             "last_window_ordinal": self.complete_window_count - 1,
-            "phase_boundaries": [
-                boundary.to_document() for boundary in self.phase_boundaries
-            ],
-            "phase_query_counts": dict(
-                zip(_PHASES, self.phase_query_counts, strict=True)
-            ),
-            "phase_window_counts": dict(
-                zip(_PHASES, self.phase_window_counts, strict=True)
-            ),
-            "publication_behavior_inventory_sha256": (
-                self.publication_behavior_inventory_sha256
-            ),
+            "phase_boundaries": [boundary.to_document() for boundary in self.phase_boundaries],
+            "phase_query_counts": dict(zip(_PHASES, self.phase_query_counts, strict=True)),
+            "phase_window_counts": dict(zip(_PHASES, self.phase_window_counts, strict=True)),
+            "publication_behavior_inventory_sha256": (self.publication_behavior_inventory_sha256),
             "publication_behavior_set_schema_version": (
                 self.publication_behavior_set_schema_version
             ),
@@ -562,11 +528,289 @@ class Day1BF1MControllerContext:
             "total_query_count": self.total_query_count,
             "trace_post_run_anchor_sha256": self.trace_post_run_anchor_sha256,
             "trace_manifest_sha256": self.trace_manifest_sha256,
+            "trace_source_git_sha": self.trace_source_git_sha,
             "unit_identity_sha256": self.unit_identity_sha256,
             "worker_build_identity_sha256": self.worker_build_identity_sha256,
             "worker_runtime_identity_sha256": self.worker_runtime_identity_sha256,
             "zero_query_window_count": self.zero_query_window_count,
         }
+
+    @classmethod
+    def from_document(cls, value: object) -> Day1BF1MControllerContext:
+        """Open one exact retained controller-context preimage."""
+
+        keys = {
+            "accepted_group_count",
+            "accounting_sha256",
+            "acquisition_bundle_sha256",
+            "candidate_id",
+            "candidate_catalog_sha256",
+            "candidate_policy_sha256",
+            "candidate_role",
+            "cell_binding_sha256",
+            "cell_ordinal",
+            "complete_phase_audit_root_sha256",
+            "complete_window_count",
+            "complete_window_stream_sha256",
+            "dataset_id",
+            "dataset_release",
+            "day1_registration_anchor_sha256",
+            "event_schedule_sha256",
+            "first_query_ordinal",
+            "first_window_ordinal",
+            "freshness",
+            "last_query_ordinal_exclusive",
+            "last_window_ordinal",
+            "phase_boundaries",
+            "phase_query_counts",
+            "phase_window_counts",
+            "publication_behavior_inventory_sha256",
+            "publication_behavior_set_schema_version",
+            "publication_source_git_sha",
+            "query_vector_sha256",
+            "query_window_count",
+            "query_window_stream_sha256",
+            "retained_phases",
+            "resource_policy_sha256",
+            "rho",
+            "schema_version",
+            "semantics",
+            "source_partition",
+            "terminal_registration_sha256",
+            "total_query_count",
+            "trace_post_run_anchor_sha256",
+            "trace_manifest_sha256",
+            "trace_source_git_sha",
+            "unit_identity_sha256",
+            "worker_build_identity_sha256",
+            "worker_runtime_identity_sha256",
+            "zero_query_window_count",
+        }
+        if type(value) is not dict or set(value) != keys:
+            raise Day1BF1MAggregationError("F1-M controller-context document keys are not exact")
+        if value["schema_version"] != DAY1B_F1M_CONTROLLER_CONTEXT_SCHEMA:
+            raise Day1BF1MAggregationError("F1-M controller-context schema changed")
+        raw_boundaries = value["phase_boundaries"]
+        if type(raw_boundaries) is not list or len(raw_boundaries) != len(_PHASES):
+            raise Day1BF1MAggregationError("F1-M controller-context boundaries are not exact")
+        phase_boundaries: list[Day1BF1MPhaseBoundary] = []
+        for raw_boundary in raw_boundaries:
+            if type(raw_boundary) is not dict or set(raw_boundary) != {
+                "accepted_group_end",
+                "accepted_group_start",
+                "phase",
+            }:
+                raise Day1BF1MAggregationError(
+                    "F1-M controller-context boundary keys are not exact"
+                )
+            phase_boundaries.append(Day1BF1MPhaseBoundary(**raw_boundary))
+        phase_query_counts = value["phase_query_counts"]
+        phase_window_counts = value["phase_window_counts"]
+        if (
+            type(phase_query_counts) is not dict
+            or set(phase_query_counts) != set(_PHASES)
+            or type(phase_window_counts) is not dict
+            or set(phase_window_counts) != set(_PHASES)
+        ):
+            raise Day1BF1MAggregationError("F1-M controller-context phase counts are not exact")
+        retained_phases = value["retained_phases"]
+        if type(retained_phases) is not list:
+            raise Day1BF1MAggregationError("F1-M controller-context retained phases are not exact")
+        context = cls(
+            publication_source_git_sha=value["publication_source_git_sha"],
+            trace_source_git_sha=value["trace_source_git_sha"],
+            publication_behavior_set_schema_version=(
+                value["publication_behavior_set_schema_version"]
+            ),
+            publication_behavior_inventory_sha256=(
+                value["publication_behavior_inventory_sha256"]
+            ),
+            terminal_registration_sha256=value["terminal_registration_sha256"],
+            day1_registration_anchor_sha256=value["day1_registration_anchor_sha256"],
+            trace_post_run_anchor_sha256=value["trace_post_run_anchor_sha256"],
+            acquisition_bundle_sha256=value["acquisition_bundle_sha256"],
+            trace_manifest_sha256=value["trace_manifest_sha256"],
+            candidate_catalog_sha256=value["candidate_catalog_sha256"],
+            resource_policy_sha256=value["resource_policy_sha256"],
+            worker_build_identity_sha256=value["worker_build_identity_sha256"],
+            worker_runtime_identity_sha256=value["worker_runtime_identity_sha256"],
+            dataset_id=value["dataset_id"],
+            dataset_release=value["dataset_release"],
+            semantics=value["semantics"],
+            source_partition=value["source_partition"],
+            unit_identity_sha256=value["unit_identity_sha256"],
+            cell_binding_sha256=value["cell_binding_sha256"],
+            cell_ordinal=value["cell_ordinal"],
+            freshness=value["freshness"],
+            rho=value["rho"],
+            candidate_id=value["candidate_id"],
+            candidate_role=value["candidate_role"],
+            candidate_policy_sha256=value["candidate_policy_sha256"],
+            retained_phases=tuple(retained_phases),
+            phase_boundaries=tuple(phase_boundaries),
+            event_schedule_sha256=value["event_schedule_sha256"],
+            query_vector_sha256=value["query_vector_sha256"],
+            accepted_group_count=value["accepted_group_count"],
+            complete_window_count=value["complete_window_count"],
+            query_window_count=value["query_window_count"],
+            zero_query_window_count=value["zero_query_window_count"],
+            total_query_count=value["total_query_count"],
+            phase_window_counts=tuple(phase_window_counts[phase] for phase in _PHASES),
+            phase_query_counts=tuple(phase_query_counts[phase] for phase in _PHASES),
+            complete_window_stream_sha256=value["complete_window_stream_sha256"],
+            complete_phase_audit_root_sha256=value["complete_phase_audit_root_sha256"],
+            accounting_sha256=value["accounting_sha256"],
+            query_window_stream_sha256=value["query_window_stream_sha256"],
+        )
+        if context.to_document() != value:
+            raise Day1BF1MAggregationError(
+                "F1-M controller-context document is not its exact typed projection"
+            )
+        return context
+
+
+@dataclass(frozen=True, slots=True)
+class Day1BF1MRouteCoverage:
+    """Small retained preimage around one opaque per-window route-stream hash."""
+
+    controller_context_sha256: str
+    day2_outer_archive_sha256: str
+    element_count: int
+    element_stream_sha256: str
+    phase_dummy_route_counts: tuple[int, int, int]
+    phase_query_counts: tuple[int, int, int]
+    phase_query_window_counts: tuple[int, int, int]
+    phase_random_route_counts: tuple[int, int, int]
+    serialized_object_size_profile_sha256: str
+
+    def __post_init__(self) -> None:
+        for field in (
+            "controller_context_sha256",
+            "day2_outer_archive_sha256",
+            "element_stream_sha256",
+            "serialized_object_size_profile_sha256",
+        ):
+            _require_sha256(getattr(self, field), f"F1-M route coverage {field}")
+        _nonnegative(self.element_count, "F1-M route coverage element count")
+        for field in (
+            "phase_dummy_route_counts",
+            "phase_query_counts",
+            "phase_query_window_counts",
+            "phase_random_route_counts",
+        ):
+            counts = getattr(self, field)
+            if (
+                type(counts) is not tuple
+                or len(counts) != len(_PHASES)
+                or any(type(item) is not int or item < 0 for item in counts)
+            ):
+                raise Day1BF1MAggregationError(
+                    f"F1-M route coverage {field} is not an exact phase tuple"
+                )
+        if sum(self.phase_query_window_counts) != self.element_count or any(
+            windows > queries
+            for windows, queries in zip(
+                self.phase_query_window_counts,
+                self.phase_query_counts,
+                strict=True,
+            )
+        ):
+            raise Day1BF1MAggregationError(
+                "F1-M route coverage query-window counts do not reconcile"
+            )
+        if any(
+            queries == 0 and (random_count != 0 or dummy_count != 0)
+            for queries, random_count, dummy_count in zip(
+                self.phase_query_counts,
+                self.phase_random_route_counts,
+                self.phase_dummy_route_counts,
+                strict=True,
+            )
+        ):
+            raise Day1BF1MAggregationError(
+                "F1-M route coverage charges a phase with no queries"
+            )
+
+    @property
+    def route_coverage_sha256(self) -> str:
+        return _sha256(self.to_document())
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "controller_context_sha256": self.controller_context_sha256,
+            "day2_outer_archive_sha256": self.day2_outer_archive_sha256,
+            "element_count": self.element_count,
+            "element_stream_sha256": self.element_stream_sha256,
+            "phase_dummy_route_counts": dict(
+                zip(_PHASES, self.phase_dummy_route_counts, strict=True)
+            ),
+            "phase_query_counts": dict(zip(_PHASES, self.phase_query_counts, strict=True)),
+            "phase_query_window_counts": dict(
+                zip(_PHASES, self.phase_query_window_counts, strict=True)
+            ),
+            "phase_random_route_counts": dict(
+                zip(_PHASES, self.phase_random_route_counts, strict=True)
+            ),
+            "schema_version": DAY1B_F1M_ROUTE_COVERAGE_SCHEMA,
+            "serialized_object_size_profile_sha256": (
+                self.serialized_object_size_profile_sha256
+            ),
+        }
+
+    @classmethod
+    def from_document(cls, value: object) -> Day1BF1MRouteCoverage:
+        keys = {
+            "controller_context_sha256",
+            "day2_outer_archive_sha256",
+            "element_count",
+            "element_stream_sha256",
+            "phase_dummy_route_counts",
+            "phase_query_counts",
+            "phase_query_window_counts",
+            "phase_random_route_counts",
+            "schema_version",
+            "serialized_object_size_profile_sha256",
+        }
+        if type(value) is not dict or set(value) != keys:
+            raise Day1BF1MAggregationError("F1-M route-coverage document keys are not exact")
+        if value["schema_version"] != DAY1B_F1M_ROUTE_COVERAGE_SCHEMA:
+            raise Day1BF1MAggregationError("F1-M route-coverage schema changed")
+        count_fields = (
+            "phase_dummy_route_counts",
+            "phase_query_counts",
+            "phase_query_window_counts",
+            "phase_random_route_counts",
+        )
+        for field in count_fields:
+            counts = value[field]
+            if type(counts) is not dict or set(counts) != set(_PHASES):
+                raise Day1BF1MAggregationError(
+                    f"F1-M route-coverage {field} keys are not exact"
+                )
+        coverage = cls(
+            controller_context_sha256=value["controller_context_sha256"],
+            day2_outer_archive_sha256=value["day2_outer_archive_sha256"],
+            element_count=value["element_count"],
+            element_stream_sha256=value["element_stream_sha256"],
+            phase_dummy_route_counts=tuple(
+                value["phase_dummy_route_counts"][phase] for phase in _PHASES
+            ),
+            phase_query_counts=tuple(value["phase_query_counts"][phase] for phase in _PHASES),
+            phase_query_window_counts=tuple(
+                value["phase_query_window_counts"][phase] for phase in _PHASES
+            ),
+            phase_random_route_counts=tuple(
+                value["phase_random_route_counts"][phase] for phase in _PHASES
+            ),
+            serialized_object_size_profile_sha256=(
+                value["serialized_object_size_profile_sha256"]
+            ),
+        )
+        if coverage.to_document() != value:
+            raise Day1BF1MAggregationError(
+                "F1-M route-coverage document is not its exact typed projection"
+            )
+        return coverage
 
 
 @dataclass(frozen=True, slots=True)
@@ -623,21 +867,120 @@ class Day1BF1MChargedSizeClass:
             "phase": self.phase,
             "schema_version": DAY1B_F1M_CHARGED_SIZE_CLASS_SCHEMA,
             "serialized_size_profile_key": self.serialized_size_profile_key,
-            "serialized_object_size_profile_sha256": (
-                self.serialized_object_size_profile_sha256
-            ),
+            "serialized_object_size_profile_sha256": (self.serialized_object_size_profile_sha256),
         }
+
+    @classmethod
+    def from_document(cls, value: object) -> Day1BF1MChargedSizeClass:
+        keys = {
+            "accounting_basis",
+            "category",
+            "charged_byte_count",
+            "ciphertext_bytes",
+            "day2_outer_archive_sha256",
+            "f1m_kind",
+            "materialized_cryptographic_object_count",
+            "multiplicity",
+            "phase",
+            "schema_version",
+            "serialized_size_profile_key",
+            "serialized_object_size_profile_sha256",
+        }
+        if type(value) is not dict or set(value) != keys:
+            raise Day1BF1MAggregationError("charged F1-M size-class document keys are not exact")
+        if (
+            value["schema_version"] != DAY1B_F1M_CHARGED_SIZE_CLASS_SCHEMA
+            or value["accounting_basis"] != DAY1B_F1M_ACCOUNTING_BASIS
+            or value["materialized_cryptographic_object_count"] != 0
+        ):
+            raise Day1BF1MAggregationError("charged F1-M size-class document semantics changed")
+        item = cls(
+            phase=value["phase"],
+            category=value["category"],
+            f1m_kind=value["f1m_kind"],
+            multiplicity=value["multiplicity"],
+            ciphertext_bytes=value["ciphertext_bytes"],
+            serialized_size_profile_key=value["serialized_size_profile_key"],
+            serialized_object_size_profile_sha256=(value["serialized_object_size_profile_sha256"]),
+            day2_outer_archive_sha256=value["day2_outer_archive_sha256"],
+        )
+        if item.charged_byte_count != value["charged_byte_count"]:
+            raise Day1BF1MAggregationError("charged F1-M size-class byte arithmetic changed")
+        if item.to_document() != value:
+            raise Day1BF1MAggregationError(
+                "charged F1-M size-class document is not its exact typed projection"
+            )
+        return item
+
+
+def canonical_day1b_f1m_charged_size_class_set_sha256(
+    classes: tuple[Day1BF1MChargedSizeClass, ...],
+) -> str:
+    """Hash one canonical ordered set of typed retained F1-M charge classes."""
+
+    if type(classes) is not tuple or any(
+        type(item) is not Day1BF1MChargedSizeClass for item in classes
+    ):
+        raise Day1BF1MAggregationError("charged F1-M size-class set must be one exact typed tuple")
+    return _sha256(
+        {
+            "classes": [item.to_document() for item in classes],
+            "schema_version": DAY1B_F1M_CHARGED_SIZE_CLASS_SET_SCHEMA,
+        }
+    )
+
+
+def derive_day1b_f1m_charged_size_classes(
+    *,
+    retained_phases: tuple[str, ...],
+    phase_random_route_counts: tuple[int, int, int],
+    phase_dummy_route_counts: tuple[int, int, int],
+    size_authority: Day1BSerializedObjectSizeAuthority,
+) -> tuple[Day1BF1MChargedSizeClass, ...]:
+    category_sizes = {
+        "random-zero-sum": size_authority.f1m_random_zero_sum_ciphertext_bytes,
+        "encrypted-zero-dummy": (size_authority.f1m_encrypted_zero_dummy_ciphertext_bytes),
+    }
+    charged: list[Day1BF1MChargedSizeClass] = []
+    for phase in retained_phases:
+        phase_index = _PHASES.index(phase)
+        for kind, counts in (
+            ("random-zero-sum", phase_random_route_counts),
+            ("encrypted-zero-dummy", phase_dummy_route_counts),
+        ):
+            multiplicity = counts[phase_index]
+            if multiplicity == 0:
+                continue
+            charged.append(
+                Day1BF1MChargedSizeClass(
+                    phase=phase,
+                    category=_CATEGORY_BY_KIND[kind],
+                    f1m_kind=kind,
+                    multiplicity=multiplicity,
+                    ciphertext_bytes=category_sizes[kind],
+                    serialized_size_profile_key=_SIZE_PROFILE_KEY_BY_KIND[kind],
+                    serialized_object_size_profile_sha256=(
+                        size_authority.serialized_object_size_profile_sha256
+                    ),
+                    day2_outer_archive_sha256=(size_authority.day2_outer_archive_sha256),
+                )
+            )
+    return tuple(charged)
 
 
 @dataclass(frozen=True, slots=True)
 class Day1BF1MControllerSummary:
-    """Closed controller proof and bounded cross-window F1-M charges."""
+    """Closed controller proof and exact cross-window F1-M charges.
+
+    The serialized-payload limit is retained as resource-policy provenance for
+    the worker stream; it is not a ceiling on multiplicity-weighted logical charge.
+    """
 
     context: Day1BF1MControllerContext
     size_authority: Day1BSerializedObjectSizeAuthority
     retained_phases: tuple[str, ...]
     query_window_stream_sha256: str
-    route_coverage_sha256: str
+    route_coverage: Day1BF1MRouteCoverage
     query_window_count: int
     phase_query_window_counts: tuple[int, int, int]
     phase_query_counts: tuple[int, int, int]
@@ -656,14 +999,14 @@ class Day1BF1MControllerSummary:
             raise Day1BF1MAggregationError("F1-M retained phase set is not frozen")
         if (
             self.context.retained_phases != self.retained_phases
-            or self.context.publication_source_git_sha
-            != self.size_authority.source_git_sha
+            or self.context.publication_source_git_sha != self.size_authority.source_git_sha
         ):
             raise Day1BF1MAggregationError(
                 "F1-M context does not bind the retained phases and size authority"
             )
         _require_sha256(self.query_window_stream_sha256, "query-window stream SHA")
-        _require_sha256(self.route_coverage_sha256, "F1-M route-coverage SHA")
+        if type(self.route_coverage) is not Day1BF1MRouteCoverage:
+            raise Day1BF1MAggregationError("F1-M route coverage type is not exact")
         _positive(
             self.serialized_object_bytes_maximum,
             "F1-M summary serialized-object byte maximum",
@@ -692,6 +1035,18 @@ class Day1BF1MControllerSummary:
         if (
             self.context.query_window_count != self.query_window_count
             or self.context.phase_query_counts != self.phase_query_counts
+            or self.route_coverage.controller_context_sha256 != self.context.context_sha256
+            or self.route_coverage.day2_outer_archive_sha256
+            != self.size_authority.day2_outer_archive_sha256
+            or self.route_coverage.serialized_object_size_profile_sha256
+            != self.size_authority.serialized_object_size_profile_sha256
+            or self.route_coverage.element_count != self.query_window_count
+            or self.route_coverage.phase_query_window_counts
+            != self.phase_query_window_counts
+            or self.route_coverage.phase_query_counts != self.phase_query_counts
+            or self.route_coverage.phase_random_route_counts
+            != self.phase_random_route_counts
+            or self.route_coverage.phase_dummy_route_counts != self.phase_dummy_route_counts
             or any(
                 query_windows > all_windows
                 for query_windows, all_windows in zip(
@@ -706,25 +1061,28 @@ class Day1BF1MControllerSummary:
             )
         if (
             type(self.charged_size_classes) is not tuple
-            or len(self.charged_size_classes)
-            > DAY1B_F1M_MAX_CHARGED_SIZE_CLASS_RECEIPTS_PER_CELL
-            or any(
-                type(item) is not Day1BF1MChargedSizeClass
-                for item in self.charged_size_classes
-            )
+            or len(self.charged_size_classes) > DAY1B_F1M_MAX_CHARGED_SIZE_CLASS_RECEIPTS_PER_CELL
+            or any(type(item) is not Day1BF1MChargedSizeClass for item in self.charged_size_classes)
         ):
             raise Day1BF1MAggregationError("charged F1-M size-class bound is not exact")
+        expected_classes = derive_day1b_f1m_charged_size_classes(
+            retained_phases=self.retained_phases,
+            phase_random_route_counts=self.phase_random_route_counts,
+            phase_dummy_route_counts=self.phase_dummy_route_counts,
+            size_authority=self.size_authority,
+        )
+        if self.charged_size_classes != expected_classes:
+            raise Day1BF1MAggregationError(
+                "charged F1-M classes do not exactly derive from routes and Day 2 authority"
+            )
+
+    @property
+    def route_coverage_sha256(self) -> str:
+        return self.route_coverage.route_coverage_sha256
 
     @property
     def charged_size_class_set_sha256(self) -> str:
-        return _sha256(
-            {
-                "classes": [item.to_document() for item in self.charged_size_classes],
-                "schema_version": (
-                    "dynamic-cssc-publication-day1b-f1m-charged-size-class-set-v1"
-                ),
-            }
-        )
+        return canonical_day1b_f1m_charged_size_class_set_sha256(self.charged_size_classes)
 
     @property
     def logical_charged_byte_count(self) -> int:
@@ -738,9 +1096,7 @@ class Day1BF1MControllerSummary:
                 DAY1B_F1M_MAX_CHARGED_SIZE_CLASS_RECEIPTS_PER_CELL
             ),
             "charged_size_class_set_sha256": self.charged_size_class_set_sha256,
-            "charged_size_classes": [
-                item.to_document() for item in self.charged_size_classes
-            ],
+            "charged_size_classes": [item.to_document() for item in self.charged_size_classes],
             "controller_context": self.context.to_document(),
             "controller_context_sha256": self.context.context_sha256,
             "logical_charged_byte_count": self.logical_charged_byte_count,
@@ -757,6 +1113,7 @@ class Day1BF1MControllerSummary:
             "query_window_count": self.query_window_count,
             "query_window_stream_sha256": self.query_window_stream_sha256,
             "retained_phases": list(self.retained_phases),
+            "route_coverage": self.route_coverage.to_document(),
             "route_coverage_sha256": self.route_coverage_sha256,
             "schema_version": DAY1B_F1M_CONTROLLER_SUMMARY_SCHEMA,
             "serialized_object_bytes_maximum": self.serialized_object_bytes_maximum,
@@ -818,11 +1175,14 @@ class Day1BF1MController:
             serialized_payload_bytes_per_cell_maximum,
             "F1-M serialized-payload byte maximum",
         )
-        if max(
-            size_authority.ciphertext_bytes,
-            size_authority.f1m_random_zero_sum_ciphertext_bytes,
-            size_authority.f1m_encrypted_zero_dummy_ciphertext_bytes,
-        ) > self._serialized_object_bytes_maximum:
+        if (
+            max(
+                size_authority.ciphertext_bytes,
+                size_authority.f1m_random_zero_sum_ciphertext_bytes,
+                size_authority.f1m_encrypted_zero_dummy_ciphertext_bytes,
+            )
+            > self._serialized_object_bytes_maximum
+        ):
             raise Day1BF1MAggregationError(
                 "anchored F1-M ciphertext size exceeds the frozen object-byte cap"
             )
@@ -877,9 +1237,7 @@ class Day1BF1MController:
             self._f1m_policy == "uniform-random-or-zero"
             and len(plan.f1m_routes) != plan.returned_share_count
         ):
-            raise Day1BF1MAggregationError(
-                "uniform F1-M must classify every returned share"
-            )
+            raise Day1BF1MAggregationError("uniform F1-M must classify every returned share")
         random_per_query = 0
         dummy_per_query = 0
         route_documents: list[dict[str, str | int]] = []
@@ -900,13 +1258,9 @@ class Day1BF1MController:
                 raise Day1BF1MAggregationError("query plan F1-M route document changed")
             for field in ("component_id", "output_block_id", "result_id"):
                 if type(document[field]) is not str or not document[field]:
-                    raise Day1BF1MAggregationError(
-                        f"query plan F1-M {field} identity is empty"
-                    )
+                    raise Day1BF1MAggregationError(f"query plan F1-M {field} identity is empty")
             if document["f1m_route_ordinal"] != expected_f1m_ordinal:
-                raise Day1BF1MAggregationError(
-                    "query plan F1-M route ordinals are not contiguous"
-                )
+                raise Day1BF1MAggregationError("query plan F1-M route ordinals are not contiguous")
             result_ordinal = document["result_ordinal"]
             if (
                 type(result_ordinal) is not int
@@ -917,31 +1271,23 @@ class Day1BF1MController:
                     "query plan F1-M result ordinal escapes the returned shares"
                 )
             result_id = str(document["result_id"])
-            route_identity = str(document["component_id"]), str(
-                document["output_block_id"]
-            )
+            route_identity = str(document["component_id"]), str(document["output_block_id"])
             if (
                 result_id in result_ids
                 or result_ordinal in result_ordinals
                 or route_identity in route_identities
             ):
-                raise Day1BF1MAggregationError(
-                    "query plan F1-M route identities are not unique"
-                )
+                raise Day1BF1MAggregationError("query plan F1-M route identities are not unique")
             result_ids.add(result_id)
             result_ordinals.add(result_ordinal)
             route_identities.add(route_identity)
             if document["f1m_kind"] == "random-zero-sum":
                 if document["category"] != _CATEGORY_BY_KIND["random-zero-sum"]:
-                    raise Day1BF1MAggregationError(
-                        "random-zero-sum route category changed"
-                    )
+                    raise Day1BF1MAggregationError("random-zero-sum route category changed")
                 random_per_query += 1
             elif document["f1m_kind"] == "encrypted-zero-dummy":
                 if document["category"] != _CATEGORY_BY_KIND["encrypted-zero-dummy"]:
-                    raise Day1BF1MAggregationError(
-                        "encrypted-zero-dummy route category changed"
-                    )
+                    raise Day1BF1MAggregationError("encrypted-zero-dummy route category changed")
                 dummy_per_query += 1
             else:
                 raise Day1BF1MAggregationError("query plan F1-M route kind is not frozen")
@@ -1007,9 +1353,7 @@ class Day1BF1MController:
         if type(accounting) is not PublicationDay1BAccounting:
             raise TypeError("accounting must be exact PublicationDay1BAccounting")
         if type(complete_schedule_audit) is not Day1BF1MCompleteScheduleAudit:
-            raise TypeError(
-                "complete_schedule_audit must be exact Day1BF1MCompleteScheduleAudit"
-            )
+            raise TypeError("complete_schedule_audit must be exact Day1BF1MCompleteScheduleAudit")
         if (
             context.accepted_group_count != self._accepted_group_count
             or context.retained_phases != self._retained_phases
@@ -1046,9 +1390,7 @@ class Day1BF1MController:
         audit_phase_set_counts = tuple(
             audit.realized_set_count for audit in complete_schedule_audit.phase_audits
         )
-        accounting_phase_set_counts = tuple(
-            phase.realized_set_count for phase in accounting.phases
-        )
+        accounting_phase_set_counts = tuple(phase.realized_set_count for phase in accounting.phases)
         expected_zero_query_windows = (
             accounting.realized_window_count - accounting.realized_query_window_count
         )
@@ -1058,12 +1400,9 @@ class Day1BF1MController:
             or accounting_phase_ranges != audit_phase_ranges
             or accounting_phase_ranges != context_phase_ranges
             or audit_phase_set_counts != accounting_phase_set_counts
-            or complete_schedule_audit.phase_window_counts
-            != accounting_phase_window_counts
-            or complete_schedule_audit.phase_query_counts
-            != accounting_phase_query_counts
-            or complete_schedule_audit.complete_window_count
-            != accounting.realized_window_count
+            or complete_schedule_audit.phase_window_counts != accounting_phase_window_counts
+            or complete_schedule_audit.phase_query_counts != accounting_phase_query_counts
+            or complete_schedule_audit.complete_window_count != accounting.realized_window_count
             or context.complete_window_count != accounting.realized_window_count
             or context.query_window_count != accounting.realized_query_window_count
             or context.zero_query_window_count != expected_zero_query_windows
@@ -1074,10 +1413,8 @@ class Day1BF1MController:
             or context.complete_phase_audit_root_sha256
             != complete_schedule_audit.complete_phase_audit_root_sha256
             or context.accounting_sha256 != accounting.accounting_sha256
-            or context.query_window_stream_sha256
-            != accounting.query_window_stream_sha256
-            or tuple(self._phase_query_window_counts)
-            != accounting_phase_query_window_counts
+            or context.query_window_stream_sha256 != accounting.query_window_stream_sha256
+            or tuple(self._phase_query_window_counts) != accounting_phase_query_window_counts
         ):
             raise Day1BF1MAggregationError(
                 "F1-M context, accounting, and complete-window audit do not reconcile"
@@ -1097,100 +1434,54 @@ class Day1BF1MController:
             raise Day1BF1MAggregationError(
                 "F1-M controller phase query totals differ from accounting"
             )
-        route_coverage_sha256 = _sha256(
-            {
-                "controller_context_sha256": context.context_sha256,
-                "day2_outer_archive_sha256": (
-                    self._size_authority.day2_outer_archive_sha256
-                ),
-                "element_count": self._query_window_count,
-                "element_stream_sha256": self._route_stream_hasher.hexdigest(),
-                "phase_dummy_route_counts": dict(
-                    zip(_PHASES, self._dummy_counts, strict=True)
-                ),
-                "phase_query_counts": dict(
-                    zip(_PHASES, self._phase_query_counts, strict=True)
-                ),
-                "phase_query_window_counts": dict(
-                    zip(_PHASES, self._phase_query_window_counts, strict=True)
-                ),
-                "phase_random_route_counts": dict(
-                    zip(_PHASES, self._random_counts, strict=True)
-                ),
-                "schema_version": DAY1B_F1M_ROUTE_COVERAGE_SCHEMA,
-                "serialized_object_size_profile_sha256": (
-                    self._size_authority.serialized_object_size_profile_sha256
-                ),
-            }
+        route_coverage = Day1BF1MRouteCoverage(
+            controller_context_sha256=context.context_sha256,
+            day2_outer_archive_sha256=self._size_authority.day2_outer_archive_sha256,
+            element_count=self._query_window_count,
+            element_stream_sha256=self._route_stream_hasher.hexdigest(),
+            phase_dummy_route_counts=tuple(self._dummy_counts),  # type: ignore[arg-type]
+            phase_query_counts=tuple(self._phase_query_counts),  # type: ignore[arg-type]
+            phase_query_window_counts=tuple(
+                self._phase_query_window_counts
+            ),  # type: ignore[arg-type]
+            phase_random_route_counts=tuple(self._random_counts),  # type: ignore[arg-type]
+            serialized_object_size_profile_sha256=(
+                self._size_authority.serialized_object_size_profile_sha256
+            ),
         )
-        charged: list[Day1BF1MChargedSizeClass] = []
-        category_sizes = {
-            "random-zero-sum": (
-                self._size_authority.f1m_random_zero_sum_ciphertext_bytes
-            ),
-            "encrypted-zero-dummy": (
-                self._size_authority.f1m_encrypted_zero_dummy_ciphertext_bytes
-            ),
-        }
-        for phase in self._retained_phases:
-            phase_index = _PHASES.index(phase)
-            for kind, counts in (
-                ("random-zero-sum", self._random_counts),
-                ("encrypted-zero-dummy", self._dummy_counts),
-            ):
-                multiplicity = counts[phase_index]
-                if multiplicity == 0:
-                    continue
-                charged.append(
-                    Day1BF1MChargedSizeClass(
-                        phase=phase,
-                        category=_CATEGORY_BY_KIND[kind],
-                        f1m_kind=kind,
-                        multiplicity=multiplicity,
-                        ciphertext_bytes=category_sizes[kind],
-                        serialized_size_profile_key=_SIZE_PROFILE_KEY_BY_KIND[kind],
-                        serialized_object_size_profile_sha256=(
-                            self._size_authority.serialized_object_size_profile_sha256
-                        ),
-                        day2_outer_archive_sha256=(
-                            self._size_authority.day2_outer_archive_sha256
-                        ),
-                    )
-                )
+        charged = derive_day1b_f1m_charged_size_classes(
+            retained_phases=self._retained_phases,
+            phase_random_route_counts=tuple(self._random_counts),  # type: ignore[arg-type]
+            phase_dummy_route_counts=tuple(self._dummy_counts),  # type: ignore[arg-type]
+            size_authority=self._size_authority,
+        )
         summary = Day1BF1MControllerSummary(
             context=context,
             size_authority=self._size_authority,
             retained_phases=self._retained_phases,
             query_window_stream_sha256=query_window_stream_sha256,
-            route_coverage_sha256=route_coverage_sha256,
+            route_coverage=route_coverage,
             query_window_count=self._query_window_count,
             phase_query_window_counts=tuple(self._phase_query_window_counts),  # type: ignore[arg-type]
             phase_query_counts=tuple(self._phase_query_counts),  # type: ignore[arg-type]
             phase_random_route_counts=tuple(self._random_counts),  # type: ignore[arg-type]
             phase_dummy_route_counts=tuple(self._dummy_counts),  # type: ignore[arg-type]
-            charged_size_classes=tuple(charged),
-            serialized_object_bytes_maximum=(
-                self._serialized_object_bytes_maximum
-            ),
+            charged_size_classes=charged,
+            serialized_object_bytes_maximum=(self._serialized_object_bytes_maximum),
             serialized_payload_bytes_per_cell_maximum=(
                 self._serialized_payload_bytes_per_cell_maximum
             ),
         )
-        # This is the necessary F1-M logical charge bound only. The worker protocol
-        # separately enforces the total update + query + one-time payload-byte cap.
-        if (
-            summary.logical_charged_byte_count
-            > self._serialized_payload_bytes_per_cell_maximum
-        ):
-            raise Day1BF1MAggregationError(
-                "logical F1-M charged bytes exceed the frozen per-cell payload cap"
-            )
+        # Logical charge prices the exact scheduled multiplicity; it does not
+        # allocate or retain those bytes.  The worker protocol independently
+        # enforces this physical serialized-payload cap on its streamed objects.
         return summary
 
 
 __all__ = (
     "DAY1B_F1M_ACCOUNTING_BASIS",
     "DAY1B_F1M_CHARGED_SIZE_CLASS_SCHEMA",
+    "DAY1B_F1M_CHARGED_SIZE_CLASS_SET_SCHEMA",
     "DAY1B_F1M_CONTROLLER_CONTEXT_SCHEMA",
     "DAY1B_F1M_CONTROLLER_SUMMARY_SCHEMA",
     "DAY1B_F1M_MAX_CHARGED_SIZE_CLASS_RECEIPTS_PER_CELL",
@@ -1202,5 +1493,8 @@ __all__ = (
     "Day1BF1MControllerContext",
     "Day1BF1MControllerSummary",
     "Day1BF1MPhaseBoundary",
+    "Day1BF1MRouteCoverage",
     "Day1BSerializedObjectSizeAuthority",
+    "canonical_day1b_f1m_charged_size_class_set_sha256",
+    "derive_day1b_f1m_charged_size_classes",
 )

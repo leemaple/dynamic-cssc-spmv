@@ -17,11 +17,13 @@ from dynamic_cssc.publication_day1b_accounting import (
 from dynamic_cssc.publication_day1b_f1m_aggregation import (
     DAY1B_F1M_MAX_CHARGED_SIZE_CLASS_RECEIPTS_PER_CELL,
     Day1BF1MAggregationError,
+    Day1BF1MChargedSizeClass,
     Day1BF1MCompletePhaseAudit,
     Day1BF1MCompleteScheduleAudit,
     Day1BF1MController,
     Day1BF1MControllerContext,
     Day1BF1MPhaseBoundary,
+    Day1BF1MRouteCoverage,
     Day1BSerializedObjectSizeAuthority,
 )
 from dynamic_cssc.simulator import F1MRouteAccounting, QueryPlanAccounting
@@ -107,9 +109,7 @@ def _window(
             version_id=f"version-{identity}",
             cloud_program_digest=hashlib.sha256(f"cloud:{identity}".encode()).hexdigest(),
             output_plan_digest=hashlib.sha256(f"output:{identity}".encode()).hexdigest(),
-            execution_binding_digest=hashlib.sha256(
-                f"execution:{identity}".encode()
-            ).hexdigest(),
+            execution_binding_digest=hashlib.sha256(f"execution:{identity}".encode()).hexdigest(),
             private_plan_digest=hashlib.sha256(f"private:{identity}".encode()).hexdigest(),
             returned_share_count=len(routes),
             f1m_routes=routes,
@@ -147,9 +147,7 @@ def _accounting(
                 accepted_group_end=end,
                 realized_window_count=len(selected) + 1,
                 realized_set_count=sum(window.set_count for window in selected),
-                realized_net_update_count=sum(
-                    window.net_update_count for window in selected
-                ),
+                realized_net_update_count=sum(window.net_update_count for window in selected),
                 realized_query_count=sum(window.query_count for window in selected),
                 query_window_count=len(selected),
                 query_window_stream_sha256=_digest(
@@ -208,9 +206,8 @@ def _context(
     phase_window_counts = tuple(phase.realized_window_count for phase in accounting.phases)
     return Day1BF1MControllerContext(
         publication_source_git_sha="1" * 40,
-        publication_behavior_set_schema_version=(
-            "dynamic-cssc-day1b-preparatory-behavior-set-v11"
-        ),
+        trace_source_git_sha="2" * 40,
+        publication_behavior_set_schema_version=("dynamic-cssc-day1b-preparatory-behavior-set-v11"),
         publication_behavior_inventory_sha256="5" * 64,
         terminal_registration_sha256="6" * 64,
         day1_registration_anchor_sha256="7" * 64,
@@ -270,9 +267,7 @@ def _summary(
         f1m_policy=f1m_policy,
         size_authority=size_authority or _authority(),
         serialized_object_bytes_maximum=10_000,
-        serialized_payload_bytes_per_cell_maximum=(
-            serialized_payload_bytes_per_cell_maximum
-        ),
+        serialized_payload_bytes_per_cell_maximum=(serialized_payload_bytes_per_cell_maximum),
     )
     for window in windows:
         controller.accept_query_window(window)
@@ -316,9 +311,7 @@ def test_cross_window_charging_keeps_route_coverage_but_materializes_four_classe
     assert summary.phase_random_route_counts == (0, 2, 6)
     assert summary.phase_dummy_route_counts == (0, 2, 3)
     assert len(summary.charged_size_classes) == 4
-    assert len(summary.charged_size_classes) <= (
-        DAY1B_F1M_MAX_CHARGED_SIZE_CLASS_RECEIPTS_PER_CELL
-    )
+    assert len(summary.charged_size_classes) <= (DAY1B_F1M_MAX_CHARGED_SIZE_CLASS_RECEIPTS_PER_CELL)
     assert summary.logical_charged_byte_count == 14_800
     assert {item.ciphertext_bytes for item in summary.charged_size_classes} == {
         1100,
@@ -337,15 +330,13 @@ def test_cross_window_charging_keeps_route_coverage_but_materializes_four_classe
     assert summary.serialized_object_bytes_maximum == 10_000
     assert summary.serialized_payload_bytes_per_cell_maximum == 1_000_000
     assert summary.to_document()["serialized_object_bytes_maximum"] == 10_000
-    assert (
-        summary.to_document()["serialized_payload_bytes_per_cell_maximum"]
-        == 1_000_000
-    )
+    assert summary.to_document()["serialized_payload_bytes_per_cell_maximum"] == 1_000_000
 
 
 @pytest.mark.parametrize(
     "field",
     (
+        "trace_source_git_sha",
         "trace_manifest_sha256",
         "candidate_catalog_sha256",
         "resource_policy_sha256",
@@ -353,7 +344,10 @@ def test_cross_window_charging_keeps_route_coverage_but_materializes_four_classe
 )
 def test_context_root_binds_trace_catalog_and_resource_policy(field: str) -> None:
     original = _context(())
-    changed = replace(original, **{field: "f" * 64})
+    changed = replace(
+        original,
+        **{field: "f" * (40 if field == "trace_source_git_sha" else 64)},
+    )
 
     assert original.context_sha256 != changed.context_sha256
 
@@ -650,7 +644,7 @@ def test_finish_recomputes_every_accounting_and_full_window_context_root(
         )
 
 
-def test_size_and_per_cell_payload_caps_are_enforced_before_evidence() -> None:
+def test_object_size_cap_is_enforced_before_evidence() -> None:
     with pytest.raises(Day1BF1MAggregationError, match="object-byte cap"):
         Day1BF1MController(
             accepted_group_count=100,
@@ -671,6 +665,8 @@ def test_size_and_per_cell_payload_caps_are_enforced_before_evidence() -> None:
             serialized_payload_bytes_per_cell_maximum=1_000_000,
         )
 
+
+def test_logical_charge_is_not_compared_with_the_physical_worker_payload_cap() -> None:
     window = _window(
         phase="held-out",
         index=20,
@@ -682,11 +678,13 @@ def test_size_and_per_cell_payload_caps_are_enforced_before_evidence() -> None:
         dummy_routes=0,
         identity="payload-cap",
     )
-    with pytest.raises(Day1BF1MAggregationError, match="payload cap"):
-        _summary(
-            (window,),
-            serialized_payload_bytes_per_cell_maximum=3_299,
-        )
+    summary = _summary(
+        (window,),
+        serialized_payload_bytes_per_cell_maximum=3_299,
+    )
+
+    assert summary.logical_charged_byte_count == 3_300
+    assert summary.serialized_payload_bytes_per_cell_maximum == 3_299
 
 
 def test_each_charged_f1m_document_fits_the_inclusive_jsonl_bound() -> None:
@@ -704,15 +702,30 @@ def test_each_charged_f1m_document_fits_the_inclusive_jsonl_bound() -> None:
     summary = _summary((window,))
 
     assert all(
-        len(_canonical(item.to_document())) <= 2_048
-        for item in summary.charged_size_classes
+        len(_canonical(item.to_document())) <= 2_048 for item in summary.charged_size_classes
     )
-    assert {
-        item.serialized_size_profile_key for item in summary.charged_size_classes
-    } == {
+    assert {item.serialized_size_profile_key for item in summary.charged_size_classes} == {
         "f1m_random_zero_sum_ciphertext_bytes",
         "f1m_encrypted_zero_dummy_ciphertext_bytes",
     }
+
+
+def test_logical_charge_round_trips_exactly_above_binary64_integer_range() -> None:
+    charge = Day1BF1MChargedSizeClass(
+        phase="held-out",
+        category="query-f1m-random-mask-ciphertexts",
+        f1m_kind="random-zero-sum",
+        multiplicity=(2**53 // 1_100) + 1,
+        ciphertext_bytes=1_100,
+        serialized_size_profile_key="f1m_random_zero_sum_ciphertext_bytes",
+        serialized_object_size_profile_sha256="4" * 64,
+        day2_outer_archive_sha256="3" * 64,
+    )
+    decoded = json.loads(_canonical(charge.to_document()))
+
+    assert charge.charged_byte_count > 2**53
+    assert type(decoded["charged_byte_count"]) is int
+    assert decoded["charged_byte_count"] == charge.charged_byte_count
 
 
 @pytest.mark.parametrize(
@@ -730,3 +743,70 @@ def test_size_authority_rejects_unanchored_or_nonpositive_sizes(
 ) -> None:
     with pytest.raises(Day1BF1MAggregationError):
         replace(_authority(), **{field: value})
+
+
+def test_controller_summary_opens_exact_context_and_route_coverage_preimages() -> None:
+    summary = _summary(
+        (
+            _window(
+                phase="tuning-prefix",
+                index=0,
+                accepted_start=10,
+                accepted_end=40,
+                first_query=0,
+                query_count=3,
+                random_routes=1,
+                dummy_routes=1,
+                identity="open-preimages",
+            ),
+        )
+    )
+    document = summary.to_document()
+
+    assert document["schema_version"].endswith("-v4")
+    assert Day1BF1MControllerContext.from_document(document["controller_context"]) == (
+        summary.context
+    )
+    assert Day1BF1MRouteCoverage.from_document(document["route_coverage"]) == (
+        summary.route_coverage
+    )
+    assert _digest(document["controller_context"]) == document["controller_context_sha256"]
+    assert _digest(document["route_coverage"]) == document["route_coverage_sha256"]
+
+
+@pytest.mark.parametrize(
+    "preimage",
+    ("context-derived-ordinal", "context-extra-key", "route-count", "route-extra-key"),
+)
+def test_open_controller_preimages_reject_noncanonical_mutations(preimage: str) -> None:
+    summary = _summary(
+        (
+            _window(
+                phase="held-out",
+                index=0,
+                accepted_start=40,
+                accepted_end=100,
+                first_query=0,
+                query_count=2,
+                random_routes=1,
+                dummy_routes=1,
+                identity="reject-preimage",
+            ),
+        )
+    )
+    if preimage.startswith("context"):
+        document = summary.context.to_document()
+        if preimage == "context-derived-ordinal":
+            document["first_query_ordinal"] = 1
+        else:
+            document["unexpected"] = True
+        with pytest.raises(Day1BF1MAggregationError):
+            Day1BF1MControllerContext.from_document(document)
+    else:
+        document = summary.route_coverage.to_document()
+        if preimage == "route-count":
+            document["element_count"] += 1
+        else:
+            document["unexpected"] = True
+        with pytest.raises(Day1BF1MAggregationError):
+            Day1BF1MRouteCoverage.from_document(document)

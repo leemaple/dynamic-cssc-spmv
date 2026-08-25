@@ -19,10 +19,18 @@ from typing import BinaryIO
 import pytest
 
 import dynamic_cssc.publication_day1b_worker_protocol as worker_protocol
+from dynamic_cssc.publication_day1b_f1m_aggregation import (
+    Day1BF1MCompletePhaseAudit,
+    Day1BF1MCompleteScheduleAudit,
+    Day1BF1MControllerContext,
+    Day1BF1MPhaseBoundary,
+    Day1BF1MRouteCoverage,
+)
 from dynamic_cssc.publication_day1b_worker_protocol import (
     DAY1B_WORKER_EXECUTION_BASIS,
     DAY1B_WORKER_EXPECTED_F1M_REGISTRY_DESCRIPTOR_SCHEMA,
     DAY1B_WORKER_FRAME_SCHEMA,
+    DAY1B_WORKER_INPUT_BINDING_SCHEMA,
     DAY1B_WORKER_MAX_HEADER_BYTES,
     DAY1B_WORKER_RECEIPT_SCHEMA,
     DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES,
@@ -176,6 +184,109 @@ def _contract(
             else expected_serialized_equivalence_class_count
         )
     )
+    phase_names = ("warmup", "tuning-prefix", "held-out")
+    complete_schedule_audit = Day1BF1MCompleteScheduleAudit(
+        tuple(
+            Day1BF1MCompletePhaseAudit(
+                phase=phase,
+                accepted_group_start=audit.accepted_group_start,
+                accepted_group_end=audit.accepted_group_end,
+                realized_window_count=audit.realized_window_count,
+                realized_set_count=audit.realized_set_count,
+                realized_query_count=audit.realized_query_count,
+                consumed_window_audit_stream_sha256=(
+                    audit.consumed_window_audit_stream_sha256
+                ),
+            )
+            for phase, audit in zip(phase_names, selected_audits, strict=True)
+        )
+    )
+    phase_query_window_counts = tuple(
+        audit.realized_window_count if audit.realized_query_count else 0
+        for audit in selected_audits
+    )
+    context = Day1BF1MControllerContext(
+        publication_source_git_sha="0" * 40,
+        trace_source_git_sha="f" * 40,
+        publication_behavior_set_schema_version="test-behavior-set-v1",
+        publication_behavior_inventory_sha256="0" * 64,
+        terminal_registration_sha256="1" * 64,
+        day1_registration_anchor_sha256="2" * 64,
+        trace_post_run_anchor_sha256="3" * 64,
+        acquisition_bundle_sha256="4" * 64,
+        trace_manifest_sha256="1" * 64,
+        candidate_catalog_sha256="4" * 64,
+        resource_policy_sha256="5" * 64,
+        worker_build_identity_sha256="6" * 64,
+        worker_runtime_identity_sha256="7" * 64,
+        dataset_id="test-dataset",
+        dataset_release="test-release",
+        semantics="insert-only",
+        source_partition=0,
+        unit_identity_sha256="8" * 64,
+        cell_binding_sha256="9" * 64,
+        cell_ordinal=0,
+        freshness="0.1",
+        rho="1",
+        candidate_id=selected_candidate.candidate_id,
+        candidate_role=selected_candidate.candidate_role,
+        candidate_policy_sha256=selected_candidate.candidate_policy_digest,
+        retained_phases=selected_candidate.retained_phases,
+        phase_boundaries=tuple(
+            Day1BF1MPhaseBoundary(
+                phase,
+                audit.accepted_group_start,
+                audit.accepted_group_end,
+            )
+            for phase, audit in zip(phase_names, selected_audits, strict=True)
+        ),
+        event_schedule_sha256="2" * 64,
+        query_vector_sha256="3" * 64,
+        accepted_group_count=selected_audits[-1].accepted_group_end,
+        complete_window_count=complete_schedule_audit.complete_window_count,
+        query_window_count=sum(phase_query_window_counts),
+        zero_query_window_count=(
+            complete_schedule_audit.complete_window_count - sum(phase_query_window_counts)
+        ),
+        total_query_count=sum(complete_schedule_audit.phase_query_counts),
+        phase_window_counts=complete_schedule_audit.phase_window_counts,
+        phase_query_counts=complete_schedule_audit.phase_query_counts,
+        complete_window_stream_sha256="a" * 64,
+        complete_phase_audit_root_sha256=(
+            complete_schedule_audit.complete_phase_audit_root_sha256
+        ),
+        accounting_sha256="b" * 64,
+        query_window_stream_sha256="c" * 64,
+    )
+    phase_random_route_counts = tuple(
+        sum(
+            item.multiplicity
+            for item in selected_expected
+            if item.phase == phase
+            and item.category == "query-f1m-random-mask-ciphertexts"
+        )
+        for phase in phase_names
+    )
+    phase_dummy_route_counts = tuple(
+        sum(
+            item.multiplicity
+            for item in selected_expected
+            if item.phase == phase
+            and item.category == "query-f1m-encrypted-zero-dummy-ciphertexts"
+        )
+        for phase in phase_names
+    )
+    route_coverage = Day1BF1MRouteCoverage(
+        controller_context_sha256=context.context_sha256,
+        day2_outer_archive_sha256="7" * 64,
+        element_count=context.query_window_count,
+        element_stream_sha256="d" * 64,
+        phase_dummy_route_counts=phase_dummy_route_counts,
+        phase_query_counts=context.phase_query_counts,
+        phase_query_window_counts=phase_query_window_counts,
+        phase_random_route_counts=phase_random_route_counts,
+        serialized_object_size_profile_sha256="8" * 64,
+    )
     return Day1BWorkerProtocolContract(
         invocation_id="6" * 64,
         trace_manifest_sha256="1" * 64,
@@ -206,8 +317,10 @@ def _contract(
             ("evaluation-keys", "one-time"),
         ),
         f1m_size_class_categories=DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES,
-        f1m_controller_context_sha256="a" * 64,
-        f1m_route_coverage_sha256="b" * 64,
+        f1m_controller_context=context,
+        f1m_controller_context_sha256=context.context_sha256,
+        f1m_route_coverage=route_coverage,
+        f1m_route_coverage_sha256=route_coverage.route_coverage_sha256,
         f1m_charged_size_class_set_sha256="c" * 64,
         expected_f1m_size_class_set_sha256=(
             canonical_day1b_expected_f1m_size_class_set_sha256(selected_expected)
@@ -494,9 +607,7 @@ def _fixture_registry_inputs(
                 private_plan_digest=cardinality.private_plan_digest,
                 execution_binding_digest=cardinality.execution_binding_digest,
                 size_class_subroot_sha256=(
-                    canonical_day1b_expected_f1m_size_class_subroot_sha256(
-                        phase_routes[phase]
-                    )
+                    canonical_day1b_expected_f1m_size_class_subroot_sha256(phase_routes[phase])
                 ),
             )
         )
@@ -587,8 +698,7 @@ def _complete_transcript(
             random_route = next(
                 item
                 for item in selected_expected
-                if item.phase == phase
-                and item.category == "query-f1m-random-mask-ciphertexts"
+                if item.phase == phase and item.category == "query-f1m-random-mask-ciphertexts"
             )
             dummy_route = next(
                 item
@@ -797,6 +907,8 @@ def test_streaming_decoder_hashes_payloads_without_retaining_raw_bytes() -> None
     assert hashlib.sha256(expected).hexdigest().encode() in spooled
     assert b"reference-a:tuning-prefix:update" not in _canonical_bytes(receipt.to_document())
     assert receipt.input_binding_sha256 == contract.input_binding_sha256
+    assert receipt.input_binding_document == contract.input_binding_document()
+    assert receipt.to_document()["input_binding_document"] == contract.input_binding_document()
     assert receipt.controller_expected_serialized_equivalence_class_count == 7
     assert receipt.object_receipt_line_count == 7
     evidence.close()
@@ -952,9 +1064,18 @@ def test_expected_registry_is_bound_to_exact_predispatch_context(splice: str) ->
     if splice == "invocation":
         other = replace(base, invocation_id="7" * 64)
     elif splice == "candidate":
-        other = replace(
-            base,
+        candidate_splice = _contract(
             candidate=replace(base.candidate, candidate_id="reference-b"),
+            expected_f1m_objects=expected,
+            expected_serialized_equivalence_class_count=(
+                base.expected_serialized_equivalence_class_count
+            ),
+        )
+        other = replace(
+            candidate_splice,
+            expected_f1m_cardinality_derivation_root_sha256=(
+                base.expected_f1m_cardinality_derivation_root_sha256
+            ),
         )
     else:
         other = replace(
@@ -1114,15 +1235,11 @@ def test_expected_f1m_registry_checks_controlled_scratch_cap_incrementally() -> 
                 multiplicity=100_000,
                 f1m_size_class=Day1BF1MSizeClass(
                     version_id="version-0001",
-                    output_plan_digest=hashlib.sha256(
-                        b"plan:reference-a:held-out"
-                    ).hexdigest(),
+                    output_plan_digest=hashlib.sha256(b"plan:reference-a:held-out").hexdigest(),
                     component_id=f"component-{ordinal}",
                     output_block_id="block-0",
                     f1m_kind="random-zero-sum",
-                    private_plan_digest=hashlib.sha256(
-                        b"private:reference-a:held-out"
-                    ).hexdigest(),
+                    private_plan_digest=hashlib.sha256(b"private:reference-a:held-out").hexdigest(),
                     execution_binding_digest=hashlib.sha256(
                         b"execution:reference-a:held-out"
                     ).hexdigest(),
@@ -1274,9 +1391,21 @@ def test_anonymous_scratch_capability_is_opaque_single_use_and_context_bound() -
     scratch.close()
 
     capability, contract, audits = _scratch_capability()
+    changed_context = replace(
+        contract.f1m_controller_context,
+        resource_policy_sha256="f" * 64,
+    )
+    changed_coverage = replace(
+        contract.f1m_route_coverage,
+        controller_context_sha256=changed_context.context_sha256,
+    )
     changed = replace(
         contract,
         resource_policy_sha256="f" * 64,
+        f1m_controller_context=changed_context,
+        f1m_controller_context_sha256=changed_context.context_sha256,
+        f1m_route_coverage=changed_coverage,
+        f1m_route_coverage_sha256=changed_coverage.route_coverage_sha256,
     )
     with pytest.raises(Day1BWorkerProtocolError, match="pre-dispatch context"):
         worker_protocol._ControlledScratch(
@@ -2041,9 +2170,7 @@ def test_contract_rejects_full_query_replay_as_the_day1b_execution_basis() -> No
     with pytest.raises(Day1BWorkerProtocolError, match="window-weighted"):
         replace(base, execution_basis="full-query-arrival-replay")
 
-    assert base.input_binding_document()["execution_basis"] == (
-        DAY1B_WORKER_EXECUTION_BASIS
-    )
+    assert base.input_binding_document()["execution_basis"] == (DAY1B_WORKER_EXECUTION_BASIS)
 
 
 def test_successful_transcript_must_match_all_serialized_count_exactly() -> None:
@@ -2124,9 +2251,7 @@ def test_receipt_preserves_weighted_window_batch_and_range_facts() -> None:
     assert receipt.controller_f1m_window_batch_stream_sha256 == (
         descriptor.controller_f1m_window_batch_stream_sha256
     )
-    assert receipt.controller_expected_f1m_phase_query_counts == (
-        descriptor.phase_query_counts
-    )
+    assert receipt.controller_expected_f1m_phase_query_counts == (descriptor.phase_query_counts)
     assert receipt.weighted_query_range_coverage_verified is True
     assert receipt.worker_observed_f1m_materialized_binding_count == 0
     assert receipt.pre_dispatch_context_sha256 == descriptor.pre_dispatch_context_sha256
@@ -2134,10 +2259,13 @@ def test_receipt_preserves_weighted_window_batch_and_range_facts() -> None:
         descriptor.controller_registered_scratch_bytes_checkpoint_maximum
     )
     assert DAY1B_WORKER_RECEIPT_SCHEMA == (
-        "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v5"
+        "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v8"
     )
-    assert 0 < receipt.controller_observed_registered_scratch_peak_bytes <= (
-        receipt.controller_registered_scratch_bytes_checkpoint_maximum
+    assert DAY1B_WORKER_RECEIPT_SCHEMA != DAY1B_WORKER_INPUT_BINDING_SCHEMA
+    assert (
+        0
+        < receipt.controller_observed_registered_scratch_peak_bytes
+        <= (receipt.controller_registered_scratch_bytes_checkpoint_maximum)
     )
     assert receipt.candidate.peak_scratch_bytes == 8_000
     assert receipt.anonymous_scratch_creation_isolation_verified is False
@@ -2152,6 +2280,11 @@ def test_receipt_preserves_weighted_window_batch_and_range_facts() -> None:
     )
     assert receipt.production_execution_admissible is False
     document = receipt.to_document()
+    assert document["f1m_controller_context_sha256"] == (contract.f1m_controller_context_sha256)
+    assert document["f1m_route_coverage_sha256"] == (contract.f1m_route_coverage_sha256)
+    assert document["f1m_charged_size_class_set_sha256"] == (
+        contract.f1m_charged_size_class_set_sha256
+    )
     assert document["controller_observed_registered_scratch_peak_bytes"] == (
         receipt.controller_observed_registered_scratch_peak_bytes
     )
@@ -2272,9 +2405,7 @@ def test_registry_rejects_cardinality_subroot_batch_range_and_input_root_splices
             selected_window_batches=(
                 replace(
                     window_batches[0],
-                    first_global_query_ordinal=(
-                        window_batches[0].first_global_query_ordinal + 1
-                    ),
+                    first_global_query_ordinal=(window_batches[0].first_global_query_ordinal + 1),
                 ),
                 *window_batches[1:],
             )
@@ -2404,18 +2535,37 @@ def test_worker_input_binding_commits_to_aggregate_f1m_summary_roots() -> None:
     contract = _contract()
     document = contract.input_binding_document()
 
-    assert document["schema_version"].endswith("-v6")
-    assert document["f1m_controller_context_sha256"] == "a" * 64
-    assert document["f1m_route_coverage_sha256"] == "b" * 64
+    assert document["schema_version"].endswith("-v7")
+    assert Day1BWorkerProtocolContract.from_input_binding_document(document) == contract
+    assert document["f1m_controller_context_document"] == (
+        contract.f1m_controller_context.to_document()
+    )
+    assert document["f1m_controller_context_sha256"] == (
+        contract.f1m_controller_context.context_sha256
+    )
+    assert document["f1m_route_coverage_document"] == contract.f1m_route_coverage.to_document()
+    assert document["f1m_route_coverage_sha256"] == (
+        contract.f1m_route_coverage.route_coverage_sha256
+    )
     assert document["f1m_charged_size_class_set_sha256"] == "c" * 64
     for field in (
         "f1m_controller_context_sha256",
         "f1m_route_coverage_sha256",
         "f1m_charged_size_class_set_sha256",
     ):
-        assert replace(contract, **{field: "f" * 64}).input_binding_sha256 != (
+        mutated = dict(document)
+        mutated[field] = "f" * 64
+        assert hashlib.sha256(_canonical_bytes(mutated)).hexdigest() != (
             contract.input_binding_sha256
         )
+
+
+def test_worker_input_binding_document_parser_rejects_noncanonical_preimages() -> None:
+    document = _contract().input_binding_document()
+    document["unexpected"] = True
+
+    with pytest.raises(Day1BWorkerProtocolError, match="keys are not exact"):
+        Day1BWorkerProtocolContract.from_input_binding_document(document)
 
 
 def test_every_retained_receipt_line_uses_the_inclusive_aggregate_bound(
@@ -2433,8 +2583,7 @@ def test_every_retained_receipt_line_uses_the_inclusive_aggregate_bound(
 
     assert lines
     assert all(
-        len(line)
-        <= worker_protocol.DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM
+        len(line) <= worker_protocol.DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM
         for line in lines
     )
     assert {document["category"] for document in documents} >= {
@@ -2504,6 +2653,8 @@ def test_launcher_terminal_missing_result_preserves_taxonomy_and_expected_size_c
     assert receipt.object_receipt_line_count == 0
     assert receipt.worker_observed_f1m_materialized_binding_count == 0
     assert receipt.weighted_query_range_coverage_verified is True
+    assert receipt.input_binding_document == contract.input_binding_document()
+    assert receipt.input_binding_sha256 == contract.input_binding_sha256
     evidence.close()
 
 
@@ -3009,14 +3160,8 @@ def test_f1m_representative_payload_digest_may_repeat_across_size_classes() -> N
 
 
 def test_f1m_window_equivalence_class_charges_exact_query_multiplicity() -> None:
-    audits = tuple(
-        replace(audit, realized_query_count=3)
-        for audit in _phase_audits()
-    )
-    expected = tuple(
-        replace(item, multiplicity=3)
-        for item in _expected_f1m_objects("reference-a")
-    )
+    audits = tuple(replace(audit, realized_query_count=3) for audit in _phase_audits())
+    expected = tuple(replace(item, multiplicity=3) for item in _expected_f1m_objects("reference-a"))
     contract = _contract(
         expected_f1m_objects=expected,
         expected_serialized_equivalence_class_count=len(expected) + 3,
@@ -3052,8 +3197,7 @@ def test_f1m_window_equivalence_class_charges_exact_query_multiplicity() -> None
             }
             assert {category.protocol_object_count for category in f1m.values()} == {3}
             assert {
-                category.serialization_equivalence_class_count
-                for category in f1m.values()
+                category.serialization_equivalence_class_count for category in f1m.values()
             } == {1}
 
 

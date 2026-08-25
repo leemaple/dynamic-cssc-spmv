@@ -20,6 +20,7 @@ import pytest
 
 import dynamic_cssc.day1_registry as registry_module
 import dynamic_cssc.publication_day1b as day1b_module
+import dynamic_cssc.publication_day1b_f1m_aggregation as f1m_aggregation
 import dynamic_cssc.publication_day1b_worker_protocol as worker_protocol
 import dynamic_cssc.publication_statistics as statistics_module
 from dynamic_cssc.day1_registry import Day1CandidateCatalog, RegistrationEvidence
@@ -45,6 +46,7 @@ from dynamic_cssc.publication_day1b import (
     produce_publication_day1b_unit,
 )
 from dynamic_cssc.publication_day1b_f1m_aggregation import (
+    Day1BF1MChargedSizeClass,
     Day1BF1MControllerSummary,
 )
 from dynamic_cssc.publication_day1b_worker_protocol import (
@@ -217,9 +219,7 @@ def _resource_amendment_document() -> dict[str, object]:
                 "launcher-controlled-root-high-water-v1"
             ),
             "controlled_scratch_root_policy": "exclusive-inode-bound-root-v1",
-            "controller_scratch_observation_method": (
-                "anonymous-registry-spool-st-size-sum-v1"
-            ),
+            "controller_scratch_observation_method": ("anonymous-registry-spool-st-size-sum-v1"),
             "infrastructure_preemption_classification_method": (
                 "repository-whole-shard-preemption-receipt-v1"
             ),
@@ -246,9 +246,7 @@ def _resource_amendment_document() -> dict[str, object]:
         "state": "RESOURCE-VALUES-FROZEN",
     }
     payload_sha256 = _sha(document)
-    document["amendment_identity"][
-        "resource_policy_amendment_payload_sha256"
-    ] = payload_sha256
+    document["amendment_identity"]["resource_policy_amendment_payload_sha256"] = payload_sha256
     return document
 
 
@@ -428,9 +426,7 @@ def _program(
             query_count = (phase.end * rho.numerator // rho.denominator) - (
                 phase.start * rho.numerator // rho.denominator
             )
-            set_start = sum(
-                group_set_count(ordinal) for ordinal in range(phase.start)
-            )
+            set_start = sum(group_set_count(ordinal) for ordinal in range(phase.start))
             set_count = sum(group_set_count(ordinal) for ordinal in range(phase.start, phase.end))
             yield ExactPublicationWindow(
                 index=index,
@@ -627,6 +623,7 @@ def _worker_transcript(
     *,
     expected_f1m_objects: tuple[Day1BControllerExpectedF1MObject, ...] = (),
     omit_first_one_time: bool = False,
+    failed_phase: str | None = None,
 ) -> bytes:
     frames: list[bytes] = []
     sequence = 0
@@ -649,7 +646,8 @@ def _worker_transcript(
         strict=True,
     ):
         retained = phase in candidate.retained_phases
-        if retained:
+        phase_failed = phase == failed_phase
+        if retained and not phase_failed:
             category_counts: list[int] = []
             for category, transaction in contract.serialized_categories:
                 f1m_routes = tuple(
@@ -702,16 +700,22 @@ def _worker_transcript(
             "phase-result",
             candidate_id=candidate.candidate_id,
             phase=phase,
-            outcome="complete",
-            failure_code=None,
+            outcome=("failed" if phase_failed else "complete"),
+            failure_code=("candidate-execution-failed" if phase_failed else None),
             retained_measurement=retained,
             update_primitive_counts=(
-                [seed + index for index in range(len(PRIMITIVE_NAMES))] if retained else None
+                [seed + index for index in range(len(PRIMITIVE_NAMES))]
+                if retained and not phase_failed
+                else None
             ),
             query_primitive_counts=(
-                [seed + 100 + index for index in range(len(PRIMITIVE_NAMES))] if retained else None
+                [seed + 100 + index for index in range(len(PRIMITIVE_NAMES))]
+                if retained and not phase_failed
+                else None
             ),
-            serialized_category_object_counts=(category_counts if retained else None),
+            serialized_category_object_counts=(
+                category_counts if retained and not phase_failed else None
+            ),
             phase_audit=audit.to_document(),
         )
     emit(
@@ -734,6 +738,7 @@ class _StreamingExecutor:
         self.calls: list[tuple[Fraction, Fraction, str, int]] = []
         self.f1m_summaries: list[Day1BF1MControllerSummary] = []
         self.terminal_failure_codes: dict[int, str] = {}
+        self.worker_failed_phases: dict[int, str] = {}
         self.observation_overrides: dict[int, dict[str, int]] = {}
         self.emit_f1m_routes = False
         self.omit_first_one_time = False
@@ -816,9 +821,7 @@ class _StreamingExecutor:
                         private_plan_digest=private_plan_digest,
                         execution_binding_digest=execution_binding_digest,
                         size_class_subroot_sha256=(
-                            canonical_day1b_expected_f1m_size_class_subroot_sha256(
-                                query_routes
-                            )
+                            canonical_day1b_expected_f1m_size_class_subroot_sha256(query_routes)
                         ),
                     )
                 )
@@ -837,9 +840,7 @@ class _StreamingExecutor:
                     f1m_policy=seed.candidate.f1m_policy,
                     returned_share_count=int(self.emit_f1m_routes),
                     overlap_masked_share_count=int(self.emit_f1m_routes),
-                    expected_random_route_count=sum(
-                        route.multiplicity for route in phase_routes
-                    ),
+                    expected_random_route_count=sum(route.multiplicity for route in phase_routes),
                     expected_dummy_route_count=0,
                     expected_size_class_subroot_sha256=(
                         canonical_day1b_expected_f1m_size_class_subroot_sha256(tuple(phase_routes))
@@ -922,6 +923,7 @@ class _StreamingExecutor:
                             audits,
                             expected_f1m_objects=expected_f1m_objects,
                             omit_first_one_time=self.omit_first_one_time,
+                            failed_phase=self.worker_failed_phases.get(call_index),
                         ),
                     )
                 ),
@@ -1000,9 +1002,9 @@ def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
         "trace_bundle_dir",
         "output_dir",
     )
-    assert tuple(
-        signature(day1b_module._repository_day1b_profile_anchor_authority).parameters
-    ) == ()
+    assert (
+        tuple(signature(day1b_module._repository_day1b_profile_anchor_authority).parameters) == ()
+    )
     assert tuple(signature(day1b_module._repository_trace_anchor_authority).parameters) == ()
     assert tuple(signature(day1b_module._repository_day1b_resource_policy).parameters) == ()
     assert tuple(signature(day1b_module._repository_day1b_execution_adapter).parameters) == (
@@ -1239,8 +1241,7 @@ def test_repository_resource_policy_uses_reviewed_amendment_without_granting_aut
 
     assert policy == amendment.resource_policy
     assert policy.authority == (
-        "non-authorizing-resource-amendment-binding:"
-        f"{amendment.amendment_payload_sha256}"
+        f"non-authorizing-resource-amendment-binding:{amendment.amendment_payload_sha256}"
     )
 
 
@@ -1297,9 +1298,10 @@ def test_resource_amendment_decoder_is_resource_only_and_non_authorizing() -> No
     assert decoded.state == "RESOURCE-VALUES-FROZEN"
     assert decoded.amendment_id == "day1b-resource-amendment-001"
     assert decoded.canonical_sha256 == hashlib.sha256(content).hexdigest()
-    assert decoded.amendment_payload_sha256 == document["amendment_identity"][
-        "resource_policy_amendment_payload_sha256"
-    ]
+    assert (
+        decoded.amendment_payload_sha256
+        == document["amendment_identity"]["resource_policy_amendment_payload_sha256"]
+    )
     assert decoded.schema_source_git_sha == "6" * 40
     assert decoded.schema_source_behavior_inventory_sha256 == "5" * 64
     assert decoded.structure_pilot_source_git_sha == "4" * 40
@@ -1309,8 +1311,7 @@ def test_resource_amendment_decoder_is_resource_only_and_non_authorizing() -> No
     assert decoded.resource_policy.max_concurrency == 1
     assert decoded.resource_policy.candidate_retry_count == 0
     assert decoded.resource_policy.authority == (
-        "non-authorizing-resource-amendment-binding:"
-        f"{decoded.amendment_payload_sha256}"
+        f"non-authorizing-resource-amendment-binding:{decoded.amendment_payload_sha256}"
     )
     assert set(document) == {
         "amendment_identity",
@@ -1385,9 +1386,7 @@ def test_resource_amendment_rejects_authority_and_nonclosed_values(
     elif mutation == "schema-source":
         document["schema_source"]["git_sha"] = "6" * 64
     else:
-        document["amendment_identity"][
-            "resource_policy_amendment_payload_sha256"
-        ] = "f" * 64
+        document["amendment_identity"]["resource_policy_amendment_payload_sha256"] = "f" * 64
 
     with pytest.raises(ValueError):
         day1b_module._decode_day1b_resource_amendment(_canonical_bytes(document))
@@ -1486,6 +1485,28 @@ def _complete_unit_fixture(
     return bundle, executor
 
 
+def test_day1b_schema_names_are_unambiguous_across_exact_key_contracts() -> None:
+    schemas = {
+        name: value
+        for name, value in vars(day1b_module).items()
+        if name.endswith("_SCHEMA") and type(value) is str
+    }
+
+    assert DAY1B_UNIT_SCHEMA == "dynamic-cssc-publication-day1b-unit-v2"
+    assert DAY1B_UNIT_FRAGMENT_SCHEMA == ("dynamic-cssc-publication-day1b-unit-fragment-v1")
+    assert len(set(schemas.values())) == len(schemas)
+    retained_document_families = (
+        DAY1B_UNIT_SCHEMA,
+        day1b_module.DAY1B_SERIALIZATION_LEDGER_SCHEMA,
+        f1m_aggregation.DAY1B_F1M_CONTROLLER_SUMMARY_SCHEMA,
+        f1m_aggregation.DAY1B_F1M_CONTROLLER_CONTEXT_SCHEMA,
+        f1m_aggregation.DAY1B_F1M_ROUTE_COVERAGE_SCHEMA,
+        worker_protocol.DAY1B_WORKER_INPUT_BINDING_SCHEMA,
+        worker_protocol.DAY1B_WORKER_RECEIPT_SCHEMA,
+    )
+    assert len(set(retained_document_families)) == len(retained_document_families)
+
+
 def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
     _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
 ) -> None:
@@ -1501,7 +1522,7 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
     records = fragment["records"]
 
     assert manifest["schema_version"] == (
-        "dynamic-cssc-publication-day1b-unit-private-test-fixture-v1"
+        "dynamic-cssc-publication-day1b-unit-private-test-fixture-v2"
     )
     assert manifest["artifact_variant"] == {
         "claims_authorized": False,
@@ -1512,6 +1533,14 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
     assert fragment["schema_version"] == (
         "dynamic-cssc-publication-day1b-unit-fragment-private-test-fixture-v1"
     )
+    assert manifest["serialized_object_size_authority"] == {
+        "schema_version": day1b_module.DAY1B_SERIALIZED_OBJECT_SIZE_AUTHORITY_SCHEMA,
+        **executor.f1m_summaries[0].size_authority.to_document(),
+    }
+    assert manifest["candidate_catalog"]["candidate_policies"] == [
+        day1b_module._candidate_policy_document(candidate)
+        for candidate in _catalog().candidates
+    ]
     assert trace_unit["schema_version"] == TRACE_UNIT_SCHEMA
     assert set(trace_unit) == statistics_module._TRACE_UNIT_KEYS
     assert len(cells) == 18
@@ -1530,9 +1559,7 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
         list(FIXED_CANDIDATE_IDS) * 18
     )
     assert [summary.context.cell_ordinal for summary in executor.f1m_summaries] == [
-        cell_ordinal
-        for cell_ordinal in range(18)
-        for _candidate_id in FIXED_CANDIDATE_IDS
+        cell_ordinal for cell_ordinal in range(18) for _candidate_id in FIXED_CANDIDATE_IDS
     ]
     assert all(
         summary.context.complete_window_count == 3
@@ -1540,10 +1567,7 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
         == summary.context.query_window_count + summary.context.zero_query_window_count
         for summary in executor.f1m_summaries
     )
-    assert any(
-        summary.context.zero_query_window_count > 0
-        for summary in executor.f1m_summaries
-    )
+    assert any(summary.context.zero_query_window_count > 0 for summary in executor.f1m_summaries)
     assert [cell["freshness_seconds"] for cell in cells] == [
         freshness for freshness in FRESHNESS_VALUES for _rho in RHO_VALUES
     ]
@@ -1590,6 +1614,97 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
     ]
     assert set(records[0]["update_primitive_counts"]) == set(PRIMITIVE_NAMES)
     decoded_ledgers = [json.loads(line) for line in ledger_lines]
+    cell_index_by_binding = {cell["cell_binding_sha256"]: index for index, cell in enumerate(cells)}
+    summary_by_candidate_cell = {
+        (summary.context.cell_ordinal, summary.context.candidate_id): summary
+        for summary in executor.f1m_summaries
+    }
+    assert len(summary_by_candidate_cell) == 252
+    for cell_index, receipt in enumerate(manifest["cell_execution_receipts"]):
+        for candidate_id, worker_receipt in zip(
+            FIXED_CANDIDATE_IDS,
+            receipt["candidate_cell_receipts"],
+            strict=True,
+        ):
+            summary = summary_by_candidate_cell[(cell_index, candidate_id)]
+            assert len(_canonical_bytes(worker_receipt)) <= (
+                day1b_module._DAY1B_WORKER_RECEIPT_CANONICAL_BYTES_MAXIMUM
+            )
+            assert worker_receipt["f1m_controller_context_sha256"] == (
+                summary.context.context_sha256
+            )
+            assert worker_receipt["f1m_route_coverage_sha256"] == (summary.route_coverage_sha256)
+            assert worker_receipt["f1m_charged_size_class_set_sha256"] == (
+                summary.charged_size_class_set_sha256
+            )
+            input_binding_document = worker_receipt["input_binding_document"]
+            assert _sha(input_binding_document) == worker_receipt["input_binding_sha256"]
+            assert len(_canonical_bytes(input_binding_document)) < (
+                worker_protocol.DAY1B_WORKER_MAX_HEADER_BYTES
+            )
+            assert input_binding_document["f1m_controller_context_document"] == (
+                summary.context.to_document()
+            )
+            assert input_binding_document["f1m_controller_context_document"][
+                "trace_source_git_sha"
+            ] == manifest["trace_source"]["git_sha"]
+            assert input_binding_document["f1m_controller_context_sha256"] == (
+                summary.context.context_sha256
+            )
+            assert input_binding_document["f1m_route_coverage_document"] == (
+                summary.route_coverage.to_document()
+            )
+            assert input_binding_document["f1m_route_coverage_sha256"] == (
+                summary.route_coverage_sha256
+            )
+            assert (
+                input_binding_document["f1m_charged_size_class_set_sha256"]
+                == summary.charged_size_class_set_sha256
+            )
+    controller_charges: list[int] = []
+    for record, ledger in zip(records, decoded_ledgers, strict=True):
+        cell_index = cell_index_by_binding[record["cell_binding_sha256"]]
+        summary = summary_by_candidate_cell[(cell_index, record["candidate_id"])]
+        expected_classes = {
+            (item.phase, item.category): item.to_document() for item in summary.charged_size_classes
+        }
+        assert ledger["schema_version"] == day1b_module.DAY1B_SERIALIZATION_LEDGER_SCHEMA
+        assert ledger["f1m_controller_context_sha256"] == (summary.context.context_sha256)
+        assert ledger["f1m_route_coverage_sha256"] == summary.route_coverage_sha256
+        assert ledger["f1m_charged_size_class_set_sha256"] == (
+            summary.charged_size_class_set_sha256
+        )
+        assert record["update_serialized_bytes"] == ledger["update_serialized_bytes"]
+        assert (
+            record["query_serialized_bytes"]
+            == (ledger["query_serialized_bytes_including_controller_charge"])
+        )
+        assert ledger["query_serialized_bytes_including_controller_charge"] == (
+            ledger["query_serialized_bytes"] + ledger["controller_charged_query_bytes"]
+        )
+        expected_controller_total = 0
+        for row in ledger["categories"]:
+            if row["category"] in worker_protocol.DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES:
+                assert row["charge_authority"] == ("controller-anchored-day2-size-class")
+                assert row["charged_byte_count"] == 0
+                assert row["protocol_object_count"] == 0
+                assert row["serialization_equivalence_class_count"] == 0
+                expected_class = expected_classes.get((record["phase"], row["category"]))
+                assert row["controller_charged_size_class"] == expected_class
+                expected_charge = (
+                    0 if expected_class is None else expected_class["charged_byte_count"]
+                )
+                assert row["controller_charged_byte_count"] == expected_charge
+                expected_controller_total += expected_charge
+            else:
+                assert row["charge_authority"] == "worker-streamed-spool"
+                assert row["controller_charged_byte_count"] == 0
+                assert row["controller_charged_size_class"] is None
+        assert ledger["controller_charged_query_bytes"] == expected_controller_total
+        controller_charges.append(expected_controller_total)
+    assert any(charge > 0 for charge in controller_charges)
+    assert bundle.manifest_path.stat().st_size <= day1b_module._DAY1B_MANIFEST_BYTES_MAXIMUM
+
     for cell_index in range(18):
         cell_ledgers = decoded_ledgers[cell_index * 27 : (cell_index + 1) * 27]
         one_time_counts = [
@@ -1679,6 +1794,40 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
     assert verified.manifest_sha256 == bundle.manifest_sha256
 
 
+@pytest.mark.parametrize(
+    "mutation",
+    ("duplicate", "order", "missing", "ciphertext", "profile", "day2"),
+)
+def test_controller_summary_rejects_noncanonical_charged_classes(
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+    mutation: str,
+) -> None:
+    _bundle, executor = _complete_unit_fixture
+    summary = next(item for item in executor.f1m_summaries if len(item.charged_size_classes) >= 2)
+    classes: list[Day1BF1MChargedSizeClass] = list(summary.charged_size_classes)
+    first = classes[0]
+    if mutation == "duplicate":
+        classes[1] = replace(
+            classes[1],
+            phase=first.phase,
+            category=first.category,
+            f1m_kind=first.f1m_kind,
+            serialized_size_profile_key=first.serialized_size_profile_key,
+        )
+    elif mutation == "order":
+        classes.reverse()
+    elif mutation == "missing":
+        classes.pop(0)
+    elif mutation == "ciphertext":
+        classes[0] = replace(first, ciphertext_bytes=first.ciphertext_bytes + 1)
+    elif mutation == "profile":
+        classes[0] = replace(first, serialized_object_size_profile_sha256="f" * 64)
+    elif mutation == "day2":
+        classes[0] = replace(first, day2_outer_archive_sha256="f" * 64)
+    with pytest.raises(ValueError, match="do not exactly derive"):
+        replace(summary, charged_size_classes=tuple(classes))
+
+
 def test_prepared_day1b_staging_installs_through_shared_descriptor_seam(
     tmp_path: Path,
     _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
@@ -1735,6 +1884,32 @@ def _rewrite_manifest_and_checksums(root: Path, manifest: dict[str, object]) -> 
         )
     )
     (root / "SHA256SUMS").write_bytes(checksums)
+
+
+def _rehash_open_input_receipt(receipt: dict[str, object]) -> None:
+    receipt["input_binding_sha256"] = _sha(receipt["input_binding_document"])
+    receipt["worker_candidate_cell_receipt_sha256"] = _sha(
+        {
+            key: value
+            for key, value in receipt.items()
+            if key != "worker_candidate_cell_receipt_sha256"
+        }
+    )
+
+
+def _rewrite_serialization_ledgers(
+    root: Path,
+    ledgers: list[dict[str, object]],
+) -> None:
+    ledger_bytes = b"".join(_canonical_bytes(ledger) for ledger in ledgers)
+    ledger_path = root / "serialized-object-ledgers.jsonl"
+    ledger_path.write_bytes(ledger_bytes)
+    manifest = json.loads((root / "publication-day1b-unit-manifest.json").read_bytes())
+    manifest["members"]["serialized-object-ledgers.jsonl"] = {
+        "byte_count": len(ledger_bytes),
+        "sha256": hashlib.sha256(ledger_bytes).hexdigest(),
+    }
+    _rewrite_manifest_and_checksums(root, manifest)
 
 
 def _rewrite_as_production_variant(root: Path) -> None:
@@ -1924,7 +2099,263 @@ def test_day1b_verifier_rejects_rehashed_incomplete_weighted_size_class_receipt(
     )
     _rewrite_manifest_and_checksums(root, manifest)
 
-    with pytest.raises(ValueError, match="cover every expected F1-M size class"):
+    with pytest.raises(ValueError, match="open exact input binding|input binding retargets"):
+        verify_existing_directory(
+            root,
+            verifier=lambda view: day1b_module._verify_day1b_unit_view(
+                view,
+                artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+            ),
+        )
+
+
+def test_day1b_verifier_rejects_rehashed_open_input_binding_splice(
+    tmp_path: Path,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    root = tmp_path / "open-input-binding-splice"
+    shutil.copytree(bundle.output_dir, root)
+    manifest = json.loads((root / "publication-day1b-unit-manifest.json").read_bytes())
+    receipt = manifest["cell_execution_receipts"][0]["candidate_cell_receipts"][0]
+    receipt["input_binding_document"]["candidate_catalog_sha256"] = "f" * 64
+    receipt["input_binding_sha256"] = _sha(receipt["input_binding_document"])
+    receipt["worker_candidate_cell_receipt_sha256"] = _sha(
+        {
+            key: value
+            for key, value in receipt.items()
+            if key != "worker_candidate_cell_receipt_sha256"
+        }
+    )
+    _rewrite_manifest_and_checksums(root, manifest)
+
+    with pytest.raises(ValueError, match="open exact input binding|input binding retargets"):
+        verify_existing_directory(
+            root,
+            verifier=lambda view: day1b_module._verify_day1b_unit_view(
+                view,
+                artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ("unit-day2-scalar", "Day 2 authority"),
+        ("unit-day2-source", "retargets the experiment source"),
+        ("contract-day2-scalar", "Day 2 authority"),
+        ("policy-digest", "candidate policies do not open"),
+        ("policy-strategy", "candidate policies do not open"),
+        ("policy-count-13", "candidate policies do not open"),
+        ("policy-count-15", "candidate policies do not open"),
+        ("policy-order", "candidate policies do not open"),
+        ("stale-catalog-hash", "retargets its manifest|controller context retargets"),
+        ("trace-source-git", "controller context retargets"),
+        ("controller-context", "controller context retargets"),
+        ("route-phase-count", "charge-set root"),
+    ),
+)
+def test_day1b_verifier_rejects_rehashed_authority_policy_and_preimage_splices(
+    tmp_path: Path,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+    mutation: str,
+    message: str,
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    root = tmp_path / mutation
+    shutil.copytree(bundle.output_dir, root)
+    manifest = json.loads((root / "publication-day1b-unit-manifest.json").read_bytes())
+    catalog = manifest["candidate_catalog"]
+    policies = catalog["candidate_policies"]
+    receipt = manifest["cell_execution_receipts"][0]["candidate_cell_receipts"][0]
+    input_document = receipt["input_binding_document"]
+
+    if mutation == "unit-day2-scalar":
+        manifest["serialized_object_size_authority"]["ciphertext_bytes"] += 1
+    elif mutation == "unit-day2-source":
+        manifest["serialized_object_size_authority"]["source_git_sha"] = "f" * 40
+    elif mutation == "contract-day2-scalar":
+        input_document["ciphertext_bytes"] += 1
+        _rehash_open_input_receipt(receipt)
+    elif mutation == "policy-digest":
+        policies[0]["candidate_policy_digest"] = "f" * 64
+    elif mutation == "policy-strategy":
+        policies[0]["strategy"] = "Strict-LocalRepack"
+        policies[0]["candidate_policy_digest"] = _sha(
+            {
+                key: value
+                for key, value in policies[0].items()
+                if key != "candidate_policy_digest"
+            }
+        )
+    elif mutation == "policy-count-13":
+        policies.pop()
+    elif mutation == "policy-count-15":
+        policies.append(dict(policies[-1]))
+    elif mutation == "policy-order":
+        policies[0], policies[1] = policies[1], policies[0]
+    elif mutation == "stale-catalog-hash":
+        catalog["registration"]["run_id"] += 1
+        catalog["registration_sha256"] = _sha(catalog["registration"])
+    elif mutation == "trace-source-git":
+        manifest["trace_source"]["git_sha"] = "f" * 40
+    elif mutation == "controller-context":
+        context_document = input_document["f1m_controller_context_document"]
+        context_document["dataset_release"] = "foreign-release"
+        context_sha256 = _sha(context_document)
+        route_document = input_document["f1m_route_coverage_document"]
+        route_document["controller_context_sha256"] = context_sha256
+        route_sha256 = _sha(route_document)
+        input_document["f1m_controller_context_sha256"] = context_sha256
+        input_document["f1m_route_coverage_sha256"] = route_sha256
+        receipt["f1m_controller_context_sha256"] = context_sha256
+        receipt["f1m_route_coverage_sha256"] = route_sha256
+        _rehash_open_input_receipt(receipt)
+    else:
+        route_document = input_document["f1m_route_coverage_document"]
+        route_document["phase_random_route_counts"]["tuning-prefix"] += 1
+        route_sha256 = _sha(route_document)
+        input_document["f1m_route_coverage_sha256"] = route_sha256
+        receipt["f1m_route_coverage_sha256"] = route_sha256
+        _rehash_open_input_receipt(receipt)
+
+    _rewrite_manifest_and_checksums(root, manifest)
+    with pytest.raises(ValueError, match=message):
+        verify_existing_directory(
+            root,
+            verifier=lambda view: day1b_module._verify_day1b_unit_view(
+                view,
+                artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ("controller-class", "controller F1-M charge document changed"),
+        ("inclusive-total", "worker, controller, or inclusive totals"),
+        ("ledger-v1", "serialization-ledger schema changed"),
+        ("receipt-root", "input binding retargets"),
+        ("non-f1m-controller-authority", "non-F1-M ledger row claims"),
+        ("f1m-worker-quantity", "does not bind exact object-receipt rows"),
+        ("null-class-charge", "null F1-M controller class carries"),
+        ("nonpositive-multiplicity", "controller F1-M charge document changed"),
+        ("materialized-controller-object", "controller F1-M charge document changed"),
+    ),
+)
+def test_day1b_verifier_rejects_rehashed_dual_source_ledger_splices(
+    tmp_path: Path,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+    mutation: str,
+    message: str,
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    root = tmp_path / mutation
+    shutil.copytree(bundle.output_dir, root)
+    if mutation == "receipt-root":
+        manifest = json.loads((root / "publication-day1b-unit-manifest.json").read_bytes())
+        receipt = manifest["cell_execution_receipts"][0]["candidate_cell_receipts"][0]
+        receipt["f1m_charged_size_class_set_sha256"] = "0" * 64
+        receipt["worker_candidate_cell_receipt_sha256"] = _sha(
+            {
+                key: value
+                for key, value in receipt.items()
+                if key != "worker_candidate_cell_receipt_sha256"
+            }
+        )
+        _rewrite_manifest_and_checksums(root, manifest)
+    else:
+        ledger_path = root / "serialized-object-ledgers.jsonl"
+        ledgers = [json.loads(line) for line in ledger_path.read_bytes().splitlines()]
+        if mutation == "controller-class":
+            target_row = next(
+                row
+                for ledger in ledgers
+                for row in ledger["categories"]
+                if row["controller_charged_size_class"] is not None
+            )
+            target_row["controller_charged_size_class"]["day2_outer_archive_sha256"] = "f" * 64
+            target_ledger = next(ledger for ledger in ledgers if target_row in ledger["categories"])
+        elif mutation == "non-f1m-controller-authority":
+            target_ledger = ledgers[0]
+            target_row = next(
+                row
+                for row in target_ledger["categories"]
+                if row["category"]
+                not in worker_protocol.DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
+            )
+            target_row["charge_authority"] = "controller-anchored-day2-size-class"
+        elif mutation == "f1m-worker-quantity":
+            target_ledger = ledgers[0]
+            target_row = next(
+                row
+                for row in target_ledger["categories"]
+                if row["category"]
+                in worker_protocol.DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
+            )
+            target_row["protocol_object_count"] = 1
+        elif mutation == "null-class-charge":
+            target_ledger = next(
+                ledger
+                for ledger in ledgers
+                if any(
+                    row["category"]
+                    in worker_protocol.DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
+                    and row["controller_charged_size_class"] is None
+                    for row in ledger["categories"]
+                )
+            )
+            target_row = next(
+                row
+                for row in target_ledger["categories"]
+                if row["category"]
+                in worker_protocol.DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
+                and row["controller_charged_size_class"] is None
+            )
+            target_row["controller_charged_byte_count"] = 1
+        elif mutation in {
+            "nonpositive-multiplicity",
+            "materialized-controller-object",
+        }:
+            target_ledger = next(
+                ledger
+                for ledger in ledgers
+                if any(
+                    row["controller_charged_size_class"] is not None for row in ledger["categories"]
+                )
+            )
+            target_row = next(
+                row
+                for row in target_ledger["categories"]
+                if row["controller_charged_size_class"] is not None
+            )
+            controller_class = target_row["controller_charged_size_class"]
+            if mutation == "nonpositive-multiplicity":
+                controller_class["multiplicity"] = 0
+                controller_class["charged_byte_count"] = 0
+                target_row["controller_charged_byte_count"] = 0
+            else:
+                controller_class["materialized_cryptographic_object_count"] = 1
+        else:
+            target_ledger = ledgers[0]
+            if mutation == "inclusive-total":
+                target_ledger["query_serialized_bytes_including_controller_charge"] += 1
+            else:
+                target_ledger["schema_version"] = (
+                    "dynamic-cssc-publication-day1b-serialized-protocol-object-ledger-v1"
+                )
+        target_ledger["serialization_ledger_sha256"] = _sha(
+            {
+                key: value
+                for key, value in target_ledger.items()
+                if key != "serialization_ledger_sha256"
+            }
+        )
+        _rewrite_serialization_ledgers(root, ledgers)
+
+    with pytest.raises(ValueError, match=message):
         verify_existing_directory(
             root,
             verifier=lambda view: day1b_module._verify_day1b_unit_view(
@@ -2043,16 +2474,8 @@ def test_shared_day1b_install_quarantines_the_whole_mutated_staging_tree(
         else:
             manifest_path = staging / "publication-day1b-unit-manifest.json"
             manifest = json.loads(manifest_path.read_bytes())
-            manifest["unit_identity"]["dataset_release"] = "valid-alternate-release"
+            manifest["trace_source"]["git_sha"] = "f" * 40
             _rewrite_manifest_and_checksums(staging, manifest)
-            alternate = verify_existing_directory(
-                staging,
-                verifier=lambda view: day1b_module._verify_day1b_unit_view(
-                    view,
-                    artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
-                ),
-            )
-            assert alternate != expected
         return real_install(*args, **kwargs)
 
     monkeypatch.setattr(day1b_module, "install_verified_directory", mutate_then_install)
@@ -2374,6 +2797,7 @@ def test_artifact_variants_reject_crossed_source_and_trace_provenance_before_wor
 
 
 def test_t2_realized_set_cardinality_is_separate_from_stats_update_denominator() -> None:
+    source = _source()
     trace = replace(
         _trace(),
         semantics="T2",
@@ -2381,11 +2805,11 @@ def test_t2_realized_set_cardinality_is_separate_from_stats_update_denominator()
     )
     program = _program(Fraction(1), total=1_000, t2_cardinality=True)
     audit = day1b_module._complete_cell_audit(program, Fraction("0.1"))
-    trace_unit = day1b_module._trace_unit_document(trace, _source())
+    trace_unit = day1b_module._trace_unit_document(trace, source)
     cell = day1b_module._cell_document(
         trace_unit,
         trace,
-        _source(),
+        source,
         program,
         Fraction("0.1"),
         audit,
@@ -2396,10 +2820,46 @@ def test_t2_realized_set_cardinality_is_separate_from_stats_update_denominator()
     assert cell["heldout_update_count"] == 600
     assert phases["tuning"]["realized_set_count"] == 600
 
-
     assert phases["tuning"]["accepted_event_group_count"] == 300
     assert phases["heldout"]["realized_set_count"] == 600
     assert phases["heldout"]["accepted_event_group_count"] == 600
+    catalog = _catalog()
+    candidate = catalog.candidates[0]
+    resource_policy = _resource_policy()
+    summary_trace = _trace()
+    summary_freshness = Fraction(FRESHNESS_VALUES[0])
+    summary_program = summary_trace.compile_schedule(Fraction(RHO_VALUES[0]))
+    summary_audit = day1b_module._complete_cell_audit(
+        summary_program,
+        summary_freshness,
+    )
+    summary_cell = day1b_module._cell_document(
+        day1b_module._trace_unit_document(summary_trace, source),
+        summary_trace,
+        source,
+        summary_program,
+        summary_freshness,
+        summary_audit,
+    )
+    f1m_controller_summary = day1b_module._replay_f1m_controller_for_candidate_cell(
+        source=source,
+        trace=summary_trace,
+        program=summary_program,
+        freshness=summary_freshness,
+        cell=summary_cell,
+        cell_ordinal=0,
+        candidate=candidate,
+        terminal_registration_sha256=day1b_module._digest(asdict(catalog.registration)),
+        candidate_catalog_sha256="e" * 64,
+        resource_policy_sha256="f" * 64,
+        lineage=day1b_module._test_only_f1m_execution_lineage(
+            source=source,
+            trace=summary_trace,
+        ),
+        size_authority=_size_authority(),
+        resource_policy=resource_policy,
+        expected_complete_audit=summary_audit,
+    )
     failed_measurement = Day1BWorkerPhaseReceipt(
         phase="tuning-prefix",
         retained_measurement=True,
@@ -2419,6 +2879,7 @@ def test_t2_realized_set_cardinality_is_separate_from_stats_update_denominator()
         candidate_role="reference",
         selection_source="fixed-reference-tuning-prefix",
         worker_object_receipt_spool_sha256="f" * 64,
+        f1m_controller_summary=f1m_controller_summary,
     )
     heldout_record, _heldout_ledger = day1b_module._physical_record_and_ledger(
         replace(failed_measurement, phase="held-out"),
@@ -2429,6 +2890,7 @@ def test_t2_realized_set_cardinality_is_separate_from_stats_update_denominator()
         candidate_role="reference",
         selection_source="fixed-reference-held-out",
         worker_object_receipt_spool_sha256="f" * 64,
+        f1m_controller_summary=f1m_controller_summary,
     )
     assert tuning_record["update_count"] == 300
     assert heldout_record["update_count"] == 600
@@ -2461,9 +2923,7 @@ def test_production_f1m_replay_derives_zero_query_coverage_and_closed_context() 
         cell=cell,
         cell_ordinal=0,
         candidate=candidate,
-        terminal_registration_sha256=day1b_module._digest(
-            asdict(catalog.registration)
-        ),
+        terminal_registration_sha256=day1b_module._digest(asdict(catalog.registration)),
         candidate_catalog_sha256="e" * 64,
         resource_policy_sha256="f" * 64,
         lineage=day1b_module._test_only_f1m_execution_lineage(
@@ -2484,9 +2944,7 @@ def test_production_f1m_replay_derives_zero_query_coverage_and_closed_context() 
     assert summary.context.zero_query_window_count == 1
     assert summary.context.phase_window_counts == (1, 1, 1)
     assert summary.context.complete_phase_audit_root_sha256 == (
-        day1b_module._f1m_complete_schedule_audit(
-            audit
-        ).complete_phase_audit_root_sha256
+        day1b_module._f1m_complete_schedule_audit(audit).complete_phase_audit_root_sha256
     )
     seed = day1b_module._candidate_worker_contract_seed(
         trace=trace,
@@ -2508,9 +2966,7 @@ def test_production_f1m_replay_derives_zero_query_coverage_and_closed_context() 
     )
     assert contract.f1m_controller_context_sha256 == summary.context.context_sha256
     assert contract.f1m_route_coverage_sha256 == summary.route_coverage_sha256
-    assert contract.f1m_charged_size_class_set_sha256 == (
-        summary.charged_size_class_set_sha256
-    )
+    assert contract.f1m_charged_size_class_set_sha256 == (summary.charged_size_class_set_sha256)
 
 
 @pytest.mark.parametrize(
@@ -2551,9 +3007,7 @@ def test_worker_seed_rejects_controller_lineage_or_resource_substitution(
         cell=cell,
         cell_ordinal=0,
         candidate=candidate,
-        terminal_registration_sha256=day1b_module._digest(
-            asdict(catalog.registration)
-        ),
+        terminal_registration_sha256=day1b_module._digest(asdict(catalog.registration)),
         candidate_catalog_sha256="e" * 64,
         resource_policy_sha256="f" * 64,
         lineage=day1b_module._test_only_f1m_execution_lineage(
@@ -2564,27 +3018,28 @@ def test_worker_seed_rejects_controller_lineage_or_resource_substitution(
         resource_policy=resource_policy,
         expected_complete_audit=audit,
     )
-    if tamper == "trace-manifest":
-        summary = replace(
-            summary,
-            context=replace(summary.context, trace_manifest_sha256="0" * 64),
+    context_fields = {
+        "trace-manifest": "trace_manifest_sha256",
+        "candidate-catalog": "candidate_catalog_sha256",
+        "resource-policy": "resource_policy_sha256",
+    }
+    if tamper in context_fields:
+        changed_context = replace(
+            summary.context,
+            **{context_fields[tamper]: "0" * 64},
         )
-    elif tamper == "candidate-catalog":
         summary = replace(
             summary,
-            context=replace(summary.context, candidate_catalog_sha256="0" * 64),
-        )
-    elif tamper == "resource-policy":
-        summary = replace(
-            summary,
-            context=replace(summary.context, resource_policy_sha256="0" * 64),
+            context=changed_context,
+            route_coverage=replace(
+                summary.route_coverage,
+                controller_context_sha256=changed_context.context_sha256,
+            ),
         )
     elif tamper == "object-cap":
         summary = replace(
             summary,
-            serialized_object_bytes_maximum=(
-                summary.serialized_object_bytes_maximum + 1
-            ),
+            serialized_object_bytes_maximum=(summary.serialized_object_bytes_maximum + 1),
         )
     else:
         summary = replace(
@@ -2666,7 +3121,11 @@ def test_controller_terminal_outcomes_are_null_records_and_later_candidates_cont
         resource_policy=_resource_policy(),
         execution_adapter=executor,
     )
+    manifest = json.loads(bundle.manifest_path.read_bytes())
     fragment = json.loads(bundle.heldout_fragment_path.read_bytes())
+    ledgers = [
+        json.loads(line) for line in bundle.serialization_ledger_path.read_bytes().splitlines()
+    ]
     first_cell = fragment["cell_bindings"][0]["cell_binding_sha256"]
     first_cell_records = [
         record for record in fragment["records"] if record["cell_binding_sha256"] == first_cell
@@ -2690,8 +3149,81 @@ def test_controller_terminal_outcomes_are_null_records_and_later_candidates_cont
             and record["query_serialized_bytes"] is None
             for record in matching
         )
+        matching_ledgers = [
+            ledger
+            for record, ledger in zip(fragment["records"], ledgers, strict=True)
+            if record["cell_binding_sha256"] == first_cell
+            and record["candidate_id"] == candidate_id
+        ]
+        receipt = next(
+            candidate_receipt
+            for candidate_receipt in manifest["cell_execution_receipts"][0][
+                "candidate_cell_receipts"
+            ]
+            if candidate_receipt["candidate"]["candidate_id"] == candidate_id
+        )
+        assert _sha(receipt["input_binding_document"]) == receipt["input_binding_sha256"]
+        assert receipt["input_binding_document"]["f1m_controller_context_document"]
+        assert receipt["input_binding_document"]["f1m_route_coverage_document"]
+        assert receipt["input_binding_document"]["day2_outer_archive_sha256"] == (
+            manifest["serialized_object_size_authority"]["day2_outer_archive_sha256"]
+        )
+        assert len(matching_ledgers) == len(matching)
+        assert all(
+            ledger["categories"] is None
+            and ledger["byte_derivation"] is None
+            and ledger["update_serialized_bytes"] is None
+            and ledger["query_serialized_bytes"] is None
+            and ledger["controller_charged_query_bytes"] is None
+            and ledger["query_serialized_bytes_including_controller_charge"] is None
+            and ledger["one_time_serialized_bytes_excluded_from_primary_C"] is None
+            and ledger["f1m_controller_context_sha256"] == receipt["f1m_controller_context_sha256"]
+            and ledger["f1m_route_coverage_sha256"] == receipt["f1m_route_coverage_sha256"]
+            and ledger["f1m_charged_size_class_set_sha256"]
+            == receipt["f1m_charged_size_class_set_sha256"]
+            for ledger in matching_ledgers
+        )
     assert len(executor.calls) == 252
     assert first_cell_records[-1]["outcome"] == "complete"
+
+
+def test_mixed_retained_phase_outcome_keeps_complete_charge_and_nulls_failure(
+    tmp_path: Path,
+) -> None:
+    executor = _StreamingExecutor(tmp_path / "controlled-scratch")
+    executor.worker_failed_phases = {0: "held-out"}
+    bundle = _produce_publication_day1b_unit_for_test(
+        trace=_trace(),
+        output_dir=tmp_path / "unit",
+        source_attestation=_source(),
+        candidate_catalog=_catalog(),
+        resource_policy=_resource_policy(),
+        execution_adapter=executor,
+    )
+    fragment = json.loads(bundle.heldout_fragment_path.read_bytes())
+    ledgers = [
+        json.loads(line) for line in bundle.serialization_ledger_path.read_bytes().splitlines()
+    ]
+    first_cell = fragment["cell_bindings"][0]["cell_binding_sha256"]
+    candidate_id = FIXED_CANDIDATE_IDS[0]
+    matching = [
+        (record, ledger)
+        for record, ledger in zip(fragment["records"], ledgers, strict=True)
+        if record["cell_binding_sha256"] == first_cell and record["candidate_id"] == candidate_id
+    ]
+
+    assert [record["outcome"] for record, _ledger in matching] == [
+        "complete",
+        "failed",
+    ]
+    complete_ledger = matching[0][1]
+    failed_ledger = matching[1][1]
+    assert complete_ledger["categories"] is not None
+    assert complete_ledger["controller_charged_query_bytes"] is not None
+    assert failed_ledger["categories"] is None
+    assert failed_ledger["byte_derivation"] is None
+    assert failed_ledger["controller_charged_query_bytes"] is None
+    assert failed_ledger["query_serialized_bytes_including_controller_charge"] is None
 
 
 def test_over_limit_controller_observation_without_matching_terminal_holds_unit(
@@ -3012,9 +3544,7 @@ def test_unit_archive_treats_weighted_f1m_receipts_as_size_classes_not_bindings(
         cell=cell,
         cell_ordinal=0,
         candidate=candidate,
-        terminal_registration_sha256=day1b_module._digest(
-            asdict(catalog.registration)
-        ),
+        terminal_registration_sha256=day1b_module._digest(asdict(catalog.registration)),
         candidate_catalog_sha256="e" * 64,
         resource_policy_sha256="f" * 64,
         lineage=day1b_module._test_only_f1m_execution_lineage(

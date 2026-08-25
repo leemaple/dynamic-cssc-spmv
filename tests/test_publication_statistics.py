@@ -5,6 +5,7 @@ import hashlib
 import json
 import subprocess
 from copy import deepcopy
+from dataclasses import replace
 from fractions import Fraction
 from pathlib import Path
 
@@ -55,6 +56,51 @@ def _canonical_digest(payload: object) -> str:
         json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n"
     ).encode("ascii")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def test_controller_charge_in_physical_query_bytes_enters_primary_cost_exactly() -> None:
+    base = publication_statistics._Record(
+        dataset_id=DATASET_IDS[0],
+        semantics="T2",
+        source_partition=0,
+        freshness_seconds="0.1",
+        rho="3",
+        phase="held-out",
+        record_kind="fixed-candidate",
+        candidate_id=FIXED_CANDIDATE_IDS[0],
+        candidate_role="reference",
+        selection_source="fixed-reference-held-out",
+        cell_binding_sha256="a" * 64,
+        outcome="complete",
+        failure_reason=None,
+        update_count=20,
+        query_count=10,
+        update_primitive_counts=(0,) * len(PRIMITIVE_NAMES),
+        query_primitive_counts=(0,) * len(PRIMITIVE_NAMES),
+        update_serialized_bytes=2_000,
+        query_serialized_bytes=1_000,
+    )
+    controller_charge = 500
+    charged = replace(
+        base,
+        query_serialized_bytes=base.query_serialized_bytes + controller_charge,
+    )
+    primitive_costs = (Fraction(),) * len(PRIMITIVE_NAMES)
+
+    base_total, base_update_bytes, base_query_time = publication_statistics._record_cost(
+        base, primitive_costs
+    )
+    charged_total, charged_update_bytes, charged_query_time = publication_statistics._record_cost(
+        charged, primitive_costs
+    )
+    expected_query_delta = Fraction(
+        8 * controller_charge,
+        publication_statistics.BANDWIDTH_MBPS * 1_000_000 * base.query_count,
+    )
+
+    assert charged_query_time - base_query_time == expected_query_delta
+    assert charged_total - base_total == Fraction(base.rho) * expected_query_delta
+    assert charged_update_bytes == base_update_bytes
 
 
 _SAMPLER_SCHEMA = "dynamic-cssc-publication-shake256-counter-sampler-v1"
@@ -613,6 +659,22 @@ def test_v7_input_preserves_the_v6_split_and_cell_binding_contract() -> None:
     assert QUERY_VECTOR_SCHEMA == "dynamic-cssc-publication-query-vector-v1"
     assert ANALYSIS_RUNTIME_IMPLEMENTATION == "CPython"
     assert ANALYSIS_RUNTIME_VERSION == "3.12.13"
+
+    repository_root = Path(__file__).resolve().parents[1]
+    empty_pre_s1_anchor_sets = {
+        "config/day1-registration-anchors.json": ("dynamic-cssc-day1-registration-anchor-set-v1"),
+        "config/day2-calibration-anchors.json": (
+            "dynamic-cssc-day2-calibration-post-run-anchor-set-v4"
+        ),
+        "config/day2-calibration-profile-anchors.json": (
+            "dynamic-cssc-day2-calibration-profile-anchor-set-v3"
+        ),
+    }
+    for relative_path, schema_version in empty_pre_s1_anchor_sets.items():
+        assert json.loads((repository_root / relative_path).read_bytes()) == {
+            "anchors": [],
+            "schema_version": schema_version,
+        }
 
     result = analyze_publication_results(_complete_payload())
 
