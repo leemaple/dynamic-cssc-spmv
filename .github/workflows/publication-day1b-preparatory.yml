@@ -141,6 +141,7 @@ jobs:
           echo 'The typed final-anchor Day2 key-plan capability remains unavailable without evidence.'
           echo 'The anchored runtime consumes that capability internally and records its receipt.'
           echo 'The same-replay representative/runtime/payload composition remains pre-admission only.'
+          echo 'The candidate-cell seam requires a consumed same-replay capability and its bound receipt.'
           echo 'Its typed D1BKEY01 key receipt remains pre-admission only.'
           echo 'Its Linux READY/DONE executable-map receipt remains pre-admission only.'
           echo 'Linux launcher-owned pathless scratch creation remains pre-admission only.'

@@ -707,6 +707,26 @@ def abandon_day1b_candidate_replay_capability(
     _live_capability_binding(capability, consume=True)
 
 
+def require_day1b_candidate_replay_capability_consumed(
+    capability: Day1BCandidateReplayCapability,
+) -> None:
+    """Require the exact terminal state produced by claim or abandonment."""
+
+    if type(capability) is not Day1BCandidateReplayCapability:
+        raise TypeError("candidate replay must be one exact collector-minted capability")
+    lock = getattr(capability, "_lock", None)
+    if type(lock) is not type(threading.Lock()):
+        raise Day1BReplayExecutionError("candidate replay capability is not authoritative")
+    with lock:
+        if (
+            getattr(capability, "_claimed", None) is not True
+            or getattr(capability, "_binding", capability) is not None
+        ):
+            raise Day1BReplayExecutionError(
+                "candidate replay capability was not consumed"
+            )
+
+
 class _Day1BQueryExecutionCollector:
     """Stream all bindings and retain one canonical typed representative."""
 
@@ -942,4 +962,5 @@ __all__ = (
     "claim_day1b_candidate_replay_capability",
     "describe_day1b_candidate_replay_capability",
     "replay_and_seal_publication_day1b_candidate",
+    "require_day1b_candidate_replay_capability_consumed",
 )

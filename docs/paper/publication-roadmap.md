@@ -379,7 +379,7 @@ previously reviewed schema-source Git/Behavior-inventory binding; authority and
 worker/runtime identity are structurally absent. Its non-self-referential
 semantic digest and immutable decoded record do not lift the repository
 `HOLD`. The real amendment and its outcome-blind review receipt are now frozen
-as pre-`S1` DAY1B Behavior Set v29 members. The resource loader can project its
+as pre-`S1` DAY1B Behavior Set v30 members. The resource loader can project its
 non-authorizing budget, after which the independent profile, trace, worker, and
 anchor gates still fail closed.
 
@@ -398,7 +398,7 @@ implementation evidence only. It cannot dispatch until the trace and catalog
 authorities, repository execution adapter, and outcome-blind resource policy
 are installed, and it is not a 30-unit publication artifact.
 
-The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v29,
+The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v30,
 the unchanged empirical-null/authority-false `PENDING-FREEZE` placeholder, the
 separate reviewed resource-only amendment, and a manual no-input validation
 workflow. These freeze the current validator, protocol, administrative safety
@@ -438,7 +438,7 @@ uses those keys in the same typed DAG, and returns a request/plan/segment/frame-
 bound receipt. Its rotation-plan hash now equals the exact LF-terminated
 `rotation-key-plan.json` member emitted by Day 2, and both Python and C++ reject
 alternate whitespace, ordering, or newline bytes. Query-derived plans and
-unanchored canonical Day 2 plan inputs remain pre-admission only. The v29
+unanchored canonical Day 2 plan inputs remain pre-admission only. The v30
 source now preserves the rotation-plan digest in final Day 2 authority and can
 mint one opaque single-use plan capability only for the exact post-run anchored
 byte preimage; every runtime, dispatch, cost, performance, publication, and
@@ -450,7 +450,7 @@ hash-locked source-contract tests, static validation, amendment validation, and
 a real non-authorizing runtime smoke; it neither invokes the producer nor
 fetches or uploads publication data.
 
-The v29 runtime surface includes separate ordinary and strong anchored entry points. They
+The v30 runtime surface includes separate ordinary and strong anchored entry points. They
 accept no caller-supplied plan object: the deep launcher consumes the opaque
 Day 2 plan capability before request construction, uses that exact plan for
 generation and verification, cross-checks the resulting key-material receipt,
@@ -458,13 +458,22 @@ and records the plan receipt in runtime receipt v7. The manual native smoke
 remains explicitly non-anchored, and this integration still supplies neither a
 production candidate-cell adapter nor dispatch authority.
 
-The same v29 surface now composes a collector-minted same-replay representative
+The same v30 surface now composes a collector-minted same-replay representative
 with one such anchored plan in a single-use pre-admission execution boundary.
 The joint receipt opens the replay and representative bindings, exact lifecycle
 authorization, runtime v7 receipt, reconstructed-output digest, and ordered
 serialized-payload receipt stream. Both capabilities are consumed on success
 or failure. The production worker invocation, registered scratch ownership,
 and candidate-cell transcript remain the next independent gates.
+
+The candidate-cell core now passes that collector-minted capability directly
+to its execution adapter and requires its exact consumed terminal state before
+accepting a launch. The launch binds the replay receipt back to the worker
+contract's candidate, policy, retained phases, controller accounting root,
+query vector, and modulus. Controller or adapter failures abandon every
+still-live capability. This closes the in-process replay-to-worker handoff, but
+the repository production adapter, worker admission receipt, and dispatch
+authority remain absent.
 
 The sole numeric exception in that pending document is the already
 preregistered, non-empirical protocol invariant

@@ -238,7 +238,7 @@ artifact that declares full query-arrival replay, omits the basis, changes a
 multiplicity, leaves a query-range gap, overlaps ranges, or disagrees with the
 controller's schedule fails closed.
 
-The preparatory v29 source surface exposes the exact typed compilation used for
+The preparatory v30 source surface exposes the exact typed compilation used for
 each query-bearing window through a synchronous, output-only query-execution
 sink, but the only public sealing seam now owns that sink and the replay call.
 The caller supplies one exact frozen candidate, window stream, domain, and
@@ -248,7 +248,7 @@ derives the candidate policy and role-retained phases, freezes the modulus at
 65,537, creates a private collector, and finishes it against the accounting
 returned by that same replay invocation.
 
-Every v29 query-execution binding commits the candidate ID, role, policy digest,
+Every v30 query-execution binding commits the candidate ID, role, policy digest,
 retained phases, and modulus together with the compact descriptor and ordinary
 or strong carrier identities. The collector independently reconstructs the
 existing compact query-window root and retains exactly one private typed
@@ -263,7 +263,16 @@ process-local capability and releases its carrier reference even on validation
 failure. Its receipt explicitly denies worker, dispatch, formal, publication,
 complete-cost, and production authority.
 
-The same v29 surface retains the native request/result language at v4 and
+The v30 candidate-cell core passes that same-replay capability as a mandatory
+adapter input and accepts a launch only after the capability reaches its exact
+consumed terminal state. The launch carries the collector-minted replay
+receipt; construction fails unless its candidate, policy, retained phases,
+accounting root, query-vector root, and modulus agree with the independently
+bound worker contract. A controller failure after capability issuance abandons
+the capability before propagating the error. This closes replay-to-worker
+continuity without granting production or dispatch authority.
+
+The same v30 surface retains the native request/result language at v4 and
 advances the enclosing runtime receipt to v7. One private deep launcher now
 admits either an ordinary or strong execution capability, owns scratch and
 READY/DONE verification, and dispatches through thin kind-specific adapters.
@@ -274,7 +283,7 @@ the runtime receipt. The native smoke still executes the explicitly
 non-anchored pre-admission paths. A production candidate-cell adapter and its
 scratch authority remain later gates.
 
-The v29 surface composes those two single-use capabilities in one additional
+The v30 surface composes those two single-use capabilities in one additional
 pre-admission boundary. It claims the representative retained by the same
 replay, prepares its exact ordinary or strong private lifecycle, and passes the
 opaque Day 2 plan capability directly into runtime v7. The returned joint
@@ -284,7 +293,7 @@ ordered digest of every retained serialized-payload receipt. Failure consumes
 or abandons both capabilities. This still grants no worker, dispatch, cost,
 performance, security, or publication authority.
 
-The v29 surface also preserves the formal Day 2 rotation-plan digest in the
+The v30 surface also preserves the formal Day 2 rotation-plan digest in the
 final read-only calibration authority and introduces a single-use key-plan
 capability. Its public issuer accepts only canonical plan bytes and obtains the
 final authority from the zero-argument repository seam before and after

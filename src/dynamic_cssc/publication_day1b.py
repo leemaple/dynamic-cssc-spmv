@@ -54,7 +54,6 @@ from dynamic_cssc.publication_day1b_accounting import (
     PUBLICATION_DAY1B_ACCOUNTING_DOMAIN,
     Day1BAccountingDomain,
     PublicationDay1BAccounting,
-    replay_publication_day1b_candidate_cell,
 )
 from dynamic_cssc.publication_day1b_aggregate_bounds import (
     SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
@@ -90,6 +89,13 @@ from dynamic_cssc.publication_day1b_metadata_framing import (
     DAY1B_FIXED_WIDTH_METADATA_CATEGORIES,
     day1b_metadata_size_class_document,
     day1b_metadata_size_class_sha256,
+)
+from dynamic_cssc.publication_day1b_replay_execution import (
+    Day1BCandidateReplayCapability,
+    Day1BReplayExecutionReceipt,
+    abandon_day1b_candidate_replay_capability,
+    replay_and_seal_publication_day1b_candidate,
+    require_day1b_candidate_replay_capability_consumed,
 )
 from dynamic_cssc.publication_day1b_worker_protocol import (
     DAY1B_WORKER_EXECUTION_BASIS,
@@ -979,12 +985,15 @@ class _Day1BControllerReplay:
 
     f1m_summary: Day1BF1MControllerSummary
     expected_counts: Day1BControllerExpectedCounts
+    candidate_replay_capability: Day1BCandidateReplayCapability
 
     def __post_init__(self) -> None:
         if type(self.f1m_summary) is not Day1BF1MControllerSummary:
             raise TypeError("controller replay requires one exact F1-M summary")
         if type(self.expected_counts) is not Day1BControllerExpectedCounts:
             raise TypeError("controller replay requires one exact expected-count preimage")
+        if type(self.candidate_replay_capability) is not Day1BCandidateReplayCapability:
+            raise TypeError("controller replay requires one exact replay capability")
         if (
             self.expected_counts.accounting_sha256
             != self.f1m_summary.context.accounting_sha256
@@ -1007,6 +1016,7 @@ class _Day1BExecutionAdapter(Protocol):
         *,
         windows: Iterator[ExactPublicationWindow],
         contract_seed: _Day1BWorkerContractSeed,
+        candidate_replay_capability: Day1BCandidateReplayCapability,
     ) -> _Day1BWorkerLaunch: ...
 
 
@@ -1017,12 +1027,30 @@ class _Day1BWorkerLaunch:
     contract: Day1BWorkerProtocolContract
     frame_chunks: Iterable[bytes]
     invocation_capability: Day1BWorkerInvocationCapability
+    replay_execution_receipt: Day1BReplayExecutionReceipt
 
     def __post_init__(self) -> None:
         if type(self.contract) is not Day1BWorkerProtocolContract:
             raise TypeError("worker launch requires one exact bound contract")
         if type(self.invocation_capability) is not Day1BWorkerInvocationCapability:
             raise TypeError("worker launch requires one exact invocation capability")
+        if type(self.replay_execution_receipt) is not Day1BReplayExecutionReceipt:
+            raise TypeError("worker launch requires one exact replay execution receipt")
+        replay = self.replay_execution_receipt
+        if (
+            replay.candidate_id != self.contract.candidate.candidate_id
+            or replay.candidate_role != self.contract.candidate.candidate_role
+            or replay.candidate_policy_sha256
+            != self.contract.candidate.candidate_policy_digest
+            or replay.retained_phases != self.contract.candidate.retained_phases
+            or replay.accounting_sha256
+            != self.contract.f1m_controller_context.accounting_sha256
+            or replay.query_vector_sha256 != self.contract.query_vector_sha256
+            or replay.plaintext_modulus != 65537
+        ):
+            raise Day1BWorkerProtocolError(
+                "worker launch replay receipt differs from its candidate-cell contract"
+            )
         try:
             iter(self.frame_chunks)
         except TypeError as error:
@@ -1433,7 +1461,7 @@ def _validate_preparatory_source_attestation(
         inventory.get("role") != EvidenceRole.DAY1B.value
         or inventory.get("source_git_sha") != source.git_sha
         or inventory.get("behavior_set_schema_version")
-        != "dynamic-cssc-day1b-preparatory-behavior-set-v29"
+        != "dynamic-cssc-day1b-preparatory-behavior-set-v30"
     ):
         raise ValueError(
             "preparatory source inventory must bind the DAY1B role, schema, and exact S1"
@@ -5115,58 +5143,66 @@ def _replay_f1m_controller_for_candidate_cell(
         program.phase_ranges,
         program.rho,
     )
-    accounting = replay_publication_day1b_candidate_cell(
+    accounting, candidate_replay_capability = replay_and_seal_publication_day1b_candidate(
         candidate=candidate,
         windows=audited_windows,
         domain=accounting_domain,
+        query_vector_canonical_bytes=trace.query_vector_canonical_bytes,
+        query_vector_sha256=trace.query_vector_sha256,
         query_window_sink=controller.accept_query_window,
     )
-    replay_audit = audited_windows.finish()
-    if replay_audit != expected_complete_audit:
-        raise Day1BWorkerProtocolError(
-            "F1-M accounting replay did not consume the canonical complete cell schedule"
+    try:
+        replay_audit = audited_windows.finish()
+        if replay_audit != expected_complete_audit:
+            raise Day1BWorkerProtocolError(
+                "F1-M accounting replay did not consume the canonical complete cell schedule"
+            )
+        complete_schedule_audit = _f1m_complete_schedule_audit(replay_audit)
+        context = _f1m_controller_context(
+            source=source,
+            trace=trace,
+            program=program,
+            freshness=freshness,
+            cell=cell,
+            cell_ordinal=cell_ordinal,
+            candidate_spec=candidate_spec,
+            terminal_registration_sha256=terminal_registration_sha256,
+            candidate_catalog_sha256=candidate_catalog_sha256,
+            resource_policy_sha256=resource_policy_sha256,
+            lineage=lineage,
+            accounting=accounting,
+            complete_schedule_audit=complete_schedule_audit,
         )
-    complete_schedule_audit = _f1m_complete_schedule_audit(replay_audit)
-    context = _f1m_controller_context(
-        source=source,
-        trace=trace,
-        program=program,
-        freshness=freshness,
-        cell=cell,
-        cell_ordinal=cell_ordinal,
-        candidate_spec=candidate_spec,
-        terminal_registration_sha256=terminal_registration_sha256,
-        candidate_catalog_sha256=candidate_catalog_sha256,
-        resource_policy_sha256=resource_policy_sha256,
-        lineage=lineage,
-        accounting=accounting,
-        complete_schedule_audit=complete_schedule_audit,
-    )
-    summary = controller.finish(
-        context=context,
-        accounting=accounting,
-        complete_schedule_audit=complete_schedule_audit,
-    )
-    expected_counts = derive_day1b_controller_expected_counts(
-        accounting=accounting,
-        retained_phases=candidate_spec.retained_phases,
-        primitive_names=PRIMITIVE_NAMES,
-        serialized_categories=SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
-        phase_random_route_counts=summary.phase_random_route_counts,
-        phase_dummy_route_counts=summary.phase_dummy_route_counts,
-        day2_outer_archive_sha256=size_authority.day2_outer_archive_sha256,
-        serialized_object_size_profile_sha256=(
-            size_authority.serialized_object_size_profile_sha256
-        ),
-        serialized_rotation_key_inventory_bytes=(
-            size_authority.serialized_rotation_key_inventory_bytes
-        ),
-        serialized_eval_mult_key_bytes=size_authority.serialized_eval_mult_key_bytes,
-    )
-    return _Day1BControllerReplay(
-        f1m_summary=summary,
-        expected_counts=expected_counts,
-    )
+        summary = controller.finish(
+            context=context,
+            accounting=accounting,
+            complete_schedule_audit=complete_schedule_audit,
+        )
+        expected_counts = derive_day1b_controller_expected_counts(
+            accounting=accounting,
+            retained_phases=candidate_spec.retained_phases,
+            primitive_names=PRIMITIVE_NAMES,
+            serialized_categories=SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
+            phase_random_route_counts=summary.phase_random_route_counts,
+            phase_dummy_route_counts=summary.phase_dummy_route_counts,
+            day2_outer_archive_sha256=size_authority.day2_outer_archive_sha256,
+            serialized_object_size_profile_sha256=(
+                size_authority.serialized_object_size_profile_sha256
+            ),
+            serialized_rotation_key_inventory_bytes=(
+                size_authority.serialized_rotation_key_inventory_bytes
+            ),
+            serialized_eval_mult_key_bytes=size_authority.serialized_eval_mult_key_bytes,
+        )
+        return _Day1BControllerReplay(
+            f1m_summary=summary,
+            expected_counts=expected_counts,
+            candidate_replay_capability=candidate_replay_capability,
+        )
+    except BaseException:
+        with suppress(BaseException):
+            abandon_day1b_candidate_replay_capability(candidate_replay_capability)
+        raise
 
 
 def _produce_publication_day1b_unit(
@@ -5275,6 +5311,7 @@ def _produce_publication_day1b_unit(
 
                 for candidate in candidates:
                     launch: _Day1BWorkerLaunch | None = None
+                    candidate_replay_capability: Day1BCandidateReplayCapability | None = None
                     invocation_consumed = False
                     try:
                         controller_replay = _replay_f1m_controller_for_candidate_cell(
@@ -5293,6 +5330,9 @@ def _produce_publication_day1b_unit(
                             resource_policy=resource_policy,
                             expected_complete_audit=audit,
                             accounting_domain=accounting_domain,
+                        )
+                        candidate_replay_capability = (
+                            controller_replay.candidate_replay_capability
                         )
                         f1m_controller_summary = controller_replay.f1m_summary
                         audited_windows = _AuditedWindowStream(
@@ -5318,11 +5358,17 @@ def _produce_publication_day1b_unit(
                         launch = execution_adapter.execute_candidate_cell(
                             windows=audited_windows,
                             contract_seed=seed,
+                            candidate_replay_capability=(
+                                candidate_replay_capability
+                            ),
                         )
                         if type(launch) is not _Day1BWorkerLaunch:
                             raise TypeError(
                                 "execution adapter must return one exact candidate-cell launch"
                             )
+                        require_day1b_candidate_replay_capability_consumed(
+                            candidate_replay_capability
+                        )
                         candidate_audit = audited_windows.finish()
                         if candidate_audit != audit:
                             raise Day1BWorkerProtocolError(
@@ -5373,6 +5419,11 @@ def _produce_publication_day1b_unit(
                                 receipt.candidate.peak_scratch_bytes,
                             )
                     except BaseException as error:
+                        if candidate_replay_capability is not None:
+                            with suppress(BaseException):
+                                abandon_day1b_candidate_replay_capability(
+                                    candidate_replay_capability
+                                )
                         if launch is not None and not invocation_consumed:
                             with suppress(BaseException):
                                 abandon_day1b_worker_invocation(launch.invocation_capability)

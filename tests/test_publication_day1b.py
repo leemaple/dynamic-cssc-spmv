@@ -62,6 +62,14 @@ from dynamic_cssc.publication_day1b_metadata_framing import (
     Day1BUpdateVersionPlanMetadata,
     day1b_metadata_size_class_sha256,
 )
+from dynamic_cssc.publication_day1b_replay_execution import (
+    Day1BCandidateReplayCapability,
+    Day1BReplayExecutionError,
+    abandon_day1b_candidate_replay_capability,
+    claim_day1b_candidate_replay_capability,
+    describe_day1b_candidate_replay_capability,
+    require_day1b_candidate_replay_capability_consumed,
+)
 from dynamic_cssc.publication_day1b_worker_protocol import (
     DAY1B_WORKER_FRAME_SCHEMA,
     Day1BControllerExpectedF1MObject,
@@ -475,7 +483,11 @@ def _program(
 
 
 def _trace() -> _Day1BTraceInput:
-    query_vector = {"schema_version": QUERY_VECTOR_SCHEMA, "values": [1, 0, -1]}
+    query_values = (1,) + (0,) * 510 + (-1,)
+    query_vector = {
+        "schema_version": QUERY_VECTOR_SCHEMA,
+        "values": list(query_values),
+    }
     query_vector_bytes = _canonical_bytes(query_vector)
     trace_behavior_sources = (("src/dynamic_cssc/publication_traces.py", "b" * 64),)
     return _Day1BTraceInput(
@@ -501,7 +513,7 @@ def _trace() -> _Day1BTraceInput:
         acquisition_authority_state=None,
         acquisition_network_authority_verified=False,
         accepted_group_count=250,
-        query_vector=(1, 0, -1),
+        query_vector=query_values,
         query_vector_canonical_bytes=query_vector_bytes,
         query_vector_sha256=hashlib.sha256(query_vector_bytes).hexdigest(),
         compile_schedule=_program,
@@ -510,7 +522,7 @@ def _trace() -> _Day1BTraceInput:
 
 def _source() -> _Day1BPreparatorySourceAttestation:
     inventory = {
-        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v29",
+        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v30",
         "behavior_set_sha256": "c" * 64,
         "entries": [],
         "role": "day1b",
@@ -820,6 +832,7 @@ class _StreamingExecutor:
         self.omit_first_one_time = False
         self.post_mint_failure: BaseException | None = None
         self.last_minted_invocation: object | None = None
+        self.consume_replay_capability = True
 
     def _registry_inputs(
         self,
@@ -934,8 +947,17 @@ class _StreamingExecutor:
         *,
         windows: object,
         contract_seed: _Day1BWorkerContractSeed,
+        candidate_replay_capability: Day1BCandidateReplayCapability,
     ) -> _Day1BWorkerLaunch:
         assert type(contract_seed) is _Day1BWorkerContractSeed
+        if self.consume_replay_capability:
+            replay_receipt = claim_day1b_candidate_replay_capability(
+                candidate_replay_capability
+            ).receipt
+        else:
+            replay_receipt = describe_day1b_candidate_replay_capability(
+                candidate_replay_capability
+            )
         audits = _worker_audits(windows)
         cardinalities, window_batches, expected_f1m_objects = self._registry_inputs(
             contract_seed, audits
@@ -1012,6 +1034,7 @@ class _StreamingExecutor:
                     )
                 ),
                 invocation_capability=invocation,
+                replay_execution_receipt=replay_receipt,
             )
             if self.post_mint_failure is not None:
                 raise self.post_mint_failure
@@ -1112,7 +1135,7 @@ def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v29"),
+            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v30"),
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -1216,7 +1239,7 @@ def test_public_producer_checks_profile_before_catalog_trace_or_worker(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v29",
+            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v30",
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -3231,6 +3254,7 @@ def test_t2_realized_set_cardinality_is_separate_from_stats_update_denominator()
         size_authority=_size_authority(),
         resource_policy=resource_policy,
         expected_complete_audit=summary_audit,
+        accounting_domain=day1b_module._TEST_DAY1B_ACCOUNTING_DOMAIN,
     )
     f1m_controller_summary = controller_replay.f1m_summary
     failed_measurement = Day1BWorkerPhaseReceipt(
@@ -3269,6 +3293,9 @@ def test_t2_realized_set_cardinality_is_separate_from_stats_update_denominator()
     )
     assert tuning_record["update_count"] == 300
     assert heldout_record["update_count"] == 600
+    abandon_day1b_candidate_replay_capability(
+        controller_replay.candidate_replay_capability
+    )
 
 
 def test_production_f1m_replay_derives_zero_query_coverage_and_closed_context() -> None:
@@ -3308,6 +3335,7 @@ def test_production_f1m_replay_derives_zero_query_coverage_and_closed_context() 
         size_authority=size_authority,
         resource_policy=resource_policy,
         expected_complete_audit=audit,
+        accounting_domain=day1b_module._TEST_DAY1B_ACCOUNTING_DOMAIN,
     )
     summary = controller_replay.f1m_summary
 
@@ -3357,6 +3385,80 @@ def test_production_f1m_replay_derives_zero_query_coverage_and_closed_context() 
     assert contract.f1m_controller_context_sha256 == summary.context.context_sha256
     assert contract.f1m_route_coverage_sha256 == summary.route_coverage_sha256
     assert contract.f1m_charged_size_class_set_sha256 == (summary.charged_size_class_set_sha256)
+    abandon_day1b_candidate_replay_capability(
+        controller_replay.candidate_replay_capability
+    )
+
+
+def test_controller_replay_abandons_a_minted_capability_on_post_replay_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace = _trace()
+    source = _source()
+    freshness = Fraction(FRESHNESS_VALUES[0])
+    program = trace.compile_schedule(Fraction(RHO_VALUES[0]))
+    audit = day1b_module._complete_cell_audit(program, freshness)
+    cell = day1b_module._cell_document(
+        day1b_module._trace_unit_document(trace, source),
+        trace,
+        source,
+        program,
+        freshness,
+        audit,
+    )
+    catalog = _catalog()
+    captured: list[Day1BCandidateReplayCapability] = []
+    original_abandon = day1b_module.abandon_day1b_candidate_replay_capability
+
+    def capture_and_abandon(capability: Day1BCandidateReplayCapability) -> None:
+        captured.append(capability)
+        original_abandon(capability)
+
+    monkeypatch.setattr(
+        day1b_module,
+        "abandon_day1b_candidate_replay_capability",
+        capture_and_abandon,
+    )
+    wrong_audit = replace(
+        audit,
+        phase_audits=(
+            replace(
+                audit.phase_audits[0],
+                realized_window_count=audit.phase_audits[0].realized_window_count + 1,
+            ),
+            *audit.phase_audits[1:],
+        ),
+    )
+
+    with pytest.raises(
+        worker_protocol.Day1BWorkerProtocolError,
+        match="did not consume the canonical complete cell schedule",
+    ):
+        day1b_module._replay_f1m_controller_for_candidate_cell(
+            source=source,
+            trace=trace,
+            program=program,
+            freshness=freshness,
+            cell=cell,
+            cell_ordinal=0,
+            candidate=catalog.candidates[0],
+            terminal_registration_sha256=day1b_module._digest(
+                asdict(catalog.registration)
+            ),
+            candidate_catalog_sha256="e" * 64,
+            resource_policy_sha256="f" * 64,
+            lineage=day1b_module._test_only_f1m_execution_lineage(
+                source=source,
+                trace=trace,
+            ),
+            size_authority=_size_authority(),
+            resource_policy=_resource_policy(),
+            expected_complete_audit=wrong_audit,
+            accounting_domain=day1b_module._TEST_DAY1B_ACCOUNTING_DOMAIN,
+        )
+
+    assert len(captured) == 1
+    require_day1b_candidate_replay_capability_consumed(captured[0])
 
 
 @pytest.mark.parametrize(
@@ -3407,6 +3509,7 @@ def test_worker_seed_rejects_controller_lineage_or_resource_substitution(
         size_authority=size_authority,
         resource_policy=resource_policy,
         expected_complete_audit=audit,
+        accounting_domain=day1b_module._TEST_DAY1B_ACCOUNTING_DOMAIN,
     )
     summary = controller_replay.f1m_summary
     context_fields = {
@@ -3457,6 +3560,9 @@ def test_worker_seed_rejects_controller_lineage_or_resource_substitution(
             f1m_controller_summary=summary,
             controller_expected_counts=controller_replay.expected_counts,
         )
+    abandon_day1b_candidate_replay_capability(
+        controller_replay.candidate_replay_capability
+    )
 
 
 def test_f1m_complete_audit_rejects_phase_name_position_substitution() -> None:
@@ -3826,6 +3932,47 @@ def test_private_core_holds_on_malformed_candidate_launch_without_output(
     assert not output_dir.exists()
 
 
+def test_private_core_rejects_an_adapter_that_does_not_claim_its_replay(
+    tmp_path: Path,
+) -> None:
+    captured: list[Day1BCandidateReplayCapability] = []
+
+    class NonConsumingExecutor(_StreamingExecutor):
+        def execute_candidate_cell(
+            self,
+            *,
+            windows: object,
+            contract_seed: _Day1BWorkerContractSeed,
+            candidate_replay_capability: Day1BCandidateReplayCapability,
+        ) -> _Day1BWorkerLaunch:
+            captured.append(candidate_replay_capability)
+            self.consume_replay_capability = False
+            return super().execute_candidate_cell(
+                windows=windows,
+                contract_seed=contract_seed,
+                candidate_replay_capability=candidate_replay_capability,
+            )
+
+    executor = NonConsumingExecutor(tmp_path / "controlled-scratch")
+    output_dir = tmp_path / "unit"
+    with pytest.raises(PublicationDay1BHold, match="candidate-cell worker evidence"):
+        _produce_publication_day1b_unit_for_test(
+            trace=_trace(),
+            output_dir=output_dir,
+            source_attestation=_source(),
+            candidate_catalog=_catalog(),
+            resource_policy=_resource_policy(),
+            execution_adapter=executor,
+        )
+
+    assert len(captured) == 1
+    with pytest.raises(Day1BReplayExecutionError, match="absent or consumed"):
+        describe_day1b_candidate_replay_capability(captured[0])
+    assert executor.last_minted_invocation is not None
+    assert id(executor.last_minted_invocation) not in worker_protocol._ISSUED_INVOCATIONS
+    assert not output_dir.exists()
+
+
 def test_fixture_adapter_abandons_capability_if_launch_fails_before_return(
     tmp_path: Path,
 ) -> None:
@@ -4168,6 +4315,9 @@ def test_formal_seed_rejects_worker_materialized_f1m_against_controller_zero_pre
     launch = executor.execute_candidate_cell(
         windows=program.stream_windows(freshness),
         contract_seed=seed,
+        candidate_replay_capability=(
+            controller_replay.candidate_replay_capability
+        ),
     )
     with pytest.raises(
         worker_protocol.Day1BWorkerProtocolError,

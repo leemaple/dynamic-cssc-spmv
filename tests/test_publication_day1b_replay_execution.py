@@ -28,6 +28,7 @@ from dynamic_cssc.publication_day1b_replay_execution import (
     claim_day1b_candidate_replay_capability,
     describe_day1b_candidate_replay_capability,
     replay_and_seal_publication_day1b_candidate,
+    require_day1b_candidate_replay_capability_consumed,
 )
 from dynamic_cssc.publication_schedule import (
     ExactPublicationWindow,
@@ -328,7 +329,10 @@ def test_collector_is_one_shot_and_capability_is_not_caller_constructible() -> N
         Day1BCandidateReplayCapability()
     with pytest.raises(TypeError, match="not a caller boolean"):
         bool(capability)
+    with pytest.raises(Day1BReplayExecutionError, match="was not consumed"):
+        require_day1b_candidate_replay_capability_consumed(capability)
     abandon_day1b_candidate_replay_capability(capability)
+    require_day1b_candidate_replay_capability_consumed(capability)
     assert capability._binding is None
     with pytest.raises(Day1BReplayExecutionError, match="absent or consumed"):
         describe_day1b_candidate_replay_capability(capability)
