@@ -199,8 +199,10 @@ full rotation-key inventory, followed by the big-endian length and SHA-256 of
 the eval-mult key set; the two raw segments follow in that order. Its size class
 binds both measured Day 2 segment lengths and the Day 2 archive/profile roots.
 No crypto context, public key, label, or optional payload is admissible. The
-existing generic OpenFHE context-bearing key bundle remains non-authorizing and
-must be replaced at the production-adapter seam before runtime admission.
+generic OpenFHE runner now emits that exact frame plus a same-context typed
+receipt, but remains non-authorizing. The production-adapter seam must still
+bind a verified Day 2 plan authority and runtime-admission capability before
+treating that frame as a formal representative.
 The formal worker input opens the Day 2 segment lengths and class digest. Its
 streaming parser validates the header, both segment digests, and exact end of
 frame without retaining the raw key payload. Exactly one representative is

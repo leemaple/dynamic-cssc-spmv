@@ -475,7 +475,7 @@ measurement-method field in this placeholder remains `null`; the separate
 amendment is the sole reviewed source of administrative limits and
 measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v19` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v20` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface, including the amendment and
 `docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
@@ -491,11 +491,15 @@ resource observations, and retained binary object verifier.
 The smoke exercises multiplication without implicit
 relinearization, explicit relinearization, exact-index rotation, plaintext
 selection, ciphertext addition, reconstruction, tail-slot zero checks, and
-SHA-256 verification of every serialized input, result, and one-time key bundle.
+SHA-256 verification of every serialized input and result plus a typed
+`D1BKEY01` rotation/eval-mult frame built directly from one key-generation
+session. Its receipt binds the request/input roots, context parameters, full
+rotation plan, required/generated indices, both segment digests, and combined
+frame while keeping context/public-key bytes outside that frame.
 Its provisional depth-2/0/0 profile remains explicitly `HOLD` for mixed-circuit
 parameter authority.
 
-The current v19 surface also contains a non-authorizing streaming accounting core. It
+The current v20 surface also contains a non-authorizing streaming accounting core. It
 advances one candidate state exactly once per exact Publication Window, derives
 at most one typed query plan per query-bearing window, applies the window's
 integer query multiplicity before the fixed 14-primitive mapping, and retains
@@ -508,7 +512,7 @@ the separate evidence path for real no-reuse enforcement. The accounting core
 does not mint a worker invocation, materialize per-query masks or ledger
 transitions, measure serialized OpenFHE sizes, or relax any dispatch gate.
 
-The v18 surface closes count authority separately from serialized-size
+The v20 surface closes count authority separately from serialized-size
 measurement. Before dispatch, the controller projects each deterministic replay
 into an open expected-count document containing the exact retained-phase
 update/query primitive vectors and all nine logical protocol-object
@@ -530,7 +534,7 @@ outcome. Thus a failed or controller-terminal null projection cannot preserve
 an otherwise self-consistent rehashed preimage that switches weighted F1-M back
 to materialized worker mode.
 
-The v18 surface also freezes canonical big-endian binary framing for the three
+The v20 surface also freezes canonical big-endian binary framing for the three
 metadata categories used in primary communication accounting. A ColumnIndex
 synchronization entry is exactly 64 bytes; patch and full-sync differ only in a
 fixed-position one-byte enum and therefore share one size class. An update-side
@@ -547,7 +551,7 @@ object receipt whose metadata byte count differs from 64, 144, or 136. This
 closes preparatory size-class pricing, but it does not yet authorize or claim a
 production representative execution.
 
-The v18 surface separately freezes the one-time evaluation-key object as an
+The v20 surface separately freezes the one-time evaluation-key object as an
 exact two-segment frame. Its 88-byte header is `D1BKEY01`, followed by the
 big-endian rotation-inventory length and 32-byte digest, then the big-endian
 evaluation-multiplication-key length and 32-byte digest. The payload is exactly
@@ -555,16 +559,19 @@ the full Day 1A rotation-key inventory bytes followed by the eval-mult key
 bytes. The size-class descriptor binds both segment lengths to the Day 2 outer
 archive and serialized-object-size-profile roots, so its charged length is
 `88 + rotation_bytes + eval_mult_bytes`. Crypto-context, public-key, label, and
-optional third segments are excluded. The generic OpenFHE runner's earlier
-context-bearing key bundle is therefore not a formal Day 1B representative;
-the worker input instead opens the exact Day 2 segment lengths and size-class
-digest. The streaming verifier checks the magic, header lengths, segment
-digests, exact end-of-frame, and object cap without retaining the binary key
-payload. The first retained-phase object receipt and ledger then bind one
-representative, its exact `88 + rotation_bytes + eval_mult_bytes` charge, and
-the same controller class digest; later retained phases bind zero. Replacing
-the generic runner with a production adapter that emits this frame remains
-HOLD work.
+optional third segments are excluded. The generic OpenFHE runner now builds
+that frame directly from typed rotation and eval-mult outputs of one actual
+context/session, and its pre-admission receipt binds the full supplied plan and
+required/generated indices. The worker input independently opens the exact Day
+2 segment lengths and size-class digest. The streaming verifier checks the
+magic, header lengths, segment digests, exact end-of-frame, and object cap
+without retaining the binary key payload. The first retained-phase object
+receipt and ledger then bind one representative, its exact
+`88 + rotation_bytes + eval_mult_bytes` charge, and the same controller class
+digest; later retained phases bind zero. Production admission remains HOLD:
+query-derived plans grant no authority, and a canonical Day 2 plan remains only
+a bound input until the adapter consumes its independent authority plus the
+runtime mapping, scratch, and representative-DAG capabilities.
 
 Held-out dispatch remains forbidden until an outcome-blind amendment freezes
 the measured limits and methods, and a repository-owned production candidate-cell

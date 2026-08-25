@@ -116,5 +116,6 @@ jobs:
           echo 'The PENDING-FREEZE placeholder remains immutable.'
           echo 'The reviewed amendment supplies administrative safety budgets only.'
           echo 'The generic OpenFHE query runtime passed a non-authorizing smoke.'
+          echo 'Its typed D1BKEY01 key receipt remains pre-admission only.'
           echo 'The production Day1B candidate worker and admission receipt remain absent.'
           echo 'No publication execution or artifact production is permitted.'

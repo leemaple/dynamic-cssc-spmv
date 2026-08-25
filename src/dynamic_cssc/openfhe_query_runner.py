@@ -33,10 +33,31 @@ from dynamic_cssc.ordinary_query_lifecycle import (
     canonical_ordinary_query_preparation_bytes,
 )
 from dynamic_cssc.plaintext_oracle import reconstruct_output
+from dynamic_cssc.publication_day1b_key_framing import (
+    DAY1B_COMBINED_EVALUATION_KEY_CATEGORY,
+    DAY1B_COMBINED_EVALUATION_KEY_FRAMING_SCHEMA,
+    DAY1B_COMBINED_EVALUATION_KEY_HEADER_BYTES,
+    Day1BCombinedEvaluationKeyFrameStreamReceipt,
+    Day1BCombinedEvaluationKeyFrameStreamValidator,
+    Day1BCombinedEvaluationKeyFramingError,
+)
 
-OPENFHE_QUERY_REQUEST_SCHEMA = "dynamic-cssc-full-openfhe-query-request-v1"
-OPENFHE_QUERY_RESULT_SCHEMA = "dynamic-cssc-full-openfhe-query-result-v1"
+OPENFHE_QUERY_REQUEST_SCHEMA = "dynamic-cssc-full-openfhe-query-request-v2"
+OPENFHE_QUERY_RESULT_SCHEMA = "dynamic-cssc-full-openfhe-query-result-v2"
 OPENFHE_QUERY_PARAMETER_PROFILE = "day1b-full-query-pre-admission-depth2-0-0-v1"
+OPENFHE_KEY_GENERATION_PLAN_SCHEMA = "dynamic-cssc-openfhe-key-generation-plan-v1"
+OPENFHE_QUERY_DERIVED_ROTATION_KEY_PLAN_SCHEMA = (
+    "dynamic-cssc-openfhe-query-derived-rotation-key-plan-v1"
+)
+OPENFHE_KEY_MATERIAL_INPUT_BINDING_SCHEMA = (
+    "dynamic-cssc-openfhe-key-material-input-binding-v1"
+)
+OPENFHE_KEY_GENERATION_SESSION_SCHEMA = (
+    "dynamic-cssc-openfhe-key-generation-session-v1"
+)
+OPENFHE_KEY_MATERIAL_RECEIPT_SCHEMA = "dynamic-cssc-openfhe-key-material-receipt-v1"
+
+_DAY2_ROTATION_KEY_PLAN_SCHEMA = "dynamic-cssc-publication-rotation-key-plan-v2"
 
 _PARAMS_PATH = "config/params_manifest.json"
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -68,11 +89,95 @@ class OpenFHESerializedObjectReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class OpenFHEKeyGenerationPlan:
+    """One canonical non-authorizing rotation plan presented to the C++ runner."""
+
+    rotation_key_plan_bytes: bytes
+    rotation_key_plan_sha256: str
+    required_exact_indices: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        plan = _decode_json(self.rotation_key_plan_bytes, field="rotation key plan")
+        if self.rotation_key_plan_bytes != _canonical_bytes(plan):
+            raise OpenFHEQueryRunnerError("rotation key plan is not canonical JSON")
+        required = _validate_rotation_key_plan_document(plan)
+        if (
+            self.rotation_key_plan_sha256
+            != hashlib.sha256(self.rotation_key_plan_bytes).hexdigest()
+            or self.required_exact_indices != required
+        ):
+            raise OpenFHEQueryRunnerError("rotation key plan typed binding changed")
+
+    def to_request_document(self) -> dict[str, object]:
+        return {
+            "authority_state": "pre-admission-only",
+            "eval_mult_key_required": True,
+            "formal_authority_granted": False,
+            "publication_authority": False,
+            "rotation_key_plan": _decode_json(
+                self.rotation_key_plan_bytes,
+                field="rotation key plan",
+            ),
+            "rotation_key_plan_sha256": self.rotation_key_plan_sha256,
+            "schema_version": OPENFHE_KEY_GENERATION_PLAN_SCHEMA,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class OpenFHEKeyMaterialReceipt:
+    combined_frame_byte_count: int
+    combined_frame_sha256: str
+    crypto_context_parameter_sha256: str
+    crypto_context_serialization_sha256: str
+    eval_mult_segment_byte_count: int
+    eval_mult_segment_sha256: str
+    generated_exact_indices: tuple[int, ...]
+    input_binding_sha256: str
+    key_generation_plan_sha256: str
+    key_generation_session_sha256: str
+    public_key_sha256: str
+    request_sha256: str
+    required_exact_indices: tuple[int, ...]
+    rotation_key_plan_sha256: str
+    rotation_segment_byte_count: int
+    rotation_segment_sha256: str
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "combined_frame_byte_count": self.combined_frame_byte_count,
+            "combined_frame_sha256": self.combined_frame_sha256,
+            "crypto_context_parameter_sha256": self.crypto_context_parameter_sha256,
+            "crypto_context_serialization_sha256": (
+                self.crypto_context_serialization_sha256
+            ),
+            "eval_mult_segment_byte_count": self.eval_mult_segment_byte_count,
+            "eval_mult_segment_sha256": self.eval_mult_segment_sha256,
+            "formal_authority_granted": False,
+            "framing_schema": DAY1B_COMBINED_EVALUATION_KEY_FRAMING_SCHEMA,
+            "generated_exact_indices": list(self.generated_exact_indices),
+            "input_binding_sha256": self.input_binding_sha256,
+            "key_generation_plan_sha256": self.key_generation_plan_sha256,
+            "key_generation_session_sha256": self.key_generation_session_sha256,
+            "public_key_sha256": self.public_key_sha256,
+            "publication_authority": False,
+            "request_sha256": self.request_sha256,
+            "required_exact_indices": list(self.required_exact_indices),
+            "rotation_key_plan_sha256": self.rotation_key_plan_sha256,
+            "rotation_segment_byte_count": self.rotation_segment_byte_count,
+            "rotation_segment_sha256": self.rotation_segment_sha256,
+            "same_crypto_context_generation_session": True,
+            "schema_version": OPENFHE_KEY_MATERIAL_RECEIPT_SCHEMA,
+            "status": "verified-by-runner-pre-admission-only",
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class VerifiedOpenFHEQueryResult:
     request_sha256: str
     operation_counts: tuple[tuple[str, int], ...]
     decrypted_results: tuple[tuple[str, tuple[int, ...]], ...]
     reconstructed_output: tuple[int, ...]
+    key_material_receipt: OpenFHEKeyMaterialReceipt
     serialized_objects: tuple[OpenFHESerializedObjectReceipt, ...]
     second_batch_row_zero: bool
     publication_authority: bool
@@ -129,6 +234,126 @@ def _sha256(value: object, *, field: str) -> str:
     if type(value) is not str or _LOWER_SHA256.fullmatch(value) is None:
         raise OpenFHEQueryRunnerError(f"{field} must be a lowercase SHA-256 digest")
     return value
+
+
+def _strict_exact_indices(value: object, *, field: str) -> tuple[int, ...]:
+    if type(value) is not list or not value or any(type(item) is not int for item in value):
+        raise OpenFHEQueryRunnerError(f"{field} must be one nonempty strict-integer list")
+    indices = tuple(value)
+    if (
+        list(indices) != sorted(set(indices))
+        or any(index == 0 or not -4095 <= index <= 4095 for index in indices)
+        or len({index % 4096 for index in indices}) != len(indices)
+    ):
+        raise OpenFHEQueryRunnerError(
+            f"{field} must be canonical, nonzero, in range, and modulo-distinct"
+        )
+    return indices
+
+
+def _validate_rotation_key_plan_document(value: dict[str, object]) -> tuple[int, ...]:
+    schema = value.get("schema_version")
+    if schema == OPENFHE_QUERY_DERIVED_ROTATION_KEY_PLAN_SCHEMA:
+        if set(value) != {
+            "coverage_kind",
+            "required_exact_indices",
+            "schema_version",
+            "source_cloud_program_sha256",
+        }:
+            raise OpenFHEQueryRunnerError("query-derived rotation key-plan keys changed")
+        if value["coverage_kind"] not in {
+            "exact-program-rotation-catalog",
+            "minimum-nonempty-program-cover",
+        }:
+            raise OpenFHEQueryRunnerError("query-derived rotation coverage kind changed")
+        _sha256(
+            value["source_cloud_program_sha256"],
+            field="query-derived source cloud program",
+        )
+        return _strict_exact_indices(
+            value["required_exact_indices"],
+            field="query-derived required rotation indices",
+        )
+    if schema != _DAY2_ROTATION_KEY_PLAN_SCHEMA:
+        raise OpenFHEQueryRunnerError("rotation key-plan schema is unsupported")
+    if set(value) != {
+        "composite_decompositions",
+        "day1a_authority_receipt_sha256",
+        "day1a_inventory_sha256",
+        "effective_slots",
+        "eval_rotate_case_ids",
+        "inventory_source_schema_version",
+        "key_plan_kind",
+        "planned_exact_indices",
+        "required_exact_indices",
+        "schema_version",
+    }:
+        raise OpenFHEQueryRunnerError("Day 2 rotation key-plan keys changed")
+    if (
+        type(value["inventory_source_schema_version"]) is not str
+        or not value["inventory_source_schema_version"]
+        or value["effective_slots"] != 4096
+        or value["key_plan_kind"] != "direct-exact-index-v1"
+        or type(value["composite_decompositions"]) is not list
+        or value["composite_decompositions"]
+    ):
+        raise OpenFHEQueryRunnerError("Day 2 rotation key-plan structure changed")
+    _sha256(
+        value["day1a_authority_receipt_sha256"],
+        field="Day1A authority receipt",
+    )
+    _sha256(value["day1a_inventory_sha256"], field="Day1A rotation inventory")
+    required = _strict_exact_indices(
+        value["required_exact_indices"],
+        field="Day 2 required rotation indices",
+    )
+    if value["planned_exact_indices"] != list(required) or value["eval_rotate_case_ids"] != [
+        f"index={index}" for index in required
+    ]:
+        raise OpenFHEQueryRunnerError("Day 2 planned rotation inventory changed")
+    return required
+
+
+def pre_admission_day2_openfhe_key_generation_plan(
+    rotation_key_plan_bytes: bytes,
+) -> OpenFHEKeyGenerationPlan:
+    """Type one canonical Day 2 plan without granting runtime/publication authority."""
+
+    plan = _decode_json(rotation_key_plan_bytes, field="Day 2 rotation key plan")
+    if rotation_key_plan_bytes != _canonical_bytes(plan):
+        raise OpenFHEQueryRunnerError("Day 2 rotation key plan is not canonical JSON")
+    required = _validate_rotation_key_plan_document(plan)
+    if plan["schema_version"] != _DAY2_ROTATION_KEY_PLAN_SCHEMA:
+        raise OpenFHEQueryRunnerError("pre-admission Day 2 plan has the wrong schema")
+    return OpenFHEKeyGenerationPlan(
+        rotation_key_plan_bytes=rotation_key_plan_bytes,
+        rotation_key_plan_sha256=hashlib.sha256(rotation_key_plan_bytes).hexdigest(),
+        required_exact_indices=required,
+    )
+
+
+def _query_derived_key_generation_plan(
+    *,
+    cloud_program_sha256: str,
+    rotation_entries: tuple[tuple[int, int], ...],
+) -> OpenFHEKeyGenerationPlan:
+    required = tuple(sorted({openfhe_index for _logical, openfhe_index in rotation_entries}))
+    coverage_kind = "exact-program-rotation-catalog"
+    if not required:
+        required = (1,)
+        coverage_kind = "minimum-nonempty-program-cover"
+    document = {
+        "coverage_kind": coverage_kind,
+        "required_exact_indices": list(required),
+        "schema_version": OPENFHE_QUERY_DERIVED_ROTATION_KEY_PLAN_SCHEMA,
+        "source_cloud_program_sha256": cloud_program_sha256,
+    }
+    content = _canonical_bytes(document)
+    return OpenFHEKeyGenerationPlan(
+        rotation_key_plan_bytes=content,
+        rotation_key_plan_sha256=hashlib.sha256(content).hexdigest(),
+        required_exact_indices=required,
+    )
 
 
 def _repository_openfhe_profile(repository_root: Path) -> dict[str, object]:
@@ -242,6 +467,7 @@ def build_ordinary_openfhe_query_request(
     prepared: PreparedOrdinaryQuery,
     *,
     repository_root: Path | None = None,
+    key_generation_plan: OpenFHEKeyGenerationPlan | None = None,
 ) -> bytes:
     """Build one private, non-authorizing request for the generic C++ runner."""
 
@@ -260,6 +486,38 @@ def build_ordinary_openfhe_query_request(
     if compiled.cloud_plan.program.slot_count > profile["batch_size"]:
         raise OpenFHEQueryRunnerError("typed query slot count exceeds the OpenFHE batch size")
     execution_binding = canonical_execution_binding_payload(compiled.cloud_plan.binding)
+    derived_key_plan = _query_derived_key_generation_plan(
+        cloud_program_sha256=compiled.cloud_program_digest,
+        rotation_entries=compiled.cloud_plan.program.rotation_catalog.entries,
+    )
+    if key_generation_plan is None:
+        key_plan = derived_key_plan
+    elif not isinstance(key_generation_plan, OpenFHEKeyGenerationPlan):
+        raise TypeError("key_generation_plan must be an OpenFHEKeyGenerationPlan")
+    else:
+        key_plan = key_generation_plan
+        plan_document = _decode_json(
+            key_plan.rotation_key_plan_bytes,
+            field="rotation key plan",
+        )
+        program_indices = {
+            openfhe_index
+            for _logical_shift, openfhe_index in (
+                compiled.cloud_plan.program.rotation_catalog.entries
+            )
+        }
+        if not program_indices.issubset(key_plan.required_exact_indices):
+            raise OpenFHEQueryRunnerError(
+                "key-generation plan does not cover every program rotation"
+            )
+        if (
+            plan_document["schema_version"]
+            == OPENFHE_QUERY_DERIVED_ROTATION_KEY_PLAN_SCHEMA
+            and key_plan != derived_key_plan
+        ):
+            raise OpenFHEQueryRunnerError(
+                "query-derived key-generation plan differs from the exact program"
+            )
     request = {
         "bindings": {
             "cloud_program_sha256": compiled.cloud_program_digest,
@@ -271,6 +529,7 @@ def build_ordinary_openfhe_query_request(
             ).hexdigest(),
         },
         "ciphertext_values": _ordinary_ciphertext_values(bundle, prepared),
+        "key_generation_plan": key_plan.to_request_document(),
         "openfhe": profile,
         "program": canonical_cloud_program_payload(compiled.cloud_plan.program),
         "schema_version": OPENFHE_QUERY_REQUEST_SCHEMA,
@@ -341,7 +600,8 @@ def _read_exact_member(
     *,
     byte_count: int,
     sha256: str,
-) -> None:
+    key_frame_validator: Day1BCombinedEvaluationKeyFrameStreamValidator | None = None,
+) -> Day1BCombinedEvaluationKeyFrameStreamReceipt | None:
     try:
         descriptor = os.open(
             relative_path,
@@ -361,6 +621,13 @@ def _read_exact_member(
             if not block:
                 raise OpenFHEQueryRunnerError("serialized OpenFHE object ended early")
             hasher.update(block)
+            if key_frame_validator is not None:
+                try:
+                    key_frame_validator.accept(block)
+                except Day1BCombinedEvaluationKeyFramingError as error:
+                    raise OpenFHEQueryRunnerError(
+                        "serialized typed key frame is invalid"
+                    ) from error
             remaining -= len(block)
         if os.read(descriptor, 1):
             raise OpenFHEQueryRunnerError("serialized OpenFHE object grew while hashing")
@@ -374,6 +641,12 @@ def _read_exact_member(
             raise OpenFHEQueryRunnerError("serialized OpenFHE object changed while hashing")
         if hasher.hexdigest() != sha256:
             raise OpenFHEQueryRunnerError("serialized OpenFHE object digest differs")
+        if key_frame_validator is None:
+            return None
+        try:
+            return key_frame_validator.finish()
+        except Day1BCombinedEvaluationKeyFramingError as error:
+            raise OpenFHEQueryRunnerError("serialized typed key frame is invalid") from error
     finally:
         os.close(descriptor)
 
@@ -413,6 +686,158 @@ def _read_bounded_exact_file(path: Path, *, maximum: int, field: str) -> bytes:
         os.close(descriptor)
 
 
+def _key_material_input_binding_sha256(request: dict[str, object]) -> str:
+    key_plan = request["key_generation_plan"]
+    assert type(key_plan) is dict
+    document = {
+        "bindings": request["bindings"],
+        "key_generation_plan_sha256": hashlib.sha256(_canonical_bytes(key_plan)).hexdigest(),
+        "schema_version": OPENFHE_KEY_MATERIAL_INPUT_BINDING_SCHEMA,
+    }
+    return hashlib.sha256(_canonical_bytes(document)).hexdigest()
+
+
+def _key_generation_session_sha256(receipt: dict[str, object]) -> str:
+    document = {
+        "crypto_context_parameter_sha256": receipt["crypto_context_parameter_sha256"],
+        "crypto_context_serialization_sha256": receipt[
+            "crypto_context_serialization_sha256"
+        ],
+        "eval_mult_segment_byte_count": receipt["eval_mult_segment_byte_count"],
+        "eval_mult_segment_sha256": receipt["eval_mult_segment_sha256"],
+        "input_binding_sha256": receipt["input_binding_sha256"],
+        "key_generation_plan_sha256": receipt["key_generation_plan_sha256"],
+        "public_key_sha256": receipt["public_key_sha256"],
+        "request_sha256": receipt["request_sha256"],
+        "required_exact_indices": receipt["required_exact_indices"],
+        "rotation_key_plan_sha256": receipt["rotation_key_plan_sha256"],
+        "rotation_segment_byte_count": receipt["rotation_segment_byte_count"],
+        "rotation_segment_sha256": receipt["rotation_segment_sha256"],
+        "schema_version": OPENFHE_KEY_GENERATION_SESSION_SCHEMA,
+    }
+    return hashlib.sha256(_canonical_bytes(document)).hexdigest()
+
+
+def _verify_key_material_receipt(
+    value: object,
+    *,
+    request: dict[str, object],
+    request_sha256: str,
+) -> OpenFHEKeyMaterialReceipt:
+    expected_keys = {
+        "combined_frame_byte_count",
+        "combined_frame_sha256",
+        "crypto_context_parameter_sha256",
+        "crypto_context_serialization_sha256",
+        "eval_mult_segment_byte_count",
+        "eval_mult_segment_sha256",
+        "formal_authority_granted",
+        "framing_schema",
+        "generated_exact_indices",
+        "input_binding_sha256",
+        "key_generation_plan_sha256",
+        "key_generation_session_sha256",
+        "publication_authority",
+        "public_key_sha256",
+        "request_sha256",
+        "required_exact_indices",
+        "rotation_key_plan_sha256",
+        "rotation_segment_byte_count",
+        "rotation_segment_sha256",
+        "same_crypto_context_generation_session",
+        "schema_version",
+        "status",
+    }
+    if type(value) is not dict or set(value) != expected_keys:
+        raise OpenFHEQueryRunnerError("key-material receipt keys are not exact")
+    key_plan = request["key_generation_plan"]
+    assert type(key_plan) is dict
+    rotation_plan = key_plan["rotation_key_plan"]
+    assert type(rotation_plan) is dict
+    required = _validate_rotation_key_plan_document(rotation_plan)
+    generated = _strict_exact_indices(
+        value["generated_exact_indices"],
+        field="generated exact rotation indices",
+    )
+    returned_required = _strict_exact_indices(
+        value["required_exact_indices"],
+        field="receipt required exact rotation indices",
+    )
+    rotation_bytes = _strict_nonnegative(
+        value["rotation_segment_byte_count"],
+        field="rotation segment byte count",
+    )
+    eval_mult_bytes = _strict_nonnegative(
+        value["eval_mult_segment_byte_count"],
+        field="eval-mult segment byte count",
+    )
+    combined_bytes = _strict_nonnegative(
+        value["combined_frame_byte_count"],
+        field="combined frame byte count",
+    )
+    digests = {
+        field: _sha256(value[field], field=field.replace("_", " "))
+        for field in (
+            "combined_frame_sha256",
+            "crypto_context_parameter_sha256",
+            "crypto_context_serialization_sha256",
+            "eval_mult_segment_sha256",
+            "input_binding_sha256",
+            "key_generation_plan_sha256",
+            "key_generation_session_sha256",
+            "public_key_sha256",
+            "request_sha256",
+            "rotation_key_plan_sha256",
+            "rotation_segment_sha256",
+        )
+    }
+    expected_key_plan_sha256 = hashlib.sha256(_canonical_bytes(key_plan)).hexdigest()
+    expected_parameter_sha256 = hashlib.sha256(_canonical_bytes(request["openfhe"])).hexdigest()
+    if (
+        value["schema_version"] != OPENFHE_KEY_MATERIAL_RECEIPT_SCHEMA
+        or value["status"] != "verified-by-runner-pre-admission-only"
+        or value["framing_schema"] != DAY1B_COMBINED_EVALUATION_KEY_FRAMING_SCHEMA
+        or value["formal_authority_granted"] is not False
+        or value["publication_authority"] is not False
+        or value["same_crypto_context_generation_session"] is not True
+        or returned_required != required
+        or generated != required
+        or rotation_bytes <= 0
+        or eval_mult_bytes <= 0
+        or combined_bytes
+        != DAY1B_COMBINED_EVALUATION_KEY_HEADER_BYTES + rotation_bytes + eval_mult_bytes
+        or digests["request_sha256"] != request_sha256
+        or digests["rotation_key_plan_sha256"]
+        != key_plan["rotation_key_plan_sha256"]
+        or digests["key_generation_plan_sha256"] != expected_key_plan_sha256
+        or digests["crypto_context_parameter_sha256"] != expected_parameter_sha256
+        or digests["input_binding_sha256"] != _key_material_input_binding_sha256(request)
+        or digests["key_generation_session_sha256"]
+        != _key_generation_session_sha256(value)
+    ):
+        raise OpenFHEQueryRunnerError("key-material receipt binding/status is not exact")
+    return OpenFHEKeyMaterialReceipt(
+        combined_frame_byte_count=combined_bytes,
+        combined_frame_sha256=digests["combined_frame_sha256"],
+        crypto_context_parameter_sha256=digests["crypto_context_parameter_sha256"],
+        crypto_context_serialization_sha256=digests[
+            "crypto_context_serialization_sha256"
+        ],
+        eval_mult_segment_byte_count=eval_mult_bytes,
+        eval_mult_segment_sha256=digests["eval_mult_segment_sha256"],
+        generated_exact_indices=generated,
+        input_binding_sha256=digests["input_binding_sha256"],
+        key_generation_plan_sha256=digests["key_generation_plan_sha256"],
+        key_generation_session_sha256=digests["key_generation_session_sha256"],
+        public_key_sha256=digests["public_key_sha256"],
+        request_sha256=request_sha256,
+        required_exact_indices=required,
+        rotation_key_plan_sha256=digests["rotation_key_plan_sha256"],
+        rotation_segment_byte_count=rotation_bytes,
+        rotation_segment_sha256=digests["rotation_segment_sha256"],
+    )
+
+
 def verify_ordinary_openfhe_query_result(
     bundle: OrdinaryExecutionBundle,
     prepared: PreparedOrdinaryQuery,
@@ -422,6 +847,7 @@ def verify_ordinary_openfhe_query_result(
     object_root: Path,
     expected_output: tuple[int, ...],
     repository_root: Path | None = None,
+    key_generation_plan: OpenFHEKeyGenerationPlan | None = None,
 ) -> VerifiedOpenFHEQueryResult:
     """Verify one C++ result plus every retained serialized-object byte stream."""
 
@@ -429,6 +855,7 @@ def verify_ordinary_openfhe_query_result(
         bundle,
         prepared,
         repository_root=repository_root,
+        key_generation_plan=key_generation_plan,
     )
     if request_bytes != expected_request:
         raise OpenFHEQueryRunnerError("runner request differs from the canonical ordinary request")
@@ -445,6 +872,8 @@ def verify_ordinary_openfhe_query_result(
     expected_result_keys = {
         "bindings",
         "decrypted_results",
+        "key_generation_plan",
+        "key_material_receipt",
         "openfhe",
         "operation_counts",
         "publication_authority",
@@ -463,11 +892,17 @@ def verify_ordinary_openfhe_query_result(
         or result["status"] != "pass"
         or result["request_sha256"] != request_sha256
         or result["bindings"] != request["bindings"]
+        or result["key_generation_plan"] != request["key_generation_plan"]
         or result["openfhe"] != request["openfhe"]
         or result["publication_authority"] is not False
         or result["second_batch_row_zero"] is not True
     ):
         raise OpenFHEQueryRunnerError("OpenFHE query result binding/status is not exact")
+    key_material_receipt = _verify_key_material_receipt(
+        result["key_material_receipt"],
+        request=request,
+        request_sha256=request_sha256,
+    )
     operation_counts = result["operation_counts"]
     if type(operation_counts) is not dict or set(operation_counts) != set(
         _OPERATION_COUNT_KEYS
@@ -578,12 +1013,44 @@ def verify_ordinary_openfhe_query_result(
                 or byte_count <= 0
             ):
                 raise OpenFHEQueryRunnerError("OpenFHE serialized-object identity changed")
-            _read_exact_member(
+            frame_receipt = _read_exact_member(
                 directory_descriptor,
                 relative_path,
                 byte_count=byte_count,
                 sha256=digest,
+                key_frame_validator=(
+                    Day1BCombinedEvaluationKeyFrameStreamValidator(
+                        expected_rotation_key_inventory_bytes=(
+                            key_material_receipt.rotation_segment_byte_count
+                        ),
+                        expected_eval_mult_key_bytes=(
+                            key_material_receipt.eval_mult_segment_byte_count
+                        ),
+                    )
+                    if index == 0
+                    else None
+                ),
             )
+            if index == 0:
+                if (
+                    expected_subject[0] != DAY1B_COMBINED_EVALUATION_KEY_CATEGORY
+                    or byte_count != key_material_receipt.combined_frame_byte_count
+                    or digest != key_material_receipt.combined_frame_sha256
+                    or frame_receipt is None
+                    or frame_receipt.rotation_key_inventory_bytes
+                    != key_material_receipt.rotation_segment_byte_count
+                    or frame_receipt.rotation_key_inventory_sha256
+                    != key_material_receipt.rotation_segment_sha256
+                    or frame_receipt.eval_mult_key_bytes
+                    != key_material_receipt.eval_mult_segment_byte_count
+                    or frame_receipt.eval_mult_key_sha256
+                    != key_material_receipt.eval_mult_segment_sha256
+                ):
+                    raise OpenFHEQueryRunnerError(
+                        "typed key frame differs from the key-material receipt"
+                    )
+            elif frame_receipt is not None:  # pragma: no cover - construction invariant
+                raise AssertionError("non-key OpenFHE object returned a key-frame receipt")
             receipts.append(
                 OpenFHESerializedObjectReceipt(
                     category=item["category"],
@@ -622,6 +1089,7 @@ def verify_ordinary_openfhe_query_result(
             (result_id, decrypted_by_id[result_id]) for result_id in program.result_ids
         ),
         reconstructed_output=reconstructed,
+        key_material_receipt=key_material_receipt,
         serialized_objects=tuple(receipts),
         second_batch_row_zero=result["second_batch_row_zero"],
         publication_authority=False,
@@ -632,9 +1100,17 @@ __all__ = (
     "OPENFHE_QUERY_PARAMETER_PROFILE",
     "OPENFHE_QUERY_REQUEST_SCHEMA",
     "OPENFHE_QUERY_RESULT_SCHEMA",
+    "OPENFHE_KEY_GENERATION_PLAN_SCHEMA",
+    "OPENFHE_KEY_GENERATION_SESSION_SCHEMA",
+    "OPENFHE_KEY_MATERIAL_INPUT_BINDING_SCHEMA",
+    "OPENFHE_KEY_MATERIAL_RECEIPT_SCHEMA",
+    "OPENFHE_QUERY_DERIVED_ROTATION_KEY_PLAN_SCHEMA",
     "OpenFHEQueryRunnerError",
+    "OpenFHEKeyGenerationPlan",
+    "OpenFHEKeyMaterialReceipt",
     "OpenFHESerializedObjectReceipt",
     "VerifiedOpenFHEQueryResult",
     "build_ordinary_openfhe_query_request",
+    "pre_admission_day2_openfhe_key_generation_plan",
     "verify_ordinary_openfhe_query_result",
 )

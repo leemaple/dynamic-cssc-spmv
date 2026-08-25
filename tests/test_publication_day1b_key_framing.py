@@ -180,7 +180,11 @@ def test_combined_frame_stream_validator_accepts_arbitrary_chunk_boundaries() ->
         position = end
         chunk_index += 1
 
-    validator.finish()
+    receipt = validator.finish()
+    assert receipt.rotation_key_inventory_bytes == len(_ROTATION)
+    assert receipt.rotation_key_inventory_sha256 == hashlib.sha256(_ROTATION).hexdigest()
+    assert receipt.eval_mult_key_bytes == len(_EVAL_MULT)
+    assert receipt.eval_mult_key_sha256 == hashlib.sha256(_EVAL_MULT).hexdigest()
 
 
 @pytest.mark.parametrize(

@@ -86,6 +86,7 @@ def main() -> int:
             json.dumps(
                 {
                     "formal_parameter_claim_allowed": False,
+                    "key_material_receipt": verified.key_material_receipt.to_document(),
                     "operation_counts": dict(verified.operation_counts),
                     "publication_authority": verified.publication_authority,
                     "reconstructed_output": verified.reconstructed_output,

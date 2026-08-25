@@ -101,6 +101,7 @@ def test_day1b_workflow_declares_pre_s1_preparatory_hold_without_artifact_steps(
     assert "PENDING-FREEZE" in workflow
     assert "reviewed amendment supplies administrative safety budgets only" in workflow
     assert "generic OpenFHE query runtime passed a non-authorizing smoke" in workflow
+    assert "typed D1BKEY01 key receipt remains pre-admission only" in workflow
     assert "production Day1B candidate worker and admission receipt remain absent" in workflow
     assert "No publication execution or artifact production is permitted" in workflow
     assert "upload" not in workflow.lower()
@@ -114,7 +115,7 @@ def test_preregistration_and_roadmap_keep_preparatory_inventory_non_authorizing(
     combined = preregistration + roadmap
 
     for required in (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v19",
+        "dynamic-cssc-day1b-preparatory-behavior-set-v20",
         "publication-day1b-preparatory.yml",
         "Source inventory is not dispatch authority",
         "controlled-scratch high-water",

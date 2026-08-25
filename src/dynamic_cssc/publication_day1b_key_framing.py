@@ -181,6 +181,14 @@ class Day1BCombinedEvaluationKeyFrame:
         return result
 
 
+@dataclass(frozen=True, slots=True)
+class Day1BCombinedEvaluationKeyFrameStreamReceipt:
+    rotation_key_inventory_bytes: int
+    rotation_key_inventory_sha256: str
+    eval_mult_key_bytes: int
+    eval_mult_key_sha256: str
+
+
 class Day1BCombinedEvaluationKeyFrameStreamValidator:
     """Validate one combined key frame without retaining its binary payload."""
 
@@ -287,7 +295,7 @@ class Day1BCombinedEvaluationKeyFrameStreamValidator:
                 "combined evaluation-key stream has trailing bytes"
             )
 
-    def finish(self) -> None:
+    def finish(self) -> Day1BCombinedEvaluationKeyFrameStreamReceipt:
         """Require the exact header, lengths, and segment digests."""
 
         if len(self._header) != _HEADER.size:
@@ -307,6 +315,12 @@ class Day1BCombinedEvaluationKeyFrameStreamValidator:
             raise Day1BCombinedEvaluationKeyFramingError(
                 "combined evaluation-key eval-mult segment digest changed"
             )
+        return Day1BCombinedEvaluationKeyFrameStreamReceipt(
+            rotation_key_inventory_bytes=self._expected_rotation_bytes,
+            rotation_key_inventory_sha256=self._rotation_hasher.hexdigest(),
+            eval_mult_key_bytes=self._expected_eval_mult_bytes,
+            eval_mult_key_sha256=self._eval_mult_hasher.hexdigest(),
+        )
 
 
 def day1b_combined_evaluation_key_size_class_document(
@@ -386,6 +400,7 @@ __all__ = (
     "DAY1B_COMBINED_EVALUATION_KEY_MAGIC",
     "DAY1B_COMBINED_EVALUATION_KEY_SIZE_CLASS_SCHEMA",
     "Day1BCombinedEvaluationKeyFrame",
+    "Day1BCombinedEvaluationKeyFrameStreamReceipt",
     "Day1BCombinedEvaluationKeyFrameStreamValidator",
     "Day1BCombinedEvaluationKeyFramingError",
     "day1b_combined_evaluation_key_size_class_document",

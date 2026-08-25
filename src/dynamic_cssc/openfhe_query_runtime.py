@@ -29,6 +29,7 @@ from pathlib import Path, PurePosixPath
 
 from dynamic_cssc.mask_ledger import PreparedF1MCommitmentLedger
 from dynamic_cssc.openfhe_query_runner import (
+    OpenFHEKeyGenerationPlan,
     OpenFHESerializedObjectReceipt,
     VerifiedOpenFHEQueryResult,
     build_ordinary_openfhe_query_request,
@@ -41,10 +42,14 @@ from dynamic_cssc.ordinary_query_lifecycle import (
     authorize_ordinary_execution,
     claim_ordinary_execution,
 )
+from dynamic_cssc.publication_day1b_key_framing import (
+    DAY1B_COMBINED_EVALUATION_KEY_CATEGORY,
+    DAY1B_COMBINED_EVALUATION_KEY_FRAMING_SCHEMA,
+)
 
-OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA = "dynamic-cssc-full-openfhe-runtime-receipt-v2"
+OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA = "dynamic-cssc-full-openfhe-runtime-receipt-v3"
 OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA = "dynamic-cssc-openfhe-runner-build-identity-v2"
-OPENFHE_SERIALIZED_PAYLOAD_SCHEMA = "dynamic-cssc-openfhe-serialized-payload-v1"
+OPENFHE_SERIALIZED_PAYLOAD_SCHEMA = "dynamic-cssc-openfhe-serialized-payload-v2"
 
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SOURCE_PATHS = (
@@ -123,6 +128,7 @@ class OpenFHERunnerBuildIdentity:
 class OpenFHESerializedPayload:
     category: str
     subject_id: str
+    binary_framing_schema: str | None
     sha256: str
     payload: bytes
 
@@ -132,6 +138,14 @@ class OpenFHESerializedPayload:
             or not self.category
             or type(self.subject_id) is not str
             or not self.subject_id
+            or (
+                self.binary_framing_schema
+                != (
+                    DAY1B_COMBINED_EVALUATION_KEY_FRAMING_SCHEMA
+                    if self.category == DAY1B_COMBINED_EVALUATION_KEY_CATEGORY
+                    else None
+                )
+            )
             or _LOWER_SHA256.fullmatch(self.sha256) is None
             or type(self.payload) is not bytes
             or not self.payload
@@ -141,6 +155,7 @@ class OpenFHESerializedPayload:
 
     def receipt_document(self) -> dict[str, object]:
         return {
+            "binary_framing_schema": self.binary_framing_schema,
             "byte_count": len(self.payload),
             "category": self.category,
             "schema_version": OPENFHE_SERIALIZED_PAYLOAD_SCHEMA,
@@ -846,6 +861,11 @@ def _payloads(
             OpenFHESerializedPayload(
                 category=receipt.category,
                 subject_id=receipt.subject_id,
+                binary_framing_schema=(
+                    DAY1B_COMBINED_EVALUATION_KEY_FRAMING_SCHEMA
+                    if receipt.category == DAY1B_COMBINED_EVALUATION_KEY_CATEGORY
+                    else None
+                ),
                 sha256=receipt.sha256,
                 payload=content,
             )
@@ -875,6 +895,7 @@ def execute_authorized_openfhe_query(
     timeout_seconds: int,
     resident_memory_limit_bytes: int,
     scratch_limit_bytes: int,
+    key_generation_plan: OpenFHEKeyGenerationPlan | None = None,
 ) -> ExecutedOpenFHEQuery:
     """Consume, launch, verify, observe, and clean one private query execution."""
 
@@ -898,6 +919,7 @@ def execute_authorized_openfhe_query(
         bundle,
         prepared,
         repository_root=root,
+        key_generation_plan=key_generation_plan,
     )
     scratch.mkdir(mode=0o700)
     scratch_identity = scratch.lstat()
@@ -946,6 +968,7 @@ def execute_authorized_openfhe_query(
             object_root=object_root,
             expected_output=expected_output,
             repository_root=root,
+            key_generation_plan=key_generation_plan,
         )
         result_after_verification = _read_direct_file(
             result_path,

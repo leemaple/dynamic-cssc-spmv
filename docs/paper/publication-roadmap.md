@@ -379,7 +379,7 @@ previously reviewed schema-source Git/Behavior-inventory binding; authority and
 worker/runtime identity are structurally absent. Its non-self-referential
 semantic digest and immutable decoded record do not lift the repository
 `HOLD`. The real amendment and its outcome-blind review receipt are now frozen
-as pre-`S1` DAY1B Behavior Set v10 members. The resource loader can project its
+as pre-`S1` DAY1B Behavior Set v20 members. The resource loader can project its
 non-authorizing budget, after which the independent profile, trace, worker, and
 anchor gates still fail closed.
 
@@ -398,7 +398,7 @@ implementation evidence only. It cannot dispatch until the trace and catalog
 authorities, repository execution adapter, and outcome-blind resource policy
 are installed, and it is not a 30-unit publication artifact.
 
-The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v10,
+The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v20,
 the unchanged empirical-null/authority-false `PENDING-FREEZE` placeholder, the
 separate reviewed resource-only amendment, and a manual no-input validation
 workflow. These freeze the current validator, protocol, administrative safety
@@ -406,9 +406,14 @@ budgets, scheduling, provenance, and artifact-installation source surface; they
 do not create empirical resource results, authorize dispatch, publish an
 artifact, or grant a claim. A controller-owned pre-admission OpenFHE runtime now consumes the
 single-use ordinary-query authorization immediately before launch, owns and
-removes exclusive private scratch, binds the runner/source/compiler identity,
-verifies result and serialized-object bytes, and records resource observations
-with authority fields false. The production two-path seam verifies the pending
+removes exclusive private scratch, binds the runner/source/compiler identity
+and resolved file-backed OpenFHE library bytes, verifies result and serialized-
+object bytes, and records resource observations with authority fields false.
+The runner now generates the full supplied exact-index rotation inventory and
+eval-mult keys in one context/session, constructs the exact `D1BKEY01` frame,
+uses those keys in the same typed DAG, and returns a request/plan/segment/frame-
+bound receipt. Query-derived plans and canonical Day 2 plan inputs remain
+pre-admission only. The production two-path seam verifies the pending
 placeholder and reviewed amendment, then stops on the next missing profile gate
 before catalog, trace, worker, or output access. The workflow performs only
 hash-locked source-contract tests, static validation, amendment validation, and
@@ -423,8 +428,9 @@ resource limit or authorize execution; every empirical numeric and method
 choice remains `null`.
 
 The remaining Day1B `HOLD` set is explicit: a controlled-scratch high-water and
-isolation method, linked-library/build
-admission, a production candidate-cell worker adapter that implements ADR 0012
+isolation method, complete ELF/build plus READY/DONE executable-mapping
+admission, a production candidate-cell worker adapter that consumes the
+independently verified Day 2 plan capability and implements ADR 0012
 window-weighted equivalence accounting and consumes the anchored Day 2 OpenFHE
 timing/size profile, the TRACE post-run anchor, and the Day-1 registration
 anchor. Full per-query-arrival OpenFHE replay is forbidden: the frozen schedule
