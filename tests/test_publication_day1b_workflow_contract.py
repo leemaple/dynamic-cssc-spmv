@@ -6,6 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 WORKFLOW_PATH = ROOT / ".github/workflows/publication-day1b-preparatory.yml"
 EXPECTED_TEST_PATHS = (
+    "tests/test_day2_openfhe_key_plan.py",
     "tests/test_evidence_compatibility.py",
     "tests/test_openfhe_query_runner.py",
     "tests/test_openfhe_query_runtime.py",
@@ -106,6 +107,7 @@ def test_day1b_workflow_declares_pre_s1_preparatory_hold_without_artifact_steps(
     assert "PENDING-FREEZE" in workflow
     assert "reviewed amendment supplies administrative safety budgets only" in workflow
     assert "ordinary and strong OpenFHE query paths passed a non-authorizing smoke" in workflow
+    assert "typed final-anchor Day2 key-plan capability remains unavailable" in workflow
     assert "typed D1BKEY01 key receipt remains pre-admission only" in workflow
     assert "Linux READY/DONE executable-map receipt remains pre-admission only" in workflow
     assert "Linux launcher-owned pathless scratch creation remains pre-admission only" in workflow
@@ -122,7 +124,7 @@ def test_preregistration_and_roadmap_keep_preparatory_inventory_non_authorizing(
     combined = preregistration + roadmap
 
     for required in (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v26",
+        "dynamic-cssc-day1b-preparatory-behavior-set-v27",
         "publication-day1b-preparatory.yml",
         "Source inventory is not dispatch authority",
         "controlled-scratch high-water",

@@ -475,7 +475,7 @@ measurement-method field in this placeholder remains `null`; the separate
 amendment is the sole reviewed source of administrative limits and
 measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v26` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v27` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface, including the amendment and
 `docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
@@ -489,7 +489,7 @@ encryption/evaluation/decryption, controller-owned exclusive scratch,
 single-use kind-specific authorization, exact runner/source/compiler
 identity plus the resolved file-backed OpenFHE linked-library bytes, bounded
 resource observations, and retained binary object verifier.
-The v26 surface additionally exposes one repository-owned replay-and-seal
+The v27 surface additionally exposes one repository-owned replay-and-seal
 wrapper. It derives the exact candidate policy, role-retained phases, and fixed
 65,537 plaintext modulus; internally owns the typed execution sink and closes
 it only against accounting returned by the same replay. Callers cannot provide
@@ -503,6 +503,17 @@ representative behind a single-use process-local capability whose carrier
 reference is released on claim or abandonment. This proves neither an OpenFHE
 execution nor worker, dispatch, formal, or publication authority; all such
 receipt fields remain explicitly false.
+The Day 2 Behavior Set v6 and Day1B v27 surface also preserve the exact formal
+rotation-plan digest in the final read-only Day 2 authority. A separate public
+issuer accepts only canonical `rotation-key-plan.json` bytes, obtains that
+authority from the zero-argument repository seam before and after issuance,
+and mints a single-use capability only when the bytes are the exact preimage of
+the post-run anchored digest. No caller can supply an authority object or
+authorization flag. Its receipt may set only
+`day2_direct_key_plan_authorized=true`; runtime admission, held-out dispatch,
+cost, performance, publication, and security claims remain false, and claim or
+abandonment releases the retained plan bytes. The current empty Day 2 profile
+and post-run anchor sets therefore still issue no such capability.
 The build-identity v3 subreceipt additionally binds stable filesystem identity,
 Mach-O UUID or ELF build ID, declared install name/SONAME and dependency names
 for the runner and each resolved non-system library; compiler bytes, version,

@@ -510,7 +510,7 @@ def _trace() -> _Day1BTraceInput:
 
 def _source() -> _Day1BPreparatorySourceAttestation:
     inventory = {
-        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v26",
+        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v27",
         "behavior_set_sha256": "c" * 64,
         "entries": [],
         "role": "day1b",
@@ -1112,7 +1112,7 @@ def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v26"),
+            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v27"),
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -1216,7 +1216,7 @@ def test_public_producer_checks_profile_before_catalog_trace_or_worker(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v26",
+            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v27",
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",

@@ -238,7 +238,7 @@ artifact that declares full query-arrival replay, omits the basis, changes a
 multiplicity, leaves a query-range gap, overlaps ranges, or disagrees with the
 controller's schedule fails closed.
 
-The preparatory v26 source surface exposes the exact typed compilation used for
+The preparatory v27 source surface exposes the exact typed compilation used for
 each query-bearing window through a synchronous, output-only query-execution
 sink, but the only public sealing seam now owns that sink and the replay call.
 The caller supplies one exact frozen candidate, window stream, domain, and
@@ -248,7 +248,7 @@ derives the candidate policy and role-retained phases, freezes the modulus at
 65,537, creates a private collector, and finishes it against the accounting
 returned by that same replay invocation.
 
-Every v26 query-execution binding commits the candidate ID, role, policy digest,
+Every v27 query-execution binding commits the candidate ID, role, policy digest,
 retained phases, and modulus together with the compact descriptor and ordinary
 or strong carrier identities. The collector independently reconstructs the
 existing compact query-window root and retains exactly one private typed
@@ -263,13 +263,25 @@ process-local capability and releases its carrier reference even on validation
 failure. Its receipt explicitly denies worker, dispatch, formal, publication,
 complete-cost, and production authority.
 
-The same v26 surface advances the native request/result language to v4 and the
+The same v27 surface advances the native request/result language to v4 and the
 enclosing runtime receipt to v6. One private deep launcher now admits either an
 ordinary or strong execution capability, owns scratch and
 READY/DONE verification, and dispatches through thin kind-specific adapters.
 The native smoke executes and independently verifies both paths. It still does
 not bind a formal Day 2 plan or install a production candidate-cell adapter;
 those remain later gates.
+
+The v27 surface also preserves the formal Day 2 rotation-plan digest in the
+final read-only calibration authority and introduces a single-use key-plan
+capability. Its public issuer accepts only canonical plan bytes and obtains the
+final authority from the zero-argument repository seam before and after
+issuance. The bytes must be the exact preimage of the post-run anchored digest;
+callers cannot submit an authority object or Boolean. The receipt sets only
+`day2_direct_key_plan_authorized=true`; runtime, held-out dispatch, cost,
+performance, publication, and security authority remain false. Claim or
+abandonment releases the retained plan bytes. Because both repository Day 2
+anchor sets are currently empty, this closes a typed future seam without
+granting a capability now.
 
 ## Consequences
 

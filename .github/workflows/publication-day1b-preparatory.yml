@@ -72,6 +72,7 @@ jobs:
           PYTHONPATH: src:.
         run: |
           .venv/bin/python -m pytest -q \
+            tests/test_day2_openfhe_key_plan.py \
             tests/test_evidence_compatibility.py \
             tests/test_openfhe_query_runner.py \
             tests/test_openfhe_query_runtime.py \
@@ -93,6 +94,7 @@ jobs:
           .venv/bin/python -m ruff check \
             scripts/run_publication_day1b.py \
             scripts/run_openfhe_query_smoke.py \
+            src/dynamic_cssc/day2_openfhe_key_plan.py \
             src/dynamic_cssc/evidence_compatibility.py \
             src/dynamic_cssc/openfhe_query_runner.py \
             src/dynamic_cssc/openfhe_query_runtime.py \
@@ -108,6 +110,7 @@ jobs:
             src/dynamic_cssc/publication_day1b_scratch.py \
             src/dynamic_cssc/publication_day1b_worker_protocol.py \
             src/dynamic_cssc/simulator.py \
+            tests/test_day2_openfhe_key_plan.py \
             tests/test_evidence_compatibility.py \
             tests/test_openfhe_query_runner.py \
             tests/test_openfhe_query_runtime.py \
@@ -132,6 +135,7 @@ jobs:
           echo 'The PENDING-FREEZE placeholder remains immutable.'
           echo 'The reviewed amendment supplies administrative safety budgets only.'
           echo 'The ordinary and strong OpenFHE query paths passed a non-authorizing smoke.'
+          echo 'The typed final-anchor Day2 key-plan capability remains unavailable without evidence.'
           echo 'Its typed D1BKEY01 key receipt remains pre-admission only.'
           echo 'Its Linux READY/DONE executable-map receipt remains pre-admission only.'
           echo 'Linux launcher-owned pathless scratch creation remains pre-admission only.'

@@ -725,6 +725,7 @@ def test_day2_authority_is_bound_to_the_exact_calibration_projection(
         calibration_projection_sha256=hashlib.sha256(
             day2_calibration_authority._canonical_json_bytes(calibration)
         ).hexdigest(),
+        rotation_key_plan_sha256="5" * 64,
         serialized_object_size_profile_sha256="4" * 64,
         ciphertext_bytes=12345,
         f1m_random_zero_sum_ciphertext_bytes=12346,

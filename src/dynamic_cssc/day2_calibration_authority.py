@@ -714,6 +714,7 @@ class _Day2CalibrationReceiptBinding:
     outer_archive_sha256: str
     raw_measurement_blocks_sha256: str
     calibration_projection_sha256: str
+    rotation_key_plan_sha256: str
     serialized_object_size_profile_sha256: str
     ciphertext_bytes: int
     f1m_random_zero_sum_ciphertext_bytes: int
@@ -778,6 +779,10 @@ class Day2CalibrationAuthority:
         return self._binding.calibration_projection_sha256
 
     @property
+    def rotation_key_plan_sha256(self) -> str:
+        return self._binding.rotation_key_plan_sha256
+
+    @property
     def serialized_object_size_profile_sha256(self) -> str:
         return self._binding.serialized_object_size_profile_sha256
 
@@ -838,7 +843,7 @@ def _mint_repository_calibration_profile_authority(
         raise Day2CalibrationAuthorityError(
             "repository pre-dispatch warmup block count is not frozen"
         )
-    if experiment_behavior_set_schema_version != "dynamic-cssc-day2-behavior-set-v5":
+    if experiment_behavior_set_schema_version != "dynamic-cssc-day2-behavior-set-v6":
         raise Day2CalibrationAuthorityError(
             "repository pre-dispatch Behavior Set schema is not frozen"
         )
@@ -865,6 +870,7 @@ def _mint_repository_calibration_authority(
     outer_archive_sha256: str,
     raw_measurement_blocks_sha256: str,
     calibration_projection_sha256: str,
+    rotation_key_plan_sha256: str,
     serialized_object_size_profile_sha256: str,
     ciphertext_bytes: int,
     f1m_random_zero_sum_ciphertext_bytes: int,
@@ -888,6 +894,10 @@ def _mint_repository_calibration_authority(
         calibration_projection_sha256=_require_lower_sha256(
             calibration_projection_sha256,
             "repository calibration projection",
+        ),
+        rotation_key_plan_sha256=_require_lower_sha256(
+            rotation_key_plan_sha256,
+            "repository calibration rotation key plan",
         ),
         serialized_object_size_profile_sha256=_require_lower_sha256(
             serialized_object_size_profile_sha256,
@@ -1249,7 +1259,7 @@ def _decode_post_run_anchor_set(content: bytes) -> tuple[_Day2CalibrationBinding
         _require_exact_keys(anchor, _POST_RUN_ANCHOR_KEYS, "Day 2 post-run anchor")
         if anchor["schema_version"] != "dynamic-cssc-day2-calibration-post-run-anchor-v6":
             raise Day2CalibrationAuthorityError("Day 2 post-run anchor schema is not frozen")
-        if anchor["experiment_behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v5":
+        if anchor["experiment_behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v6":
             raise Day2CalibrationAuthorityError("Day 2 post-run Behavior Set schema is not frozen")
         experiment_source_git_sha = _require_lower_git_sha(
             anchor["experiment_source_git_sha"],
@@ -1567,7 +1577,7 @@ def _validate_artifact_behavior_inventory(
         raise Day2CalibrationAuthorityError(
             "artifact Behavior inventory source SHA does not match source provenance"
         )
-    if value["behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v5":
+    if value["behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v6":
         raise Day2CalibrationAuthorityError("artifact Day 2 Behavior Set schema is not frozen")
     entries = value["entries"]
     if type(entries) is not list or not entries:
@@ -2762,6 +2772,7 @@ def repository_day2_calibration_authority() -> Day2CalibrationAuthority:
         outer_archive_sha256=binding.outer_archive_sha256,
         raw_measurement_blocks_sha256=binding.raw_measurement_blocks_sha256,
         calibration_projection_sha256=binding.calibration_projection_sha256,
+        rotation_key_plan_sha256=binding.rotation_key_plan_sha256,
         serialized_object_size_profile_sha256=(
             binding.serialized_object_size_profile_sha256
         ),

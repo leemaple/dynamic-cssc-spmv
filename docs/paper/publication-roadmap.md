@@ -379,7 +379,7 @@ previously reviewed schema-source Git/Behavior-inventory binding; authority and
 worker/runtime identity are structurally absent. Its non-self-referential
 semantic digest and immutable decoded record do not lift the repository
 `HOLD`. The real amendment and its outcome-blind review receipt are now frozen
-as pre-`S1` DAY1B Behavior Set v26 members. The resource loader can project its
+as pre-`S1` DAY1B Behavior Set v27 members. The resource loader can project its
 non-authorizing budget, after which the independent profile, trace, worker, and
 anchor gates still fail closed.
 
@@ -398,7 +398,7 @@ implementation evidence only. It cannot dispatch until the trace and catalog
 authorities, repository execution adapter, and outcome-blind resource policy
 are installed, and it is not a 30-unit publication artifact.
 
-The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v26,
+The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v27,
 the unchanged empirical-null/authority-false `PENDING-FREEZE` placeholder, the
 separate reviewed resource-only amendment, and a manual no-input validation
 workflow. These freeze the current validator, protocol, administrative safety
@@ -438,7 +438,12 @@ uses those keys in the same typed DAG, and returns a request/plan/segment/frame-
 bound receipt. Its rotation-plan hash now equals the exact LF-terminated
 `rotation-key-plan.json` member emitted by Day 2, and both Python and C++ reject
 alternate whitespace, ordering, or newline bytes. Query-derived plans and
-canonical Day 2 plan inputs remain pre-admission only. The production two-path seam verifies the pending
+unanchored canonical Day 2 plan inputs remain pre-admission only. The v27
+source now preserves the rotation-plan digest in final Day 2 authority and can
+mint one opaque single-use plan capability only for the exact post-run anchored
+byte preimage; every runtime, dispatch, cost, performance, publication, and
+security flag remains false. With the current empty Day 2 anchors, no
+capability can be issued. The production two-path seam verifies the pending
 placeholder and reviewed amendment, then stops on the next missing profile gate
 before catalog, trace, worker, or output access. The workflow performs only
 hash-locked source-contract tests, static validation, amendment validation, and
