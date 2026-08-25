@@ -709,7 +709,10 @@ def test_three_window_cell_runs_one_continuous_ordinary_and_strong_replay(
     assert strong_advance_count == 3
 
 
-def test_integer_rho_scaling_is_exactly_equal_to_direct_causal_replay() -> None:
+@pytest.mark.parametrize("multiplier", [3, 10, 30, 100])
+def test_integer_rho_scaling_is_exactly_equal_to_direct_causal_replay(
+    multiplier: int,
+) -> None:
     initial = {(0, 0): 1, (1, 0): 2}
     unit_windows = [
         PublicationWindow(
@@ -726,10 +729,14 @@ def test_integer_rho_scaling_is_exactly_equal_to_direct_causal_replay() -> None:
                 (NetUpdate(0, 1, 0, 3),),
                 (NetUpdate(1, 0, 2, 0),),
                 (NetUpdate(0, 1, 3, 4),),
+                (NetUpdate(1, 1, 0, 5),),
+                (NetUpdate(1, 2, 0, 6),),
+                (NetUpdate(1, 1, 5, 0),),
+                (NetUpdate(0, 2, 0, 7),),
             )
         )
     ]
-    triple_windows = [replace(window, query_count=3) for window in unit_windows]
+    scaled_windows = [replace(window, query_count=multiplier) for window in unit_windows]
     config = SimulationConfig(
         rows=2,
         cols=6,
@@ -752,13 +759,39 @@ def test_integer_rho_scaling_is_exactly_equal_to_direct_causal_replay() -> None:
     }
 
     unit = _evaluate_causal_cell(windows=unit_windows, **arguments)
-    direct_triple = _evaluate_causal_cell(windows=triple_windows, **arguments)
+    direct_scaled = _evaluate_causal_cell(windows=scaled_windows, **arguments)
 
-    assert run_day1_suite._query_scaled_windows(unit_windows, triple_windows, 3)  # noqa: SLF001
-    assert (
-        run_day1_suite._rescale_causal_cell_queries(unit, 3, UnitCosts())  # noqa: SLF001
-        == direct_triple
+    assert run_day1_suite._query_scaled_windows(  # noqa: SLF001
+        unit_windows,
+        scaled_windows,
+        multiplier,
     )
+    assert (
+        run_day1_suite._rescale_causal_cell_queries(  # noqa: SLF001
+            unit,
+            multiplier,
+            UnitCosts(),
+        )
+        == direct_scaled
+    )
+
+
+def test_integer_rho_scaling_rejects_a_spliced_selection_candidate_pool() -> None:
+    metrics = StrategyMetrics("PaddingReuse-CSSC", "reference")
+    result = CausalCellResult(
+        warmup_end=1,
+        tuning_end=2,
+        tuning_results={"padding-reuse": SimulationResult(metrics, {})},
+        fixed_results={"padding-reuse": SimulationResult(metrics, {})},
+        selected_candidate_id="padding-reuse",
+        tuned_policy=metrics,
+        oracle_candidate_id="padding-reuse",
+        offline_oracle=metrics,
+        selection_candidates=(),
+    )
+
+    with pytest.raises(ValueError, match="selection candidates"):
+        run_day1_suite._rescale_causal_cell_queries(result, 3, UnitCosts())  # noqa: SLF001
 
 
 def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
@@ -864,6 +897,16 @@ def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
                 "BestFixed-Offline-Oracle",
                 "diagnostic-oracle",
                 source="held-out-hindsight-diagnostic",
+            ),
+            selection_candidates=tuple(
+                FixedCandidate(
+                    candidate_id=candidate.candidate_id,
+                    strategy=candidate.strategy,
+                    reserved_slack_beta=candidate.reserved_slack_beta,
+                    periodic_repack_windows=candidate.periodic_repack_windows,
+                    packed_coo_segment_capacity=candidate.packed_coo_segment_capacity,
+                )
+                for candidate in catalog.selection_candidates
             ),
         )
 

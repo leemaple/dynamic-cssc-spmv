@@ -336,12 +336,20 @@ def _write_cell(
         split=plan.split,
         costs=UnitCosts(),
     )
+    evaluation_mode, query_scaling_source_rho = (
+        run_day1_suite._causal_evaluation_provenance(  # noqa: SLF001
+            ratio,
+            rho_one_available=Fraction(1) in plan.ratio_grid[: plan.ratio_grid.index(ratio)],
+        )
+    )
     metadata = {
         "workload": workload,
         "suite_seed": SEED,
         "freshness_seconds_fraction": str(freshness),
         "queries_per_update_fraction": str(ratio),
         "rho_id": rho_id,
+        "causal_evaluation_mode": evaluation_mode,
+        "query_scaling_source_rho_fraction": query_scaling_source_rho,
         "experiment_plan_sha256": plan_sha256,
         "manifest_sha256": manifest_sha256,
         "event_window_trace_schema": EVENT_WINDOW_TRACE_SCHEMA,
@@ -727,6 +735,46 @@ def test_independent_replay_accepts_an_authorized_official_small_plan_shard(
     assert receipt["verified"] is True
     assert receipt["cells_replayed"] == 9
     assert (shard_dir / "REPLAY_RECEIPT.json").is_file()
+    rho_one = json.loads(
+        next(shard_dir.rglob("rho-n1d1/metrics.json")).read_text(encoding="utf-8")
+    )["metadata"]
+    rho_three = json.loads(
+        next(shard_dir.rglob("rho-n3d1/metrics.json")).read_text(encoding="utf-8")
+    )["metadata"]
+    assert rho_one["causal_evaluation_mode"] == "full-state-replay"
+    assert rho_one["query_scaling_source_rho_fraction"] is None
+    assert rho_three["causal_evaluation_mode"] == "exact-query-linearity-from-rho-1"
+    assert rho_three["query_scaling_source_rho_fraction"] == "1"
+
+
+@pytest.mark.parametrize(
+    ("field", "forged"),
+    [
+        ("causal_evaluation_mode", "full-state-replay"),
+        ("query_scaling_source_rho_fraction", None),
+    ],
+)
+def test_independent_replay_rejects_forged_query_scaling_provenance(
+    tmp_path: Path,
+    field: str,
+    forged: object,
+) -> None:
+    download_dir = tmp_path / "downloaded-shards"
+    shard_dir = _build_download_layout(download_dir)[0]
+    cell_dir = next(path.parent for path in shard_dir.rglob("rho-n3d1/metrics.json"))
+    metrics_path = cell_dir / "metrics.json"
+    payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+    payload["metadata"][field] = forged
+    metrics_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, allow_nan=False),
+        encoding="utf-8",
+    )
+    _resign_checksums_only(shard_dir, cell_dir)
+
+    with pytest.raises(ValueError, match=field):
+        _replay_existing_shard(shard_dir, download_dir)
+
+    assert not (shard_dir / "REPLAY_RECEIPT.json").exists()
 
 
 @pytest.mark.parametrize("keep_updates", [False, True])

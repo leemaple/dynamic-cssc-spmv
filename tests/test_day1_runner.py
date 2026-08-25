@@ -21,6 +21,7 @@ from dynamic_cssc.publication_traces import (
     PublicationTransition,
     TransitionEventProvenance,
 )
+from dynamic_cssc.selection import FixedCandidate
 from dynamic_cssc.simulator import SimulationResult
 from scripts import run_day1_suite
 from scripts.run_day1_suite import CausalCellResult, insert_queries_by_ratio
@@ -471,6 +472,16 @@ def test_runner_executes_each_ratio_from_experiment_plan(
                 "BestFixed-Offline-Oracle",
                 "diagnostic-oracle",
                 source="held-out-hindsight-diagnostic",
+            ),
+            selection_candidates=tuple(
+                FixedCandidate(
+                    candidate_id=candidate.candidate_id,
+                    strategy=candidate.strategy,
+                    reserved_slack_beta=candidate.reserved_slack_beta,
+                    periodic_repack_windows=candidate.periodic_repack_windows,
+                    packed_coo_segment_capacity=candidate.packed_coo_segment_capacity,
+                )
+                for candidate in catalog.selection_candidates
             ),
         )
 

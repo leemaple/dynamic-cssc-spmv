@@ -103,6 +103,7 @@ class CausalCellResult:
     tuned_policy: StrategyMetrics
     oracle_candidate_id: str
     offline_oracle: StrategyMetrics
+    selection_candidates: tuple[FixedCandidate, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,6 +224,7 @@ def _assemble_causal_cell(
         tuned_policy=tuned_policy,
         oracle_candidate_id=oracle_candidate_id,
         offline_oracle=offline_oracle,
+        selection_candidates=selection_candidates,
     )
 
 
@@ -361,6 +363,22 @@ _QUERY_LINEAR_METRIC_FIELDS = (
 )
 
 
+def _causal_evaluation_provenance(
+    ratio: Fraction,
+    *,
+    rho_one_available: bool,
+) -> tuple[str, str | None]:
+    """Describe the exact replay path selected for one ordered rho cell."""
+
+    if type(ratio) is not Fraction:
+        raise TypeError("ratio must be an exact Fraction")
+    if type(rho_one_available) is not bool:
+        raise TypeError("rho_one_available must be an exact bool")
+    if ratio.denominator == 1 and ratio > 1 and rho_one_available:
+        return "exact-query-linearity-from-rho-1", "1"
+    return "full-state-replay", None
+
+
 def _query_scaled_windows(
     unit_windows: list[PublicationWindow],
     scaled_windows: list[PublicationWindow],
@@ -414,10 +432,12 @@ def _rescale_causal_cell_queries(
         candidate_id: _scale_simulation_queries(simulation, multiplier)
         for candidate_id, simulation in result.fixed_results.items()
     }
-    selection_candidates = tuple(
-        FixedCandidate(candidate_id, simulation.metrics.strategy)  # type: ignore[arg-type]
-        for candidate_id, simulation in sorted(tuning_results.items())
-    )
+    selection_candidates = result.selection_candidates
+    selection_ids = tuple(candidate.candidate_id for candidate in selection_candidates)
+    if len(selection_ids) != len(set(selection_ids)) or set(selection_ids) != set(tuning_results):
+        raise ValueError(
+            "rho=1 selection candidates must exactly match the tuning-result candidate pool"
+        )
     return _assemble_causal_cell(
         warmup_end=result.warmup_end,
         tuning_end=result.tuning_end,
@@ -1082,22 +1102,20 @@ def run_suite(args: argparse.Namespace) -> int:
                 query_requires_latest=query_requires_latest,
             )
         )
-        evaluation_mode = "full-state-replay"
-        query_scaling_source_rho: str | None = None
-        if (
-            ratio.denominator == 1
-            and ratio > 1
-            and unit_ratio_windows is not None
-            and unit_ratio_result is not None
-        ):
+        rho_one_available = unit_ratio_windows is not None and unit_ratio_result is not None
+        evaluation_mode, query_scaling_source_rho = _causal_evaluation_provenance(
+            ratio,
+            rho_one_available=rho_one_available,
+        )
+        if query_scaling_source_rho is not None:
+            if unit_ratio_windows is None or unit_ratio_result is None:
+                raise AssertionError("rho=1 scaling provenance requires its exact replay")
             multiplier = ratio.numerator
             if not _query_scaled_windows(unit_ratio_windows, windows, multiplier):
                 raise ValueError(
                     "integer-rho query scaling requires an exact rho=1 window trajectory"
                 )
             result = _rescale_causal_cell_queries(unit_ratio_result, multiplier, costs)
-            evaluation_mode = "exact-query-linearity-from-rho-1"
-            query_scaling_source_rho = "1"
         else:
             result = evaluate_causal_cell(
                 windows=windows,
