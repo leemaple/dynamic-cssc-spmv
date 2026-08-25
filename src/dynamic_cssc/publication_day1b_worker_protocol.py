@@ -25,6 +25,10 @@ from fractions import Fraction
 from pathlib import Path
 from typing import BinaryIO
 
+from dynamic_cssc.publication_day1b_aggregate_bounds import (
+    DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM,
+)
+
 DAY1B_WORKER_FRAME_SCHEMA = "dynamic-cssc-publication-day1b-worker-frame-v2"
 DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v5"
 DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v5"
@@ -49,6 +53,12 @@ _DAY1B_WORKER_EXPECTED_F1M_SIZE_CLASS_SUBROOT_SCHEMA = (
     "dynamic-cssc-publication-day1b-expected-f1m-size-class-subroot-v3"
 )
 DAY1B_WORKER_MAX_HEADER_BYTES = 16_384
+if not (
+    0
+    < DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM
+    <= DAY1B_WORKER_MAX_HEADER_BYTES
+):
+    raise RuntimeError("aggregate receipt bound must fit one worker frame header")
 DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES = (
     "query-f1m-random-mask-ciphertexts",
     "query-f1m-encrypted-zero-dummy-ciphertexts",

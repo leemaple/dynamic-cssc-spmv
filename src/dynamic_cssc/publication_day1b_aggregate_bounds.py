@@ -12,15 +12,20 @@ from dataclasses import dataclass
 from typing import Final
 
 from dynamic_cssc.publication_statistics import (
+    DATASET_IDS,
     FIXED_CANDIDATE_IDS,
     REFERENCE_CANDIDATE_IDS,
+    SEMANTICS,
 )
+from dynamic_cssc.publication_traces import PUBLICATION_SOURCE_PARTITION_COUNT
 
 DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM: Final = 2_048
 """Maximum complete canonical JSONL receipt bytes, including its newline."""
 
 DAY1B_CELLS_PER_UNIT: Final = 18
-DAY1B_UNITS_PER_JOB: Final = 30
+DAY1B_UNITS_PER_JOB: Final = (
+    len(DATASET_IDS) * len(SEMANTICS) * PUBLICATION_SOURCE_PARTITION_COUNT
+)
 DAY1B_WORKER_FIXED_FRAMES_PER_CANDIDATE_CELL: Final = 7
 """cell-start, candidate-start, three phase-result, candidate-result, cell-end."""
 
@@ -109,6 +114,8 @@ def publication_day1b_aggregate_static_bounds() -> Day1BAggregateStaticBounds:
     ablation_count = len(FIXED_CANDIDATE_IDS) - reference_count
     if reference_count != 13 or ablation_count != 1:
         raise RuntimeError("frozen Day1B candidate-role cardinality changed")
+    if DAY1B_UNITS_PER_JOB != 30:
+        raise RuntimeError("frozen dataset/semantics/source-partition grid changed")
     phase_categories = len(DAY1B_PHASE_SCOPED_SERIALIZED_CATEGORIES)
     one_time_categories = len(DAY1B_ONE_TIME_SERIALIZED_CATEGORIES)
     if phase_categories != 8 or one_time_categories != 1:

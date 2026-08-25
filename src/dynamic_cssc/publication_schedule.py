@@ -45,6 +45,7 @@ from dynamic_cssc.publication_traces import (
     PARSER_RUNTIME_SCHEMA,
     PUBLICATION_MAPPING_SCHEMA,
     PUBLICATION_QUERY_VECTOR_SCHEMA,
+    PUBLICATION_SOURCE_PARTITION_COUNT,
     PUBLICATION_TRACE_MANIFEST_SCHEMA,
     PUBLICATION_TRANSITION_SCHEMA,
     REPOSITORY_PROVENANCE_SCHEMA,
@@ -999,8 +1000,8 @@ def _validate_manifest(payload: object) -> dict[str, object]:
     if manifest["semantics"] not in {"T1", "T2"}:
         raise ValueError("trace manifest semantics must be T1 or T2")
     source_partition = _integer(manifest["source_partition"], "trace manifest.source_partition")
-    if source_partition >= 5:
-        raise ValueError("trace manifest source_partition must be in [0, 5)")
+    if source_partition >= PUBLICATION_SOURCE_PARTITION_COUNT:
+        raise ValueError("trace manifest source_partition is outside the frozen domain")
 
     normalization = _object(manifest["normalization_contract"], "normalization_contract")
     expected_normalization = _NORMALIZATION_CONTRACTS[dataset_id]

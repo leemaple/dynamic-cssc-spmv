@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 from contextlib import suppress
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from fractions import Fraction
 from inspect import signature
@@ -43,6 +43,9 @@ from dynamic_cssc.publication_day1b import (
     _PublicationScheduleAdapter,
     _UnitObjectReceiptArchive,
     produce_publication_day1b_unit,
+)
+from dynamic_cssc.publication_day1b_f1m_aggregation import (
+    Day1BF1MControllerSummary,
 )
 from dynamic_cssc.publication_day1b_worker_protocol import (
     DAY1B_WORKER_FRAME_SCHEMA,
@@ -203,7 +206,7 @@ def _resource_amendment_document() -> dict[str, object]:
             "serialized_object_bytes_maximum": 1_000_000,
             "serialized_object_receipt_count_maximum": 100_000,
             "serialized_object_receipt_spool_bytes_maximum": 100_000_000,
-            "serialized_payload_bytes_per_cell_maximum": 1_000_000_000,
+            "serialized_payload_bytes_per_cell_maximum": 4_000_000_000,
             "shard_cost_budget_usd_maximum": "5.25",
             "shard_wall_clock_seconds_maximum": 36_000,
             "wall_clock_seconds_per_candidate_cell": 600,
@@ -425,6 +428,9 @@ def _program(
             query_count = (phase.end * rho.numerator // rho.denominator) - (
                 phase.start * rho.numerator // rho.denominator
             )
+            set_start = sum(
+                group_set_count(ordinal) for ordinal in range(phase.start)
+            )
             set_count = sum(group_set_count(ordinal) for ordinal in range(phase.start, phase.end))
             yield ExactPublicationWindow(
                 index=index,
@@ -435,7 +441,12 @@ def _program(
                 end_time=Fraction(phase.end - 1, 128),
                 set_count=set_count,
                 updates=tuple(
-                    ScheduledNetUpdate(row=0, col=ordinal, before=index, after=index + 1)
+                    ScheduledNetUpdate(
+                        row=0,
+                        col=set_start + ordinal,
+                        before=0,
+                        after=1,
+                    )
                     for ordinal in range(set_count)
                 ),
                 query_count=query_count,
@@ -513,7 +524,7 @@ def _resource_policy() -> PublicationDay1BResourcePolicy:
         serialized_object_bytes_maximum=1_000_000,
         serialized_object_receipt_count_maximum=100_000,
         serialized_object_receipt_spool_bytes_maximum=100_000_000,
-        serialized_payload_bytes_per_cell_maximum=1_000_000_000,
+        serialized_payload_bytes_per_cell_maximum=4_000_000_000,
         worker_frame_count_maximum=200_000,
         controller_registered_scratch_bytes_checkpoint_maximum=100_000_000,
         output_bytes_per_unit=8_000_000_000,
@@ -721,6 +732,7 @@ class _StreamingExecutor:
         self.controlled_scratch_root = controlled_scratch_root
         self.controlled_scratch_root.mkdir()
         self.calls: list[tuple[Fraction, Fraction, str, int]] = []
+        self.f1m_summaries: list[Day1BF1MControllerSummary] = []
         self.terminal_failure_codes: dict[int, str] = {}
         self.observation_overrides: dict[int, dict[str, int]] = {}
         self.emit_f1m_routes = False
@@ -925,6 +937,7 @@ class _StreamingExecutor:
                     sum(audit.realized_window_count for audit in audits),
                 )
             )
+            self.f1m_summaries.append(contract_seed.f1m_controller_summary)
             return launch
         except BaseException:
             with suppress(BaseException):
@@ -1506,11 +1519,30 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
     assert len(ledger_lines) == 486
     assert len(object_receipt_lines) == 3_168
     assert len(executor.calls) == 252
+    assert len(executor.f1m_summaries) == 252
     assert all(
         window_count == 3 for _freshness, _rho, _candidate_id, window_count in executor.calls
     )
     assert [candidate_id for _freshness, _rho, candidate_id, _count in executor.calls] == (
         list(FIXED_CANDIDATE_IDS) * 18
+    )
+    assert [summary.context.candidate_id for summary in executor.f1m_summaries] == (
+        list(FIXED_CANDIDATE_IDS) * 18
+    )
+    assert [summary.context.cell_ordinal for summary in executor.f1m_summaries] == [
+        cell_ordinal
+        for cell_ordinal in range(18)
+        for _candidate_id in FIXED_CANDIDATE_IDS
+    ]
+    assert all(
+        summary.context.complete_window_count == 3
+        and summary.context.complete_window_count
+        == summary.context.query_window_count + summary.context.zero_query_window_count
+        for summary in executor.f1m_summaries
+    )
+    assert any(
+        summary.context.zero_query_window_count > 0
+        for summary in executor.f1m_summaries
     )
     assert [cell["freshness_seconds"] for cell in cells] == [
         freshness for freshness in FRESHNESS_VALUES for _rho in RHO_VALUES
@@ -2363,6 +2395,8 @@ def test_t2_realized_set_cardinality_is_separate_from_stats_update_denominator()
     assert cell["tuning_update_count"] == 300
     assert cell["heldout_update_count"] == 600
     assert phases["tuning"]["realized_set_count"] == 600
+
+
     assert phases["tuning"]["accepted_event_group_count"] == 300
     assert phases["heldout"]["realized_set_count"] == 600
     assert phases["heldout"]["accepted_event_group_count"] == 600
@@ -2398,6 +2432,75 @@ def test_t2_realized_set_cardinality_is_separate_from_stats_update_denominator()
     )
     assert tuning_record["update_count"] == 300
     assert heldout_record["update_count"] == 600
+
+
+def test_production_f1m_replay_derives_zero_query_coverage_and_closed_context() -> None:
+    trace = _trace()
+    source = _source()
+    freshness = Fraction(FRESHNESS_VALUES[0])
+    program = trace.compile_schedule(Fraction(RHO_VALUES[0]))
+    audit = day1b_module._complete_cell_audit(program, freshness)
+    cell = day1b_module._cell_document(
+        day1b_module._trace_unit_document(trace, source),
+        trace,
+        source,
+        program,
+        freshness,
+        audit,
+    )
+    catalog = _catalog()
+    candidate = catalog.candidates[0]
+
+    summary = day1b_module._replay_f1m_controller_for_candidate_cell(
+        source=source,
+        trace=trace,
+        program=program,
+        freshness=freshness,
+        cell=cell,
+        cell_ordinal=0,
+        candidate=candidate,
+        terminal_registration_sha256=day1b_module._digest(
+            asdict(catalog.registration)
+        ),
+        lineage=day1b_module._test_only_f1m_execution_lineage(
+            source=source,
+            trace=trace,
+        ),
+        size_authority=_size_authority(),
+        resource_policy=_resource_policy(),
+        expected_complete_audit=audit,
+    )
+
+    assert summary.context.candidate_id == candidate.candidate_id
+    assert summary.context.candidate_policy_sha256 == (
+        day1b_module._candidate_policy_digest(candidate)
+    )
+    assert summary.context.complete_window_count == 3
+    assert summary.context.query_window_count == 2
+    assert summary.context.zero_query_window_count == 1
+    assert summary.context.phase_window_counts == (1, 1, 1)
+    assert summary.context.complete_phase_audit_root_sha256 == (
+        day1b_module._f1m_complete_schedule_audit(
+            audit
+        ).complete_phase_audit_root_sha256
+    )
+
+
+def test_f1m_complete_audit_rejects_phase_name_position_substitution() -> None:
+    audit = day1b_module._complete_cell_audit(
+        _program(Fraction(RHO_VALUES[0])),
+        Fraction(FRESHNESS_VALUES[0]),
+    )
+    substituted = day1b_module._CellAudit(
+        (
+            audit.phase_audits[0],
+            replace(audit.phase_audits[1], phase="heldout"),
+            replace(audit.phase_audits[2], phase="tuning"),
+        )
+    )
+
+    with pytest.raises(ValueError, match="exact three phases"):
+        day1b_module._f1m_complete_schedule_audit(substituted)
 
 
 def test_private_core_rejects_a_query_vector_splice_before_output(tmp_path: Path) -> None:
@@ -2625,16 +2728,16 @@ def test_core_abandons_returned_launch_on_unexpected_validation_failure(
     finish_count = 0
     failure = RuntimeError("unexpected post-launch validation failure")
 
-    def fail_second_finish(
+    def fail_third_finish(
         stream: day1b_module._AuditedWindowStream,
     ) -> day1b_module._CellAudit:
         nonlocal finish_count
         finish_count += 1
-        if finish_count == 2:
+        if finish_count == 3:
             raise failure
         return original_finish(stream)
 
-    monkeypatch.setattr(day1b_module._AuditedWindowStream, "finish", fail_second_finish)
+    monkeypatch.setattr(day1b_module._AuditedWindowStream, "finish", fail_third_finish)
 
     with pytest.raises(RuntimeError) as raised:
         _produce_publication_day1b_unit_for_test(
@@ -2760,23 +2863,57 @@ def test_unit_archive_treats_weighted_f1m_receipts_as_size_classes_not_bindings(
 ) -> None:
     trace = _trace()
     program = _program(Fraction("0.01"))
+    freshness = Fraction("0.1")
+    source = _source()
     resource_policy = _resource_policy()
-    candidate = _catalog().candidates[0]
+    size_authority = _size_authority()
+    catalog = _catalog()
+    candidate = catalog.candidates[0]
+    audit = day1b_module._complete_cell_audit(program, freshness)
+    cell = day1b_module._cell_document(
+        day1b_module._trace_unit_document(trace, source),
+        trace,
+        source,
+        program,
+        freshness,
+        audit,
+    )
+    f1m_controller_summary = day1b_module._replay_f1m_controller_for_candidate_cell(
+        source=source,
+        trace=trace,
+        program=program,
+        freshness=freshness,
+        cell=cell,
+        cell_ordinal=0,
+        candidate=candidate,
+        terminal_registration_sha256=day1b_module._digest(
+            asdict(catalog.registration)
+        ),
+        lineage=day1b_module._test_only_f1m_execution_lineage(
+            source=source,
+            trace=trace,
+        ),
+        size_authority=size_authority,
+        resource_policy=resource_policy,
+        expected_complete_audit=audit,
+        accounting_domain=day1b_module._TEST_DAY1B_ACCOUNTING_DOMAIN,
+    )
     seed = day1b_module._candidate_worker_contract_seed(
         trace=trace,
         program=program,
-        freshness=Fraction("0.1"),
+        freshness=freshness,
         candidate=candidate,
-        cell_binding_sha256="d" * 64,
+        cell_binding_sha256=str(cell["cell_binding_sha256"]),
         candidate_catalog_sha256="e" * 64,
         resource_policy=resource_policy,
         resource_policy_sha256="f" * 64,
-        size_authority=_size_authority(),
+        size_authority=size_authority,
+        f1m_controller_summary=f1m_controller_summary,
     )
     executor = _StreamingExecutor(tmp_path / "controlled-scratch")
     executor.emit_f1m_routes = True
     launch = executor.execute_candidate_cell(
-        windows=program.stream_windows(Fraction("0.1")),
+        windows=program.stream_windows(freshness),
         contract_seed=seed,
     )
     evidence_capability = consume_day1b_worker_frames(

@@ -6,6 +6,7 @@ from dynamic_cssc.publication_day1b_aggregate_bounds import (
     SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
     publication_day1b_aggregate_static_bounds,
 )
+from dynamic_cssc.publication_day1b_worker_protocol import DAY1B_WORKER_MAX_HEADER_BYTES
 
 
 def test_category_table_is_closed_and_already_contains_f1m() -> None:
@@ -59,3 +60,7 @@ def test_frame_spool_payload_and_job_bounds_have_no_window_multiplier() -> None:
     assert bounds.worker_frames_per_job == 177_120
     assert bounds.aggregate_receipt_spool_bytes_per_job == 254_361_600
     assert DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM == 2_048
+    assert (
+        DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM
+        <= DAY1B_WORKER_MAX_HEADER_BYTES
+    )

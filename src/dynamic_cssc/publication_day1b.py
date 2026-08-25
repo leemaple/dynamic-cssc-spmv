@@ -48,8 +48,22 @@ from dynamic_cssc.publication_artifact_install import (
     install_verified_directory,
     quarantine_owned_directory,
 )
+from dynamic_cssc.publication_day1b_accounting import (
+    PUBLICATION_DAY1B_ACCOUNTING_DOMAIN,
+    Day1BAccountingDomain,
+    PublicationDay1BAccounting,
+    replay_publication_day1b_candidate_cell,
+)
 from dynamic_cssc.publication_day1b_aggregate_bounds import (
     SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
+)
+from dynamic_cssc.publication_day1b_f1m_aggregation import (
+    Day1BF1MCompletePhaseAudit,
+    Day1BF1MCompleteScheduleAudit,
+    Day1BF1MController,
+    Day1BF1MControllerContext,
+    Day1BF1MControllerSummary,
+    Day1BF1MPhaseBoundary,
 )
 from dynamic_cssc.publication_day1b_f1m_aggregation import (
     Day1BSerializedObjectSizeAuthority as _Day1BSerializedObjectSizeAuthority,
@@ -105,6 +119,7 @@ from dynamic_cssc.publication_statistics import (
 )
 from dynamic_cssc.publication_traces import (
     ACQUISITION_TRACE_BINDING_SCHEMA,
+    PUBLICATION_SOURCE_PARTITION_COUNT,
     PUBLICATION_TRACE_MANIFEST_SCHEMA,
 )
 
@@ -270,6 +285,15 @@ _PRODUCTION_TRACE_PROJECTION_TOKEN = object()
 _TEST_TRACE_PROJECTION_TOKEN = object()
 _PRODUCTION_ARTIFACT_VARIANT_TOKEN = object()
 _TEST_ARTIFACT_VARIANT_TOKEN = object()
+_TEST_DAY1B_ACCOUNTING_DOMAIN = Day1BAccountingDomain(
+    rows=128,
+    cols=512,
+    effective_slots=128,
+    partition_rows=128,
+    matrix_value_bound=7,
+    max_row_nnz=512,
+    strong_segment_width=128,
+)
 _PRODUCTION_ARTIFACT_VARIANT = MappingProxyType(
     {
         "schema_version": DAY1B_ARTIFACT_VARIANT_SCHEMA,
@@ -851,6 +875,20 @@ class _Day1BPreparatorySourceAttestation:
     source_attestation: str
 
 
+@dataclass(frozen=True, slots=True)
+class _Day1BF1MExecutionLineage:
+    """Repository-admitted anchors and worker identities unavailable from a trace."""
+
+    day1_registration_anchor_sha256: str
+    trace_post_run_anchor_sha256: str
+    worker_build_identity_sha256: str
+    worker_runtime_identity_sha256: str
+
+    def __post_init__(self) -> None:
+        for field in self.__dataclass_fields__:
+            _require_sha256(getattr(self, field), f"Day1B F1-M lineage {field}")
+
+
 class _Day1BExecutionAdapter(Protocol):
     """Launch exactly one canonical candidate×cell worker invocation.
 
@@ -1329,8 +1367,11 @@ def _validate_trace(trace: _Day1BTraceInput) -> None:
         raise TypeError("trace must be an exact typed Day1B trace input")
     if trace.dataset_id not in DATASET_IDS or trace.semantics not in SEMANTICS:
         raise ValueError("Day1B trace must name one frozen primary dataset and semantics")
-    if type(trace.source_partition) is not int or trace.source_partition not in range(5):
-        raise ValueError("Day1B source partition must be in [0, 5)")
+    if (
+        type(trace.source_partition) is not int
+        or trace.source_partition not in range(PUBLICATION_SOURCE_PARTITION_COUNT)
+    ):
+        raise ValueError("Day1B source partition is outside the frozen domain")
     _require_git_sha(trace.trace_source_git_sha, "trace source Git SHA")
     for field in (
         "repository_provenance_sha256",
@@ -2198,7 +2239,8 @@ def _verify_day1b_unit_view(
         or type(unit_identity["dataset_release"]) is not str
         or not unit_identity["dataset_release"]
         or type(unit_identity["source_partition"]) is not int
-        or unit_identity["source_partition"] not in range(5)
+        or unit_identity["source_partition"]
+        not in range(PUBLICATION_SOURCE_PARTITION_COUNT)
     ):
         raise ValueError("Day1B unit identity is outside the frozen analysis domain")
 
@@ -3389,6 +3431,56 @@ class _Day1BWorkerContractSeed:
     candidate: Day1BWorkerCandidateSpec
     phase_ranges: tuple[Day1BWorkerPhaseRange, ...]
     resource_limits: Day1BWorkerResourceLimits
+    f1m_controller_summary: Day1BF1MControllerSummary
+
+    def __post_init__(self) -> None:
+        if type(self.f1m_controller_summary) is not Day1BF1MControllerSummary:
+            raise TypeError("worker seed requires one exact F1-M controller summary")
+        summary = self.f1m_controller_summary
+        context = summary.context
+        authority = summary.size_authority
+        expected_phase_ranges = tuple(
+            Day1BF1MPhaseBoundary(
+                {"warmup": "warmup", "tuning": "tuning-prefix", "heldout": "held-out"}[
+                    phase.phase
+                ],
+                phase.accepted_group_start,
+                phase.accepted_group_end,
+            )
+            for phase in self.phase_ranges
+        )
+        expected_invocation_id = _digest(
+            {
+                "candidate_id": self.candidate.candidate_id,
+                "cell_binding_sha256": context.cell_binding_sha256,
+                "schema_version": (
+                    "dynamic-cssc-publication-day1b-candidate-cell-invocation-v1"
+                ),
+            }
+        )
+        if (
+            self.invocation_id != expected_invocation_id
+            or context.event_schedule_sha256 != self.event_schedule_sha256
+            or context.query_vector_sha256 != self.query_vector_sha256
+            or context.freshness != self.freshness
+            or context.rho != self.rho
+            or context.candidate_id != self.candidate.candidate_id
+            or context.candidate_role != self.candidate.candidate_role
+            or context.candidate_policy_sha256 != self.candidate.candidate_policy_digest
+            or context.retained_phases != self.candidate.retained_phases
+            or context.phase_boundaries != expected_phase_ranges
+            or authority.day2_outer_archive_sha256 != self.day2_outer_archive_sha256
+            or authority.serialized_object_size_profile_sha256
+            != self.serialized_object_size_profile_sha256
+            or authority.ciphertext_bytes != self.ciphertext_bytes
+            or authority.f1m_random_zero_sum_ciphertext_bytes
+            != self.f1m_random_zero_sum_ciphertext_bytes
+            or authority.f1m_encrypted_zero_dummy_ciphertext_bytes
+            != self.f1m_encrypted_zero_dummy_ciphertext_bytes
+        ):
+            raise Day1BWorkerProtocolError(
+                "worker seed and F1-M controller summary do not bind one candidate cell"
+            )
 
     def bind(
         self,
@@ -3471,6 +3563,27 @@ def _candidate_policy_digest(candidate: RegisteredCandidate) -> str:
     )
 
 
+def _candidate_worker_spec(candidate: RegisteredCandidate) -> Day1BWorkerCandidateSpec:
+    if type(candidate) is not RegisteredCandidate:
+        raise TypeError("worker candidate must be exact RegisteredCandidate")
+    return Day1BWorkerCandidateSpec(
+        candidate_id=candidate.candidate_id,
+        candidate_role=candidate.role,
+        strategy=candidate.strategy,
+        f1m_policy=(
+            "uniform-random-or-zero"
+            if candidate.strategy == "Packed-COO-Cloud-Segmented-Delta"
+            else "overlap-only"
+        ),
+        candidate_policy_digest=_candidate_policy_digest(candidate),
+        retained_phases=(
+            ("tuning-prefix", "held-out")
+            if candidate.role == "reference"
+            else ("held-out",)
+        ),
+    )
+
+
 def _candidate_worker_contract_seed(
     *,
     trace: _Day1BTraceInput,
@@ -3482,6 +3595,7 @@ def _candidate_worker_contract_seed(
     resource_policy: PublicationDay1BResourcePolicy,
     resource_policy_sha256: str,
     size_authority: _Day1BSerializedObjectSizeAuthority,
+    f1m_controller_summary: Day1BF1MControllerSummary,
 ) -> _Day1BWorkerContractSeed:
     invocation_id = _digest(
         {
@@ -3510,25 +3624,13 @@ def _candidate_worker_contract_seed(
         ),
         freshness=_fraction_text(freshness),
         rho=_fraction_text(program.rho),
-        candidate=Day1BWorkerCandidateSpec(
-            candidate_id=candidate.candidate_id,
-            candidate_role=candidate.role,
-            strategy=candidate.strategy,
-            f1m_policy=(
-                "uniform-random-or-zero"
-                if candidate.strategy == "Packed-COO-Cloud-Segmented-Delta"
-                else "overlap-only"
-            ),
-            candidate_policy_digest=_candidate_policy_digest(candidate),
-            retained_phases=(
-                ("tuning-prefix", "held-out") if candidate.role == "reference" else ("held-out",)
-            ),
-        ),
+        candidate=_candidate_worker_spec(candidate),
         phase_ranges=tuple(
             Day1BWorkerPhaseRange(phase.name, phase.start, phase.end)
             for phase in program.phase_ranges
         ),
         resource_limits=resource_policy.to_worker_limits(),
+        f1m_controller_summary=f1m_controller_summary,
     )
 
 
@@ -3546,6 +3648,241 @@ def _complete_cell_audit(
     return stream.finish()
 
 
+def _test_only_f1m_execution_lineage(
+    *,
+    source: _Day1BPreparatorySourceAttestation,
+    trace: _Day1BTraceInput,
+) -> _Day1BF1MExecutionLineage:
+    """Conspicuously non-authoritative identities for the private artifact variant."""
+
+    return _Day1BF1MExecutionLineage(
+        day1_registration_anchor_sha256=_digest(
+            {
+                "kind": "test-only-day1-registration-anchor",
+                "source_git_sha": source.git_sha,
+            }
+        ),
+        trace_post_run_anchor_sha256=_digest(
+            {
+                "kind": "test-only-trace-post-run-anchor",
+                "trace_manifest_sha256": trace.trace_manifest_sha256,
+            }
+        ),
+        worker_build_identity_sha256=_digest(
+            {
+                "kind": "test-only-worker-build",
+                "source_git_sha": source.git_sha,
+            }
+        ),
+        worker_runtime_identity_sha256=_digest(
+            {
+                "kind": "test-only-worker-runtime",
+                "source_git_sha": source.git_sha,
+            }
+        ),
+    )
+
+
+def _f1m_complete_schedule_audit(audit: _CellAudit) -> Day1BF1MCompleteScheduleAudit:
+    if type(audit) is not _CellAudit:
+        raise TypeError("F1-M schedule audit requires one exact cell audit")
+    phase_name = {
+        "warmup": "warmup",
+        "tuning": "tuning-prefix",
+        "heldout": "held-out",
+    }
+    return Day1BF1MCompleteScheduleAudit(
+        tuple(
+            Day1BF1MCompletePhaseAudit(
+                phase=phase_name[item.phase],
+                accepted_group_start=item.accepted_group_start,
+                accepted_group_end=item.accepted_group_end,
+                realized_window_count=item.realized_window_count,
+                realized_set_count=item.realized_set_count,
+                realized_query_count=item.realized_query_count,
+                consumed_window_audit_stream_sha256=(
+                    item.consumed_window_audit_stream_sha256
+                ),
+            )
+            for item in audit.phase_audits
+        )
+    )
+
+
+def _f1m_controller_context(
+    *,
+    source: _Day1BPreparatorySourceAttestation,
+    trace: _Day1BTraceInput,
+    program: _PublicationScheduleAdapter,
+    freshness: Fraction,
+    cell: Mapping[str, object],
+    cell_ordinal: int,
+    candidate_spec: Day1BWorkerCandidateSpec,
+    terminal_registration_sha256: str,
+    lineage: _Day1BF1MExecutionLineage,
+    accounting: PublicationDay1BAccounting,
+    complete_schedule_audit: Day1BF1MCompleteScheduleAudit,
+) -> Day1BF1MControllerContext:
+    """Bind replay output to repository lineage and an independent full-window audit."""
+
+    if type(lineage) is not _Day1BF1MExecutionLineage:
+        raise TypeError("F1-M execution lineage type is not exact")
+    if type(candidate_spec) is not Day1BWorkerCandidateSpec:
+        raise TypeError("F1-M candidate spec type is not exact")
+    if accounting.candidate_id != candidate_spec.candidate_id:
+        raise Day1BWorkerProtocolError("F1-M accounting changed the candidate identity")
+    if accounting.candidate_policy_sha256 != candidate_spec.candidate_policy_digest:
+        raise Day1BWorkerProtocolError("F1-M accounting changed the candidate policy")
+    _require_sha256(terminal_registration_sha256, "terminal registration SHA")
+    behavior_schema = source.behavior_inventory.get("behavior_set_schema_version")
+    behavior_sha256 = source.behavior_inventory.get("behavior_set_sha256")
+    if type(behavior_schema) is not str or not behavior_schema:
+        raise ValueError("Day1B behavior-set schema is unavailable to F1-M accounting")
+    _require_sha256(behavior_sha256, "Day1B behavior-set inventory SHA")
+    unit_identity_sha256 = _digest(
+        {
+            "dataset_id": trace.dataset_id,
+            "dataset_release": trace.dataset_release,
+            "semantics": trace.semantics,
+            "source_partition": trace.source_partition,
+        }
+    )
+    phase_boundaries = tuple(
+        Day1BF1MPhaseBoundary(
+            {"warmup": "warmup", "tuning": "tuning-prefix", "heldout": "held-out"}[
+                phase.name
+            ],
+            phase.start,
+            phase.end,
+        )
+        for phase in program.phase_ranges
+    )
+    phase_query_counts = (
+        accounting.phases[0].realized_query_count,
+        accounting.phases[1].realized_query_count,
+        accounting.phases[2].realized_query_count,
+    )
+    phase_window_counts = (
+        accounting.phases[0].realized_window_count,
+        accounting.phases[1].realized_window_count,
+        accounting.phases[2].realized_window_count,
+    )
+    cell_binding_sha256 = _require_sha256(
+        cell.get("cell_binding_sha256"),
+        "Day1B F1-M cell binding SHA",
+    )
+    return Day1BF1MControllerContext(
+        publication_source_git_sha=source.git_sha,
+        publication_behavior_set_schema_version=behavior_schema,
+        publication_behavior_inventory_sha256=behavior_sha256,
+        terminal_registration_sha256=terminal_registration_sha256,
+        day1_registration_anchor_sha256=(lineage.day1_registration_anchor_sha256),
+        trace_post_run_anchor_sha256=lineage.trace_post_run_anchor_sha256,
+        acquisition_bundle_sha256=trace.source_bundle_sha256,
+        worker_build_identity_sha256=lineage.worker_build_identity_sha256,
+        worker_runtime_identity_sha256=lineage.worker_runtime_identity_sha256,
+        dataset_id=trace.dataset_id,
+        dataset_release=trace.dataset_release,
+        semantics=trace.semantics,
+        source_partition=trace.source_partition,
+        unit_identity_sha256=unit_identity_sha256,
+        cell_binding_sha256=cell_binding_sha256,
+        cell_ordinal=cell_ordinal,
+        freshness=_fraction_text(freshness),
+        rho=_fraction_text(program.rho),
+        candidate_id=candidate_spec.candidate_id,
+        candidate_role=candidate_spec.candidate_role,
+        candidate_policy_sha256=accounting.candidate_policy_sha256,
+        retained_phases=candidate_spec.retained_phases,
+        phase_boundaries=phase_boundaries,
+        event_schedule_sha256=program.canonical_schedule_sha256,
+        query_vector_sha256=trace.query_vector_sha256,
+        accepted_group_count=program.accepted_group_count,
+        complete_window_count=accounting.realized_window_count,
+        query_window_count=accounting.realized_query_window_count,
+        zero_query_window_count=(
+            accounting.realized_window_count - accounting.realized_query_window_count
+        ),
+        total_query_count=accounting.realized_query_count,
+        phase_window_counts=phase_window_counts,
+        phase_query_counts=phase_query_counts,
+        complete_window_stream_sha256=accounting.window_stream_sha256,
+        complete_phase_audit_root_sha256=(
+            complete_schedule_audit.complete_phase_audit_root_sha256
+        ),
+        accounting_sha256=accounting.accounting_sha256,
+        query_window_stream_sha256=accounting.query_window_stream_sha256,
+    )
+
+
+def _replay_f1m_controller_for_candidate_cell(
+    *,
+    source: _Day1BPreparatorySourceAttestation,
+    trace: _Day1BTraceInput,
+    program: _PublicationScheduleAdapter,
+    freshness: Fraction,
+    cell: Mapping[str, object],
+    cell_ordinal: int,
+    candidate: RegisteredCandidate,
+    terminal_registration_sha256: str,
+    lineage: _Day1BF1MExecutionLineage,
+    size_authority: _Day1BSerializedObjectSizeAuthority,
+    resource_policy: PublicationDay1BResourcePolicy,
+    expected_complete_audit: _CellAudit,
+    accounting_domain: Day1BAccountingDomain = PUBLICATION_DAY1B_ACCOUNTING_DOMAIN,
+) -> Day1BF1MControllerSummary:
+    """Replay one deterministic, independently audited controller accounting pass."""
+
+    candidate_spec = _candidate_worker_spec(candidate)
+    controller = Day1BF1MController(
+        accepted_group_count=program.accepted_group_count,
+        retained_phases=candidate_spec.retained_phases,
+        f1m_policy=candidate_spec.f1m_policy,
+        size_authority=size_authority,
+        serialized_object_bytes_maximum=(
+            resource_policy.serialized_object_bytes_maximum
+        ),
+        serialized_payload_bytes_per_cell_maximum=(
+            resource_policy.serialized_payload_bytes_per_cell_maximum
+        ),
+    )
+    audited_windows = _AuditedWindowStream(
+        program.stream_windows(freshness),
+        program.phase_ranges,
+        program.rho,
+    )
+    accounting = replay_publication_day1b_candidate_cell(
+        candidate=candidate,
+        windows=audited_windows,
+        domain=accounting_domain,
+        query_window_sink=controller.accept_query_window,
+    )
+    replay_audit = audited_windows.finish()
+    if replay_audit != expected_complete_audit:
+        raise Day1BWorkerProtocolError(
+            "F1-M accounting replay did not consume the canonical complete cell schedule"
+        )
+    complete_schedule_audit = _f1m_complete_schedule_audit(replay_audit)
+    context = _f1m_controller_context(
+        source=source,
+        trace=trace,
+        program=program,
+        freshness=freshness,
+        cell=cell,
+        cell_ordinal=cell_ordinal,
+        candidate_spec=candidate_spec,
+        terminal_registration_sha256=terminal_registration_sha256,
+        lineage=lineage,
+        accounting=accounting,
+        complete_schedule_audit=complete_schedule_audit,
+    )
+    return controller.finish(
+        context=context,
+        accounting=accounting,
+        complete_schedule_audit=complete_schedule_audit,
+    )
+
+
 def _produce_publication_day1b_unit(
     *,
     trace: _Day1BTraceInput,
@@ -3557,6 +3894,7 @@ def _produce_publication_day1b_unit(
     execution_adapter: _Day1BExecutionAdapter,
     repository_root: Path,
     artifact_variant_token: object,
+    f1m_execution_lineage: _Day1BF1MExecutionLineage | None = None,
 ) -> PublicationDay1BUnitBundle:
     """Build one complete unit through typed internal seams and one-pass windows."""
 
@@ -3576,6 +3914,8 @@ def _produce_publication_day1b_unit(
         raise TypeError("resource_policy must be an exact fixed policy")
     if type(size_authority) is not _Day1BSerializedObjectSizeAuthority:
         raise TypeError("size_authority must be exact Day 2 size authority")
+    if size_authority.source_git_sha != source_attestation.git_sha:
+        raise ValueError("Day 2 size authority changed the Day1B source identity")
     if not callable(getattr(execution_adapter, "execute_candidate_cell", None)):
         raise TypeError("execution_adapter must provide the candidate-cell streaming seam")
     artifact_variant, unit_schema, fragment_schema = _artifact_variant_contract(
@@ -3583,6 +3923,20 @@ def _produce_publication_day1b_unit(
         trace=trace,
         source=source_attestation,
     )
+    if artifact_variant_token is _TEST_ARTIFACT_VARIANT_TOKEN:
+        expected_test_lineage = _test_only_f1m_execution_lineage(
+            source=source_attestation,
+            trace=trace,
+        )
+        if f1m_execution_lineage is None:
+            f1m_execution_lineage = expected_test_lineage
+        elif f1m_execution_lineage != expected_test_lineage:
+            raise ValueError("fixture F1-M lineage must be the exact test-only derivation")
+        accounting_domain = _TEST_DAY1B_ACCOUNTING_DOMAIN
+    elif type(f1m_execution_lineage) is not _Day1BF1MExecutionLineage:
+        raise TypeError("production Day1B requires exact repository-admitted F1-M lineage")
+    else:
+        accounting_domain = PUBLICATION_DAY1B_ACCOUNTING_DOMAIN
 
     programs = tuple(trace.compile_schedule(Fraction(rho)) for rho in RHO_VALUES)
     for program, rho in zip(programs, (Fraction(value) for value in RHO_VALUES), strict=True):
@@ -3598,6 +3952,10 @@ def _produce_publication_day1b_unit(
         "ablation_candidate_ids": [ABLATION_CANDIDATE_ID],
     }
     candidate_catalog_sha256 = _digest(catalog_document)
+    terminal_registration_sha256 = _require_sha256(
+        catalog_document["registration_sha256"],
+        "terminal Day1 registration SHA",
+    )
     resource_document = resource_policy.to_document()
     resource_policy_sha256 = str(resource_document["resource_policy_sha256"])
     cells: list[dict[str, object]] = []
@@ -3610,6 +3968,7 @@ def _produce_publication_day1b_unit(
         for freshness_text in FRESHNESS_VALUES:
             freshness = Fraction(freshness_text)
             for program in programs:
+                cell_ordinal = len(cells)
                 audit = _complete_cell_audit(program, freshness)
                 cell = _cell_document(
                     trace_unit,
@@ -3628,25 +3987,43 @@ def _produce_publication_day1b_unit(
                 peak_scratch_bytes = 0
 
                 for candidate in candidates:
-                    audited_windows = _AuditedWindowStream(
-                        program.stream_windows(freshness),
-                        program.phase_ranges,
-                        program.rho,
-                    )
-                    seed = _candidate_worker_contract_seed(
-                        trace=trace,
-                        program=program,
-                        freshness=freshness,
-                        candidate=candidate,
-                        cell_binding_sha256=str(cell["cell_binding_sha256"]),
-                        candidate_catalog_sha256=candidate_catalog_sha256,
-                        resource_policy=resource_policy,
-                        resource_policy_sha256=resource_policy_sha256,
-                        size_authority=size_authority,
-                    )
                     launch: _Day1BWorkerLaunch | None = None
                     invocation_consumed = False
                     try:
+                        f1m_controller_summary = _replay_f1m_controller_for_candidate_cell(
+                            source=source_attestation,
+                            trace=trace,
+                            program=program,
+                            freshness=freshness,
+                            cell=cell,
+                            cell_ordinal=cell_ordinal,
+                            candidate=candidate,
+                            terminal_registration_sha256=(
+                                terminal_registration_sha256
+                            ),
+                            lineage=f1m_execution_lineage,
+                            size_authority=size_authority,
+                            resource_policy=resource_policy,
+                            expected_complete_audit=audit,
+                            accounting_domain=accounting_domain,
+                        )
+                        audited_windows = _AuditedWindowStream(
+                            program.stream_windows(freshness),
+                            program.phase_ranges,
+                            program.rho,
+                        )
+                        seed = _candidate_worker_contract_seed(
+                            trace=trace,
+                            program=program,
+                            freshness=freshness,
+                            candidate=candidate,
+                            cell_binding_sha256=str(cell["cell_binding_sha256"]),
+                            candidate_catalog_sha256=candidate_catalog_sha256,
+                            resource_policy=resource_policy,
+                            resource_policy_sha256=resource_policy_sha256,
+                            size_authority=size_authority,
+                            f1m_controller_summary=f1m_controller_summary,
+                        )
                         launch = execution_adapter.execute_candidate_cell(
                             windows=audited_windows,
                             contract_seed=seed,
@@ -4147,7 +4524,7 @@ def _repository_day1b_profile_anchor_authority() -> _Day1BSerializedObjectSizeAu
     )
 
 
-def _repository_trace_anchor_authority() -> None:
+def _repository_trace_anchor_authority() -> _Day1BF1MExecutionLineage:
     """Fail closed until the central TRACE post-run anchor is repository-installed."""
 
     raise PublicationDay1BHold(
@@ -4304,7 +4681,7 @@ def produce_publication_day1b_unit(
             f"HOLD: complete Day1B candidate catalog unavailable: {error}"
         ) from error
     trace = _load_repository_trace_input(trace_bundle_dir)
-    _repository_trace_anchor_authority()
+    f1m_execution_lineage = _repository_trace_anchor_authority()
     execution_adapter = _repository_day1b_execution_adapter(size_authority)
     return _produce_publication_day1b_unit(
         trace=trace,
@@ -4316,6 +4693,7 @@ def produce_publication_day1b_unit(
         execution_adapter=execution_adapter,
         repository_root=repository_root,
         artifact_variant_token=_PRODUCTION_ARTIFACT_VARIANT_TOKEN,
+        f1m_execution_lineage=f1m_execution_lineage,
     )
 
 

@@ -7,10 +7,18 @@ from fractions import Fraction
 
 import pytest
 
-from dynamic_cssc.publication_day1b_accounting import Day1BQueryWindowAccounting
+from dynamic_cssc.day2_calibration_authority import PRIMITIVE_NAMES
+from dynamic_cssc.publication_day1b_accounting import (
+    PUBLICATION_DAY1B_ACCOUNTING_DOMAIN,
+    Day1BPhaseAccounting,
+    Day1BQueryWindowAccounting,
+    PublicationDay1BAccounting,
+)
 from dynamic_cssc.publication_day1b_f1m_aggregation import (
     DAY1B_F1M_MAX_CHARGED_SIZE_CLASS_RECEIPTS_PER_CELL,
     Day1BF1MAggregationError,
+    Day1BF1MCompletePhaseAudit,
+    Day1BF1MCompleteScheduleAudit,
     Day1BF1MController,
     Day1BF1MControllerContext,
     Day1BF1MPhaseBoundary,
@@ -122,20 +130,82 @@ def _query_stream_sha256(windows: tuple[Day1BQueryWindowAccounting, ...]) -> str
     )
 
 
+def _accounting(
+    windows: tuple[Day1BQueryWindowAccounting, ...],
+    *,
+    retained_phases: tuple[str, ...] = ("tuning-prefix", "held-out"),
+) -> PublicationDay1BAccounting:
+    phases = ("warmup", "tuning-prefix", "held-out")
+    boundaries = ((0, 10), (10, 40), (40, 100))
+    phase_rows: list[Day1BPhaseAccounting] = []
+    for phase, (start, end) in zip(phases, boundaries, strict=True):
+        selected = tuple(window for window in windows if window.phase == phase)
+        phase_rows.append(
+            Day1BPhaseAccounting(
+                phase=phase,  # type: ignore[arg-type]
+                accepted_group_start=start,
+                accepted_group_end=end,
+                realized_window_count=len(selected) + 1,
+                realized_set_count=sum(window.set_count for window in selected),
+                realized_net_update_count=sum(
+                    window.net_update_count for window in selected
+                ),
+                realized_query_count=sum(window.query_count for window in selected),
+                query_window_count=len(selected),
+                query_window_stream_sha256=_digest(
+                    {"phase": phase, "windows": [row.to_document() for row in selected]}
+                ),
+                strategy_metrics_sha256=_digest({"phase": phase, "metrics": "fixture"}),
+                update_primitive_counts=(0,) * len(PRIMITIVE_NAMES),
+                query_primitive_counts=(0,) * len(PRIMITIVE_NAMES),
+            )
+        )
+    candidate_id = "reference-a" if len(retained_phases) == 2 else "ablation-a"
+    return PublicationDay1BAccounting(
+        candidate_id=candidate_id,
+        candidate_policy_sha256="e" * 64,
+        domain=PUBLICATION_DAY1B_ACCOUNTING_DOMAIN,
+        phases=tuple(phase_rows),
+        window_stream_sha256="1" * 64,
+        query_window_stream_sha256=_query_stream_sha256(windows),
+        realized_window_count=sum(phase.realized_window_count for phase in phase_rows),
+        realized_query_window_count=len(windows),
+        realized_query_count=sum(window.query_count for window in windows),
+        terminal_version_id="v00000001",
+        terminal_logical_state_sha256="4" * 64,
+    )
+
+
+def _complete_schedule_audit(
+    accounting: PublicationDay1BAccounting,
+) -> Day1BF1MCompleteScheduleAudit:
+    return Day1BF1MCompleteScheduleAudit(
+        tuple(
+            Day1BF1MCompletePhaseAudit(
+                phase=phase.phase,
+                accepted_group_start=phase.accepted_group_start,
+                accepted_group_end=phase.accepted_group_end,
+                realized_window_count=phase.realized_window_count,
+                realized_set_count=phase.realized_set_count,
+                realized_query_count=phase.realized_query_count,
+                consumed_window_audit_stream_sha256=_digest(
+                    {"phase": phase.phase, "audit": "fixture"}
+                ),
+            )
+            for phase in accounting.phases
+        )
+    )
+
+
 def _context(
     windows: tuple[Day1BQueryWindowAccounting, ...],
     *,
     retained_phases: tuple[str, ...] = ("tuning-prefix", "held-out"),
 ) -> Day1BF1MControllerContext:
-    phases = ("warmup", "tuning-prefix", "held-out")
-    phase_query_window_counts = tuple(
-        sum(window.phase == phase for window in windows) for phase in phases
-    )
-    phase_query_counts = tuple(
-        sum(window.query_count for window in windows if window.phase == phase)
-        for phase in phases
-    )
-    phase_window_counts = tuple(count + 1 for count in phase_query_window_counts)
+    accounting = _accounting(windows, retained_phases=retained_phases)
+    audit = _complete_schedule_audit(accounting)
+    phase_query_counts = tuple(phase.realized_query_count for phase in accounting.phases)
+    phase_window_counts = tuple(phase.realized_window_count for phase in accounting.phases)
     return Day1BF1MControllerContext(
         publication_source_git_sha="1" * 40,
         publication_behavior_set_schema_version=(
@@ -169,16 +239,18 @@ def _context(
         event_schedule_sha256="f" * 64,
         query_vector_sha256="0" * 64,
         accepted_group_count=100,
-        complete_window_count=sum(phase_window_counts),
+        complete_window_count=accounting.realized_window_count,
         query_window_count=len(windows),
-        zero_query_window_count=3,
+        zero_query_window_count=(
+            accounting.realized_window_count - accounting.realized_query_window_count
+        ),
         total_query_count=sum(phase_query_counts),
         phase_window_counts=phase_window_counts,  # type: ignore[arg-type]
         phase_query_counts=phase_query_counts,  # type: ignore[arg-type]
-        complete_window_stream_sha256="1" * 64,
-        complete_phase_audit_root_sha256="2" * 64,
-        accounting_sha256="3" * 64,
-        query_window_stream_sha256=_query_stream_sha256(windows),
+        complete_window_stream_sha256=accounting.window_stream_sha256,
+        complete_phase_audit_root_sha256=(audit.complete_phase_audit_root_sha256),
+        accounting_sha256=accounting.accounting_sha256,
+        query_window_stream_sha256=accounting.query_window_stream_sha256,
     )
 
 
@@ -186,16 +258,27 @@ def _summary(
     windows: tuple[Day1BQueryWindowAccounting, ...],
     *,
     f1m_policy: str = "uniform-random-or-zero",
+    size_authority: Day1BSerializedObjectSizeAuthority | None = None,
+    serialized_payload_bytes_per_cell_maximum: int = 1_000_000,
 ) -> object:
     controller = Day1BF1MController(
         accepted_group_count=100,
         retained_phases=("tuning-prefix", "held-out"),
         f1m_policy=f1m_policy,
-        size_authority=_authority(),
+        size_authority=size_authority or _authority(),
+        serialized_object_bytes_maximum=10_000,
+        serialized_payload_bytes_per_cell_maximum=(
+            serialized_payload_bytes_per_cell_maximum
+        ),
     )
     for window in windows:
         controller.accept_query_window(window)
-    return controller.finish(context=_context(windows))
+    accounting = _accounting(windows)
+    return controller.finish(
+        context=_context(windows),
+        accounting=accounting,
+        complete_schedule_audit=_complete_schedule_audit(accounting),
+    )
 
 
 def test_cross_window_charging_keeps_route_coverage_but_materializes_four_classes() -> None:
@@ -280,6 +363,98 @@ def test_route_identity_tamper_changes_coverage_without_changing_charged_totals(
     )
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("result_id", "different-result-id"),
+        ("result_ordinal", 1),
+    ),
+)
+def test_result_identity_and_ordinal_are_bound_into_route_coverage(
+    field: str,
+    value: object,
+) -> None:
+    original = _window(
+        phase="held-out",
+        index=20,
+        accepted_start=40,
+        accepted_end=60,
+        first_query=0,
+        query_count=3,
+        random_routes=1,
+        dummy_routes=0,
+        identity="route-result",
+    )
+    changed_route = replace(
+        original.query_plan.f1m_routes[0],
+        **{field: value},
+    )
+    changed_plan = replace(
+        original.query_plan,
+        returned_share_count=(2 if field == "result_ordinal" else 1),
+        f1m_routes=(changed_route,),
+    )
+    changed = replace(original, query_plan=changed_plan)
+
+    policy = "overlap-only" if field == "result_ordinal" else "uniform-random-or-zero"
+    assert _summary((original,), f1m_policy=policy).route_coverage_sha256 != (
+        _summary((changed,), f1m_policy=policy).route_coverage_sha256
+    )
+
+
+def test_day2_archive_and_size_profile_identity_are_bound_into_route_coverage() -> None:
+    window = _window(
+        phase="held-out",
+        index=20,
+        accepted_start=40,
+        accepted_end=60,
+        first_query=0,
+        query_count=3,
+        random_routes=1,
+        dummy_routes=0,
+        identity="day2-lineage",
+    )
+    original = _summary((window,), size_authority=_authority())
+    substituted_authority = replace(
+        _authority(),
+        day2_outer_archive_sha256="a" * 64,
+        serialized_object_size_profile_sha256="b" * 64,
+    )
+    substituted = _summary((window,), size_authority=substituted_authority)
+
+    assert original.logical_charged_byte_count == substituted.logical_charged_byte_count
+    assert original.route_coverage_sha256 != substituted.route_coverage_sha256
+
+
+def test_uniform_policy_requires_a_kind_for_every_returned_share() -> None:
+    window = _window(
+        phase="held-out",
+        index=20,
+        accepted_start=40,
+        accepted_end=60,
+        first_query=0,
+        query_count=1,
+        random_routes=1,
+        dummy_routes=0,
+        identity="missing-kind",
+    )
+    window = replace(
+        window,
+        query_plan=replace(window.query_plan, returned_share_count=2),
+    )
+    controller = Day1BF1MController(
+        accepted_group_count=100,
+        retained_phases=("tuning-prefix", "held-out"),
+        f1m_policy="uniform-random-or-zero",
+        size_authority=_authority(),
+        serialized_object_bytes_maximum=10_000,
+        serialized_payload_bytes_per_cell_maximum=1_000_000,
+    )
+
+    with pytest.raises(Day1BF1MAggregationError, match="classify every returned share"):
+        controller.accept_query_window(window)
+
+
 @pytest.mark.parametrize("case", ("query-gap", "accepted-overlap", "phase-regression"))
 def test_controller_rejects_noncanonical_route_coverage(case: str) -> None:
     first = _window(
@@ -316,6 +491,8 @@ def test_controller_rejects_noncanonical_route_coverage(case: str) -> None:
         retained_phases=("tuning-prefix", "held-out"),
         f1m_policy="uniform-random-or-zero",
         size_authority=_authority(),
+        serialized_object_bytes_maximum=10_000,
+        serialized_payload_bytes_per_cell_maximum=1_000_000,
     )
     controller.accept_query_window(first)
     with pytest.raises(Day1BF1MAggregationError, match="canonical|contiguous|overlap"):
@@ -339,6 +516,8 @@ def test_overlap_only_policy_rejects_dummy_route_charges() -> None:
         retained_phases=("held-out",),
         f1m_policy="overlap-only",
         size_authority=_authority(),
+        serialized_object_bytes_maximum=10_000,
+        serialized_payload_bytes_per_cell_maximum=1_000_000,
     )
 
     with pytest.raises(Day1BF1MAggregationError, match="overlap-only"):
@@ -362,16 +541,143 @@ def test_finish_rejects_an_omitted_window_or_changed_phase_total() -> None:
         retained_phases=("held-out",),
         f1m_policy="overlap-only",
         size_authority=_authority(),
+        serialized_object_bytes_maximum=10_000,
+        serialized_payload_bytes_per_cell_maximum=1_000_000,
     )
     controller.accept_query_window(window)
+    accounting = _accounting((window,), retained_phases=("held-out",))
 
-    with pytest.raises(Day1BF1MAggregationError, match="exact accounting.*stream"):
+    with pytest.raises(Day1BF1MAggregationError, match="do not reconcile"):
         controller.finish(
             context=replace(
                 _context((window,), retained_phases=("held-out",)),
                 query_window_stream_sha256="f" * 64,
-            )
+            ),
+            accounting=accounting,
+            complete_schedule_audit=_complete_schedule_audit(accounting),
         )
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        "inflated-zero-window-count",
+        "accounting-root",
+        "complete-window-root",
+        "complete-phase-audit-root",
+        "phase-audit-set-count",
+    ),
+)
+def test_finish_recomputes_every_accounting_and_full_window_context_root(
+    tamper: str,
+) -> None:
+    window = _window(
+        phase="held-out",
+        index=20,
+        accepted_start=40,
+        accepted_end=60,
+        first_query=0,
+        query_count=3,
+        random_routes=1,
+        dummy_routes=0,
+        identity=f"context-{tamper}",
+    )
+    accounting = _accounting((window,), retained_phases=("held-out",))
+    audit = _complete_schedule_audit(accounting)
+    context = _context((window,), retained_phases=("held-out",))
+    if tamper == "inflated-zero-window-count":
+        context = replace(
+            context,
+            complete_window_count=context.complete_window_count + 1,
+            zero_query_window_count=context.zero_query_window_count + 1,
+            phase_window_counts=(
+                context.phase_window_counts[0] + 1,
+                *context.phase_window_counts[1:],
+            ),
+        )
+    elif tamper == "accounting-root":
+        context = replace(context, accounting_sha256="f" * 64)
+    elif tamper == "complete-window-root":
+        context = replace(context, complete_window_stream_sha256="f" * 64)
+    elif tamper == "complete-phase-audit-root":
+        context = replace(context, complete_phase_audit_root_sha256="f" * 64)
+    else:
+        last = replace(
+            audit.phase_audits[-1],
+            realized_set_count=audit.phase_audits[-1].realized_set_count + 1,
+        )
+        audit = Day1BF1MCompleteScheduleAudit((*audit.phase_audits[:-1], last))
+    controller = Day1BF1MController(
+        accepted_group_count=100,
+        retained_phases=("held-out",),
+        f1m_policy="overlap-only",
+        size_authority=_authority(),
+        serialized_object_bytes_maximum=10_000,
+        serialized_payload_bytes_per_cell_maximum=1_000_000,
+    )
+    controller.accept_query_window(window)
+
+    with pytest.raises(Day1BF1MAggregationError, match="do not reconcile"):
+        controller.finish(
+            context=context,
+            accounting=accounting,
+            complete_schedule_audit=audit,
+        )
+
+
+def test_size_and_per_cell_payload_caps_are_enforced_before_evidence() -> None:
+    with pytest.raises(Day1BF1MAggregationError, match="object-byte cap"):
+        Day1BF1MController(
+            accepted_group_count=100,
+            retained_phases=("held-out",),
+            f1m_policy="overlap-only",
+            size_authority=_authority(),
+            serialized_object_bytes_maximum=1_099,
+            serialized_payload_bytes_per_cell_maximum=1_000_000,
+        )
+
+    window = _window(
+        phase="held-out",
+        index=20,
+        accepted_start=40,
+        accepted_end=60,
+        first_query=0,
+        query_count=3,
+        random_routes=1,
+        dummy_routes=0,
+        identity="payload-cap",
+    )
+    with pytest.raises(Day1BF1MAggregationError, match="payload cap"):
+        _summary(
+            (window,),
+            serialized_payload_bytes_per_cell_maximum=3_299,
+        )
+
+
+def test_each_charged_f1m_document_fits_the_inclusive_jsonl_bound() -> None:
+    window = _window(
+        phase="held-out",
+        index=20,
+        accepted_start=40,
+        accepted_end=60,
+        first_query=0,
+        query_count=3,
+        random_routes=1,
+        dummy_routes=1,
+        identity="jsonl-bound",
+    )
+    summary = _summary((window,))
+
+    assert all(
+        len(_canonical(item.to_document())) <= 2_048
+        for item in summary.charged_size_classes
+    )
+    assert {
+        item.serialized_size_profile_key for item in summary.charged_size_classes
+    } == {
+        "f1m_random_zero_sum_ciphertext_bytes",
+        "f1m_encrypted_zero_dummy_ciphertext_bytes",
+    }
 
 
 @pytest.mark.parametrize(

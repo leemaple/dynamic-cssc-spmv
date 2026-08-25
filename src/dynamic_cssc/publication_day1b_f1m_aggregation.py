@@ -16,7 +16,16 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import Final
 
-from dynamic_cssc.publication_day1b_accounting import Day1BQueryWindowAccounting
+from dynamic_cssc.publication_day1b_accounting import (
+    Day1BQueryWindowAccounting,
+    PublicationDay1BAccounting,
+)
+from dynamic_cssc.publication_day1b_aggregate_bounds import (
+    DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM,
+    DAY1B_CELLS_PER_UNIT,
+    DAY1B_F1M_SERIALIZED_CATEGORIES,
+)
+from dynamic_cssc.publication_traces import PUBLICATION_SOURCE_PARTITION_COUNT
 
 DAY1B_F1M_CHARGED_SIZE_CLASS_SCHEMA: Final = (
     "dynamic-cssc-publication-day1b-f1m-charged-size-class-v2"
@@ -38,10 +47,13 @@ _RETAINED_PHASE_SETS: Final = {
     ("tuning-prefix", "held-out"),
     ("held-out",),
 }
-_CATEGORY_BY_KIND: Final = {
-    "random-zero-sum": "query-f1m-random-mask-ciphertexts",
-    "encrypted-zero-dummy": "query-f1m-encrypted-zero-dummy-ciphertexts",
-}
+_CATEGORY_BY_KIND: Final = dict(
+    zip(
+        ("random-zero-sum", "encrypted-zero-dummy"),
+        DAY1B_F1M_SERIALIZED_CATEGORIES,
+        strict=True,
+    )
+)
 _KIND_BY_CATEGORY: Final = {value: key for key, value in _CATEGORY_BY_KIND.items()}
 _SIZE_PROFILE_KEY_BY_KIND: Final = {
     "random-zero-sum": "f1m_random_zero_sum_ciphertext_bytes",
@@ -216,6 +228,114 @@ class Day1BF1MPhaseBoundary:
 
 
 @dataclass(frozen=True, slots=True)
+class Day1BF1MCompletePhaseAudit:
+    """One independently hashed full-window phase, including zero-query windows."""
+
+    phase: str
+    accepted_group_start: int
+    accepted_group_end: int
+    realized_window_count: int
+    realized_set_count: int
+    realized_query_count: int
+    consumed_window_audit_stream_sha256: str
+
+    def __post_init__(self) -> None:
+        Day1BF1MPhaseBoundary(
+            self.phase,
+            self.accepted_group_start,
+            self.accepted_group_end,
+        )
+        for field in (
+            "realized_window_count",
+            "realized_set_count",
+            "realized_query_count",
+        ):
+            _nonnegative(getattr(self, field), f"complete phase audit {field}")
+        if self.realized_window_count == 0:
+            raise Day1BF1MAggregationError(
+                "complete phase audit must contain at least one publication window"
+            )
+        _require_sha256(
+            self.consumed_window_audit_stream_sha256,
+            "complete phase window-audit stream SHA",
+        )
+
+    def to_document(self) -> dict[str, int | str]:
+        return {
+            "accepted_group_end": self.accepted_group_end,
+            "accepted_group_start": self.accepted_group_start,
+            "consumed_window_audit_stream_sha256": (
+                self.consumed_window_audit_stream_sha256
+            ),
+            "phase": self.phase,
+            "realized_query_count": self.realized_query_count,
+            "realized_set_count": self.realized_set_count,
+            "realized_window_count": self.realized_window_count,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class Day1BF1MCompleteScheduleAudit:
+    """Closed three-phase audit derived by the all-window stream wrapper."""
+
+    phase_audits: tuple[Day1BF1MCompletePhaseAudit, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.phase_audits) is not tuple
+            or tuple(audit.phase for audit in self.phase_audits) != _PHASES
+            or any(
+                type(audit) is not Day1BF1MCompletePhaseAudit
+                for audit in self.phase_audits
+            )
+        ):
+            raise Day1BF1MAggregationError(
+                "complete schedule audit must contain the exact three phases"
+            )
+        if (
+            self.phase_audits[0].accepted_group_start != 0
+            or any(
+                before.accepted_group_end != after.accepted_group_start
+                for before, after in zip(
+                    self.phase_audits,
+                    self.phase_audits[1:],
+                    strict=False,
+                )
+            )
+        ):
+            raise Day1BF1MAggregationError(
+                "complete schedule audit phase ranges are not contiguous from zero"
+            )
+
+    @property
+    def complete_window_count(self) -> int:
+        return sum(audit.realized_window_count for audit in self.phase_audits)
+
+    @property
+    def phase_window_counts(self) -> tuple[int, int, int]:
+        return tuple(  # type: ignore[return-value]
+            audit.realized_window_count for audit in self.phase_audits
+        )
+
+    @property
+    def phase_query_counts(self) -> tuple[int, int, int]:
+        return tuple(  # type: ignore[return-value]
+            audit.realized_query_count for audit in self.phase_audits
+        )
+
+    @property
+    def complete_phase_audit_root_sha256(self) -> str:
+        return _sha256(
+            {
+                "phase_audits": [audit.to_document() for audit in self.phase_audits],
+                "schema_version": (
+                    "dynamic-cssc-publication-day1b-complete-phase-audit-root-v1"
+                ),
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Day1BF1MControllerContext:
     """Closed lineage, candidate-cell, and complete-schedule binding."""
 
@@ -286,12 +406,20 @@ class Day1BF1MControllerContext:
             _require_sha256(getattr(self, field), f"F1-M context {field}")
         for field in ("dataset_id", "dataset_release", "semantics", "candidate_id"):
             _nonempty(getattr(self, field), f"F1-M context {field}")
-        if type(self.source_partition) is not int or self.source_partition not in range(5):
+        if (
+            type(self.source_partition) is not int
+            or self.source_partition not in range(PUBLICATION_SOURCE_PARTITION_COUNT)
+        ):
             raise Day1BF1MAggregationError(
-                "F1-M context source partition is outside [0, 5)"
+                "F1-M context source partition is outside the frozen domain"
             )
-        if type(self.cell_ordinal) is not int or self.cell_ordinal not in range(18):
-            raise Day1BF1MAggregationError("F1-M context cell ordinal is outside [0, 18)")
+        if (
+            type(self.cell_ordinal) is not int
+            or self.cell_ordinal not in range(DAY1B_CELLS_PER_UNIT)
+        ):
+            raise Day1BF1MAggregationError(
+                "F1-M context cell ordinal is outside the frozen unit"
+            )
         _canonical_fraction_text(self.freshness, "F1-M context freshness")
         _canonical_fraction_text(self.rho, "F1-M context rho")
         if self.candidate_role not in {"reference", "ablation"}:
@@ -461,6 +589,13 @@ class Day1BF1MChargedSizeClass:
             "charged F1-M size-profile SHA",
         )
         _require_sha256(self.day2_outer_archive_sha256, "charged F1-M Day 2 archive SHA")
+        if (
+            len(_canonical_bytes(self.to_document()))
+            > DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM
+        ):
+            raise Day1BF1MAggregationError(
+                "charged F1-M canonical JSONL exceeds the frozen 2 KiB bound"
+            )
 
     @property
     def charged_byte_count(self) -> int:
@@ -627,6 +762,8 @@ class Day1BF1MController:
         "_random_counts",
         "_retained_phases",
         "_route_stream_hasher",
+        "_serialized_object_bytes_maximum",
+        "_serialized_payload_bytes_per_cell_maximum",
         "_size_authority",
     )
 
@@ -637,6 +774,8 @@ class Day1BF1MController:
         retained_phases: tuple[str, ...],
         f1m_policy: str,
         size_authority: Day1BSerializedObjectSizeAuthority,
+        serialized_object_bytes_maximum: int,
+        serialized_payload_bytes_per_cell_maximum: int,
     ) -> None:
         self._accepted_group_count = _positive(
             accepted_group_count,
@@ -648,6 +787,21 @@ class Day1BF1MController:
             raise Day1BF1MAggregationError("F1-M policy is not frozen")
         if type(size_authority) is not Day1BSerializedObjectSizeAuthority:
             raise TypeError("size_authority must be exact Day1BSerializedObjectSizeAuthority")
+        self._serialized_object_bytes_maximum = _positive(
+            serialized_object_bytes_maximum,
+            "F1-M serialized-object byte maximum",
+        )
+        self._serialized_payload_bytes_per_cell_maximum = _positive(
+            serialized_payload_bytes_per_cell_maximum,
+            "F1-M serialized-payload byte maximum",
+        )
+        if max(
+            size_authority.f1m_random_zero_sum_ciphertext_bytes,
+            size_authority.f1m_encrypted_zero_dummy_ciphertext_bytes,
+        ) > self._serialized_object_bytes_maximum:
+            raise Day1BF1MAggregationError(
+                "anchored F1-M ciphertext size exceeds the frozen object-byte cap"
+            )
         self._retained_phases = retained_phases
         self._f1m_policy = f1m_policy
         self._size_authority = size_authority
@@ -695,6 +849,13 @@ class Day1BF1MController:
             or plan.returned_share_count < len(plan.f1m_routes)
         ):
             raise Day1BF1MAggregationError("query plan F1-M route cardinality is not exact")
+        if (
+            self._f1m_policy == "uniform-random-or-zero"
+            and len(plan.f1m_routes) != plan.returned_share_count
+        ):
+            raise Day1BF1MAggregationError(
+                "uniform F1-M must classify every returned share"
+            )
         random_per_query = 0
         dummy_per_query = 0
         route_documents: list[dict[str, str | int]] = []
@@ -811,12 +972,20 @@ class Day1BF1MController:
         self,
         *,
         context: Day1BF1MControllerContext,
+        accounting: PublicationDay1BAccounting,
+        complete_schedule_audit: Day1BF1MCompleteScheduleAudit,
     ) -> Day1BF1MControllerSummary:
         if self._finished:
             raise Day1BF1MAggregationError("F1-M controller is already finished")
         self._finished = True
         if type(context) is not Day1BF1MControllerContext:
             raise TypeError("context must be exact Day1BF1MControllerContext")
+        if type(accounting) is not PublicationDay1BAccounting:
+            raise TypeError("accounting must be exact PublicationDay1BAccounting")
+        if type(complete_schedule_audit) is not Day1BF1MCompleteScheduleAudit:
+            raise TypeError(
+                "complete_schedule_audit must be exact Day1BF1MCompleteScheduleAudit"
+            )
         if (
             context.accepted_group_count != self._accepted_group_count
             or context.retained_phases != self._retained_phases
@@ -824,6 +993,70 @@ class Day1BF1MController:
         ):
             raise Day1BF1MAggregationError(
                 "F1-M controller context changed accepted groups, retained phases, or source"
+            )
+        accounting_phase_ranges = tuple(
+            (phase.phase, phase.accepted_group_start, phase.accepted_group_end)
+            for phase in accounting.phases
+        )
+        audit_phase_ranges = tuple(
+            (audit.phase, audit.accepted_group_start, audit.accepted_group_end)
+            for audit in complete_schedule_audit.phase_audits
+        )
+        context_phase_ranges = tuple(
+            (
+                boundary.phase,
+                boundary.accepted_group_start,
+                boundary.accepted_group_end,
+            )
+            for boundary in context.phase_boundaries
+        )
+        accounting_phase_window_counts = tuple(
+            phase.realized_window_count for phase in accounting.phases
+        )
+        accounting_phase_query_counts = tuple(
+            phase.realized_query_count for phase in accounting.phases
+        )
+        accounting_phase_query_window_counts = tuple(
+            phase.query_window_count for phase in accounting.phases
+        )
+        audit_phase_set_counts = tuple(
+            audit.realized_set_count for audit in complete_schedule_audit.phase_audits
+        )
+        accounting_phase_set_counts = tuple(
+            phase.realized_set_count for phase in accounting.phases
+        )
+        expected_zero_query_windows = (
+            accounting.realized_window_count - accounting.realized_query_window_count
+        )
+        if (
+            accounting.candidate_id != context.candidate_id
+            or accounting.candidate_policy_sha256 != context.candidate_policy_sha256
+            or accounting_phase_ranges != audit_phase_ranges
+            or accounting_phase_ranges != context_phase_ranges
+            or audit_phase_set_counts != accounting_phase_set_counts
+            or complete_schedule_audit.phase_window_counts
+            != accounting_phase_window_counts
+            or complete_schedule_audit.phase_query_counts
+            != accounting_phase_query_counts
+            or complete_schedule_audit.complete_window_count
+            != accounting.realized_window_count
+            or context.complete_window_count != accounting.realized_window_count
+            or context.query_window_count != accounting.realized_query_window_count
+            or context.zero_query_window_count != expected_zero_query_windows
+            or context.total_query_count != accounting.realized_query_count
+            or context.phase_window_counts != accounting_phase_window_counts
+            or context.phase_query_counts != accounting_phase_query_counts
+            or context.complete_window_stream_sha256 != accounting.window_stream_sha256
+            or context.complete_phase_audit_root_sha256
+            != complete_schedule_audit.complete_phase_audit_root_sha256
+            or context.accounting_sha256 != accounting.accounting_sha256
+            or context.query_window_stream_sha256
+            != accounting.query_window_stream_sha256
+            or tuple(self._phase_query_window_counts)
+            != accounting_phase_query_window_counts
+        ):
+            raise Day1BF1MAggregationError(
+                "F1-M context, accounting, and complete-window audit do not reconcile"
             )
         query_window_stream_sha256 = _sha256(
             {
@@ -843,6 +1076,9 @@ class Day1BF1MController:
         route_coverage_sha256 = _sha256(
             {
                 "controller_context_sha256": context.context_sha256,
+                "day2_outer_archive_sha256": (
+                    self._size_authority.day2_outer_archive_sha256
+                ),
                 "element_count": self._query_window_count,
                 "element_stream_sha256": self._route_stream_hasher.hexdigest(),
                 "phase_dummy_route_counts": dict(
@@ -858,6 +1094,9 @@ class Day1BF1MController:
                     zip(_PHASES, self._random_counts, strict=True)
                 ),
                 "schema_version": DAY1B_F1M_ROUTE_COVERAGE_SCHEMA,
+                "serialized_object_size_profile_sha256": (
+                    self._size_authority.serialized_object_size_profile_sha256
+                ),
             }
         )
         charged: list[Day1BF1MChargedSizeClass] = []
@@ -894,7 +1133,7 @@ class Day1BF1MController:
                         ),
                     )
                 )
-        return Day1BF1MControllerSummary(
+        summary = Day1BF1MControllerSummary(
             context=context,
             size_authority=self._size_authority,
             retained_phases=self._retained_phases,
@@ -907,6 +1146,14 @@ class Day1BF1MController:
             phase_dummy_route_counts=tuple(self._dummy_counts),  # type: ignore[arg-type]
             charged_size_classes=tuple(charged),
         )
+        if (
+            summary.logical_charged_byte_count
+            > self._serialized_payload_bytes_per_cell_maximum
+        ):
+            raise Day1BF1MAggregationError(
+                "logical F1-M charged bytes exceed the frozen per-cell payload cap"
+            )
+        return summary
 
 
 __all__ = (
@@ -917,6 +1164,8 @@ __all__ = (
     "DAY1B_F1M_MAX_CHARGED_SIZE_CLASS_RECEIPTS_PER_CELL",
     "Day1BF1MAggregationError",
     "Day1BF1MChargedSizeClass",
+    "Day1BF1MCompletePhaseAudit",
+    "Day1BF1MCompleteScheduleAudit",
     "Day1BF1MController",
     "Day1BF1MControllerContext",
     "Day1BF1MControllerSummary",
