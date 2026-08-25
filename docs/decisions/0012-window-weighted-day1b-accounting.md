@@ -172,6 +172,10 @@ advanced the enclosing worker receipt to v9. Binding the three fixed-width
 metadata size classes advances the expected-count document to v2, the worker
 input binding to v9, and the serialization ledger to v4; the unchanged
 expected-phase-count document remains v1.
+Binding the one-time combined evaluation-key class advances the expected-count
+document to v3, the worker input binding to v10, the serialization ledger to
+v5, the worker receipt to v10, the unit to v4, and the preparatory behavior set
+to v18.
 The retained unit, ledger, controller summary, context, route, worker-input, and
 worker-receipt schema identifiers are pairwise distinct so an exact-key parser
 cannot silently accept one document family as another.
@@ -197,6 +201,12 @@ binds both measured Day 2 segment lengths and the Day 2 archive/profile roots.
 No crypto context, public key, label, or optional payload is admissible. The
 existing generic OpenFHE context-bearing key bundle remains non-authorizing and
 must be replaced at the production-adapter seam before runtime admission.
+The formal worker input opens the Day 2 segment lengths and class digest. Its
+streaming parser validates the header, both segment digests, and exact end of
+frame without retaining the raw key payload. Exactly one representative is
+required in the first retained phase, and its object receipt and ledger must
+charge the controller multiplicity at `88 + rotation_bytes + eval_mult_bytes`;
+later retained phases carry no such representative.
 
 The representative receipt proves an accounting size class; it does not claim
 that billions of fresh masks were generated or consumed during the experiment.

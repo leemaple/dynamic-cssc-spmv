@@ -11,6 +11,7 @@ from contextlib import suppress
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from fractions import Fraction
+from functools import cache
 from inspect import signature
 from pathlib import Path
 from types import SimpleNamespace
@@ -48,6 +49,12 @@ from dynamic_cssc.publication_day1b import (
 from dynamic_cssc.publication_day1b_f1m_aggregation import (
     Day1BF1MChargedSizeClass,
     Day1BF1MControllerSummary,
+)
+from dynamic_cssc.publication_day1b_key_framing import (
+    DAY1B_COMBINED_EVALUATION_KEY_CATEGORY,
+    DAY1B_COMBINED_EVALUATION_KEY_HEADER_BYTES,
+    Day1BCombinedEvaluationKeyFrame,
+    day1b_combined_evaluation_key_size_class_sha256,
 )
 from dynamic_cssc.publication_day1b_metadata_framing import (
     Day1BColumnIndexSynchronizationEntry,
@@ -503,7 +510,7 @@ def _trace() -> _Day1BTraceInput:
 
 def _source() -> _Day1BPreparatorySourceAttestation:
     inventory = {
-        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v17",
+        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v18",
         "behavior_set_sha256": "c" * 64,
         "entries": [],
         "role": "day1b",
@@ -656,6 +663,17 @@ def _fixed_width_metadata_payload(category: str) -> bytes | None:
     return None
 
 
+@cache
+def _combined_evaluation_key_payload(
+    rotation_key_inventory_bytes: int,
+    eval_mult_key_bytes: int,
+) -> bytes:
+    return Day1BCombinedEvaluationKeyFrame(
+        rotation_key_inventory=b"r" * rotation_key_inventory_bytes,
+        eval_mult_keys=b"m" * eval_mult_key_bytes,
+    ).to_bytes()
+
+
 def _worker_transcript(
     contract: Day1BWorkerProtocolContract,
     audits: tuple[Day1BWorkerPhaseAudit, ...],
@@ -735,6 +753,13 @@ def _worker_transcript(
                     f"{contract.input_binding_sha256}:{candidate.candidate_id}:{phase}:{category}"
                 )
                 payload = _fixed_width_metadata_payload(category)
+                if category == DAY1B_COMBINED_EVALUATION_KEY_CATEGORY:
+                    assert contract.serialized_rotation_key_inventory_bytes is not None
+                    assert contract.serialized_eval_mult_key_bytes is not None
+                    payload = _combined_evaluation_key_payload(
+                        contract.serialized_rotation_key_inventory_bytes,
+                        contract.serialized_eval_mult_key_bytes,
+                    )
                 if payload is None:
                     payload = f"test-only:{identity}".encode("ascii")
                 emit(
@@ -1087,7 +1112,7 @@ def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v17"),
+            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v18"),
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -1191,7 +1216,7 @@ def test_public_producer_checks_profile_before_catalog_trace_or_worker(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v17",
+            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v18",
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -1551,7 +1576,7 @@ def test_day1b_schema_names_are_unambiguous_across_exact_key_contracts() -> None
         if name.endswith("_SCHEMA") and type(value) is str
     }
 
-    assert DAY1B_UNIT_SCHEMA == "dynamic-cssc-publication-day1b-unit-v3"
+    assert DAY1B_UNIT_SCHEMA == "dynamic-cssc-publication-day1b-unit-v4"
     assert DAY1B_UNIT_FRAGMENT_SCHEMA == ("dynamic-cssc-publication-day1b-unit-fragment-v1")
     assert len(set(schemas.values())) == len(schemas)
     retained_document_families = (
@@ -1565,10 +1590,15 @@ def test_day1b_schema_names_are_unambiguous_across_exact_key_contracts() -> None
         day1b_accounting.DAY1B_ACCOUNTING_SCHEMA,
         day1b_accounting.DAY1B_PHASE_ACCOUNTING_SCHEMA,
         expected_counts_module.DAY1B_CONTROLLER_EXPECTED_COUNTS_SCHEMA,
+        expected_counts_module.DAY1B_CONTROLLER_EXPECTED_COMBINED_EVALUATION_KEY_SIZE_CLASS_SCHEMA,
         expected_counts_module.DAY1B_CONTROLLER_EXPECTED_METADATA_SIZE_CLASS_SCHEMA,
         expected_counts_module.DAY1B_CONTROLLER_EXPECTED_PHASE_COUNTS_SCHEMA,
     )
     assert len(set(retained_document_families)) == len(retained_document_families)
+    assert worker_protocol.DAY1B_WORKER_INPUT_BINDING_SCHEMA.endswith("-v10")
+    assert worker_protocol.DAY1B_WORKER_RECEIPT_SCHEMA.endswith("-v10")
+    assert day1b_module.DAY1B_SERIALIZATION_LEDGER_SCHEMA.endswith("-v5")
+    assert DAY1B_UNIT_SCHEMA.endswith("-v4")
 
 
 def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
@@ -1586,7 +1616,7 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
     records = fragment["records"]
 
     assert manifest["schema_version"] == (
-        "dynamic-cssc-publication-day1b-unit-private-test-fixture-v3"
+        "dynamic-cssc-publication-day1b-unit-private-test-fixture-v4"
     )
     assert manifest["artifact_variant"] == {
         "claims_authorized": False,
@@ -1751,6 +1781,9 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
                 "fixed_width_metadata_size_classes"
             ]
         }
+        expected_key_class = expected_document[
+            "combined_evaluation_key_size_class"
+        ]
         expected_classes = {
             (item.phase, item.category): item.to_document() for item in summary.charged_size_classes
         }
@@ -1788,9 +1821,31 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
             expected_metadata_class = expected_metadata_classes.get(
                 row["category"]
             )
-            if expected_metadata_class is None:
+            if row["category"] == DAY1B_COMBINED_EVALUATION_KEY_CATEGORY:
                 assert row[
                     "controller_expected_fixed_width_size_class_sha256"
+                ] is None
+                assert row[
+                    "controller_expected_combined_evaluation_key_size_class_sha256"
+                ] == expected_key_class[
+                    "combined_evaluation_key_size_class_sha256"
+                ]
+                assert row["controller_expected_serialized_byte_count"] == (
+                    expected_key_class["serialized_byte_count"]
+                )
+                assert row["charged_byte_count"] == (
+                    expected_worker_count
+                    * expected_key_class["serialized_byte_count"]
+                )
+                assert row["serialization_equivalence_class_count"] == int(
+                    expected_worker_count > 0
+                )
+            elif expected_metadata_class is None:
+                assert row[
+                    "controller_expected_fixed_width_size_class_sha256"
+                ] is None
+                assert row[
+                    "controller_expected_combined_evaluation_key_size_class_sha256"
                 ] is None
                 assert row["controller_expected_serialized_byte_count"] is None
             else:
@@ -1800,6 +1855,9 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
                 assert row[
                     "controller_expected_fixed_width_size_class_sha256"
                 ] == day1b_metadata_size_class_sha256(row["category"])
+                assert row[
+                    "controller_expected_combined_evaluation_key_size_class_sha256"
+                ] is None
                 assert row[
                     "controller_expected_serialized_byte_count"
                 ] == expected_metadata_bytes
@@ -1854,6 +1912,30 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
     assert b"test-only:" not in bundle.serialized_object_receipt_path.read_bytes()
     assert (
         sum(row["category"] == "one-time-evaluation-key-material" for row in object_receipts) == 252
+    )
+    key_size_authority = executor.f1m_summaries[0].size_authority
+    rotation_key_bytes = (
+        key_size_authority.serialized_rotation_key_inventory_bytes
+    )
+    eval_mult_key_bytes = key_size_authority.serialized_eval_mult_key_bytes
+    expected_key_bytes = 88 + rotation_key_bytes + eval_mult_key_bytes
+    key_payload = _combined_evaluation_key_payload(
+        rotation_key_bytes,
+        eval_mult_key_bytes,
+    )
+    key_payload_sha256 = hashlib.sha256(key_payload).hexdigest()
+    key_receipts = [
+        row
+        for row in object_receipts
+        if row["category"] == DAY1B_COMBINED_EVALUATION_KEY_CATEGORY
+    ]
+    assert all(
+        row["transaction"] == "one-time"
+        and row["object"]["serialized_byte_count"] == expected_key_bytes
+        and row["object"]["multiplicity"] == 1
+        and row["object"]["charged_byte_count"] == expected_key_bytes
+        and row["object"]["serialized_sha256"] == key_payload_sha256
+        for row in key_receipts
     )
     assert manifest["cardinality"] == {
         "cell_binding_count": 18,
@@ -2311,11 +2393,50 @@ def test_day1b_verifier_rejects_rehashed_metadata_size_class_byte_splice(
 
 
 @pytest.mark.parametrize(
+    "mutation",
+    ("expected-segment-length", "direct-segment-length"),
+)
+def test_day1b_verifier_rejects_rehashed_combined_key_authority_splice(
+    tmp_path: Path,
+    _complete_unit_fixture: tuple[PublicationDay1BUnitBundle, _StreamingExecutor],
+    mutation: str,
+) -> None:
+    bundle, _executor = _complete_unit_fixture
+    root = tmp_path / mutation
+    shutil.copytree(bundle.output_dir, root)
+    manifest = json.loads((root / "publication-day1b-unit-manifest.json").read_bytes())
+    receipt = manifest["cell_execution_receipts"][0]["candidate_cell_receipts"][0]
+    input_document = receipt["input_binding_document"]
+    if mutation == "expected-segment-length":
+        expected_document = input_document["controller_expected_counts_document"]
+        expected_document["combined_evaluation_key_size_class"][
+            "serialized_rotation_key_inventory_bytes"
+        ] += 1
+        input_document["controller_expected_counts_sha256"] = _sha(
+            expected_document
+        )
+    else:
+        input_document["serialized_rotation_key_inventory_bytes"] += 1
+    _rehash_open_input_receipt(receipt)
+    _rewrite_manifest_and_checksums(root, manifest)
+
+    with pytest.raises(ValueError, match="open exact input binding"):
+        verify_existing_directory(
+            root,
+            verifier=lambda view: day1b_module._verify_day1b_unit_view(
+                view,
+                artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+            ),
+        )
+
+
+@pytest.mark.parametrize(
     ("mutation", "message"),
     (
         ("unit-day2-scalar", "Day 2 authority"),
         ("unit-day2-source", "retargets the experiment source"),
         ("contract-day2-scalar", "Day 2 authority"),
+        ("contract-day2-key-scalar", "Day 2 authority"),
         ("policy-digest", "candidate policies do not open"),
         ("policy-strategy", "candidate policies do not open"),
         ("policy-count-13", "candidate policies do not open"),
@@ -2352,6 +2473,34 @@ def test_day1b_verifier_rejects_rehashed_authority_policy_and_preimage_splices(
         manifest["serialized_object_size_authority"]["source_git_sha"] = "f" * 40
     elif mutation == "contract-day2-scalar":
         input_document["ciphertext_bytes"] += 1
+        _rehash_open_input_receipt(receipt)
+    elif mutation == "contract-day2-key-scalar":
+        expected_document = input_document["controller_expected_counts_document"]
+        key_class = expected_document["combined_evaluation_key_size_class"]
+        key_class["serialized_rotation_key_inventory_bytes"] += 1
+        key_class["serialized_byte_count"] += 1
+        key_class_digest = day1b_combined_evaluation_key_size_class_sha256(
+            day2_outer_archive_sha256=key_class["day2_outer_archive_sha256"],
+            serialized_object_size_profile_sha256=(
+                key_class["serialized_object_size_profile_sha256"]
+            ),
+            serialized_rotation_key_inventory_bytes=(
+                key_class["serialized_rotation_key_inventory_bytes"]
+            ),
+            serialized_eval_mult_key_bytes=(
+                key_class["serialized_eval_mult_key_bytes"]
+            ),
+        )
+        key_class[
+            "combined_evaluation_key_size_class_sha256"
+        ] = key_class_digest
+        input_document["serialized_rotation_key_inventory_bytes"] += 1
+        input_document[
+            "combined_evaluation_key_size_class_sha256"
+        ] = key_class_digest
+        input_document["controller_expected_counts_sha256"] = _sha(
+            expected_document
+        )
         _rehash_open_input_receipt(receipt)
     elif mutation == "policy-digest":
         policies[0]["candidate_policy_digest"] = "f" * 64
@@ -2426,6 +2575,8 @@ def test_day1b_verifier_rejects_rehashed_authority_policy_and_preimage_splices(
         ("ledger-v1", "serialization-ledger schema changed"),
         ("metadata-class-root", "metadata ledger row differs"),
         ("metadata-class-size", "metadata ledger row differs"),
+        ("combined-key-class-root", "combined evaluation-key ledger row differs"),
+        ("combined-key-class-size", "combined evaluation-key ledger row differs"),
         ("receipt-root", "input binding retargets"),
         ("non-f1m-controller-authority", "non-F1-M ledger row claims"),
         (
@@ -2479,6 +2630,22 @@ def test_day1b_verifier_rejects_rehashed_dual_source_ledger_splices(
                 not in worker_protocol.DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
             )
             target_row["charge_authority"] = "controller-anchored-day2-size-class"
+        elif mutation in {
+            "combined-key-class-root",
+            "combined-key-class-size",
+        }:
+            target_ledger = ledgers[0]
+            target_row = next(
+                row
+                for row in target_ledger["categories"]
+                if row["category"] == DAY1B_COMBINED_EVALUATION_KEY_CATEGORY
+            )
+            if mutation == "combined-key-class-root":
+                target_row[
+                    "controller_expected_combined_evaluation_key_size_class_sha256"
+                ] = "f" * 64
+            else:
+                target_row["controller_expected_serialized_byte_count"] += 1
         elif mutation in {"metadata-class-root", "metadata-class-size"}:
             target_ledger = ledgers[0]
             target_row = next(
@@ -3901,6 +4068,42 @@ def test_private_core_requires_one_time_key_in_first_retained_phase(
             candidate_catalog=_catalog(),
             resource_policy=_resource_policy(),
             execution_adapter=executor,
+        )
+
+    assert not output_dir.exists()
+
+
+def test_private_core_rejects_tampered_combined_evaluation_key_segment(
+    tmp_path: Path,
+) -> None:
+    class TamperingExecutor(_StreamingExecutor):
+        def execute_candidate_cell(self, **kwargs: object) -> _Day1BWorkerLaunch:
+            launch = super().execute_candidate_cell(**kwargs)
+            rotation_bytes = launch.contract.serialized_rotation_key_inventory_bytes
+            eval_mult_bytes = launch.contract.serialized_eval_mult_key_bytes
+            assert rotation_bytes is not None and eval_mult_bytes is not None
+            key_payload = _combined_evaluation_key_payload(
+                rotation_bytes,
+                eval_mult_bytes,
+            )
+            transcript = bytearray(next(iter(launch.frame_chunks)))
+            payload_start = transcript.find(key_payload)
+            assert payload_start >= 0
+            transcript[
+                payload_start
+                + DAY1B_COMBINED_EVALUATION_KEY_HEADER_BYTES
+            ] ^= 1
+            return replace(launch, frame_chunks=(bytes(transcript),))
+
+    output_dir = tmp_path / "unit"
+    with pytest.raises(PublicationDay1BHold, match="candidate-cell worker evidence"):
+        _produce_publication_day1b_unit_for_test(
+            trace=_trace(),
+            output_dir=output_dir,
+            source_attestation=_source(),
+            candidate_catalog=_catalog(),
+            resource_policy=_resource_policy(),
+            execution_adapter=TamperingExecutor(tmp_path / "controlled-scratch"),
         )
 
     assert not output_dir.exists()

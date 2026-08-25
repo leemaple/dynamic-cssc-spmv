@@ -19,6 +19,12 @@ from dynamic_cssc.publication_day1b_accounting import PublicationDay1BAccounting
 from dynamic_cssc.publication_day1b_aggregate_bounds import (
     SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
 )
+from dynamic_cssc.publication_day1b_key_framing import (
+    DAY1B_COMBINED_EVALUATION_KEY_CATEGORY,
+    Day1BCombinedEvaluationKeyFramingError,
+    day1b_combined_evaluation_key_size_class_document,
+    day1b_combined_evaluation_key_size_class_sha256,
+)
 from dynamic_cssc.publication_day1b_metadata_framing import (
     DAY1B_FIXED_WIDTH_METADATA_CATEGORIES,
     day1b_metadata_size_class_document,
@@ -26,13 +32,16 @@ from dynamic_cssc.publication_day1b_metadata_framing import (
 )
 
 DAY1B_CONTROLLER_EXPECTED_COUNTS_SCHEMA = (
-    "dynamic-cssc-publication-day1b-controller-expected-counts-v2"
+    "dynamic-cssc-publication-day1b-controller-expected-counts-v3"
 )
 DAY1B_CONTROLLER_EXPECTED_PHASE_COUNTS_SCHEMA = (
     "dynamic-cssc-publication-day1b-controller-expected-phase-counts-v1"
 )
 DAY1B_CONTROLLER_EXPECTED_METADATA_SIZE_CLASS_SCHEMA = (
     "dynamic-cssc-publication-day1b-controller-expected-metadata-size-class-v1"
+)
+DAY1B_CONTROLLER_EXPECTED_COMBINED_EVALUATION_KEY_SIZE_CLASS_SCHEMA = (
+    "dynamic-cssc-publication-day1b-controller-expected-combined-evaluation-key-size-class-v1"
 )
 
 _PHASES = ("warmup", "tuning-prefix", "held-out")
@@ -130,6 +139,190 @@ class Day1BControllerExpectedMetadataSizeClass:
         if result.to_document() != value:
             raise Day1BControllerExpectedCountsError(
                 "controller metadata size class is not its exact typed projection"
+            )
+        return result
+
+
+@dataclass(frozen=True, slots=True)
+class Day1BControllerExpectedCombinedEvaluationKeySizeClass:
+    """One Day-2-bound rotation-plus-eval-mult size class."""
+
+    category: str
+    transaction: str
+    day2_outer_archive_sha256: str
+    serialized_object_size_profile_sha256: str
+    serialized_rotation_key_inventory_bytes: int
+    serialized_eval_mult_key_bytes: int
+    serialized_byte_count: int
+    combined_evaluation_key_size_class_sha256: str
+
+    def __post_init__(self) -> None:
+        try:
+            canonical = day1b_combined_evaluation_key_size_class_document(
+                day2_outer_archive_sha256=self.day2_outer_archive_sha256,
+                serialized_object_size_profile_sha256=(
+                    self.serialized_object_size_profile_sha256
+                ),
+                serialized_rotation_key_inventory_bytes=(
+                    self.serialized_rotation_key_inventory_bytes
+                ),
+                serialized_eval_mult_key_bytes=self.serialized_eval_mult_key_bytes,
+            )
+            canonical_sha256 = day1b_combined_evaluation_key_size_class_sha256(
+                day2_outer_archive_sha256=self.day2_outer_archive_sha256,
+                serialized_object_size_profile_sha256=(
+                    self.serialized_object_size_profile_sha256
+                ),
+                serialized_rotation_key_inventory_bytes=(
+                    self.serialized_rotation_key_inventory_bytes
+                ),
+                serialized_eval_mult_key_bytes=self.serialized_eval_mult_key_bytes,
+            )
+        except Day1BCombinedEvaluationKeyFramingError as error:
+            raise Day1BControllerExpectedCountsError(
+                "controller combined evaluation-key authority is malformed"
+            ) from error
+        if (
+            self.category != DAY1B_COMBINED_EVALUATION_KEY_CATEGORY
+            or self.category != canonical["category"]
+            or self.transaction != canonical["transaction"]
+            or self.serialized_byte_count != canonical["serialized_byte_count"]
+            or self.combined_evaluation_key_size_class_sha256
+            != canonical_sha256
+        ):
+            raise Day1BControllerExpectedCountsError(
+                "controller combined evaluation-key size class differs from canonical framing"
+            )
+        _require_sha256(
+            self.day2_outer_archive_sha256,
+            "controller combined evaluation-key Day 2 archive digest",
+        )
+        _require_sha256(
+            self.serialized_object_size_profile_sha256,
+            "controller combined evaluation-key size-profile digest",
+        )
+        _require_sha256(
+            self.combined_evaluation_key_size_class_sha256,
+            "controller combined evaluation-key size-class digest",
+        )
+
+    @classmethod
+    def from_day2_authority(
+        cls,
+        *,
+        day2_outer_archive_sha256: str,
+        serialized_object_size_profile_sha256: str,
+        serialized_rotation_key_inventory_bytes: int,
+        serialized_eval_mult_key_bytes: int,
+    ) -> Day1BControllerExpectedCombinedEvaluationKeySizeClass:
+        try:
+            document = day1b_combined_evaluation_key_size_class_document(
+                day2_outer_archive_sha256=day2_outer_archive_sha256,
+                serialized_object_size_profile_sha256=(
+                    serialized_object_size_profile_sha256
+                ),
+                serialized_rotation_key_inventory_bytes=(
+                    serialized_rotation_key_inventory_bytes
+                ),
+                serialized_eval_mult_key_bytes=serialized_eval_mult_key_bytes,
+            )
+            size_class_sha256 = day1b_combined_evaluation_key_size_class_sha256(
+                day2_outer_archive_sha256=day2_outer_archive_sha256,
+                serialized_object_size_profile_sha256=(
+                    serialized_object_size_profile_sha256
+                ),
+                serialized_rotation_key_inventory_bytes=(
+                    serialized_rotation_key_inventory_bytes
+                ),
+                serialized_eval_mult_key_bytes=serialized_eval_mult_key_bytes,
+            )
+        except Day1BCombinedEvaluationKeyFramingError as error:
+            raise Day1BControllerExpectedCountsError(
+                "controller combined evaluation-key authority is malformed"
+            ) from error
+        return cls(
+            category=str(document["category"]),
+            transaction=str(document["transaction"]),
+            day2_outer_archive_sha256=day2_outer_archive_sha256,
+            serialized_object_size_profile_sha256=(
+                serialized_object_size_profile_sha256
+            ),
+            serialized_rotation_key_inventory_bytes=(
+                serialized_rotation_key_inventory_bytes
+            ),
+            serialized_eval_mult_key_bytes=serialized_eval_mult_key_bytes,
+            serialized_byte_count=int(document["serialized_byte_count"]),
+            combined_evaluation_key_size_class_sha256=(
+                size_class_sha256
+            ),
+        )
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "category": self.category,
+            "combined_evaluation_key_size_class_sha256": (
+                self.combined_evaluation_key_size_class_sha256
+            ),
+            "day2_outer_archive_sha256": self.day2_outer_archive_sha256,
+            "schema_version": (
+                DAY1B_CONTROLLER_EXPECTED_COMBINED_EVALUATION_KEY_SIZE_CLASS_SCHEMA
+            ),
+            "serialized_byte_count": self.serialized_byte_count,
+            "serialized_eval_mult_key_bytes": self.serialized_eval_mult_key_bytes,
+            "serialized_object_size_profile_sha256": (
+                self.serialized_object_size_profile_sha256
+            ),
+            "serialized_rotation_key_inventory_bytes": (
+                self.serialized_rotation_key_inventory_bytes
+            ),
+            "transaction": self.transaction,
+        }
+
+    @classmethod
+    def from_document(
+        cls,
+        value: object,
+    ) -> Day1BControllerExpectedCombinedEvaluationKeySizeClass:
+        expected_keys = {
+            "category",
+            "combined_evaluation_key_size_class_sha256",
+            "day2_outer_archive_sha256",
+            "schema_version",
+            "serialized_byte_count",
+            "serialized_eval_mult_key_bytes",
+            "serialized_object_size_profile_sha256",
+            "serialized_rotation_key_inventory_bytes",
+            "transaction",
+        }
+        if type(value) is not dict or set(value) != expected_keys:
+            raise Day1BControllerExpectedCountsError(
+                "controller combined evaluation-key size-class keys are not exact"
+            )
+        if value["schema_version"] != (
+            DAY1B_CONTROLLER_EXPECTED_COMBINED_EVALUATION_KEY_SIZE_CLASS_SCHEMA
+        ):
+            raise Day1BControllerExpectedCountsError(
+                "controller combined evaluation-key size-class schema changed"
+            )
+        result = cls(
+            category=value["category"],
+            transaction=value["transaction"],
+            day2_outer_archive_sha256=value["day2_outer_archive_sha256"],
+            serialized_object_size_profile_sha256=(
+                value["serialized_object_size_profile_sha256"]
+            ),
+            serialized_rotation_key_inventory_bytes=(
+                value["serialized_rotation_key_inventory_bytes"]
+            ),
+            serialized_eval_mult_key_bytes=value["serialized_eval_mult_key_bytes"],
+            serialized_byte_count=value["serialized_byte_count"],
+            combined_evaluation_key_size_class_sha256=(
+                value["combined_evaluation_key_size_class_sha256"]
+            ),
+        )
+        if result.to_document() != value:
+            raise Day1BControllerExpectedCountsError(
+                "controller combined evaluation-key size class is not its exact typed projection"
             )
         return result
 
@@ -294,6 +487,9 @@ class Day1BControllerExpectedCounts:
     fixed_width_metadata_size_classes: tuple[
         Day1BControllerExpectedMetadataSizeClass, ...
     ] = ()
+    combined_evaluation_key_size_class: (
+        Day1BControllerExpectedCombinedEvaluationKeySizeClass | None
+    ) = None
 
     def __post_init__(self) -> None:
         if type(self.candidate_id) is not str or not self.candidate_id:
@@ -369,6 +565,18 @@ class Day1BControllerExpectedCounts:
             raise Day1BControllerExpectedCountsError(
                 "controller metadata size classes retarget category order"
             )
+        if self.combined_evaluation_key_size_class is not None and (
+            type(self.combined_evaluation_key_size_class)
+            is not Day1BControllerExpectedCombinedEvaluationKeySizeClass
+            or self.combined_evaluation_key_size_class.category not in category_names
+            or self.combined_evaluation_key_size_class.transaction
+            != dict(self.serialized_categories)[
+                self.combined_evaluation_key_size_class.category
+            ]
+        ):
+            raise Day1BControllerExpectedCountsError(
+                "controller combined evaluation-key size class retargets taxonomy"
+            )
         if (
             type(self.phases) is not tuple
             or tuple(phase.phase for phase in self.phases) not in _RETAINED_PHASE_SETS
@@ -433,6 +641,11 @@ class Day1BControllerExpectedCounts:
             "accounting_sha256": self.accounting_sha256,
             "candidate_id": self.candidate_id,
             "candidate_policy_sha256": self.candidate_policy_sha256,
+            "combined_evaluation_key_size_class": (
+                None
+                if self.combined_evaluation_key_size_class is None
+                else self.combined_evaluation_key_size_class.to_document()
+            ),
             "fixed_width_metadata_size_classes": [
                 item.to_document()
                 for item in self.fixed_width_metadata_size_classes
@@ -449,6 +662,7 @@ class Day1BControllerExpectedCounts:
             "accounting_sha256",
             "candidate_id",
             "candidate_policy_sha256",
+            "combined_evaluation_key_size_class",
             "fixed_width_metadata_size_classes",
             "phases",
             "primitive_names",
@@ -465,6 +679,7 @@ class Day1BControllerExpectedCounts:
             )
         phases = value["phases"]
         metadata_size_classes = value["fixed_width_metadata_size_classes"]
+        combined_key_size_class = value["combined_evaluation_key_size_class"]
         primitive_names = value["primitive_names"]
         categories = value["serialized_categories"]
         if (
@@ -490,6 +705,13 @@ class Day1BControllerExpectedCounts:
             fixed_width_metadata_size_classes=tuple(
                 Day1BControllerExpectedMetadataSizeClass.from_document(item)
                 for item in metadata_size_classes
+            ),
+            combined_evaluation_key_size_class=(
+                None
+                if combined_key_size_class is None
+                else Day1BControllerExpectedCombinedEvaluationKeySizeClass.from_document(
+                    combined_key_size_class
+                )
             ),
         )
         if result.to_document() != value:
@@ -519,6 +741,15 @@ class Day1BControllerExpectedCounts:
                 return item
         return None
 
+    def combined_evaluation_key_size_class_for(
+        self,
+        category: str,
+    ) -> Day1BControllerExpectedCombinedEvaluationKeySizeClass | None:
+        size_class = self.combined_evaluation_key_size_class
+        if size_class is not None and size_class.category == category:
+            return size_class
+        return None
+
 
 def canonical_day1b_fixed_width_metadata_size_classes() -> tuple[
     Day1BControllerExpectedMetadataSizeClass, ...
@@ -539,6 +770,10 @@ def derive_day1b_controller_expected_counts(
     serialized_categories: tuple[tuple[str, str], ...],
     phase_random_route_counts: tuple[int, int, int],
     phase_dummy_route_counts: tuple[int, int, int],
+    day2_outer_archive_sha256: str,
+    serialized_object_size_profile_sha256: str,
+    serialized_rotation_key_inventory_bytes: int,
+    serialized_eval_mult_key_bytes: int,
 ) -> Day1BControllerExpectedCounts:
     """Project one complete deterministic replay into its formal count authority."""
 
@@ -630,7 +865,65 @@ def derive_day1b_controller_expected_counts(
         fixed_width_metadata_size_classes=(
             canonical_day1b_fixed_width_metadata_size_classes()
         ),
+        combined_evaluation_key_size_class=(
+            Day1BControllerExpectedCombinedEvaluationKeySizeClass.from_day2_authority(
+                day2_outer_archive_sha256=day2_outer_archive_sha256,
+                serialized_object_size_profile_sha256=(
+                    serialized_object_size_profile_sha256
+                ),
+                serialized_rotation_key_inventory_bytes=(
+                    serialized_rotation_key_inventory_bytes
+                ),
+                serialized_eval_mult_key_bytes=serialized_eval_mult_key_bytes,
+            )
+        ),
     )
+
+
+def require_formal_day1b_combined_evaluation_key_size_class(
+    expected_counts: Day1BControllerExpectedCounts,
+) -> None:
+    """Require the one Day-2-bound combined key class on a formal preimage."""
+
+    if type(expected_counts) is not Day1BControllerExpectedCounts:
+        raise TypeError(
+            "formal combined evaluation-key validation requires exact controller expected counts"
+        )
+    if expected_counts.serialized_categories != SERIALIZED_PROTOCOL_OBJECT_CATEGORIES:
+        raise Day1BControllerExpectedCountsError(
+            "formal combined evaluation-key validation requires the exact Day 1B category taxonomy"
+        )
+    size_class = expected_counts.combined_evaluation_key_size_class
+    if (
+        type(size_class)
+        is not Day1BControllerExpectedCombinedEvaluationKeySizeClass
+        or size_class.category != DAY1B_COMBINED_EVALUATION_KEY_CATEGORY
+    ):
+        raise Day1BControllerExpectedCountsError(
+            "formal combined evaluation-key size class is absent"
+        )
+    category_names = tuple(
+        category for category, _transaction in expected_counts.serialized_categories
+    )
+    key_index = category_names.index(DAY1B_COMBINED_EVALUATION_KEY_CATEGORY)
+    expected_pattern = tuple(
+        int(index == 0) for index, _phase in enumerate(expected_counts.phases)
+    )
+    if (
+        tuple(
+            phase.logical_protocol_object_counts[key_index]
+            for phase in expected_counts.phases
+        )
+        != expected_pattern
+        or tuple(
+            phase.worker_streamed_protocol_object_counts[key_index]
+            for phase in expected_counts.phases
+        )
+        != expected_pattern
+    ):
+        raise Day1BControllerExpectedCountsError(
+            "formal combined evaluation-key multiplicity must be one in the first retained phase"
+        )
 
 
 def require_formal_day1b_fixed_width_metadata_size_classes(
@@ -687,15 +980,18 @@ def require_formal_day1b_f1m_worker_zero(
 
 
 __all__ = (
+    "DAY1B_CONTROLLER_EXPECTED_COMBINED_EVALUATION_KEY_SIZE_CLASS_SCHEMA",
     "DAY1B_CONTROLLER_EXPECTED_COUNTS_SCHEMA",
     "DAY1B_CONTROLLER_EXPECTED_METADATA_SIZE_CLASS_SCHEMA",
     "DAY1B_CONTROLLER_EXPECTED_PHASE_COUNTS_SCHEMA",
     "Day1BControllerExpectedCounts",
     "Day1BControllerExpectedCountsError",
+    "Day1BControllerExpectedCombinedEvaluationKeySizeClass",
     "Day1BControllerExpectedMetadataSizeClass",
     "Day1BControllerExpectedPhaseCounts",
     "canonical_day1b_fixed_width_metadata_size_classes",
     "derive_day1b_controller_expected_counts",
+    "require_formal_day1b_combined_evaluation_key_size_class",
     "require_formal_day1b_fixed_width_metadata_size_classes",
     "require_formal_day1b_f1m_worker_zero",
 )

@@ -10,6 +10,7 @@ from dynamic_cssc.publication_day1b_key_framing import (
     DAY1B_COMBINED_EVALUATION_KEY_HEADER_BYTES,
     DAY1B_COMBINED_EVALUATION_KEY_MAGIC,
     Day1BCombinedEvaluationKeyFrame,
+    Day1BCombinedEvaluationKeyFrameStreamValidator,
     Day1BCombinedEvaluationKeyFramingError,
     day1b_combined_evaluation_key_size_class_document,
     day1b_combined_evaluation_key_size_class_sha256,
@@ -162,6 +163,59 @@ def test_combined_frame_parser_requires_exact_day2_lengths_and_bytes_type() -> N
             expected_rotation_key_inventory_bytes=True,
             expected_eval_mult_key_bytes=len(_EVAL_MULT),
         )
+
+
+def test_combined_frame_stream_validator_accepts_arbitrary_chunk_boundaries() -> None:
+    payload = _frame().to_bytes()
+    validator = Day1BCombinedEvaluationKeyFrameStreamValidator(
+        expected_rotation_key_inventory_bytes=len(_ROTATION),
+        expected_eval_mult_key_bytes=len(_EVAL_MULT),
+    )
+    position = 0
+    chunk_sizes = (1, 7, 33, 2, 49, 5, 11)
+    chunk_index = 0
+    while position < len(payload):
+        end = min(len(payload), position + chunk_sizes[chunk_index % len(chunk_sizes)])
+        validator.accept(memoryview(payload)[position:end])
+        position = end
+        chunk_index += 1
+
+    validator.finish()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ("header", "magic changed"),
+        ("rotation", "rotation segment digest changed"),
+        ("eval-mult", "eval-mult segment digest changed"),
+        ("missing", "missing segment bytes"),
+        ("trailing", "trailing bytes"),
+    ),
+)
+def test_combined_frame_stream_validator_fails_closed(
+    mutation: str,
+    message: str,
+) -> None:
+    payload = bytearray(_frame().to_bytes())
+    if mutation == "header":
+        payload[0] ^= 1
+    elif mutation == "rotation":
+        payload[88] ^= 1
+    elif mutation == "eval-mult":
+        payload[88 + len(_ROTATION)] ^= 1
+    elif mutation == "missing":
+        payload.pop()
+    else:
+        payload.append(0)
+    validator = Day1BCombinedEvaluationKeyFrameStreamValidator(
+        expected_rotation_key_inventory_bytes=len(_ROTATION),
+        expected_eval_mult_key_bytes=len(_EVAL_MULT),
+    )
+
+    with pytest.raises(Day1BCombinedEvaluationKeyFramingError, match=message):
+        validator.accept(bytes(payload))
+        validator.finish()
 
 
 def test_old_context_and_public_key_bundle_is_not_a_formal_key_frame() -> None:

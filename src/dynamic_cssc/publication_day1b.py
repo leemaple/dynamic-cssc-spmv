@@ -62,6 +62,7 @@ from dynamic_cssc.publication_day1b_aggregate_bounds import (
 from dynamic_cssc.publication_day1b_expected_counts import (
     Day1BControllerExpectedCounts,
     derive_day1b_controller_expected_counts,
+    require_formal_day1b_combined_evaluation_key_size_class,
     require_formal_day1b_f1m_worker_zero,
     require_formal_day1b_fixed_width_metadata_size_classes,
 )
@@ -80,6 +81,10 @@ from dynamic_cssc.publication_day1b_f1m_aggregation import (
 )
 from dynamic_cssc.publication_day1b_f1m_aggregation import (
     Day1BSerializedObjectSizeAuthority as _Day1BSerializedObjectSizeAuthority,
+)
+from dynamic_cssc.publication_day1b_key_framing import (
+    DAY1B_COMBINED_EVALUATION_KEY_CATEGORY,
+    day1b_combined_evaluation_key_size_class_sha256,
 )
 from dynamic_cssc.publication_day1b_metadata_framing import (
     DAY1B_FIXED_WIDTH_METADATA_CATEGORIES,
@@ -141,14 +146,14 @@ from dynamic_cssc.publication_traces import (
     PUBLICATION_TRACE_MANIFEST_SCHEMA,
 )
 
-DAY1B_UNIT_SCHEMA = "dynamic-cssc-publication-day1b-unit-v3"
+DAY1B_UNIT_SCHEMA = "dynamic-cssc-publication-day1b-unit-v4"
 DAY1B_UNIT_FRAGMENT_SCHEMA = "dynamic-cssc-publication-day1b-unit-fragment-v1"
-_TEST_DAY1B_UNIT_SCHEMA = "dynamic-cssc-publication-day1b-unit-private-test-fixture-v3"
+_TEST_DAY1B_UNIT_SCHEMA = "dynamic-cssc-publication-day1b-unit-private-test-fixture-v4"
 _TEST_DAY1B_UNIT_FRAGMENT_SCHEMA = (
     "dynamic-cssc-publication-day1b-unit-fragment-private-test-fixture-v1"
 )
 DAY1B_SERIALIZATION_LEDGER_SCHEMA = (
-    "dynamic-cssc-publication-day1b-serialized-protocol-object-ledger-v4"
+    "dynamic-cssc-publication-day1b-serialized-protocol-object-ledger-v5"
 )
 DAY1B_SERIALIZED_OBJECT_SIZE_AUTHORITY_SCHEMA = (
     "dynamic-cssc-publication-day1b-serialized-object-size-authority-v1"
@@ -427,6 +432,7 @@ _CATEGORY_LEDGER_KEYS = frozenset(
         "charged_byte_count",
         "controller_charged_byte_count",
         "controller_charged_size_class",
+        "controller_expected_combined_evaluation_key_size_class_sha256",
         "controller_expected_fixed_width_size_class_sha256",
         "controller_expected_logical_protocol_object_count",
         "controller_expected_serialized_byte_count",
@@ -1427,7 +1433,7 @@ def _validate_preparatory_source_attestation(
         inventory.get("role") != EvidenceRole.DAY1B.value
         or inventory.get("source_git_sha") != source.git_sha
         or inventory.get("behavior_set_schema_version")
-        != "dynamic-cssc-day1b-preparatory-behavior-set-v17"
+        != "dynamic-cssc-day1b-preparatory-behavior-set-v18"
     ):
         raise ValueError(
             "preparatory source inventory must bind the DAY1B role, schema, and exact S1"
@@ -1812,6 +1818,9 @@ def _serialized_ledger(
     require_formal_day1b_fixed_width_metadata_size_classes(
         controller_expected_counts
     )
+    require_formal_day1b_combined_evaluation_key_size_class(
+        controller_expected_counts
+    )
     if phase not in f1m_controller_summary.retained_phases:
         raise ValueError("serialized ledger phase is absent from the F1-M controller summary")
     expected_phase = controller_expected_counts.phase_counts(phase)
@@ -1850,33 +1859,52 @@ def _serialized_ledger(
         metadata_size_class = controller_expected_counts.metadata_size_class(
             expected_name
         )
-        if metadata_size_class is None:
+        combined_key_size_class = (
+            controller_expected_counts.combined_evaluation_key_size_class_for(
+                expected_name
+            )
+        )
+        if metadata_size_class is None and combined_key_size_class is None:
             row.update(
                 {
+                    "controller_expected_combined_evaluation_key_size_class_sha256": None,
                     "controller_expected_fixed_width_size_class_sha256": None,
                     "controller_expected_serialized_byte_count": None,
                 }
             )
         else:
+            expected_size_class = (
+                metadata_size_class
+                if metadata_size_class is not None
+                else combined_key_size_class
+            )
+            assert expected_size_class is not None
             expected_class_count = int(worker_count > 0)
             if (
                 category.charged_byte_count
-                != worker_count * metadata_size_class.serialized_byte_count
+                != worker_count * expected_size_class.serialized_byte_count
                 or category.serialization_equivalence_class_count
                 != expected_class_count
                 or category.object_receipt_spool_line_count
                 != expected_class_count
             ):
                 raise ValueError(
-                    "fixed-width metadata receipt differs from controller size class"
+                    "serialized receipt differs from its controller size class"
                 )
             row.update(
                 {
                     "controller_expected_fixed_width_size_class_sha256": (
-                        metadata_size_class.metadata_size_class_sha256
+                        None
+                        if metadata_size_class is None
+                        else metadata_size_class.metadata_size_class_sha256
+                    ),
+                    "controller_expected_combined_evaluation_key_size_class_sha256": (
+                        None
+                        if combined_key_size_class is None
+                        else combined_key_size_class.combined_evaluation_key_size_class_sha256
                     ),
                     "controller_expected_serialized_byte_count": (
-                        metadata_size_class.serialized_byte_count
+                        expected_size_class.serialized_byte_count
                     ),
                 }
             )
@@ -2960,6 +2988,7 @@ def _verify_day1b_unit_view(
     worker_receipts: dict[tuple[str, str], dict[str, object]] = {}
     worker_contracts: dict[tuple[str, str], Day1BWorkerProtocolContract] = {}
     worker_receipts_by_binding: dict[str, tuple[str, dict[str, object]]] = {}
+    worker_contracts_by_binding: dict[str, Day1BWorkerProtocolContract] = {}
     unit_f1m_lineage: tuple[str, str, str, str] | None = None
     for index, receipt in enumerate(execution_receipts):
         receipt = _exact_object(
@@ -3102,6 +3131,9 @@ def _verify_day1b_unit_view(
                 input_contract.controller_expected_counts
             )
             require_formal_day1b_fixed_width_metadata_size_classes(
+                input_contract.controller_expected_counts
+            )
+            require_formal_day1b_combined_evaluation_key_size_class(
                 input_contract.controller_expected_counts
             )
             if candidate["receipt_origin"] == "worker-complete-transcript":
@@ -3262,6 +3294,10 @@ def _verify_day1b_unit_view(
                 != size_authority.f1m_random_zero_sum_ciphertext_bytes
                 or input_contract.f1m_encrypted_zero_dummy_ciphertext_bytes
                 != size_authority.f1m_encrypted_zero_dummy_ciphertext_bytes
+                or input_contract.serialized_rotation_key_inventory_bytes
+                != size_authority.serialized_rotation_key_inventory_bytes
+                or input_contract.serialized_eval_mult_key_bytes
+                != size_authority.serialized_eval_mult_key_bytes
             ):
                 raise ValueError(
                     "Day1B worker input binding diverges from unit policy or Day 2 authority"
@@ -3485,6 +3521,7 @@ def _verify_day1b_unit_view(
             worker_receipts[key] = candidate_receipt
             worker_contracts[key] = input_contract
             worker_receipts_by_binding[input_binding] = (candidate_id, candidate_receipt)
+            worker_contracts_by_binding[input_binding] = input_contract
         candidate_receipt_count += len(candidates)
     if candidate_receipt_count != 252:
         raise ValueError("Day1B artifact must contain exactly 252 candidate-cell receipts")
@@ -3663,6 +3700,18 @@ def _verify_day1b_unit_view(
             ):
                 raise ValueError(
                     "Day1B metadata object receipt changed its fixed-width size class"
+                )
+        if row["category"] == DAY1B_COMBINED_EVALUATION_KEY_CATEGORY:
+            key_size_class = worker_contracts_by_binding[
+                input_binding
+            ].controller_expected_counts.combined_evaluation_key_size_class
+            if (
+                key_size_class is None
+                or key_size_class.transaction != row["transaction"]
+                or key_size_class.serialized_byte_count != serialized_size
+            ):
+                raise ValueError(
+                    "Day1B combined evaluation-key receipt changed its controller size class"
                 )
         f1m_size_class = serialized_object["f1m_size_class"]
         if row["category"] in DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES:
@@ -3908,27 +3957,40 @@ def _verify_day1b_unit_view(
             expected_metadata_size_class = (
                 controller_expected_counts.metadata_size_class(expected_pair[0])
             )
-            documented_metadata_size = category[
+            expected_combined_key_size_class = (
+                controller_expected_counts.combined_evaluation_key_size_class_for(
+                    expected_pair[0]
+                )
+            )
+            documented_size = category[
                 "controller_expected_serialized_byte_count"
             ]
             documented_metadata_root = category[
                 "controller_expected_fixed_width_size_class_sha256"
             ]
-            if expected_metadata_size_class is None:
+            documented_combined_key_root = category[
+                "controller_expected_combined_evaluation_key_size_class_sha256"
+            ]
+            if (
+                expected_metadata_size_class is None
+                and expected_combined_key_size_class is None
+            ):
                 if (
-                    documented_metadata_size is not None
+                    documented_size is not None
                     or documented_metadata_root is not None
+                    or documented_combined_key_root is not None
                 ):
                     raise ValueError(
-                        "non-metadata ledger row claims a fixed-width size class"
+                        "unpriced ledger row claims a controller size class"
                     )
-            else:
+            elif expected_metadata_size_class is not None:
                 expected_metadata_class_count = int(
                     controller_expected_worker_count > 0
                 )
                 if (
-                    documented_metadata_size
+                    documented_size
                     != expected_metadata_size_class.serialized_byte_count
+                    or documented_combined_key_root is not None
                     or _require_sha256(
                         documented_metadata_root,
                         "ledger fixed-width metadata size-class digest",
@@ -3946,6 +4008,49 @@ def _verify_day1b_unit_view(
                 ):
                     raise ValueError(
                         "Day1B metadata ledger row differs from its fixed-width size class"
+                    )
+            else:
+                assert expected_combined_key_size_class is not None
+                expected_key_class_count = int(
+                    controller_expected_worker_count > 0
+                )
+                expected_key_root = (
+                    expected_combined_key_size_class.combined_evaluation_key_size_class_sha256
+                )
+                if (
+                    documented_size
+                    != expected_combined_key_size_class.serialized_byte_count
+                    or documented_metadata_root is not None
+                    or _require_sha256(
+                        documented_combined_key_root,
+                        "ledger combined evaluation-key size-class digest",
+                    )
+                    != expected_key_root
+                    or documented_combined_key_root
+                    != day1b_combined_evaluation_key_size_class_sha256(
+                        day2_outer_archive_sha256=(
+                            expected_combined_key_size_class.day2_outer_archive_sha256
+                        ),
+                        serialized_object_size_profile_sha256=(
+                            expected_combined_key_size_class.serialized_object_size_profile_sha256
+                        ),
+                        serialized_rotation_key_inventory_bytes=(
+                            expected_combined_key_size_class.serialized_rotation_key_inventory_bytes
+                        ),
+                        serialized_eval_mult_key_bytes=(
+                            expected_combined_key_size_class.serialized_eval_mult_key_bytes
+                        ),
+                    )
+                    or expected_combined_key_size_class.transaction
+                    != expected_pair[1]
+                    or charged_byte_count
+                    != controller_expected_worker_count
+                    * expected_combined_key_size_class.serialized_byte_count
+                    or equivalence_class_count != expected_key_class_count
+                    or line_count != expected_key_class_count
+                ):
+                    raise ValueError(
+                        "Day1B combined evaluation-key ledger row differs from its size class"
                     )
             key = (binding, str(record["phase"]), expected_pair[0])
             observed = category_facts.get(key)
@@ -4428,6 +4533,8 @@ class _Day1BWorkerContractSeed:
     ciphertext_bytes: int
     f1m_random_zero_sum_ciphertext_bytes: int
     f1m_encrypted_zero_dummy_ciphertext_bytes: int
+    serialized_rotation_key_inventory_bytes: int
+    serialized_eval_mult_key_bytes: int
     freshness: str
     rho: str
     candidate: Day1BWorkerCandidateSpec
@@ -4445,8 +4552,15 @@ class _Day1BWorkerContractSeed:
         require_formal_day1b_fixed_width_metadata_size_classes(
             self.controller_expected_counts
         )
+        require_formal_day1b_combined_evaluation_key_size_class(
+            self.controller_expected_counts
+        )
         summary = self.f1m_controller_summary
         expected_counts = self.controller_expected_counts
+        combined_key_size_class = (
+            expected_counts.combined_evaluation_key_size_class
+        )
+        assert combined_key_size_class is not None
         context = summary.context
         authority = summary.size_authority
         expected_phase_ranges = tuple(
@@ -4495,6 +4609,18 @@ class _Day1BWorkerContractSeed:
             != self.f1m_random_zero_sum_ciphertext_bytes
             or authority.f1m_encrypted_zero_dummy_ciphertext_bytes
             != self.f1m_encrypted_zero_dummy_ciphertext_bytes
+            or authority.serialized_rotation_key_inventory_bytes
+            != self.serialized_rotation_key_inventory_bytes
+            or authority.serialized_eval_mult_key_bytes
+            != self.serialized_eval_mult_key_bytes
+            or combined_key_size_class.day2_outer_archive_sha256
+            != authority.day2_outer_archive_sha256
+            or combined_key_size_class.serialized_object_size_profile_sha256
+            != authority.serialized_object_size_profile_sha256
+            or combined_key_size_class.serialized_rotation_key_inventory_bytes
+            != authority.serialized_rotation_key_inventory_bytes
+            or combined_key_size_class.serialized_eval_mult_key_bytes
+            != authority.serialized_eval_mult_key_bytes
             or summary.serialized_object_bytes_maximum
             != self.resource_limits.serialized_object_bytes_maximum
             or summary.serialized_payload_bytes_per_cell_maximum
@@ -4512,6 +4638,10 @@ class _Day1BWorkerContractSeed:
         expected_serialized_equivalence_class_count: int,
         expected_f1m_cardinality_derivation_root_sha256: str,
     ) -> Day1BWorkerProtocolContract:
+        combined_key_size_class = (
+            self.controller_expected_counts.combined_evaluation_key_size_class
+        )
+        assert combined_key_size_class is not None
         return Day1BWorkerProtocolContract(
             invocation_id=self.invocation_id,
             trace_manifest_sha256=self.trace_manifest_sha256,
@@ -4525,6 +4655,13 @@ class _Day1BWorkerContractSeed:
             f1m_random_zero_sum_ciphertext_bytes=(self.f1m_random_zero_sum_ciphertext_bytes),
             f1m_encrypted_zero_dummy_ciphertext_bytes=(
                 self.f1m_encrypted_zero_dummy_ciphertext_bytes
+            ),
+            serialized_rotation_key_inventory_bytes=(
+                self.serialized_rotation_key_inventory_bytes
+            ),
+            serialized_eval_mult_key_bytes=self.serialized_eval_mult_key_bytes,
+            combined_evaluation_key_size_class_sha256=(
+                combined_key_size_class.combined_evaluation_key_size_class_sha256
             ),
             freshness=self.freshness,
             rho=self.rho,
@@ -4742,6 +4879,10 @@ def _candidate_worker_contract_seed(
         f1m_encrypted_zero_dummy_ciphertext_bytes=(
             size_authority.f1m_encrypted_zero_dummy_ciphertext_bytes
         ),
+        serialized_rotation_key_inventory_bytes=(
+            size_authority.serialized_rotation_key_inventory_bytes
+        ),
+        serialized_eval_mult_key_bytes=size_authority.serialized_eval_mult_key_bytes,
         freshness=_fraction_text(freshness),
         rho=_fraction_text(program.rho),
         candidate=_candidate_worker_spec(candidate),
@@ -5013,6 +5154,14 @@ def _replay_f1m_controller_for_candidate_cell(
         serialized_categories=SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
         phase_random_route_counts=summary.phase_random_route_counts,
         phase_dummy_route_counts=summary.phase_dummy_route_counts,
+        day2_outer_archive_sha256=size_authority.day2_outer_archive_sha256,
+        serialized_object_size_profile_sha256=(
+            size_authority.serialized_object_size_profile_sha256
+        ),
+        serialized_rotation_key_inventory_bytes=(
+            size_authority.serialized_rotation_key_inventory_bytes
+        ),
+        serialized_eval_mult_key_bytes=size_authority.serialized_eval_mult_key_bytes,
     )
     return _Day1BControllerReplay(
         f1m_summary=summary,

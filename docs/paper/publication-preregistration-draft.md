@@ -475,7 +475,7 @@ measurement-method field in this placeholder remains `null`; the separate
 amendment is the sole reviewed source of administrative limits and
 measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v17` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v18` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface, including the amendment and
 `docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
@@ -494,7 +494,7 @@ SHA-256 verification of every serialized input, result, and one-time key bundle.
 Its provisional depth-2/0/0 profile remains explicitly `HOLD` for mixed-circuit
 parameter authority.
 
-The current v17 surface also contains a non-authorizing streaming accounting core. It
+The current v18 surface also contains a non-authorizing streaming accounting core. It
 advances one candidate state exactly once per exact Publication Window, derives
 at most one typed query plan per query-bearing window, applies the window's
 integer query multiplicity before the fixed 14-primitive mapping, and retains
@@ -507,7 +507,7 @@ the separate evidence path for real no-reuse enforcement. The accounting core
 does not mint a worker invocation, materialize per-query masks or ledger
 transitions, measure serialized OpenFHE sizes, or relax any dispatch gate.
 
-The v17 surface closes count authority separately from serialized-size
+The v18 surface closes count authority separately from serialized-size
 measurement. Before dispatch, the controller projects each deterministic replay
 into an open expected-count document containing the exact retained-phase
 update/query primitive vectors and all nine logical protocol-object
@@ -521,15 +521,15 @@ version-plan publication is counted exactly once for an update-bearing window
 and zero times for a no-update window. Worker phase receipts, object-receipt
 spools, serialization ledgers, and physical primitive-count records must all
 open the same controller preimage. The resulting schema family is Day 1B unit
-v3, serialization ledger v4, accounting/phase accounting v2, worker input
-binding v9, worker receipt v9, and controller expected-count documents v2.
+v4, serialization ledger v5, accounting/phase accounting v2, worker input
+binding v10, worker receipt v10, and controller expected-count documents v3.
 The formal producer and artifact verifier require both F1-M worker-streamed
 multiplicities to remain zero in every retained phase before branching on its
 outcome. Thus a failed or controller-terminal null projection cannot preserve
 an otherwise self-consistent rehashed preimage that switches weighted F1-M back
 to materialized worker mode.
 
-The v17 surface also freezes canonical big-endian binary framing for the three
+The v18 surface also freezes canonical big-endian binary framing for the three
 metadata categories used in primary communication accounting. A ColumnIndex
 synchronization entry is exactly 64 bytes; patch and full-sync differ only in a
 fixed-position one-byte enum and therefore share one size class. An update-side
@@ -546,7 +546,7 @@ object receipt whose metadata byte count differs from 64, 144, or 136. This
 closes preparatory size-class pricing, but it does not yet authorize or claim a
 production representative execution.
 
-The v17 surface separately freezes the one-time evaluation-key object as an
+The v18 surface separately freezes the one-time evaluation-key object as an
 exact two-segment frame. Its 88-byte header is `D1BKEY01`, followed by the
 big-endian rotation-inventory length and 32-byte digest, then the big-endian
 evaluation-multiplication-key length and 32-byte digest. The payload is exactly
@@ -556,7 +556,14 @@ archive and serialized-object-size-profile roots, so its charged length is
 `88 + rotation_bytes + eval_mult_bytes`. Crypto-context, public-key, label, and
 optional third segments are excluded. The generic OpenFHE runner's earlier
 context-bearing key bundle is therefore not a formal Day 1B representative;
-replacing that adapter and connecting this class to the ledger remain HOLD work.
+the worker input instead opens the exact Day 2 segment lengths and size-class
+digest. The streaming verifier checks the magic, header lengths, segment
+digests, exact end-of-frame, and object cap without retaining the binary key
+payload. The first retained-phase object receipt and ledger then bind one
+representative, its exact `88 + rotation_bytes + eval_mult_bytes` charge, and
+the same controller class digest; later retained phases bind zero. Replacing
+the generic runner with a production adapter that emits this frame remains
+HOLD work.
 
 Held-out dispatch remains forbidden until an outcome-blind amendment freezes
 the measured limits and methods, and a repository-owned production candidate-cell

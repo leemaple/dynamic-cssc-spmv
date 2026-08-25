@@ -358,6 +358,9 @@ def _contract(
         ciphertext_bytes=64,
         f1m_random_zero_sum_ciphertext_bytes=65,
         f1m_encrypted_zero_dummy_ciphertext_bytes=66,
+        serialized_rotation_key_inventory_bytes=None,
+        serialized_eval_mult_key_bytes=None,
+        combined_evaluation_key_size_class_sha256=None,
         freshness="0.1",
         rho="1",
         execution_basis=DAY1B_WORKER_EXECUTION_BASIS,
@@ -2392,7 +2395,7 @@ def test_receipt_preserves_weighted_window_batch_and_range_facts() -> None:
         descriptor.controller_registered_scratch_bytes_checkpoint_maximum
     )
     assert DAY1B_WORKER_RECEIPT_SCHEMA == (
-        "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v9"
+        "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v10"
     )
     assert DAY1B_WORKER_RECEIPT_SCHEMA != DAY1B_WORKER_INPUT_BINDING_SCHEMA
     assert (
@@ -2668,7 +2671,7 @@ def test_worker_input_binding_commits_to_aggregate_f1m_summary_roots() -> None:
     contract = _contract()
     document = contract.input_binding_document()
 
-    assert document["schema_version"].endswith("-v9")
+    assert document["schema_version"].endswith("-v10")
     assert Day1BWorkerProtocolContract.from_input_binding_document(document) == contract
     assert document["controller_expected_counts_document"] == (
         contract.controller_expected_counts.to_document()
@@ -2687,6 +2690,9 @@ def test_worker_input_binding_commits_to_aggregate_f1m_summary_roots() -> None:
         contract.f1m_route_coverage.route_coverage_sha256
     )
     assert document["f1m_charged_size_class_set_sha256"] == "c" * 64
+    assert document["serialized_rotation_key_inventory_bytes"] is None
+    assert document["serialized_eval_mult_key_bytes"] is None
+    assert document["combined_evaluation_key_size_class_sha256"] is None
     for field in (
         "f1m_controller_context_sha256",
         "f1m_route_coverage_sha256",

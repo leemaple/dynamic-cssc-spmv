@@ -181,6 +181,134 @@ class Day1BCombinedEvaluationKeyFrame:
         return result
 
 
+class Day1BCombinedEvaluationKeyFrameStreamValidator:
+    """Validate one combined key frame without retaining its binary payload."""
+
+    __slots__ = (
+        "_eval_mult_digest",
+        "_eval_mult_hasher",
+        "_eval_mult_remaining",
+        "_expected_eval_mult_bytes",
+        "_expected_rotation_bytes",
+        "_expected_total_bytes",
+        "_header",
+        "_rotation_digest",
+        "_rotation_hasher",
+        "_rotation_remaining",
+        "_total_bytes",
+    )
+
+    def __init__(
+        self,
+        *,
+        expected_rotation_key_inventory_bytes: int,
+        expected_eval_mult_key_bytes: int,
+    ) -> None:
+        self._expected_rotation_bytes = _strict_segment_bytes(
+            expected_rotation_key_inventory_bytes,
+            "expected rotation-key inventory bytes",
+        )
+        self._expected_eval_mult_bytes = _strict_segment_bytes(
+            expected_eval_mult_key_bytes,
+            "expected eval-mult key bytes",
+        )
+        self._expected_total_bytes = (
+            DAY1B_COMBINED_EVALUATION_KEY_HEADER_BYTES
+            + self._expected_rotation_bytes
+            + self._expected_eval_mult_bytes
+        )
+        if self._expected_total_bytes > _UINT64_MAX:
+            raise Day1BCombinedEvaluationKeyFramingError(
+                "combined evaluation-key expected length exceeds uint64"
+            )
+        self._rotation_remaining = self._expected_rotation_bytes
+        self._eval_mult_remaining = self._expected_eval_mult_bytes
+        self._total_bytes = 0
+        self._header = bytearray()
+        self._rotation_digest: bytes | None = None
+        self._eval_mult_digest: bytes | None = None
+        self._rotation_hasher = hashlib.sha256()
+        self._eval_mult_hasher = hashlib.sha256()
+
+    def accept(self, value: bytes | memoryview) -> None:
+        """Consume the next nonempty contiguous frame fragment."""
+
+        if type(value) is bytes:
+            fragment = memoryview(value)
+        elif type(value) is memoryview:
+            fragment = value
+        else:
+            raise Day1BCombinedEvaluationKeyFramingError(
+                "combined evaluation-key stream fragment must be exact bytes"
+            )
+        if not fragment:
+            raise Day1BCombinedEvaluationKeyFramingError(
+                "combined evaluation-key stream fragment must be nonempty"
+            )
+        position = 0
+        self._total_bytes += len(fragment)
+        if self._total_bytes > self._expected_total_bytes:
+            raise Day1BCombinedEvaluationKeyFramingError(
+                "combined evaluation-key stream has trailing bytes"
+            )
+
+        if len(self._header) < _HEADER.size:
+            take = min(_HEADER.size - len(self._header), len(fragment))
+            self._header.extend(fragment[:take])
+            position += take
+            if len(self._header) == _HEADER.size:
+                fields = _HEADER.unpack(bytes(self._header))
+                if fields[0] != DAY1B_COMBINED_EVALUATION_KEY_MAGIC:
+                    raise Day1BCombinedEvaluationKeyFramingError(
+                        "combined evaluation-key magic changed"
+                    )
+                if (
+                    fields[1] != self._expected_rotation_bytes
+                    or fields[3] != self._expected_eval_mult_bytes
+                ):
+                    raise Day1BCombinedEvaluationKeyFramingError(
+                        "combined evaluation-key segment length differs from Day 2 authority"
+                    )
+                self._rotation_digest = fields[2]
+                self._eval_mult_digest = fields[4]
+
+        if position < len(fragment) and self._rotation_remaining:
+            take = min(self._rotation_remaining, len(fragment) - position)
+            self._rotation_hasher.update(fragment[position : position + take])
+            self._rotation_remaining -= take
+            position += take
+        if position < len(fragment) and self._eval_mult_remaining:
+            take = min(self._eval_mult_remaining, len(fragment) - position)
+            self._eval_mult_hasher.update(fragment[position : position + take])
+            self._eval_mult_remaining -= take
+            position += take
+        if position != len(fragment):
+            raise Day1BCombinedEvaluationKeyFramingError(
+                "combined evaluation-key stream has trailing bytes"
+            )
+
+    def finish(self) -> None:
+        """Require the exact header, lengths, and segment digests."""
+
+        if len(self._header) != _HEADER.size:
+            raise Day1BCombinedEvaluationKeyFramingError(
+                "combined evaluation-key stream is shorter than its exact header"
+            )
+        if self._rotation_remaining or self._eval_mult_remaining:
+            raise Day1BCombinedEvaluationKeyFramingError(
+                "combined evaluation-key stream has missing segment bytes"
+            )
+        assert self._rotation_digest is not None and self._eval_mult_digest is not None
+        if self._rotation_hasher.digest() != self._rotation_digest:
+            raise Day1BCombinedEvaluationKeyFramingError(
+                "combined evaluation-key rotation segment digest changed"
+            )
+        if self._eval_mult_hasher.digest() != self._eval_mult_digest:
+            raise Day1BCombinedEvaluationKeyFramingError(
+                "combined evaluation-key eval-mult segment digest changed"
+            )
+
+
 def day1b_combined_evaluation_key_size_class_document(
     *,
     day2_outer_archive_sha256: str,
@@ -258,6 +386,7 @@ __all__ = (
     "DAY1B_COMBINED_EVALUATION_KEY_MAGIC",
     "DAY1B_COMBINED_EVALUATION_KEY_SIZE_CLASS_SCHEMA",
     "Day1BCombinedEvaluationKeyFrame",
+    "Day1BCombinedEvaluationKeyFrameStreamValidator",
     "Day1BCombinedEvaluationKeyFramingError",
     "day1b_combined_evaluation_key_size_class_document",
     "day1b_combined_evaluation_key_size_class_sha256",

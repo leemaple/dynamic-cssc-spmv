@@ -9,13 +9,26 @@ from dynamic_cssc.publication_day1b_aggregate_bounds import (
     SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
 )
 from dynamic_cssc.publication_day1b_expected_counts import (
+    Day1BControllerExpectedCombinedEvaluationKeySizeClass,
     Day1BControllerExpectedCounts,
     Day1BControllerExpectedCountsError,
     Day1BControllerExpectedPhaseCounts,
     canonical_day1b_fixed_width_metadata_size_classes,
+    require_formal_day1b_combined_evaluation_key_size_class,
     require_formal_day1b_f1m_worker_zero,
     require_formal_day1b_fixed_width_metadata_size_classes,
 )
+
+
+def _combined_key_size_class() -> (
+    Day1BControllerExpectedCombinedEvaluationKeySizeClass
+):
+    return Day1BControllerExpectedCombinedEvaluationKeySizeClass.from_day2_authority(
+        day2_outer_archive_sha256="c" * 64,
+        serialized_object_size_profile_sha256="d" * 64,
+        serialized_rotation_key_inventory_bytes=101,
+        serialized_eval_mult_key_bytes=202,
+    )
 
 
 def _phase(
@@ -48,6 +61,7 @@ def _expected_counts() -> Day1BControllerExpectedCounts:
         fixed_width_metadata_size_classes=(
             canonical_day1b_fixed_width_metadata_size_classes()
         ),
+        combined_evaluation_key_size_class=_combined_key_size_class(),
     )
 
 
@@ -196,6 +210,68 @@ def test_formal_expected_counts_reject_missing_metadata_size_class() -> None:
                 ),
             )
         )
+
+
+def test_formal_expected_counts_bind_combined_evaluation_key_size_class() -> None:
+    expected = _expected_counts()
+
+    require_formal_day1b_combined_evaluation_key_size_class(expected)
+
+    size_class = expected.combined_evaluation_key_size_class
+    assert size_class is not None
+    assert size_class.category == "one-time-evaluation-key-material"
+    assert size_class.transaction == "one-time"
+    assert size_class.serialized_byte_count == 88 + 101 + 202
+
+
+def test_formal_expected_counts_reject_missing_combined_key_size_class() -> None:
+    with pytest.raises(
+        Day1BControllerExpectedCountsError,
+        match="formal combined evaluation-key size class is absent",
+    ):
+        require_formal_day1b_combined_evaluation_key_size_class(
+            replace(_expected_counts(), combined_evaluation_key_size_class=None)
+        )
+
+
+def test_formal_expected_counts_reject_zero_combined_key_multiplicity() -> None:
+    expected = _expected_counts()
+    first_phase = expected.phases[0]
+    logical = list(first_phase.logical_protocol_object_counts)
+    worker = list(first_phase.worker_streamed_protocol_object_counts)
+    logical[-1] = 0
+    worker[-1] = 0
+
+    with pytest.raises(
+        Day1BControllerExpectedCountsError,
+        match="multiplicity must be one in the first retained phase",
+    ):
+        require_formal_day1b_combined_evaluation_key_size_class(
+            replace(
+                expected,
+                phases=(
+                    replace(
+                        first_phase,
+                        logical_protocol_object_counts=tuple(logical),
+                        worker_streamed_protocol_object_counts=tuple(worker),
+                    ),
+                    expected.phases[1],
+                ),
+            )
+        )
+
+
+def test_expected_counts_parser_rejects_combined_key_size_class_splice() -> None:
+    document = _expected_counts().to_document()
+    document["combined_evaluation_key_size_class"][
+        "serialized_rotation_key_inventory_bytes"
+    ] += 1
+
+    with pytest.raises(
+        Day1BControllerExpectedCountsError,
+        match="differs from canonical framing",
+    ):
+        Day1BControllerExpectedCounts.from_document(document)
 
 
 @pytest.mark.parametrize("mutation", ("missing-transaction", "wrong-transaction"))

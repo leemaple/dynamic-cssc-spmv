@@ -37,10 +37,15 @@ from dynamic_cssc.publication_day1b_f1m_aggregation import (
     Day1BF1MControllerContext,
     Day1BF1MRouteCoverage,
 )
+from dynamic_cssc.publication_day1b_key_framing import (
+    DAY1B_COMBINED_EVALUATION_KEY_CATEGORY,
+    Day1BCombinedEvaluationKeyFrameStreamValidator,
+    Day1BCombinedEvaluationKeyFramingError,
+)
 
 DAY1B_WORKER_FRAME_SCHEMA = "dynamic-cssc-publication-day1b-worker-frame-v2"
-DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v9"
-DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v9"
+DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v10"
+DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v10"
 DAY1B_WORKER_WINDOW_AUDIT_SCHEMA = "dynamic-cssc-publication-day1b-worker-window-audit-v1"
 DAY1B_WORKER_F1M_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-f1m-binding-receipt-v1"
 DAY1B_WORKER_F1M_SIZE_CLASS_SCHEMA = "dynamic-cssc-publication-day1b-f1m-size-class-v1"
@@ -109,6 +114,7 @@ _WORKER_INPUT_BINDING_KEYS = frozenset(
         "candidate_catalog_sha256",
         "candidate",
         "ciphertext_bytes",
+        "combined_evaluation_key_size_class_sha256",
         "controller_expected_counts_document",
         "controller_expected_counts_sha256",
         "day2_outer_archive_sha256",
@@ -135,6 +141,8 @@ _WORKER_INPUT_BINDING_KEYS = frozenset(
         "resource_policy_sha256",
         "rho",
         "serialized_object_size_profile_sha256",
+        "serialized_eval_mult_key_bytes",
+        "serialized_rotation_key_inventory_bytes",
         "serialized_categories",
         "trace_manifest_sha256",
     }
@@ -1066,6 +1074,9 @@ class Day1BWorkerProtocolContract:
     ciphertext_bytes: int
     f1m_random_zero_sum_ciphertext_bytes: int
     f1m_encrypted_zero_dummy_ciphertext_bytes: int
+    serialized_rotation_key_inventory_bytes: int | None
+    serialized_eval_mult_key_bytes: int | None
+    combined_evaluation_key_size_class_sha256: str | None
     freshness: str
     rho: str
     execution_basis: str
@@ -1129,6 +1140,9 @@ class Day1BWorkerProtocolContract:
                 "controller expected counts must be one exact typed preimage"
             )
         expected_counts = self.controller_expected_counts
+        combined_key_size_class = (
+            expected_counts.combined_evaluation_key_size_class
+        )
         if (
             context.context_sha256 != self.f1m_controller_context_sha256
             or coverage.route_coverage_sha256 != self.f1m_route_coverage_sha256
@@ -1206,6 +1220,47 @@ class Day1BWorkerProtocolContract:
             category_names.append(item[0])
         if len(category_names) != len(set(category_names)):
             raise Day1BWorkerProtocolError("serialized category names must be unique")
+        formal_key_category_present = (
+            DAY1B_COMBINED_EVALUATION_KEY_CATEGORY in category_names
+        )
+        if formal_key_category_present:
+            if (
+                combined_key_size_class is None
+                or combined_key_size_class.day2_outer_archive_sha256
+                != self.day2_outer_archive_sha256
+                or combined_key_size_class.serialized_object_size_profile_sha256
+                != self.serialized_object_size_profile_sha256
+                or combined_key_size_class.serialized_rotation_key_inventory_bytes
+                != self.serialized_rotation_key_inventory_bytes
+                or combined_key_size_class.serialized_eval_mult_key_bytes
+                != self.serialized_eval_mult_key_bytes
+                or combined_key_size_class.combined_evaluation_key_size_class_sha256
+                != self.combined_evaluation_key_size_class_sha256
+            ):
+                raise Day1BWorkerProtocolError(
+                    "combined evaluation-key class retargets worker input authority"
+                )
+            _sha256(
+                self.combined_evaluation_key_size_class_sha256,
+                "combined_evaluation_key_size_class_sha256",
+            )
+            _strict_positive(
+                self.serialized_rotation_key_inventory_bytes,
+                "serialized_rotation_key_inventory_bytes",
+            )
+            _strict_positive(
+                self.serialized_eval_mult_key_bytes,
+                "serialized_eval_mult_key_bytes",
+            )
+        elif (
+            combined_key_size_class is not None
+            or self.serialized_rotation_key_inventory_bytes is not None
+            or self.serialized_eval_mult_key_bytes is not None
+            or self.combined_evaluation_key_size_class_sha256 is not None
+        ):
+            raise Day1BWorkerProtocolError(
+                "generic worker taxonomy claims a formal combined evaluation-key class"
+            )
         if (
             type(self.f1m_size_class_categories) is not tuple
             or any(type(category) is not str for category in self.f1m_size_class_categories)
@@ -1295,6 +1350,13 @@ class Day1BWorkerProtocolContract:
                 raise Day1BWorkerProtocolError(
                     f"anchored {field} exceeds the serialized-object cap"
                 )
+        if combined_key_size_class is not None and (
+            combined_key_size_class.serialized_byte_count
+            > self.resource_limits.serialized_object_bytes_maximum
+        ):
+            raise Day1BWorkerProtocolError(
+                "anchored combined evaluation-key frame exceeds the serialized-object cap"
+            )
 
     def input_binding_document(self) -> dict[str, object]:
         return {
@@ -1302,6 +1364,9 @@ class Day1BWorkerProtocolContract:
             "candidate_catalog_sha256": self.candidate_catalog_sha256,
             "candidate": self.candidate.to_document(),
             "ciphertext_bytes": self.ciphertext_bytes,
+            "combined_evaluation_key_size_class_sha256": (
+                self.combined_evaluation_key_size_class_sha256
+            ),
             "controller_expected_counts_document": (
                 self.controller_expected_counts.to_document()
             ),
@@ -1338,6 +1403,10 @@ class Day1BWorkerProtocolContract:
             "resource_policy_sha256": self.resource_policy_sha256,
             "rho": self.rho,
             "serialized_object_size_profile_sha256": (self.serialized_object_size_profile_sha256),
+            "serialized_eval_mult_key_bytes": self.serialized_eval_mult_key_bytes,
+            "serialized_rotation_key_inventory_bytes": (
+                self.serialized_rotation_key_inventory_bytes
+            ),
             "serialized_categories": [list(item) for item in self.serialized_categories],
             "trace_manifest_sha256": self.trace_manifest_sha256,
         }
@@ -1416,6 +1485,13 @@ class Day1BWorkerProtocolContract:
             f1m_random_zero_sum_ciphertext_bytes=(value["f1m_random_zero_sum_ciphertext_bytes"]),
             f1m_encrypted_zero_dummy_ciphertext_bytes=(
                 value["f1m_encrypted_zero_dummy_ciphertext_bytes"]
+            ),
+            serialized_rotation_key_inventory_bytes=(
+                value["serialized_rotation_key_inventory_bytes"]
+            ),
+            serialized_eval_mult_key_bytes=value["serialized_eval_mult_key_bytes"],
+            combined_evaluation_key_size_class_sha256=(
+                value["combined_evaluation_key_size_class_sha256"]
             ),
             freshness=value["freshness"],
             rho=value["rho"],
@@ -4287,6 +4363,12 @@ def _validate_frame_header(
             raise Day1BWorkerProtocolError("serialized-object payload must be nonempty")
         if payload_count > contract.resource_limits.serialized_object_bytes_maximum:
             raise Day1BWorkerProtocolError("serialized-object payload exceeds the frozen cap")
+        if header["category"] == DAY1B_COMBINED_EVALUATION_KEY_CATEGORY:
+            size_class = contract.controller_expected_counts.combined_evaluation_key_size_class
+            if size_class is None or payload_count != size_class.serialized_byte_count:
+                raise Day1BWorkerProtocolError(
+                    "combined evaluation-key payload length differs from its controller size class"
+                )
     elif payload_count != 0:
         raise Day1BWorkerProtocolError("control worker frames cannot carry a binary payload")
     return kind
@@ -4467,11 +4549,13 @@ def _consume_claimed_day1b_worker_frames(
     header_length: int | None = None
     payload_remaining = 0
     payload_hasher: hashlib._Hash | None = None  # type: ignore[attr-defined]
+    payload_key_validator: Day1BCombinedEvaluationKeyFrameStreamValidator | None = None
     current_header: dict[str, object] | None = None
     expected_sequence = 0
 
     def accept_header(raw_header: bytes) -> None:
-        nonlocal current_header, payload_remaining, payload_hasher, expected_sequence
+        nonlocal current_header, payload_remaining, payload_hasher
+        nonlocal payload_key_validator, expected_sequence
         header = _decode_header(raw_header)
         if expected_sequence >= contract.resource_limits.worker_frame_count_maximum:
             raise Day1BWorkerProtocolError("worker frame count exceeds frozen cap")
@@ -4487,6 +4571,13 @@ def _consume_claimed_day1b_worker_frames(
             if kind != "serialized-object":  # pragma: no cover - checked above
                 raise Day1BWorkerProtocolError("only serialized objects may carry payloads")
             payload_hasher = hashlib.sha256()
+            if header["category"] == DAY1B_COMBINED_EVALUATION_KEY_CATEGORY:
+                payload_key_validator = Day1BCombinedEvaluationKeyFrameStreamValidator(
+                    expected_rotation_key_inventory_bytes=(
+                        contract.serialized_rotation_key_inventory_bytes
+                    ),
+                    expected_eval_mult_key_bytes=contract.serialized_eval_mult_key_bytes,
+                )
         else:
             builder.accept(header, None)
             current_header = None
@@ -4502,12 +4593,28 @@ def _consume_claimed_day1b_worker_frames(
                 if payload_remaining:
                     take = min(payload_remaining, len(raw_chunk) - position)
                     assert payload_hasher is not None and current_header is not None
-                    payload_hasher.update(memoryview(raw_chunk)[position : position + take])
+                    fragment = memoryview(raw_chunk)[position : position + take]
+                    payload_hasher.update(fragment)
+                    if payload_key_validator is not None:
+                        try:
+                            payload_key_validator.accept(fragment)
+                        except Day1BCombinedEvaluationKeyFramingError as error:
+                            raise Day1BWorkerProtocolError(
+                                "combined evaluation-key payload is not its canonical frame"
+                            ) from error
                     position += take
                     payload_remaining -= take
                     if payload_remaining == 0:
+                        if payload_key_validator is not None:
+                            try:
+                                payload_key_validator.finish()
+                            except Day1BCombinedEvaluationKeyFramingError as error:
+                                raise Day1BWorkerProtocolError(
+                                    "combined evaluation-key payload is not its canonical frame"
+                                ) from error
                         builder.accept(current_header, payload_hasher.hexdigest())
                         payload_hasher = None
+                        payload_key_validator = None
                         current_header = None
                     continue
                 if header_length is None:
