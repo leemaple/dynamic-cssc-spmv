@@ -19,6 +19,7 @@ EXPECTED_TEST_PATHS = (
     "tests/test_publication_day1b_layout_execution.py",
     "tests/test_publication_day1b_replay_execution.py",
     "tests/test_publication_day1b_metadata_framing.py",
+    "tests/test_publication_day1b_openfhe_execution.py",
     "tests/test_publication_day1b_scratch.py",
     "tests/test_publication_day1b_worker_protocol.py",
     "tests/test_publication_day1b_workflow_contract.py",
@@ -109,6 +110,7 @@ def test_day1b_workflow_declares_pre_s1_preparatory_hold_without_artifact_steps(
     assert "ordinary and strong OpenFHE query paths passed a non-authorizing smoke" in workflow
     assert "typed final-anchor Day2 key-plan capability remains unavailable" in workflow
     assert "anchored runtime consumes that capability internally" in workflow
+    assert "same-replay representative/runtime/payload composition" in workflow
     assert "typed D1BKEY01 key receipt remains pre-admission only" in workflow
     assert "Linux READY/DONE executable-map receipt remains pre-admission only" in workflow
     assert "Linux launcher-owned pathless scratch creation remains pre-admission only" in workflow
@@ -125,7 +127,7 @@ def test_preregistration_and_roadmap_keep_preparatory_inventory_non_authorizing(
     combined = preregistration + roadmap
 
     for required in (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v28",
+        "dynamic-cssc-day1b-preparatory-behavior-set-v29",
         "publication-day1b-preparatory.yml",
         "Source inventory is not dispatch authority",
         "controlled-scratch high-water",

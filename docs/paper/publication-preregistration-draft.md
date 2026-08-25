@@ -475,7 +475,7 @@ measurement-method field in this placeholder remains `null`; the separate
 amendment is the sole reviewed source of administrative limits and
 measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v28` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v29` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface, including the amendment and
 `docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
@@ -489,7 +489,7 @@ encryption/evaluation/decryption, controller-owned exclusive scratch,
 single-use kind-specific authorization, exact runner/source/compiler
 identity plus the resolved file-backed OpenFHE linked-library bytes, bounded
 resource observations, and retained binary object verifier.
-The v28 surface additionally exposes one repository-owned replay-and-seal
+The v29 surface additionally exposes one repository-owned replay-and-seal
 wrapper. It derives the exact candidate policy, role-retained phases, and fixed
 65,537 plaintext modulus; internally owns the typed execution sink and closes
 it only against accounting returned by the same replay. Callers cannot provide
@@ -503,7 +503,7 @@ representative behind a single-use process-local capability whose carrier
 reference is released on claim or abandonment. This proves neither an OpenFHE
 execution nor worker, dispatch, formal, or publication authority; all such
 receipt fields remain explicitly false.
-The Day 2 Behavior Set v6 and Day1B v28 surface also preserve the exact formal
+The Day 2 Behavior Set v6 and Day1B v29 surface also preserve the exact formal
 rotation-plan digest in the final read-only Day 2 authority. A separate public
 issuer accepts only canonical `rotation-key-plan.json` bytes, obtains that
 authority from the zero-argument repository seam before and after issuance,
@@ -538,6 +538,12 @@ opaque Day 2 key-plan capability; the deep launcher consumes it internally,
 constructs and verifies the request with that exact plan, cross-checks the
 generated key-material digest and exact-index inventory, and embeds the plan
 receipt. This does not grant dispatch or publication authority.
+The Day1B v29 composition seam then consumes one same-replay representative
+capability together with one anchored Day 2 plan capability, prepares the exact
+ordinary or strong single-use query lifecycle, and records one joint
+replay/runtime/payload receipt. Its output digest must equal the replay oracle
+digest, and its payload-receipt stream, count, and byte total must equal runtime
+v7. It remains pre-admission and cannot mint a worker invocation.
 The v23 surface separately adds one Linux-only production scratch-creation
 seam. Starting from an exact empty launcher-owned mode-0700 parent, it opens
 every path component through held no-follow directory descriptors, creates a
