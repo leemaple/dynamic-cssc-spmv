@@ -475,7 +475,7 @@ measurement-method field in this placeholder remains `null`; the separate
 amendment is the sole reviewed source of administrative limits and
 measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v21` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v22` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface, including the amendment and
 `docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
@@ -494,11 +494,17 @@ for the runner and each resolved non-system library; compiler bytes, version,
 and target; the CMake executable and version; the runner CMake cache,
 `compile_commands.json`, complete Ninja graph, and rules; and the pinned
 OpenFHE repository/version, clean commit and tree, package config, build cache,
-compile commands, and install manifest. The enclosing runtime receipt is v4 so
-the enlarged nested language cannot be mistaken for an older receipt. These
-are immutable pre-launch build facts, not a claim about the process mappings
-observed at READY or DONE; that independent runtime-mapping admission remains
-on `HOLD`.
+compile commands, and install manifest. The enclosing runtime receipt is v5 so
+the enlarged nested language cannot be mistaken for an older receipt. It also
+freezes an inherited-file-descriptor READY/DONE control protocol. On Linux the
+controller reads the paused process's exact `/proc` executable mappings at
+both control points, admits only the pre-launch runner and resolved linked-file
+closure plus the fixed kernel pseudo-maps, rechecks every admitted file's
+mode, size, and SHA-256 through a no-follow descriptor, binds raw map roots and process
+start-time identity, and requires identical executable mapping sets at DONE.
+Darwin records no mapping admission and remains non-authorizing. This runtime
+witness is still pre-admission evidence: it neither creates a production
+scratch capability nor authorizes a candidate-cell adapter.
 The smoke exercises multiplication without implicit
 relinearization, explicit relinearization, exact-index rotation, plaintext
 selection, ciphertext addition, reconstruction, tail-slot zero checks, and
@@ -507,10 +513,13 @@ SHA-256 verification of every serialized input and result plus a typed
 session. Its receipt binds the request/input roots, context parameters, full
 rotation plan, required/generated indices, both segment digests, and combined
 frame while keeping context/public-key bytes outside that frame.
-Its provisional depth-2/0/0 profile remains explicitly `HOLD` for mixed-circuit
+The rotation-plan digest is now the exact SHA-256 of the formal Day 2 compact
+JSON member including its single trailing LF; the Python input seam and C++
+runner independently require that same byte identity. Its provisional
+depth-2/0/0 profile remains explicitly `HOLD` for mixed-circuit
 parameter authority.
 
-The current v21 surface also contains a non-authorizing streaming accounting core. It
+The current v22 surface also contains a non-authorizing streaming accounting core. It
 advances one candidate state exactly once per exact Publication Window, derives
 at most one typed query plan per query-bearing window, applies the window's
 integer query multiplicity before the fixed 14-primitive mapping, and retains
@@ -523,7 +532,7 @@ the separate evidence path for real no-reuse enforcement. The accounting core
 does not mint a worker invocation, materialize per-query masks or ledger
 transitions, measure serialized OpenFHE sizes, or relax any dispatch gate.
 
-The v21 surface closes count authority separately from serialized-size
+The v22 surface closes count authority separately from serialized-size
 measurement. Before dispatch, the controller projects each deterministic replay
 into an open expected-count document containing the exact retained-phase
 update/query primitive vectors and all nine logical protocol-object
@@ -545,7 +554,7 @@ outcome. Thus a failed or controller-terminal null projection cannot preserve
 an otherwise self-consistent rehashed preimage that switches weighted F1-M back
 to materialized worker mode.
 
-The v21 surface also freezes canonical big-endian binary framing for the three
+The v22 surface also freezes canonical big-endian binary framing for the three
 metadata categories used in primary communication accounting. A ColumnIndex
 synchronization entry is exactly 64 bytes; patch and full-sync differ only in a
 fixed-position one-byte enum and therefore share one size class. An update-side
@@ -562,7 +571,7 @@ object receipt whose metadata byte count differs from 64, 144, or 136. This
 closes preparatory size-class pricing, but it does not yet authorize or claim a
 production representative execution.
 
-The v21 surface separately freezes the one-time evaluation-key object as an
+The v22 surface separately freezes the one-time evaluation-key object as an
 exact two-segment frame. Its 88-byte header is `D1BKEY01`, followed by the
 big-endian rotation-inventory length and 32-byte digest, then the big-endian
 evaluation-multiplication-key length and 32-byte digest. The payload is exactly

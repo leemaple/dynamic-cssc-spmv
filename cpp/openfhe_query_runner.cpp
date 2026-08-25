@@ -9,6 +9,9 @@
 #include "cereal/external/rapidjson/writer.h"
 
 #include <algorithm>
+#include <array>
+#include <cerrno>
+#include <charconv>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -23,6 +26,8 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include <unistd.h>
 
 #include "include/args.hpp"
 
@@ -41,25 +46,29 @@ constexpr std::uint32_t kMultiplicativeDepth = 2;
 constexpr std::uint32_t kEstimatorEvalAddCount = 0;
 constexpr std::uint32_t kEstimatorKeySwitchCount = 0;
 constexpr std::uint64_t kRequestByteMaximum = 128ULL * 1024ULL * 1024ULL;
-constexpr char kRequestSchema[] = "dynamic-cssc-full-openfhe-query-request-v2";
-constexpr char kResultSchema[] = "dynamic-cssc-full-openfhe-query-result-v2";
+constexpr char kRequestSchema[] = "dynamic-cssc-full-openfhe-query-request-v3";
+constexpr char kResultSchema[] = "dynamic-cssc-full-openfhe-query-result-v3";
 constexpr char kProgramSchema[] = "dynamic-cssc-cloud-program-v1";
 constexpr char kBindingSchema[] = "dynamic-cssc-execution-binding-v1";
 constexpr char kKeyGenerationPlanSchema[] =
-    "dynamic-cssc-openfhe-key-generation-plan-v1";
+    "dynamic-cssc-openfhe-key-generation-plan-v2";
 constexpr char kQueryDerivedRotationPlanSchema[] =
     "dynamic-cssc-openfhe-query-derived-rotation-key-plan-v1";
 constexpr char kDay2RotationPlanSchema[] =
     "dynamic-cssc-publication-rotation-key-plan-v2";
 constexpr char kKeyMaterialInputBindingSchema[] =
-    "dynamic-cssc-openfhe-key-material-input-binding-v1";
+    "dynamic-cssc-openfhe-key-material-input-binding-v2";
 constexpr char kKeyGenerationSessionSchema[] =
-    "dynamic-cssc-openfhe-key-generation-session-v1";
+    "dynamic-cssc-openfhe-key-generation-session-v2";
 constexpr char kKeyMaterialReceiptSchema[] =
-    "dynamic-cssc-openfhe-key-material-receipt-v1";
+    "dynamic-cssc-openfhe-key-material-receipt-v2";
 constexpr char kCombinedKeyFramingSchema[] =
     "dynamic-cssc-publication-day1b-combined-evaluation-key-framing-v1";
 constexpr char kCombinedKeyMagic[] = "D1BKEY01";
+constexpr char kReadyRecord[] = "D1BRDY01";
+constexpr char kDoneRecord[] = "D1BDON01";
+constexpr char kReadyAcknowledgement[] = "D1BGO001";
+constexpr char kDoneAcknowledgement[] = "D1BGO002";
 constexpr char kCompilerProfile[] = "day1b-full-query-pre-admission-depth2-0-0-v1";
 constexpr char kOpenFHERepository[] = "https://github.com/openfheorg/openfhe-development.git";
 constexpr char kOpenFHEVersion[] = "1.5.1";
@@ -126,6 +135,63 @@ struct KeyMaterialReceipt {
 
 [[noreturn]] void Fail(const std::string& message) {
     throw std::runtime_error(message);
+}
+
+int StrictControlDescriptor(const std::string& value, const std::string& field) {
+    int descriptor = -1;
+    const auto parsed = std::from_chars(
+        value.data(), value.data() + value.size(), descriptor);
+    if (value.empty() || parsed.ec != std::errc() ||
+        parsed.ptr != value.data() + value.size() || descriptor <= STDERR_FILENO) {
+        Fail(field + " must be one inherited descriptor greater than stderr");
+    }
+    return descriptor;
+}
+
+void WriteControlRecord(int descriptor, std::string_view value) {
+    std::size_t offset = 0;
+    while (offset < value.size()) {
+        const auto written = ::write(
+            descriptor, value.data() + offset, value.size() - offset);
+        if (written < 0 && errno == EINTR) {
+            continue;
+        }
+        if (written <= 0) {
+            Fail("runtime control record write failed");
+        }
+        offset += static_cast<std::size_t>(written);
+    }
+}
+
+void RequireControlAcknowledgement(int descriptor, std::string_view expected) {
+    std::array<char, 8> received{};
+    std::size_t offset = 0;
+    while (offset < received.size()) {
+        const auto count = ::read(
+            descriptor, received.data() + offset, received.size() - offset);
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (count <= 0) {
+            Fail("runtime control acknowledgement ended early");
+        }
+        offset += static_cast<std::size_t>(count);
+    }
+    if (std::string_view(received.data(), received.size()) != expected) {
+        Fail("runtime control acknowledgement changed");
+    }
+}
+
+void ControlPoint(
+    int writeDescriptor,
+    int readDescriptor,
+    std::string_view record,
+    std::string_view acknowledgement) {
+    if (record.size() != 8 || acknowledgement.size() != 8) {
+        Fail("runtime control protocol width changed");
+    }
+    WriteControlRecord(writeDescriptor, record);
+    RequireControlAcknowledgement(readDescriptor, acknowledgement);
 }
 
 std::string ReadFile(const fs::path& path, std::uint64_t maximum) {
@@ -476,7 +542,8 @@ KeyGenerationPlan ParseKeyGenerationPlan(
     const auto& plan = Member(value, "rotation_key_plan", "rotation key plan");
     const auto planSha256 = StringMember(
         value, "rotation_key_plan_sha256", "rotation key-plan SHA-256");
-    if (!LowerSha256(planSha256) || HashUtil::HashString(CanonicalJson(plan)) != planSha256) {
+    if (!LowerSha256(planSha256) ||
+        HashUtil::HashString(CanonicalJson(plan) + "\n") != planSha256) {
         Fail("rotation key-plan SHA-256 binding changed");
     }
     const auto schema = StringMember(plan, "schema_version", "rotation key-plan schema");
@@ -1289,9 +1356,17 @@ std::string BuildResult(
 int main(int argc, char** argv) {
     try {
         const auto args = dynamic_cssc::ParseArgs(argc, argv);
-        if (args.size() != 3 || !args.count("request") || !args.count("result") ||
-            !args.count("object-dir")) {
-            Fail("exactly --request, --result, and --object-dir are required");
+        if (args.size() != 5 || !args.count("request") || !args.count("result") ||
+            !args.count("object-dir") || !args.count("control-write-fd") ||
+            !args.count("control-read-fd")) {
+            Fail("the exact request/result/object/control arguments are required");
+        }
+        const auto controlWriteFd = StrictControlDescriptor(
+            args.at("control-write-fd"), "control-write-fd");
+        const auto controlReadFd = StrictControlDescriptor(
+            args.at("control-read-fd"), "control-read-fd");
+        if (controlWriteFd == controlReadFd) {
+            Fail("runtime control descriptors must be distinct");
         }
         const fs::path requestPath(args.at("request"));
         const fs::path resultPath(args.at("result"));
@@ -1301,6 +1376,11 @@ int main(int argc, char** argv) {
             fs::directory_iterator(objectRoot) != fs::directory_iterator()) {
             Fail("object-dir must be an existing direct empty directory");
         }
+        ControlPoint(
+            controlWriteFd,
+            controlReadFd,
+            kReadyRecord,
+            kReadyAcknowledgement);
         const auto requestBytes = ReadFile(requestPath, kRequestByteMaximum);
         json::Document request;
         request.Parse<json::kParseValidateEncodingFlag>(requestBytes.data(), requestBytes.size());
@@ -1472,6 +1552,11 @@ int main(int argc, char** argv) {
             receipts,
             secondBatchRowZero);
         WriteNewFile(resultPath, resultBytes);
+        ControlPoint(
+            controlWriteFd,
+            controlReadFd,
+            kDoneRecord,
+            kDoneAcknowledgement);
         std::cout << resultPath.string() << '\n';
         return 0;
     }

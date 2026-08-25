@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import dynamic_cssc.day2_calibration_profile as day2_profile
 import dynamic_cssc.openfhe_query_runner as runner_contract
 from dynamic_cssc.cssc import publish_component
 from dynamic_cssc.mask_ledger import SQLiteMaskBindingLedger
@@ -32,6 +33,7 @@ from dynamic_cssc.publication_day1b_key_framing import (
     Day1BCombinedEvaluationKeyFrame,
 )
 from dynamic_cssc.query_compiler import compile_query
+from scripts import run_openfhe_query_smoke as smoke
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -255,20 +257,20 @@ def test_verifier_binds_decryption_reconstruction_and_every_object(tmp_path: Pat
 
 def test_day2_rotation_plan_is_typed_but_remains_pre_admission(tmp_path: Path) -> None:
     bundle, prepared = _bundle_and_prepared(tmp_path)
-    day2_plan_bytes = _canonical(
-        {
-            "composite_decompositions": [],
-            "day1a_authority_receipt_sha256": "c" * 64,
-            "day1a_inventory_sha256": "d" * 64,
-            "effective_slots": 4096,
-            "eval_rotate_case_ids": ["index=-1", "index=1", "index=2"],
-            "inventory_source_schema_version": "dynamic-cssc-day1a-rotation-inventory-v1",
-            "key_plan_kind": "direct-exact-index-v1",
-            "planned_exact_indices": [-1, 1, 2],
-            "required_exact_indices": [-1, 1, 2],
-            "schema_version": "dynamic-cssc-publication-rotation-key-plan-v2",
-        }
-    )
+    day2_plan = {
+        "composite_decompositions": [],
+        "day1a_authority_receipt_sha256": "c" * 64,
+        "day1a_inventory_sha256": "d" * 64,
+        "effective_slots": 4096,
+        "eval_rotate_case_ids": ["index=-1", "index=1", "index=2"],
+        "inventory_source_schema_version": "dynamic-cssc-day1a-rotation-inventory-v1",
+        "key_plan_kind": "direct-exact-index-v1",
+        "planned_exact_indices": [-1, 1, 2],
+        "required_exact_indices": [-1, 1, 2],
+        "schema_version": "dynamic-cssc-publication-rotation-key-plan-v2",
+    }
+    day2_plan_bytes = day2_profile._canonical_json_bytes(day2_plan)
+    assert day2_plan_bytes == _canonical(day2_plan) + b"\n"
     key_plan = pre_admission_day2_openfhe_key_generation_plan(day2_plan_bytes)
     request_bytes = build_ordinary_openfhe_query_request(
         bundle,
@@ -295,6 +297,10 @@ def test_day2_rotation_plan_is_typed_but_remains_pre_admission(tmp_path: Path) -
     )
 
     assert verified.key_material_receipt.required_exact_indices == (-1, 1, 2)
+    assert (
+        verified.key_material_receipt.rotation_key_plan_sha256
+        == hashlib.sha256(day2_plan_bytes).hexdigest()
+    )
     with pytest.raises(OpenFHEQueryRunnerError, match="request differs"):
         verify_ordinary_openfhe_query_result(
             bundle,
@@ -304,6 +310,47 @@ def test_day2_rotation_plan_is_typed_but_remains_pre_admission(tmp_path: Path) -
             object_root=object_root,
             expected_output=(31, 44),
         )
+
+
+@pytest.mark.parametrize("mutation", ("missing-lf", "extra-lf", "space", "key-order"))
+def test_day2_rotation_plan_rejects_noncanonical_producer_member(
+    mutation: str,
+) -> None:
+    plan = {
+        "composite_decompositions": [],
+        "day1a_authority_receipt_sha256": "c" * 64,
+        "day1a_inventory_sha256": "d" * 64,
+        "effective_slots": 4096,
+        "eval_rotate_case_ids": ["index=-1", "index=1", "index=2"],
+        "inventory_source_schema_version": "dynamic-cssc-day1a-rotation-inventory-v1",
+        "key_plan_kind": "direct-exact-index-v1",
+        "planned_exact_indices": [-1, 1, 2],
+        "required_exact_indices": [-1, 1, 2],
+        "schema_version": "dynamic-cssc-publication-rotation-key-plan-v2",
+    }
+    exact = day2_profile._canonical_json_bytes(plan)
+    if mutation == "missing-lf":
+        changed = exact[:-1]
+    elif mutation == "extra-lf":
+        changed = exact + b"\n"
+    elif mutation == "space":
+        changed = exact.replace(b":", b": ", 1)
+    else:
+        changed = json.dumps(
+            dict(reversed(tuple(plan.items()))),
+            separators=(",", ":"),
+        ).encode("ascii") + b"\n"
+    with pytest.raises(OpenFHEQueryRunnerError, match="not canonical JSON"):
+        pre_admission_day2_openfhe_key_generation_plan(changed)
+
+
+def test_real_smoke_uses_the_same_exact_day2_producer_member_bytes() -> None:
+    smoke_source = (ROOT / "scripts/run_openfhe_query_smoke.py").read_text()
+    exact = smoke._day2_plan_smoke_bytes()
+    plan = json.loads(exact)
+    assert exact == day2_profile._canonical_json_bytes(plan)
+    assert "pre_admission_day2_openfhe_key_generation_plan" in smoke_source
+    assert "key_generation_plan=" in smoke_source
 
 
 def test_verifier_rejects_typed_key_receipt_and_frame_splices(tmp_path: Path) -> None:
@@ -498,10 +545,15 @@ def test_cpp_runner_contract_uses_real_openfhe_operations_and_serialization() ->
         "SerializeEvalAutomorphismKey",
         "BuildCombinedEvaluationKeyFrame",
         "D1BKEY01",
+        "D1BRDY01",
+        "D1BDON01",
+        "control-write-fd",
+        "control-read-fd",
         "key_generation_session_sha256",
     ):
         assert token in source
     assert "dynamic-cssc-openfhe-key-bundle-v1" not in source
+    assert 'HashUtil::HashString(CanonicalJson(plan) + "\\n")' in source
     assert "AppendFramed" not in source
     assert "SerializeOpenFHE(keyPair.secretKey" not in source
     assert "publication_authority" in source

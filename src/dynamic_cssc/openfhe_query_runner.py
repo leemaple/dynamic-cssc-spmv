@@ -42,20 +42,20 @@ from dynamic_cssc.publication_day1b_key_framing import (
     Day1BCombinedEvaluationKeyFramingError,
 )
 
-OPENFHE_QUERY_REQUEST_SCHEMA = "dynamic-cssc-full-openfhe-query-request-v2"
-OPENFHE_QUERY_RESULT_SCHEMA = "dynamic-cssc-full-openfhe-query-result-v2"
+OPENFHE_QUERY_REQUEST_SCHEMA = "dynamic-cssc-full-openfhe-query-request-v3"
+OPENFHE_QUERY_RESULT_SCHEMA = "dynamic-cssc-full-openfhe-query-result-v3"
 OPENFHE_QUERY_PARAMETER_PROFILE = "day1b-full-query-pre-admission-depth2-0-0-v1"
-OPENFHE_KEY_GENERATION_PLAN_SCHEMA = "dynamic-cssc-openfhe-key-generation-plan-v1"
+OPENFHE_KEY_GENERATION_PLAN_SCHEMA = "dynamic-cssc-openfhe-key-generation-plan-v2"
 OPENFHE_QUERY_DERIVED_ROTATION_KEY_PLAN_SCHEMA = (
     "dynamic-cssc-openfhe-query-derived-rotation-key-plan-v1"
 )
 OPENFHE_KEY_MATERIAL_INPUT_BINDING_SCHEMA = (
-    "dynamic-cssc-openfhe-key-material-input-binding-v1"
+    "dynamic-cssc-openfhe-key-material-input-binding-v2"
 )
 OPENFHE_KEY_GENERATION_SESSION_SCHEMA = (
-    "dynamic-cssc-openfhe-key-generation-session-v1"
+    "dynamic-cssc-openfhe-key-generation-session-v2"
 )
-OPENFHE_KEY_MATERIAL_RECEIPT_SCHEMA = "dynamic-cssc-openfhe-key-material-receipt-v1"
+OPENFHE_KEY_MATERIAL_RECEIPT_SCHEMA = "dynamic-cssc-openfhe-key-material-receipt-v2"
 
 _DAY2_ROTATION_KEY_PLAN_SCHEMA = "dynamic-cssc-publication-rotation-key-plan-v2"
 
@@ -98,7 +98,7 @@ class OpenFHEKeyGenerationPlan:
 
     def __post_init__(self) -> None:
         plan = _decode_json(self.rotation_key_plan_bytes, field="rotation key plan")
-        if self.rotation_key_plan_bytes != _canonical_bytes(plan):
+        if self.rotation_key_plan_bytes != _canonical_rotation_key_plan_bytes(plan):
             raise OpenFHEQueryRunnerError("rotation key plan is not canonical JSON")
         required = _validate_rotation_key_plan_document(plan)
         if (
@@ -195,6 +195,12 @@ def _canonical_bytes(value: object) -> bytes:
     except (TypeError, ValueError) as error:
         raise OpenFHEQueryRunnerError("OpenFHE runner value is not canonical JSON") from error
     return rendered.encode("ascii")
+
+
+def _canonical_rotation_key_plan_bytes(value: object) -> bytes:
+    """Render the exact LF-terminated bytes used by formal Day 2 artifacts."""
+
+    return _canonical_bytes(value) + b"\n"
 
 
 def _decode_json(content: bytes, *, field: str) -> dict[str, object]:
@@ -320,7 +326,7 @@ def pre_admission_day2_openfhe_key_generation_plan(
     """Type one canonical Day 2 plan without granting runtime/publication authority."""
 
     plan = _decode_json(rotation_key_plan_bytes, field="Day 2 rotation key plan")
-    if rotation_key_plan_bytes != _canonical_bytes(plan):
+    if rotation_key_plan_bytes != _canonical_rotation_key_plan_bytes(plan):
         raise OpenFHEQueryRunnerError("Day 2 rotation key plan is not canonical JSON")
     required = _validate_rotation_key_plan_document(plan)
     if plan["schema_version"] != _DAY2_ROTATION_KEY_PLAN_SCHEMA:
@@ -348,7 +354,7 @@ def _query_derived_key_generation_plan(
         "schema_version": OPENFHE_QUERY_DERIVED_ROTATION_KEY_PLAN_SCHEMA,
         "source_cloud_program_sha256": cloud_program_sha256,
     }
-    content = _canonical_bytes(document)
+    content = _canonical_rotation_key_plan_bytes(document)
     return OpenFHEKeyGenerationPlan(
         rotation_key_plan_bytes=content,
         rotation_key_plan_sha256=hashlib.sha256(content).hexdigest(),

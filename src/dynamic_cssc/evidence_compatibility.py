@@ -457,6 +457,7 @@ _DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "config/publication-day1b-resource-amendment.json",
     "docs/decisions/0013-anchor-day2-serialized-size-profile.md",
     "docs/reviews/day1b-resource-amendment-review-2026-08-25.md",
+    "src/dynamic_cssc/openfhe_runtime_admission.py",
     "src/dynamic_cssc/publication_day1b_aggregate_bounds.py",
     "src/dynamic_cssc/publication_day1b_expected_counts.py",
     "src/dynamic_cssc/publication_day1b_f1m_aggregation.py",
@@ -467,6 +468,7 @@ _DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "tests/test_publication_day1b_f1m_aggregation.py",
     "tests/test_publication_day1b_key_framing.py",
     "tests/test_publication_day1b_metadata_framing.py",
+    "tests/test_openfhe_runtime_admission.py",
 )
 
 _ROLE_BEHAVIOR_PATHS: dict[EvidenceRole, tuple[str, ...] | None] = {
@@ -482,7 +484,7 @@ _ROLE_BEHAVIOR_PATHS: dict[EvidenceRole, tuple[str, ...] | None] = {
 _ROLE_BEHAVIOR_SCHEMAS = {
     EvidenceRole.ACQUISITION: "dynamic-cssc-acquisition-behavior-set-v2",
     EvidenceRole.TRACE: "dynamic-cssc-trace-behavior-set-v2",
-    EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v21",
+    EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v22",
     EvidenceRole.DAY2: "dynamic-cssc-day2-behavior-set-v5",
     EvidenceRole.ANALYZER: "dynamic-cssc-publication-analyzer-behavior-set-v2",
     EvidenceRole.STRONG_CORRECTNESS: "dynamic-cssc-strong-correctness-behavior-set-v1",

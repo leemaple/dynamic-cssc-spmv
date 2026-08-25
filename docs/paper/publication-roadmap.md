@@ -379,7 +379,7 @@ previously reviewed schema-source Git/Behavior-inventory binding; authority and
 worker/runtime identity are structurally absent. Its non-self-referential
 semantic digest and immutable decoded record do not lift the repository
 `HOLD`. The real amendment and its outcome-blind review receipt are now frozen
-as pre-`S1` DAY1B Behavior Set v21 members. The resource loader can project its
+as pre-`S1` DAY1B Behavior Set v22 members. The resource loader can project its
 non-authorizing budget, after which the independent profile, trace, worker, and
 anchor gates still fail closed.
 
@@ -398,7 +398,7 @@ implementation evidence only. It cannot dispatch until the trace and catalog
 authorities, repository execution adapter, and outcome-blind resource policy
 are installed, and it is not a 30-unit publication artifact.
 
-The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v21,
+The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v22,
 the unchanged empirical-null/authority-false `PENDING-FREEZE` placeholder, the
 separate reviewed resource-only amendment, and a manual no-input validation
 workflow. These freeze the current validator, protocol, administrative safety
@@ -413,15 +413,22 @@ Its build-identity v3 subreceipt now includes stable runner/library filesystem
 identity, Mach-O UUID or ELF build ID, install-name/SONAME and dependency-name
 inventories, compiler bytes/version/target, CMake executable/version, complete
 runner CMake/Ninja inputs, and the pinned clean OpenFHE source plus package,
-build, compile-command, and install-manifest digests. Runtime receipt v4 makes
-that nested-language change explicit. READY/DONE process mappings remain a
-separate production-admission requirement rather than an inferred consequence
-of these build-time facts.
+build, compile-command, and install-manifest digests. Runtime receipt v5 makes
+that nested-language change explicit and adds an inherited-FD READY/DONE
+protocol. On Linux, the controller pauses the runner at each point, verifies
+the exact pre-admitted runner/library executable mapping closure from `/proc`,
+rehashes each admitted file through a no-follow descriptor, binds the raw
+mapping roots and process start-time identity, and requires the
+same executable map set at DONE. Darwin produces no mapping admission. The
+receipt remains pre-admission and cannot substitute for a production scratch
+capability or candidate-cell adapter.
 The runner now generates the full supplied exact-index rotation inventory and
 eval-mult keys in one context/session, constructs the exact `D1BKEY01` frame,
 uses those keys in the same typed DAG, and returns a request/plan/segment/frame-
-bound receipt. Query-derived plans and canonical Day 2 plan inputs remain
-pre-admission only. The production two-path seam verifies the pending
+bound receipt. Its rotation-plan hash now equals the exact LF-terminated
+`rotation-key-plan.json` member emitted by Day 2, and both Python and C++ reject
+alternate whitespace, ordering, or newline bytes. Query-derived plans and
+canonical Day 2 plan inputs remain pre-admission only. The production two-path seam verifies the pending
 placeholder and reviewed amendment, then stops on the next missing profile gate
 before catalog, trace, worker, or output access. The workflow performs only
 hash-locked source-contract tests, static validation, amendment validation, and
@@ -435,13 +442,13 @@ preregistered, non-empirical protocol invariant
 resource limit or authorize execution; every empirical numeric and method
 choice remains `null`.
 
-The remaining Day1B `HOLD` set is explicit: a controlled-scratch high-water and
-isolation method, complete ELF/build plus READY/DONE executable-mapping
-admission, a production candidate-cell worker adapter that consumes the
-independently verified Day 2 plan capability and implements ADR 0012
-window-weighted equivalence accounting and consumes the anchored Day 2 OpenFHE
-timing/size profile, the TRACE post-run anchor, and the Day-1 registration
-anchor. Full per-query-arrival OpenFHE replay is forbidden: the frozen schedule
+The remaining Day1B `HOLD` set is explicit: a production controlled-scratch
+high-water and creation-isolation capability, integration of the Linux
+READY/DONE mapping receipt into a production candidate-cell worker adapter,
+consumption of the independently verified Day 2 plan capability, ADR 0012
+window-weighted equivalence accounting, the anchored Day 2 OpenFHE timing/size
+profile, the TRACE post-run anchor, and the Day-1 registration anchor. Full
+per-query-arrival OpenFHE replay is forbidden: the frozen schedule
 would otherwise require 530,097,064 arrivals per trace unit and
 15,902,911,920 across all 30 units without adding independent layout states or
 measurements.

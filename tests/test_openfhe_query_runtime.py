@@ -120,6 +120,27 @@ printf '%s\\n' "$result"
     return runner
 
 
+def _handshake_runner(tmp_path: Path, name: str, *, ready: bytes = b"D1BRDY01") -> Path:
+    runner = tmp_path.resolve() / name
+    _write(
+        runner,
+        (
+            "#!/usr/bin/python3\n"
+            "import os, sys\n"
+            "arguments = dict(zip(sys.argv[1::2], sys.argv[2::2]))\n"
+            "write_fd = int(arguments['--control-write-fd'])\n"
+            "read_fd = int(arguments['--control-read-fd'])\n"
+            f"os.write(write_fd, {ready!r})\n"
+            "if os.read(read_fd, 8) != b'D1BGO001': raise SystemExit(21)\n"
+            "os.write(write_fd, b'D1BDON01')\n"
+            "if os.read(read_fd, 8) != b'D1BGO002': raise SystemExit(22)\n"
+            "print(arguments['--result'])\n"
+        ).encode(),
+        executable=True,
+    )
+    return runner
+
+
 def test_runner_build_identity_binds_binary_sources_compiler_flags_and_libraries(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -338,6 +359,56 @@ def test_process_controller_enforces_stdout_and_fast_exit_scratch_limit(
             object_root=limited_objects,
             timeout_seconds=10,
             scratch_limit_bytes=1,
+        )
+
+
+def test_process_controller_requires_exact_ready_done_handshake(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _handshake_runner(tmp_path, "handshake-runner")
+    scratch, request_path, result_path, object_root = _process_scratch(
+        tmp_path,
+        "handshake-scratch",
+    )
+    identity = object.__new__(runtime.OpenFHERunnerBuildIdentity)
+    monkeypatch.setattr(runtime.platform, "system", lambda: "Darwin")
+
+    observation = runtime._run_process(
+        runner,
+        repository_root=tmp_path.resolve(),
+        scratch_root=scratch,
+        request_path=request_path,
+        result_path=result_path,
+        object_root=object_root,
+        timeout_seconds=10,
+        scratch_limit_bytes=1024 * 1024,
+        runner_identity=identity,
+    )
+
+    assert observation.runtime_mapping_admission is None
+    assert observation.stdout == f"{result_path}\n".encode()
+
+    bad_runner = _handshake_runner(
+        tmp_path,
+        "bad-handshake-runner",
+        ready=b"D1RBAD01",
+    )
+    bad_scratch, bad_request, bad_result, bad_objects = _process_scratch(
+        tmp_path,
+        "bad-handshake-scratch",
+    )
+    with pytest.raises(runtime.OpenFHEQueryRuntimeError, match="control record changed"):
+        runtime._run_process(
+            bad_runner,
+            repository_root=tmp_path.resolve(),
+            scratch_root=bad_scratch,
+            request_path=bad_request,
+            result_path=bad_result,
+            object_root=bad_objects,
+            timeout_seconds=10,
+            scratch_limit_bytes=1024 * 1024,
+            runner_identity=identity,
         )
 
 

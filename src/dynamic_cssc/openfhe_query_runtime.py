@@ -17,6 +17,7 @@ import os
 import platform
 import re
 import resource
+import select
 import shlex
 import shutil
 import signal
@@ -24,6 +25,7 @@ import stat
 import subprocess
 import sys
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -34,6 +36,13 @@ from dynamic_cssc.openfhe_query_runner import (
     VerifiedOpenFHEQueryResult,
     build_ordinary_openfhe_query_request,
     verify_ordinary_openfhe_query_result,
+)
+from dynamic_cssc.openfhe_runtime_admission import (
+    AdmittedExecutableFile,
+    OpenFHERuntimeAdmissionError,
+    OpenFHERuntimeMappingAdmission,
+    admit_linux_runtime_mapping_continuity,
+    capture_linux_process_mapping_snapshot,
 )
 from dynamic_cssc.ordinary_query_lifecycle import (
     OrdinaryExecutionAuthorizationReceipt,
@@ -47,9 +56,10 @@ from dynamic_cssc.publication_day1b_key_framing import (
     DAY1B_COMBINED_EVALUATION_KEY_FRAMING_SCHEMA,
 )
 
-OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA = "dynamic-cssc-full-openfhe-runtime-receipt-v4"
+OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA = "dynamic-cssc-full-openfhe-runtime-receipt-v5"
 OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA = "dynamic-cssc-openfhe-runner-build-identity-v3"
 OPENFHE_SERIALIZED_PAYLOAD_SCHEMA = "dynamic-cssc-openfhe-serialized-payload-v2"
+OPENFHE_RUNTIME_CONTROL_PROTOCOL_SCHEMA = "dynamic-cssc-openfhe-runtime-control-v1"
 
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SOURCE_PATHS = (
@@ -73,6 +83,10 @@ _FIXED_TARGET_FLAGS = ("-std=c++17", "-Wall", "-Wextra", "-Wpedantic")
 _LOG_BYTES_MAXIMUM = 1024 * 1024
 _LINKED_LIBRARY_BYTES_MAXIMUM = 512 * 1024 * 1024
 _OBSERVATION_INTERVAL_SECONDS = 0.01
+_CONTROL_RECORDS = {
+    "READY": (b"D1BRDY01", b"D1BGO001"),
+    "DONE": (b"D1BDON01", b"D1BGO002"),
+}
 
 
 class OpenFHEQueryRuntimeError(RuntimeError):
@@ -277,6 +291,7 @@ class OpenFHEQueryRuntimeReceipt:
     host_identity_sha256: str
     operating_system_identity: str
     cpu_affinity: tuple[int, ...] | None
+    runtime_mapping_admission: OpenFHERuntimeMappingAdmission | None
 
     def to_document(self) -> dict[str, object]:
         return {
@@ -295,6 +310,16 @@ class OpenFHEQueryRuntimeReceipt:
             "result_byte_count": self.result_byte_count,
             "result_sha256": self.result_sha256,
             "runner": self.runner.to_document(),
+            "runtime_control_protocol_schema": OPENFHE_RUNTIME_CONTROL_PROTOCOL_SCHEMA,
+            "runtime_mapping_admission": (
+                None
+                if self.runtime_mapping_admission is None
+                else self.runtime_mapping_admission.to_document()
+            ),
+            "runtime_state_continuity_verified": (
+                self.runtime_mapping_admission is not None
+            ),
+            "dynamic_loader_environment_clear": True,
             "schema_version": OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA,
             "scratch_limit_bytes": self.scratch_limit_bytes,
             "serialized_object_bytes": self.serialized_object_bytes,
@@ -326,6 +351,7 @@ class _ProcessObservation:
     peak_scratch_bytes: int
     stdout: bytes
     stderr: bytes
+    runtime_mapping_admission: OpenFHERuntimeMappingAdmission | None
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -1218,15 +1244,165 @@ def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
         raise OpenFHEQueryRuntimeError("OpenFHE process group could not be terminated") from error
 
 
+def _terminate_and_reap_process(process: subprocess.Popen[bytes]) -> None:
+    try:
+        waited_pid, status, _usage = os.wait4(process.pid, os.WNOHANG)
+    except ChildProcessError:
+        return
+    except OSError as error:
+        raise OpenFHEQueryRuntimeError(
+            "OpenFHE child state could not be inspected before termination"
+        ) from error
+    if waited_pid == process.pid:
+        process.returncode = os.waitstatus_to_exitcode(status)
+        return
+    try:
+        _terminate_process_group(process)
+    except OpenFHEQueryRuntimeError:
+        try:
+            waited_pid, status, _usage = os.wait4(process.pid, os.WNOHANG)
+        except (ChildProcessError, OSError):
+            raise
+        if waited_pid == process.pid:
+            process.returncode = os.waitstatus_to_exitcode(status)
+            return
+        raise
+    try:
+        _waited_pid, status, _usage = os.wait4(process.pid, 0)
+    except ChildProcessError:
+        return
+    except OSError as error:
+        raise OpenFHEQueryRuntimeError(
+            "terminated OpenFHE child could not be reaped"
+        ) from error
+    process.returncode = os.waitstatus_to_exitcode(status)
+
+
+def _admitted_executable_files(
+    runner: Path,
+    identity: OpenFHERunnerBuildIdentity,
+) -> tuple[AdmittedExecutableFile, ...]:
+    if (
+        type(identity) is not OpenFHERunnerBuildIdentity
+        or identity.runner_binary_format != "elf-v1"
+        or any(item.binary_format != "elf-v1" for item in identity.linked_libraries)
+    ):
+        raise OpenFHEQueryRuntimeError(
+            "Linux mapping admission requires one exact ELF build identity"
+        )
+    try:
+        runner_path = str(runner.resolve(strict=True))
+    except OSError as error:
+        raise OpenFHEQueryRuntimeError(
+            "OpenFHE runner cannot be resolved for mapping admission"
+        ) from error
+    values = [
+        AdmittedExecutableFile(
+            path=runner_path,
+            device=identity.runner_device,
+            inode=identity.runner_inode,
+            mode=identity.runner_mode,
+            byte_count=identity.runner_byte_count,
+            sha256=identity.runner_sha256,
+            binary_format=identity.runner_binary_format,
+            binary_id=identity.runner_binary_id,
+        ),
+        *(
+            AdmittedExecutableFile(
+                path=item.resolved_path,
+                device=item.device,
+                inode=item.inode,
+                mode=item.mode,
+                byte_count=item.byte_count,
+                sha256=item.sha256,
+                binary_format=item.binary_format,
+                binary_id=item.binary_id,
+            )
+            for item in identity.linked_libraries
+        ),
+    ]
+    result = tuple(sorted(values, key=lambda item: item.path))
+    if len({item.path for item in result}) != len(result):
+        raise OpenFHEQueryRuntimeError(
+            "admitted executable closure contains duplicate physical paths"
+        )
+    return result
+
+
+def _await_control_record(
+    descriptor: int,
+    expected: bytes,
+    *,
+    scratch_root: Path,
+    scratch_limit_bytes: int,
+    deadline: float,
+    peak_scratch_bytes: int,
+) -> int:
+    received = bytearray()
+    while len(received) < len(expected):
+        peak_scratch_bytes = max(peak_scratch_bytes, _scratch_bytes(scratch_root))
+        if peak_scratch_bytes > scratch_limit_bytes:
+            raise OpenFHEQueryRuntimeError("scratch-limit-exceeded")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise OpenFHEQueryRuntimeError("wall-clock-limit-exceeded")
+        try:
+            readable, _writable, _exceptional = select.select(
+                (descriptor,),
+                (),
+                (),
+                min(_OBSERVATION_INTERVAL_SECONDS, remaining),
+            )
+        except (OSError, ValueError) as error:
+            raise OpenFHEQueryRuntimeError(
+                "OpenFHE runtime control descriptor could not be observed"
+            ) from error
+        if not readable:
+            continue
+        try:
+            chunk = os.read(descriptor, len(expected) - len(received))
+        except OSError as error:
+            raise OpenFHEQueryRuntimeError(
+                "OpenFHE runtime control record could not be read"
+            ) from error
+        if not chunk:
+            raise OpenFHEQueryRuntimeError(
+                "OpenFHE runner ended before its runtime control record"
+            )
+        received.extend(chunk)
+    if bytes(received) != expected:
+        raise OpenFHEQueryRuntimeError("OpenFHE runtime control record changed")
+    return peak_scratch_bytes
+
+
+def _write_control_acknowledgement(descriptor: int, acknowledgement: bytes) -> None:
+    view = memoryview(acknowledgement)
+    while view:
+        try:
+            written = os.write(descriptor, view)
+        except OSError as error:
+            raise OpenFHEQueryRuntimeError(
+                "OpenFHE runtime acknowledgement could not be written"
+            ) from error
+        if written <= 0:  # pragma: no cover - operating-system contract
+            raise OpenFHEQueryRuntimeError(
+                "OpenFHE runtime acknowledgement made no progress"
+            )
+        view = view[written:]
+
+
 def _wait4_process(
     process: subprocess.Popen[bytes],
     *,
     scratch_root: Path,
     timeout_seconds: int,
     scratch_limit_bytes: int,
+    deadline: float | None = None,
+    initial_peak_scratch_bytes: int = 0,
 ) -> tuple[int, resource.struct_rusage, int]:
-    deadline = time.monotonic() + timeout_seconds
-    peak_scratch = _scratch_bytes(scratch_root)
+    if deadline is None:
+        deadline = time.monotonic() + timeout_seconds
+    peak_scratch = max(initial_peak_scratch_bytes, _scratch_bytes(scratch_root))
     failure: str | None = None
     status = 0
     usage: resource.struct_rusage | None = None
@@ -1264,6 +1440,93 @@ def _wait4_process(
     return process.returncode, usage, peak_scratch
 
 
+def _wait4_handshaken_process(
+    process: subprocess.Popen[bytes],
+    *,
+    runner: Path,
+    runner_identity: OpenFHERunnerBuildIdentity,
+    control_read_descriptor: int,
+    control_write_descriptor: int,
+    scratch_root: Path,
+    timeout_seconds: int,
+    scratch_limit_bytes: int,
+) -> tuple[
+    int,
+    resource.struct_rusage,
+    int,
+    OpenFHERuntimeMappingAdmission | None,
+]:
+    deadline = time.monotonic() + timeout_seconds
+    peak_scratch = _scratch_bytes(scratch_root)
+    ready_record, ready_acknowledgement = _CONTROL_RECORDS["READY"]
+    peak_scratch = _await_control_record(
+        control_read_descriptor,
+        ready_record,
+        scratch_root=scratch_root,
+        scratch_limit_bytes=scratch_limit_bytes,
+        deadline=deadline,
+        peak_scratch_bytes=peak_scratch,
+    )
+    admitted_files: tuple[AdmittedExecutableFile, ...] | None = None
+    ready_snapshot = None
+    if platform.system() == "Linux":
+        admitted_files = _admitted_executable_files(runner, runner_identity)
+        try:
+            ready_snapshot = capture_linux_process_mapping_snapshot(
+                pid=process.pid,
+                stage="READY",
+                admitted_executable_files=admitted_files,
+            )
+        except OpenFHERuntimeAdmissionError as error:
+            raise OpenFHEQueryRuntimeError(
+                "OpenFHE READY executable mappings failed admission"
+            ) from error
+    _write_control_acknowledgement(
+        control_write_descriptor,
+        ready_acknowledgement,
+    )
+
+    done_record, done_acknowledgement = _CONTROL_RECORDS["DONE"]
+    peak_scratch = _await_control_record(
+        control_read_descriptor,
+        done_record,
+        scratch_root=scratch_root,
+        scratch_limit_bytes=scratch_limit_bytes,
+        deadline=deadline,
+        peak_scratch_bytes=peak_scratch,
+    )
+    mapping_admission = None
+    if admitted_files is not None:
+        assert ready_snapshot is not None
+        try:
+            done_snapshot = capture_linux_process_mapping_snapshot(
+                pid=process.pid,
+                stage="DONE",
+                admitted_executable_files=admitted_files,
+            )
+            mapping_admission = admit_linux_runtime_mapping_continuity(
+                ready_snapshot,
+                done_snapshot,
+            )
+        except OpenFHERuntimeAdmissionError as error:
+            raise OpenFHEQueryRuntimeError(
+                "OpenFHE DONE executable mappings failed continuity admission"
+            ) from error
+    _write_control_acknowledgement(
+        control_write_descriptor,
+        done_acknowledgement,
+    )
+    return_code, usage, peak_scratch = _wait4_process(
+        process,
+        scratch_root=scratch_root,
+        timeout_seconds=timeout_seconds,
+        scratch_limit_bytes=scratch_limit_bytes,
+        deadline=deadline,
+        initial_peak_scratch_bytes=peak_scratch,
+    )
+    return return_code, usage, peak_scratch, mapping_admission
+
+
 def _run_process(
     runner: Path,
     *,
@@ -1274,31 +1537,56 @@ def _run_process(
     object_root: Path,
     timeout_seconds: int,
     scratch_limit_bytes: int,
+    runner_identity: OpenFHERunnerBuildIdentity | None = None,
 ) -> _ProcessObservation:
     stdout_path = scratch_root / "stdout.bin"
     stderr_path = scratch_root / "stderr.bin"
-    stdout_fd = os.open(
-        stdout_path,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-        0o600,
-    )
-    stderr_fd = os.open(
-        stderr_path,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-        0o600,
-    )
+    stdout_fd: int | None = None
+    stderr_fd: int | None = None
+    child_to_parent_read: int | None = None
+    child_to_parent_write: int | None = None
+    parent_to_child_read: int | None = None
+    parent_to_child_write: int | None = None
+    process: subprocess.Popen[bytes] | None = None
+    mapping_admission: OpenFHERuntimeMappingAdmission | None = None
     started_ns = time.monotonic_ns()
     try:
+        stdout_fd = os.open(
+            stdout_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+        )
+        stderr_fd = os.open(
+            stderr_path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+        )
+        command = [
+            str(runner),
+            "--request",
+            str(request_path),
+            "--result",
+            str(result_path),
+            "--object-dir",
+            str(object_root),
+        ]
+        passed_descriptors: tuple[int, ...] = ()
+        if runner_identity is not None:
+            if type(runner_identity) is not OpenFHERunnerBuildIdentity:
+                raise TypeError("runner_identity must be one exact build identity")
+            child_to_parent_read, child_to_parent_write = os.pipe()
+            parent_to_child_read, parent_to_child_write = os.pipe()
+            command.extend(
+                (
+                    "--control-write-fd",
+                    str(child_to_parent_write),
+                    "--control-read-fd",
+                    str(parent_to_child_read),
+                )
+            )
+            passed_descriptors = (child_to_parent_write, parent_to_child_read)
         process = subprocess.Popen(
-            (
-                str(runner),
-                "--request",
-                str(request_path),
-                "--result",
-                str(result_path),
-                "--object-dir",
-                str(object_root),
-            ),
+            tuple(command),
             stdin=subprocess.DEVNULL,
             stdout=stdout_fd,
             stderr=stderr_fd,
@@ -1309,31 +1597,63 @@ def _run_process(
                 "LC_ALL": "C",
                 "OMP_NUM_THREADS": "1",
                 "PATH": "/usr/bin:/bin",
+                "PYTHONDONTWRITEBYTECODE": "1",
                 "TMPDIR": str(scratch_root / "tmp"),
                 "TZ": "UTC",
             },
             close_fds=True,
+            pass_fds=passed_descriptors,
             start_new_session=True,
         )
+        if child_to_parent_write is not None:
+            os.close(child_to_parent_write)
+            child_to_parent_write = None
+        if parent_to_child_read is not None:
+            os.close(parent_to_child_read)
+            parent_to_child_read = None
         try:
-            return_code, usage, peak_scratch = _wait4_process(
-                process,
-                scratch_root=scratch_root,
-                timeout_seconds=timeout_seconds,
-                scratch_limit_bytes=scratch_limit_bytes,
-            )
+            if runner_identity is None:
+                return_code, usage, peak_scratch = _wait4_process(
+                    process,
+                    scratch_root=scratch_root,
+                    timeout_seconds=timeout_seconds,
+                    scratch_limit_bytes=scratch_limit_bytes,
+                )
+            else:
+                assert child_to_parent_read is not None
+                assert parent_to_child_write is not None
+                (
+                    return_code,
+                    usage,
+                    peak_scratch,
+                    mapping_admission,
+                ) = _wait4_handshaken_process(
+                    process,
+                    runner=runner,
+                    runner_identity=runner_identity,
+                    control_read_descriptor=child_to_parent_read,
+                    control_write_descriptor=parent_to_child_write,
+                    scratch_root=scratch_root,
+                    timeout_seconds=timeout_seconds,
+                    scratch_limit_bytes=scratch_limit_bytes,
+                )
         except BaseException:
             if process.returncode is None:
-                _terminate_process_group(process)
-                try:
-                    _pid, status, _usage = os.wait4(process.pid, 0)
-                    process.returncode = os.waitstatus_to_exitcode(status)
-                except (ChildProcessError, OSError):
-                    pass
+                with suppress(BaseException):
+                    _terminate_and_reap_process(process)
             raise
     finally:
-        os.close(stdout_fd)
-        os.close(stderr_fd)
+        for descriptor in (
+            stdout_fd,
+            stderr_fd,
+            child_to_parent_read,
+            child_to_parent_write,
+            parent_to_child_read,
+            parent_to_child_write,
+        ):
+            if descriptor is not None:
+                with suppress(OSError):
+                    os.close(descriptor)
     elapsed_ns = time.monotonic_ns() - started_ns
     stdout = _read_log(stdout_path)
     stderr = _read_log(stderr_path)
@@ -1349,6 +1669,7 @@ def _run_process(
         peak_scratch_bytes=peak_scratch,
         stdout=stdout,
         stderr=stderr,
+        runtime_mapping_admission=mapping_admission,
     )
 
 
@@ -1462,6 +1783,7 @@ def execute_authorized_openfhe_query(
             object_root=object_root,
             timeout_seconds=timeout_seconds,
             scratch_limit_bytes=scratch_limit_bytes,
+            runner_identity=runner_identity,
         )
         if observation.peak_resident_memory_bytes > resident_memory_limit_bytes:
             raise OpenFHEQueryRuntimeError("resident-memory-limit-exceeded")
@@ -1518,6 +1840,7 @@ def execute_authorized_openfhe_query(
             host_identity_sha256=host_identity,
             operating_system_identity=os_identity,
             cpu_affinity=_cpu_affinity(),
+            runtime_mapping_admission=observation.runtime_mapping_admission,
         )
         return ExecutedOpenFHEQuery(
             verified_result=verified,
@@ -1544,6 +1867,7 @@ def execute_authorized_openfhe_query(
 __all__ = (
     "OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA",
     "OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA",
+    "OPENFHE_RUNTIME_CONTROL_PROTOCOL_SCHEMA",
     "ExecutedOpenFHEQuery",
     "OpenFHEBuildProvenance",
     "OpenFHEQueryRuntimeError",

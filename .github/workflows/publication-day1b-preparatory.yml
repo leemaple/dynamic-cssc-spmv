@@ -75,6 +75,7 @@ jobs:
             tests/test_evidence_compatibility.py \
             tests/test_openfhe_query_runner.py \
             tests/test_openfhe_query_runtime.py \
+            tests/test_openfhe_runtime_admission.py \
             tests/test_ordinary_query_lifecycle.py \
             tests/test_publication_day1b.py \
             tests/test_publication_day1b_accounting.py \
@@ -91,6 +92,7 @@ jobs:
             src/dynamic_cssc/evidence_compatibility.py \
             src/dynamic_cssc/openfhe_query_runner.py \
             src/dynamic_cssc/openfhe_query_runtime.py \
+            src/dynamic_cssc/openfhe_runtime_admission.py \
             src/dynamic_cssc/ordinary_query_lifecycle.py \
             src/dynamic_cssc/publication_day1b.py \
             src/dynamic_cssc/publication_day1b_accounting.py \
@@ -101,6 +103,7 @@ jobs:
             tests/test_evidence_compatibility.py \
             tests/test_openfhe_query_runner.py \
             tests/test_openfhe_query_runtime.py \
+            tests/test_openfhe_runtime_admission.py \
             tests/test_ordinary_query_lifecycle.py \
             tests/test_publication_day1b.py \
             tests/test_publication_day1b_accounting.py \
@@ -117,5 +120,6 @@ jobs:
           echo 'The reviewed amendment supplies administrative safety budgets only.'
           echo 'The generic OpenFHE query runtime passed a non-authorizing smoke.'
           echo 'Its typed D1BKEY01 key receipt remains pre-admission only.'
+          echo 'Its Linux READY/DONE executable-map receipt remains pre-admission only.'
           echo 'The production Day1B candidate worker and admission receipt remain absent.'
           echo 'No publication execution or artifact production is permitted.'

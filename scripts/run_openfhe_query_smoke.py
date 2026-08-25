@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import shutil
 import stat
@@ -11,6 +12,9 @@ from pathlib import Path
 
 from dynamic_cssc.cssc import publish_component
 from dynamic_cssc.mask_ledger import SQLiteMaskBindingLedger
+from dynamic_cssc.openfhe_query_runner import (
+    pre_admission_day2_openfhe_key_generation_plan,
+)
 from dynamic_cssc.openfhe_query_runtime import (
     execute_authorized_openfhe_query,
 )
@@ -21,6 +25,39 @@ from dynamic_cssc.ordinary_query_lifecycle import (
 from dynamic_cssc.query_compiler import compile_query
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _day2_plan_smoke_bytes() -> bytes:
+    """Mirror one exact Day 2 member without importing its producer internals."""
+
+    document = {
+        "composite_decompositions": [],
+        "day1a_authority_receipt_sha256": hashlib.sha256(
+            b"non-authorizing-day1a-authority-smoke"
+        ).hexdigest(),
+        "day1a_inventory_sha256": hashlib.sha256(
+            b"non-authorizing-day1a-inventory-smoke"
+        ).hexdigest(),
+        "effective_slots": 4096,
+        "eval_rotate_case_ids": ["index=-1", "index=1", "index=2"],
+        "inventory_source_schema_version": (
+            "dynamic-cssc-day1a-rotation-inventory-v1"
+        ),
+        "key_plan_kind": "direct-exact-index-v1",
+        "planned_exact_indices": [-1, 1, 2],
+        "required_exact_indices": [-1, 1, 2],
+        "schema_version": "dynamic-cssc-publication-rotation-key-plan-v2",
+    }
+    return (
+        json.dumps(
+            document,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("ascii")
 
 
 def main() -> int:
@@ -80,6 +117,9 @@ def main() -> int:
             timeout_seconds=arguments.timeout_seconds,
             resident_memory_limit_bytes=arguments.resident_memory_limit_bytes,
             scratch_limit_bytes=arguments.scratch_limit_bytes,
+            key_generation_plan=pre_admission_day2_openfhe_key_generation_plan(
+                _day2_plan_smoke_bytes()
+            ),
         )
         verified = execution.verified_result
         print(
