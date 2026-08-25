@@ -2450,6 +2450,8 @@ def test_production_f1m_replay_derives_zero_query_coverage_and_closed_context() 
     )
     catalog = _catalog()
     candidate = catalog.candidates[0]
+    resource_policy = _resource_policy()
+    size_authority = _size_authority()
 
     summary = day1b_module._replay_f1m_controller_for_candidate_cell(
         source=source,
@@ -2462,12 +2464,14 @@ def test_production_f1m_replay_derives_zero_query_coverage_and_closed_context() 
         terminal_registration_sha256=day1b_module._digest(
             asdict(catalog.registration)
         ),
+        candidate_catalog_sha256="e" * 64,
+        resource_policy_sha256="f" * 64,
         lineage=day1b_module._test_only_f1m_execution_lineage(
             source=source,
             trace=trace,
         ),
-        size_authority=_size_authority(),
-        resource_policy=_resource_policy(),
+        size_authority=size_authority,
+        resource_policy=resource_policy,
         expected_complete_audit=audit,
     )
 
@@ -2484,6 +2488,128 @@ def test_production_f1m_replay_derives_zero_query_coverage_and_closed_context() 
             audit
         ).complete_phase_audit_root_sha256
     )
+    seed = day1b_module._candidate_worker_contract_seed(
+        trace=trace,
+        program=program,
+        freshness=freshness,
+        candidate=candidate,
+        cell_binding_sha256=str(cell["cell_binding_sha256"]),
+        candidate_catalog_sha256="e" * 64,
+        resource_policy=resource_policy,
+        resource_policy_sha256="f" * 64,
+        size_authority=size_authority,
+        f1m_controller_summary=summary,
+    )
+    contract = seed.bind(
+        expected_f1m_size_class_set_sha256="1" * 64,
+        expected_f1m_size_class_count=0,
+        expected_serialized_equivalence_class_count=17,
+        expected_f1m_cardinality_derivation_root_sha256="2" * 64,
+    )
+    assert contract.f1m_controller_context_sha256 == summary.context.context_sha256
+    assert contract.f1m_route_coverage_sha256 == summary.route_coverage_sha256
+    assert contract.f1m_charged_size_class_set_sha256 == (
+        summary.charged_size_class_set_sha256
+    )
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        "trace-manifest",
+        "candidate-catalog",
+        "resource-policy",
+        "object-cap",
+        "payload-cap",
+    ),
+)
+def test_worker_seed_rejects_controller_lineage_or_resource_substitution(
+    tamper: str,
+) -> None:
+    trace = _trace()
+    source = _source()
+    freshness = Fraction(FRESHNESS_VALUES[0])
+    program = trace.compile_schedule(Fraction(RHO_VALUES[0]))
+    audit = day1b_module._complete_cell_audit(program, freshness)
+    cell = day1b_module._cell_document(
+        day1b_module._trace_unit_document(trace, source),
+        trace,
+        source,
+        program,
+        freshness,
+        audit,
+    )
+    catalog = _catalog()
+    candidate = catalog.candidates[0]
+    resource_policy = _resource_policy()
+    size_authority = _size_authority()
+    summary = day1b_module._replay_f1m_controller_for_candidate_cell(
+        source=source,
+        trace=trace,
+        program=program,
+        freshness=freshness,
+        cell=cell,
+        cell_ordinal=0,
+        candidate=candidate,
+        terminal_registration_sha256=day1b_module._digest(
+            asdict(catalog.registration)
+        ),
+        candidate_catalog_sha256="e" * 64,
+        resource_policy_sha256="f" * 64,
+        lineage=day1b_module._test_only_f1m_execution_lineage(
+            source=source,
+            trace=trace,
+        ),
+        size_authority=size_authority,
+        resource_policy=resource_policy,
+        expected_complete_audit=audit,
+    )
+    if tamper == "trace-manifest":
+        summary = replace(
+            summary,
+            context=replace(summary.context, trace_manifest_sha256="0" * 64),
+        )
+    elif tamper == "candidate-catalog":
+        summary = replace(
+            summary,
+            context=replace(summary.context, candidate_catalog_sha256="0" * 64),
+        )
+    elif tamper == "resource-policy":
+        summary = replace(
+            summary,
+            context=replace(summary.context, resource_policy_sha256="0" * 64),
+        )
+    elif tamper == "object-cap":
+        summary = replace(
+            summary,
+            serialized_object_bytes_maximum=(
+                summary.serialized_object_bytes_maximum + 1
+            ),
+        )
+    else:
+        summary = replace(
+            summary,
+            serialized_payload_bytes_per_cell_maximum=(
+                summary.serialized_payload_bytes_per_cell_maximum + 1
+            ),
+        )
+
+    with pytest.raises(
+        worker_protocol.Day1BWorkerProtocolError,
+        match="do not bind one candidate cell",
+    ):
+        day1b_module._candidate_worker_contract_seed(
+            trace=trace,
+            program=program,
+            freshness=freshness,
+            candidate=candidate,
+            cell_binding_sha256=str(cell["cell_binding_sha256"]),
+            candidate_catalog_sha256="e" * 64,
+            resource_policy=resource_policy,
+            resource_policy_sha256="f" * 64,
+            size_authority=size_authority,
+            f1m_controller_summary=summary,
+        )
 
 
 def test_f1m_complete_audit_rejects_phase_name_position_substitution() -> None:
@@ -2889,6 +3015,8 @@ def test_unit_archive_treats_weighted_f1m_receipts_as_size_classes_not_bindings(
         terminal_registration_sha256=day1b_module._digest(
             asdict(catalog.registration)
         ),
+        candidate_catalog_sha256="e" * 64,
+        resource_policy_sha256="f" * 64,
         lineage=day1b_module._test_only_f1m_execution_lineage(
             source=source,
             trace=trace,

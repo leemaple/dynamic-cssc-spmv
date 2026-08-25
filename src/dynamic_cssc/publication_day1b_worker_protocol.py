@@ -30,7 +30,7 @@ from dynamic_cssc.publication_day1b_aggregate_bounds import (
 )
 
 DAY1B_WORKER_FRAME_SCHEMA = "dynamic-cssc-publication-day1b-worker-frame-v2"
-DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v5"
+DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v6"
 DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v5"
 DAY1B_WORKER_WINDOW_AUDIT_SCHEMA = "dynamic-cssc-publication-day1b-worker-window-audit-v1"
 DAY1B_WORKER_F1M_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-f1m-binding-receipt-v1"
@@ -1024,6 +1024,9 @@ class Day1BWorkerProtocolContract:
     primitive_names: tuple[str, ...]
     serialized_categories: tuple[tuple[str, str], ...]
     f1m_size_class_categories: tuple[str, ...]
+    f1m_controller_context_sha256: str
+    f1m_route_coverage_sha256: str
+    f1m_charged_size_class_set_sha256: str
     expected_f1m_size_class_set_sha256: str
     expected_f1m_size_class_count: int
     expected_serialized_equivalence_class_count: int
@@ -1040,6 +1043,9 @@ class Day1BWorkerProtocolContract:
             "day2_outer_archive_sha256",
             "serialized_object_size_profile_sha256",
             "invocation_id",
+            "f1m_controller_context_sha256",
+            "f1m_route_coverage_sha256",
+            "f1m_charged_size_class_set_sha256",
             "expected_f1m_size_class_set_sha256",
             "expected_f1m_cardinality_derivation_root_sha256",
         ):
@@ -1169,6 +1175,11 @@ class Day1BWorkerProtocolContract:
                 self.f1m_random_zero_sum_ciphertext_bytes
             ),
             "f1m_size_class_categories": list(self.f1m_size_class_categories),
+            "f1m_controller_context_sha256": self.f1m_controller_context_sha256,
+            "f1m_route_coverage_sha256": self.f1m_route_coverage_sha256,
+            "f1m_charged_size_class_set_sha256": (
+                self.f1m_charged_size_class_set_sha256
+            ),
             "phase_ranges": [phase.to_document() for phase in self.phase_ranges],
             "primitive_names": list(self.primitive_names),
             "query_vector_sha256": self.query_vector_sha256,
@@ -2986,6 +2997,10 @@ class _ObjectReceiptSpool:
                 "transaction": transaction,
             }
         )
+        if len(line) > DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM:
+            raise Day1BWorkerProtocolError(
+                "canonical serialized-object receipt exceeds frozen 2 KiB bound"
+            )
         if self.byte_count + len(line) > (
             self._limits.serialized_object_receipt_spool_bytes_maximum
         ):

@@ -216,14 +216,17 @@ def _context(
         day1_registration_anchor_sha256="7" * 64,
         trace_post_run_anchor_sha256="8" * 64,
         acquisition_bundle_sha256="9" * 64,
-        worker_build_identity_sha256="a" * 64,
-        worker_runtime_identity_sha256="b" * 64,
+        trace_manifest_sha256="a" * 64,
+        candidate_catalog_sha256="b" * 64,
+        resource_policy_sha256="c" * 64,
+        worker_build_identity_sha256="d" * 64,
+        worker_runtime_identity_sha256="e" * 64,
         dataset_id="stack-overflow",
         dataset_release="test-release",
         semantics="T2",
         source_partition=0,
-        unit_identity_sha256="c" * 64,
-        cell_binding_sha256="d" * 64,
+        unit_identity_sha256="f" * 64,
+        cell_binding_sha256="1" * 64,
         cell_ordinal=0,
         freshness="0.1",
         rho="1",
@@ -331,6 +334,28 @@ def test_cross_window_charging_keeps_route_coverage_but_materializes_four_classe
         "output_plan_digest",
         "window_index",
     } & set(summary.charged_size_classes[0].to_document())
+    assert summary.serialized_object_bytes_maximum == 10_000
+    assert summary.serialized_payload_bytes_per_cell_maximum == 1_000_000
+    assert summary.to_document()["serialized_object_bytes_maximum"] == 10_000
+    assert (
+        summary.to_document()["serialized_payload_bytes_per_cell_maximum"]
+        == 1_000_000
+    )
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "trace_manifest_sha256",
+        "candidate_catalog_sha256",
+        "resource_policy_sha256",
+    ),
+)
+def test_context_root_binds_trace_catalog_and_resource_policy(field: str) -> None:
+    original = _context(())
+    changed = replace(original, **{field: "f" * 64})
+
+    assert original.context_sha256 != changed.context_sha256
 
 
 def test_route_identity_tamper_changes_coverage_without_changing_charged_totals() -> None:
@@ -633,6 +658,16 @@ def test_size_and_per_cell_payload_caps_are_enforced_before_evidence() -> None:
             f1m_policy="overlap-only",
             size_authority=_authority(),
             serialized_object_bytes_maximum=1_099,
+            serialized_payload_bytes_per_cell_maximum=1_000_000,
+        )
+
+    with pytest.raises(Day1BF1MAggregationError, match="object-byte cap"):
+        Day1BF1MController(
+            accepted_group_count=100,
+            retained_phases=("held-out",),
+            f1m_policy="overlap-only",
+            size_authority=replace(_authority(), ciphertext_bytes=1_300),
+            serialized_object_bytes_maximum=1_250,
             serialized_payload_bytes_per_cell_maximum=1_000_000,
         )
 

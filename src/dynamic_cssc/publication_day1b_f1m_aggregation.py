@@ -31,13 +31,13 @@ DAY1B_F1M_CHARGED_SIZE_CLASS_SCHEMA: Final = (
     "dynamic-cssc-publication-day1b-f1m-charged-size-class-v2"
 )
 DAY1B_F1M_CONTROLLER_SUMMARY_SCHEMA: Final = (
-    "dynamic-cssc-publication-day1b-f1m-controller-summary-v2"
+    "dynamic-cssc-publication-day1b-f1m-controller-summary-v3"
 )
 DAY1B_F1M_ROUTE_COVERAGE_SCHEMA: Final = (
     "dynamic-cssc-publication-day1b-f1m-route-coverage-v2"
 )
 DAY1B_F1M_CONTROLLER_CONTEXT_SCHEMA: Final = (
-    "dynamic-cssc-publication-day1b-f1m-controller-context-v1"
+    "dynamic-cssc-publication-day1b-f1m-controller-context-v2"
 )
 DAY1B_F1M_ACCOUNTING_BASIS: Final = "anchored-size-cross-window-charge-v1"
 DAY1B_F1M_MAX_CHARGED_SIZE_CLASS_RECEIPTS_PER_CELL: Final = 4
@@ -346,6 +346,9 @@ class Day1BF1MControllerContext:
     day1_registration_anchor_sha256: str
     trace_post_run_anchor_sha256: str
     acquisition_bundle_sha256: str
+    trace_manifest_sha256: str
+    candidate_catalog_sha256: str
+    resource_policy_sha256: str
     worker_build_identity_sha256: str
     worker_runtime_identity_sha256: str
     dataset_id: str
@@ -391,6 +394,9 @@ class Day1BF1MControllerContext:
             "day1_registration_anchor_sha256",
             "trace_post_run_anchor_sha256",
             "acquisition_bundle_sha256",
+            "trace_manifest_sha256",
+            "candidate_catalog_sha256",
+            "resource_policy_sha256",
             "worker_build_identity_sha256",
             "worker_runtime_identity_sha256",
             "unit_identity_sha256",
@@ -506,6 +512,7 @@ class Day1BF1MControllerContext:
             "accounting_sha256": self.accounting_sha256,
             "acquisition_bundle_sha256": self.acquisition_bundle_sha256,
             "candidate_id": self.candidate_id,
+            "candidate_catalog_sha256": self.candidate_catalog_sha256,
             "candidate_policy_sha256": self.candidate_policy_sha256,
             "candidate_role": self.candidate_role,
             "cell_binding_sha256": self.cell_binding_sha256,
@@ -546,6 +553,7 @@ class Day1BF1MControllerContext:
             "query_window_count": self.query_window_count,
             "query_window_stream_sha256": self.query_window_stream_sha256,
             "retained_phases": list(self.retained_phases),
+            "resource_policy_sha256": self.resource_policy_sha256,
             "rho": self.rho,
             "schema_version": DAY1B_F1M_CONTROLLER_CONTEXT_SCHEMA,
             "semantics": self.semantics,
@@ -553,6 +561,7 @@ class Day1BF1MControllerContext:
             "terminal_registration_sha256": self.terminal_registration_sha256,
             "total_query_count": self.total_query_count,
             "trace_post_run_anchor_sha256": self.trace_post_run_anchor_sha256,
+            "trace_manifest_sha256": self.trace_manifest_sha256,
             "unit_identity_sha256": self.unit_identity_sha256,
             "worker_build_identity_sha256": self.worker_build_identity_sha256,
             "worker_runtime_identity_sha256": self.worker_runtime_identity_sha256,
@@ -635,6 +644,8 @@ class Day1BF1MControllerSummary:
     phase_random_route_counts: tuple[int, int, int]
     phase_dummy_route_counts: tuple[int, int, int]
     charged_size_classes: tuple[Day1BF1MChargedSizeClass, ...]
+    serialized_object_bytes_maximum: int
+    serialized_payload_bytes_per_cell_maximum: int
 
     def __post_init__(self) -> None:
         if type(self.context) is not Day1BF1MControllerContext:
@@ -653,6 +664,14 @@ class Day1BF1MControllerSummary:
             )
         _require_sha256(self.query_window_stream_sha256, "query-window stream SHA")
         _require_sha256(self.route_coverage_sha256, "F1-M route-coverage SHA")
+        _positive(
+            self.serialized_object_bytes_maximum,
+            "F1-M summary serialized-object byte maximum",
+        )
+        _positive(
+            self.serialized_payload_bytes_per_cell_maximum,
+            "F1-M summary serialized-payload byte maximum",
+        )
         if type(self.query_window_count) is not int or self.query_window_count < 0:
             raise Day1BF1MAggregationError("F1-M query-window count is not nonnegative")
         for field in (
@@ -740,6 +759,10 @@ class Day1BF1MControllerSummary:
             "retained_phases": list(self.retained_phases),
             "route_coverage_sha256": self.route_coverage_sha256,
             "schema_version": DAY1B_F1M_CONTROLLER_SUMMARY_SCHEMA,
+            "serialized_object_bytes_maximum": self.serialized_object_bytes_maximum,
+            "serialized_payload_bytes_per_cell_maximum": (
+                self.serialized_payload_bytes_per_cell_maximum
+            ),
             "size_authority": self.size_authority.to_document(),
         }
 
@@ -796,6 +819,7 @@ class Day1BF1MController:
             "F1-M serialized-payload byte maximum",
         )
         if max(
+            size_authority.ciphertext_bytes,
             size_authority.f1m_random_zero_sum_ciphertext_bytes,
             size_authority.f1m_encrypted_zero_dummy_ciphertext_bytes,
         ) > self._serialized_object_bytes_maximum:
@@ -1145,7 +1169,15 @@ class Day1BF1MController:
             phase_random_route_counts=tuple(self._random_counts),  # type: ignore[arg-type]
             phase_dummy_route_counts=tuple(self._dummy_counts),  # type: ignore[arg-type]
             charged_size_classes=tuple(charged),
+            serialized_object_bytes_maximum=(
+                self._serialized_object_bytes_maximum
+            ),
+            serialized_payload_bytes_per_cell_maximum=(
+                self._serialized_payload_bytes_per_cell_maximum
+            ),
         )
+        # This is the necessary F1-M logical charge bound only. The worker protocol
+        # separately enforces the total update + query + one-time payload-byte cap.
         if (
             summary.logical_charged_byte_count
             > self._serialized_payload_bytes_per_cell_maximum

@@ -206,6 +206,9 @@ def _contract(
             ("evaluation-keys", "one-time"),
         ),
         f1m_size_class_categories=DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES,
+        f1m_controller_context_sha256="a" * 64,
+        f1m_route_coverage_sha256="b" * 64,
+        f1m_charged_size_class_set_sha256="c" * 64,
         expected_f1m_size_class_set_sha256=(
             canonical_day1b_expected_f1m_size_class_set_sha256(selected_expected)
         ),
@@ -2394,6 +2397,62 @@ def test_byte_caps_are_not_inferred_from_expected_route_count() -> None:
     )
     invocation = _issue_invocation(contract)
     abandon_day1b_worker_invocation(invocation)
+    _assert_no_live_controlled_scratch()
+
+
+def test_worker_input_binding_commits_to_aggregate_f1m_summary_roots() -> None:
+    contract = _contract()
+    document = contract.input_binding_document()
+
+    assert document["schema_version"].endswith("-v6")
+    assert document["f1m_controller_context_sha256"] == "a" * 64
+    assert document["f1m_route_coverage_sha256"] == "b" * 64
+    assert document["f1m_charged_size_class_set_sha256"] == "c" * 64
+    for field in (
+        "f1m_controller_context_sha256",
+        "f1m_route_coverage_sha256",
+        "f1m_charged_size_class_set_sha256",
+    ):
+        assert replace(contract, **{field: "f" * 64}).input_binding_sha256 != (
+            contract.input_binding_sha256
+        )
+
+
+def test_every_retained_receipt_line_uses_the_inclusive_aggregate_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = _contract()
+    evidence = claim_day1b_worker_evidence(
+        _consume((_complete_transcript(contract),), contract=contract)
+    )
+    destination = io.BytesIO()
+    evidence.copy_object_receipts_to(destination)
+    evidence.close()
+    lines = destination.getvalue().splitlines(keepends=True)
+    documents = tuple(json.loads(line) for line in lines)
+
+    assert lines
+    assert all(
+        len(line)
+        <= worker_protocol.DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM
+        for line in lines
+    )
+    assert {document["category"] for document in documents} >= {
+        "update-ciphertexts",
+        "query-f1m-random-mask-ciphertexts",
+    }
+    first_ordinary_line = next(
+        line
+        for line, document in zip(lines, documents, strict=True)
+        if document["category"] == "update-ciphertexts"
+    )
+    monkeypatch.setattr(
+        worker_protocol,
+        "DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM",
+        len(first_ordinary_line) - 1,
+    )
+    with pytest.raises(Day1BWorkerProtocolError, match="receipt exceeds.*bound"):
+        _consume((_complete_transcript(contract),), contract=contract)
     _assert_no_live_controlled_scratch()
 
 

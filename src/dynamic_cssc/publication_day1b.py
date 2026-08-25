@@ -3460,8 +3460,11 @@ class _Day1BWorkerContractSeed:
         )
         if (
             self.invocation_id != expected_invocation_id
+            or context.trace_manifest_sha256 != self.trace_manifest_sha256
             or context.event_schedule_sha256 != self.event_schedule_sha256
             or context.query_vector_sha256 != self.query_vector_sha256
+            or context.candidate_catalog_sha256 != self.candidate_catalog_sha256
+            or context.resource_policy_sha256 != self.resource_policy_sha256
             or context.freshness != self.freshness
             or context.rho != self.rho
             or context.candidate_id != self.candidate.candidate_id
@@ -3477,6 +3480,10 @@ class _Day1BWorkerContractSeed:
             != self.f1m_random_zero_sum_ciphertext_bytes
             or authority.f1m_encrypted_zero_dummy_ciphertext_bytes
             != self.f1m_encrypted_zero_dummy_ciphertext_bytes
+            or summary.serialized_object_bytes_maximum
+            != self.resource_limits.serialized_object_bytes_maximum
+            or summary.serialized_payload_bytes_per_cell_maximum
+            != self.resource_limits.serialized_payload_bytes_per_cell_maximum
         ):
             raise Day1BWorkerProtocolError(
                 "worker seed and F1-M controller summary do not bind one candidate cell"
@@ -3516,6 +3523,15 @@ class _Day1BWorkerContractSeed:
             primitive_names=PRIMITIVE_NAMES,
             serialized_categories=SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
             f1m_size_class_categories=DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES,
+            f1m_controller_context_sha256=(
+                self.f1m_controller_summary.context.context_sha256
+            ),
+            f1m_route_coverage_sha256=(
+                self.f1m_controller_summary.route_coverage_sha256
+            ),
+            f1m_charged_size_class_set_sha256=(
+                self.f1m_controller_summary.charged_size_class_set_sha256
+            ),
             expected_f1m_size_class_set_sha256=expected_f1m_size_class_set_sha256,
             expected_f1m_size_class_count=expected_f1m_size_class_count,
             expected_serialized_equivalence_class_count=(
@@ -3719,6 +3735,8 @@ def _f1m_controller_context(
     cell_ordinal: int,
     candidate_spec: Day1BWorkerCandidateSpec,
     terminal_registration_sha256: str,
+    candidate_catalog_sha256: str,
+    resource_policy_sha256: str,
     lineage: _Day1BF1MExecutionLineage,
     accounting: PublicationDay1BAccounting,
     complete_schedule_audit: Day1BF1MCompleteScheduleAudit,
@@ -3734,6 +3752,8 @@ def _f1m_controller_context(
     if accounting.candidate_policy_sha256 != candidate_spec.candidate_policy_digest:
         raise Day1BWorkerProtocolError("F1-M accounting changed the candidate policy")
     _require_sha256(terminal_registration_sha256, "terminal registration SHA")
+    _require_sha256(candidate_catalog_sha256, "Day1B candidate catalog SHA")
+    _require_sha256(resource_policy_sha256, "Day1B resource policy SHA")
     behavior_schema = source.behavior_inventory.get("behavior_set_schema_version")
     behavior_sha256 = source.behavior_inventory.get("behavior_set_sha256")
     if type(behavior_schema) is not str or not behavior_schema:
@@ -3779,6 +3799,9 @@ def _f1m_controller_context(
         day1_registration_anchor_sha256=(lineage.day1_registration_anchor_sha256),
         trace_post_run_anchor_sha256=lineage.trace_post_run_anchor_sha256,
         acquisition_bundle_sha256=trace.source_bundle_sha256,
+        trace_manifest_sha256=trace.trace_manifest_sha256,
+        candidate_catalog_sha256=candidate_catalog_sha256,
+        resource_policy_sha256=resource_policy_sha256,
         worker_build_identity_sha256=lineage.worker_build_identity_sha256,
         worker_runtime_identity_sha256=lineage.worker_runtime_identity_sha256,
         dataset_id=trace.dataset_id,
@@ -3825,6 +3848,8 @@ def _replay_f1m_controller_for_candidate_cell(
     cell_ordinal: int,
     candidate: RegisteredCandidate,
     terminal_registration_sha256: str,
+    candidate_catalog_sha256: str,
+    resource_policy_sha256: str,
     lineage: _Day1BF1MExecutionLineage,
     size_authority: _Day1BSerializedObjectSizeAuthority,
     resource_policy: PublicationDay1BResourcePolicy,
@@ -3872,6 +3897,8 @@ def _replay_f1m_controller_for_candidate_cell(
         cell_ordinal=cell_ordinal,
         candidate_spec=candidate_spec,
         terminal_registration_sha256=terminal_registration_sha256,
+        candidate_catalog_sha256=candidate_catalog_sha256,
+        resource_policy_sha256=resource_policy_sha256,
         lineage=lineage,
         accounting=accounting,
         complete_schedule_audit=complete_schedule_audit,
@@ -4001,6 +4028,8 @@ def _produce_publication_day1b_unit(
                             terminal_registration_sha256=(
                                 terminal_registration_sha256
                             ),
+                            candidate_catalog_sha256=candidate_catalog_sha256,
+                            resource_policy_sha256=resource_policy_sha256,
                             lineage=f1m_execution_lineage,
                             size_authority=size_authority,
                             resource_policy=resource_policy,
