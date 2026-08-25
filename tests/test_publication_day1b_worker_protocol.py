@@ -19,6 +19,10 @@ from typing import BinaryIO
 import pytest
 
 import dynamic_cssc.publication_day1b_worker_protocol as worker_protocol
+from dynamic_cssc.publication_day1b_expected_counts import (
+    Day1BControllerExpectedCounts,
+    Day1BControllerExpectedPhaseCounts,
+)
 from dynamic_cssc.publication_day1b_f1m_aggregation import (
     Day1BF1MCompletePhaseAudit,
     Day1BF1MCompleteScheduleAudit,
@@ -287,6 +291,44 @@ def _contract(
         phase_random_route_counts=phase_random_route_counts,
         serialized_object_size_profile_sha256="8" * 64,
     )
+    serialized_categories = (
+        ("update-ciphertexts", "update"),
+        ("query-ciphertexts", "query"),
+        ("query-f1m-random-mask-ciphertexts", "query"),
+        ("query-f1m-encrypted-zero-dummy-ciphertexts", "query"),
+        ("evaluation-keys", "one-time"),
+    )
+    retain_non_f1m_fixture_counts = (
+        expected_f1m_objects is None
+        or selected_all_serialized_count > len(selected_expected)
+    )
+    expected_phases: list[Day1BControllerExpectedPhaseCounts] = []
+    for retained_index, phase in enumerate(selected_candidate.retained_phases):
+        phase_index = phase_names.index(phase)
+        logical = (
+            2 if retain_non_f1m_fixture_counts else 0,
+            0,
+            phase_random_route_counts[phase_index],
+            phase_dummy_route_counts[phase_index],
+            int(retain_non_f1m_fixture_counts and retained_index == 0),
+        )
+        expected_phases.append(
+            Day1BControllerExpectedPhaseCounts(
+                phase=phase,
+                update_primitive_counts=(3, 4),
+                query_primitive_counts=(5, 6),
+                logical_protocol_object_counts=logical,
+                worker_streamed_protocol_object_counts=logical,
+            )
+        )
+    controller_expected_counts = Day1BControllerExpectedCounts(
+        candidate_id=selected_candidate.candidate_id,
+        candidate_policy_sha256=selected_candidate.candidate_policy_digest,
+        accounting_sha256=context.accounting_sha256,
+        primitive_names=("encrypt", "serialize_ciphertext"),
+        serialized_categories=serialized_categories,
+        phases=tuple(expected_phases),
+    )
     return Day1BWorkerProtocolContract(
         invocation_id="6" * 64,
         trace_manifest_sha256="1" * 64,
@@ -309,19 +351,17 @@ def _contract(
             Day1BWorkerPhaseRange("heldout", 40, 100),
         ),
         primitive_names=("encrypt", "serialize_ciphertext"),
-        serialized_categories=(
-            ("update-ciphertexts", "update"),
-            ("query-ciphertexts", "query"),
-            ("query-f1m-random-mask-ciphertexts", "query"),
-            ("query-f1m-encrypted-zero-dummy-ciphertexts", "query"),
-            ("evaluation-keys", "one-time"),
-        ),
+        serialized_categories=serialized_categories,
         f1m_size_class_categories=DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES,
         f1m_controller_context=context,
         f1m_controller_context_sha256=context.context_sha256,
         f1m_route_coverage=route_coverage,
         f1m_route_coverage_sha256=route_coverage.route_coverage_sha256,
         f1m_charged_size_class_set_sha256="c" * 64,
+        controller_expected_counts=controller_expected_counts,
+        controller_expected_counts_sha256=(
+            controller_expected_counts.expected_counts_sha256
+        ),
         expected_f1m_size_class_set_sha256=(
             canonical_day1b_expected_f1m_size_class_set_sha256(selected_expected)
         ),
@@ -778,6 +818,7 @@ def _outcome_transcript(
     contract: Day1BWorkerProtocolContract,
     *,
     outcomes: tuple[tuple[str, str | None], ...],
+    omit_f1m_from_complete_phases: bool = False,
 ) -> bytes:
     assert len(outcomes) == 3
     candidate = contract.candidate
@@ -791,6 +832,7 @@ def _outcome_transcript(
         ),
     ]
     sequence = 2
+    expected_f1m = _expected_f1m_objects(candidate.candidate_id)
     for audit, phase, (outcome, failure_code) in zip(
         _phase_audits(),
         ("warmup", "tuning-prefix", "held-out"),
@@ -799,6 +841,67 @@ def _outcome_transcript(
     ):
         retained = phase in candidate.retained_phases
         complete = outcome == "complete"
+        expected_phase = (
+            contract.controller_expected_counts.phase_counts(phase)
+            if retained
+            else None
+        )
+        equivalence_class_counts: list[int] | None = None
+        if retained and complete:
+            assert expected_phase is not None
+            equivalence_class_counts = []
+            for category_index, (category, _transaction) in enumerate(
+                contract.serialized_categories
+            ):
+                multiplicity = (
+                    expected_phase.worker_streamed_protocol_object_counts[
+                        category_index
+                    ]
+                )
+                if (
+                    omit_f1m_from_complete_phases
+                    and category in contract.f1m_size_class_categories
+                ):
+                    equivalence_class_counts.append(0)
+                    continue
+                if multiplicity == 0:
+                    equivalence_class_counts.append(0)
+                    continue
+                if category in contract.f1m_size_class_categories:
+                    matching = tuple(
+                        item
+                        for item in expected_f1m
+                        if item.phase == phase and item.category == category
+                    )
+                    assert sum(item.multiplicity for item in matching) == multiplicity
+                else:
+                    matching = (None,)
+                equivalence_class_counts.append(len(matching))
+                for ordinal, expected_object in enumerate(matching):
+                    frames.append(
+                        _frame(
+                            sequence,
+                            "serialized-object",
+                            candidate_id=candidate.candidate_id,
+                            phase=phase,
+                            category=category,
+                            object_ordinal=ordinal,
+                            multiplicity=(
+                                multiplicity
+                                if expected_object is None
+                                else expected_object.multiplicity
+                            ),
+                            f1m_size_class=(
+                                None
+                                if expected_object is None
+                                else expected_object.f1m_size_class.to_document()
+                            ),
+                            payload=(
+                                f"{candidate.candidate_id}:{phase}:{category}:{ordinal}"
+                            ).encode(),
+                        )
+                    )
+                    sequence += 1
         frames.append(
             _frame(
                 sequence,
@@ -808,11 +911,17 @@ def _outcome_transcript(
                 outcome=outcome,
                 failure_code=failure_code,
                 retained_measurement=retained,
-                update_primitive_counts=[0, 0] if retained and complete else None,
-                query_primitive_counts=[1, 0] if retained and complete else None,
-                serialized_category_object_counts=(
-                    [0, 0, 0, 0, 0] if retained and complete else None
+                update_primitive_counts=(
+                    list(expected_phase.update_primitive_counts)
+                    if retained and complete and expected_phase is not None
+                    else None
                 ),
+                query_primitive_counts=(
+                    list(expected_phase.query_primitive_counts)
+                    if retained and complete and expected_phase is not None
+                    else None
+                ),
+                serialized_category_object_counts=equivalence_class_counts,
                 phase_audit=audit.to_document(),
             )
         )
@@ -2155,13 +2264,13 @@ def test_all_serialized_count_is_exact_bound_and_not_a_boolean() -> None:
     with pytest.raises(Day1BWorkerProtocolError, match="integer"):
         replace(base, expected_serialized_equivalence_class_count=True)
 
-    changed = replace(
-        base,
-        expected_serialized_equivalence_class_count=(
-            base.expected_serialized_equivalence_class_count + 1
-        ),
-    )
-    assert changed.input_binding_sha256 != base.input_binding_sha256
+    with pytest.raises(Day1BWorkerProtocolError, match="controller count preimage"):
+        replace(
+            base,
+            expected_serialized_equivalence_class_count=(
+                base.expected_serialized_equivalence_class_count + 1
+            ),
+        )
 
 
 def test_contract_rejects_full_query_replay_as_the_day1b_execution_basis() -> None:
@@ -2175,18 +2284,13 @@ def test_contract_rejects_full_query_replay_as_the_day1b_execution_basis() -> No
 
 def test_successful_transcript_must_match_all_serialized_count_exactly() -> None:
     base = _contract()
-    contract = replace(
-        base,
-        expected_serialized_equivalence_class_count=(
-            base.expected_serialized_equivalence_class_count + 1
-        ),
-    )
-
-    with pytest.raises(
-        Day1BWorkerProtocolError,
-        match="all serialized equivalence class count",
-    ):
-        _consume((_complete_transcript(contract),), contract=contract)
+    with pytest.raises(Day1BWorkerProtocolError, match="controller count preimage"):
+        replace(
+            base,
+            expected_serialized_equivalence_class_count=(
+                base.expected_serialized_equivalence_class_count + 1
+            ),
+        )
     _assert_no_live_controlled_scratch()
 
 
@@ -2259,7 +2363,7 @@ def test_receipt_preserves_weighted_window_batch_and_range_facts() -> None:
         descriptor.controller_registered_scratch_bytes_checkpoint_maximum
     )
     assert DAY1B_WORKER_RECEIPT_SCHEMA == (
-        "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v8"
+        "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v9"
     )
     assert DAY1B_WORKER_RECEIPT_SCHEMA != DAY1B_WORKER_INPUT_BINDING_SCHEMA
     assert (
@@ -2535,8 +2639,14 @@ def test_worker_input_binding_commits_to_aggregate_f1m_summary_roots() -> None:
     contract = _contract()
     document = contract.input_binding_document()
 
-    assert document["schema_version"].endswith("-v7")
+    assert document["schema_version"].endswith("-v8")
     assert Day1BWorkerProtocolContract.from_input_binding_document(document) == contract
+    assert document["controller_expected_counts_document"] == (
+        contract.controller_expected_counts.to_document()
+    )
+    assert document["controller_expected_counts_sha256"] == (
+        contract.controller_expected_counts.expected_counts_sha256
+    )
     assert document["f1m_controller_context_document"] == (
         contract.f1m_controller_context.to_document()
     )
@@ -3101,7 +3211,7 @@ def test_query_primitive_vector_must_match_controller_realized_query_presence() 
         predicate=lambda header: header["phase"] == "tuning-prefix",
     )
 
-    with pytest.raises(Day1BWorkerProtocolError, match="primitive vector.*realized query"):
+    with pytest.raises(Day1BWorkerProtocolError, match="primitive vectors.*controller replay"):
         _consume((no_query_primitives,), contract=contract)
     _assert_no_live_controlled_scratch()
 
@@ -3284,6 +3394,27 @@ def test_f1m_worker_size_class_must_match_controller_expected_descriptor() -> No
         _consume((spliced,), contract=contract)
 
 
+def test_same_equivalence_class_count_cannot_hide_a_multiplicity_tamper() -> None:
+    contract = _contract()
+    transcript = _complete_transcript(contract)
+    spliced = _rewrite_first_frame(
+        transcript,
+        "serialized-object",
+        lambda header, payload: ({**header, "multiplicity": 1}, payload),
+        predicate=lambda header: (
+            header["candidate_id"] == "reference-a"
+            and header["phase"] == "tuning-prefix"
+            and header["category"] == "update-ciphertexts"
+        ),
+    )
+
+    with pytest.raises(
+        Day1BWorkerProtocolError,
+        match="protocol-object multiplicities",
+    ):
+        _consume((spliced,), contract=contract)
+
+
 def test_f1m_controller_expected_route_set_rejects_worker_omission_and_extra() -> None:
     base_expected = _expected_f1m_objects("reference-a")
     missing_from_controller = base_expected[1:]
@@ -3307,7 +3438,10 @@ def test_f1m_controller_expected_route_set_rejects_worker_omission_and_extra() -
     omitted_contract = _contract(expected_f1m_objects=expected_with_unobserved)
     with pytest.raises(
         Day1BWorkerProtocolError,
-        match="missing.*F1-M|expected.*unobserved|query range fields|cardinality",
+        match=(
+            "missing.*F1-M|expected.*unobserved|query range fields|cardinality|"
+            "protocol-object multiplicities"
+        ),
     ):
         _consume(
             (_complete_transcript(omitted_contract),),
@@ -3395,9 +3529,13 @@ def test_late_phase_failure_cannot_hide_missing_routes_from_earlier_complete_pha
             ("complete", None),
             ("failed", "candidate-execution-failed"),
         ),
+        omit_f1m_from_complete_phases=True,
     )
 
-    with pytest.raises(Day1BWorkerProtocolError, match="complete phase.*F1-M|F1-M.*unobserved"):
+    with pytest.raises(
+        Day1BWorkerProtocolError,
+        match="complete phase.*F1-M|F1-M.*unobserved|protocol-object multiplicities",
+    ):
         _consume((transcript,), contract=contract)
 
 
@@ -3431,7 +3569,10 @@ def test_both_f1m_ciphertext_categories_require_size_class_descriptors() -> None
         for item in base.serialized_categories
         if item[0] != "query-f1m-random-mask-ciphertexts"
     )
-    with pytest.raises(Day1BWorkerProtocolError, match="required.*F1-M.*category"):
+    with pytest.raises(
+        Day1BWorkerProtocolError,
+        match="required.*F1-M.*category|retained preimages",
+    ):
         replace(
             base,
             serialized_categories=without_random_mask,
@@ -3445,26 +3586,16 @@ def test_positive_query_can_have_zero_f1m_routes_when_output_plan_has_no_shares(
         contract,
         outcomes=(("complete", None), ("complete", None), ("complete", None)),
     )
-    nonzero_query = _rewrite_first_frame(
-        transcript,
-        "phase-result",
-        lambda header, payload: (
-            {**header, "query_primitive_counts": [1, 0]},
-            payload,
-        ),
-        predicate=lambda header: header["phase"] == "tuning-prefix",
-    )
-
     evidence = claim_day1b_worker_evidence(
         _consume(
-            (nonzero_query,),
+            (transcript,),
             contract=contract,
             expected_f1m_objects=(),
         )
     )
     tuning = evidence.receipt.candidate.phases[1]
     assert tuning.outcome == "complete"
-    assert tuning.query_primitive_counts == (1, 0)
+    assert tuning.query_primitive_counts == (5, 6)
     assert evidence.receipt.controller_expected_f1m_size_class_count == 0
     evidence.close()
 
@@ -3493,6 +3624,11 @@ def test_positive_query_accepts_exact_expected_size_classes_of_only_one_f1m_kind
         strict=True,
     ):
         retained = phase in candidate.retained_phases
+        expected_phase = (
+            contract.controller_expected_counts.phase_counts(phase)
+            if retained
+            else None
+        )
         if phase == "held-out":
             frames.append(
                 _frame(
@@ -3522,9 +3658,15 @@ def test_positive_query_accepts_exact_expected_size_classes_of_only_one_f1m_kind
                 outcome="complete",
                 failure_code=None,
                 retained_measurement=retained,
-                update_primitive_counts=[0, 0] if retained else None,
+                update_primitive_counts=(
+                    list(expected_phase.update_primitive_counts)
+                    if expected_phase is not None
+                    else None
+                ),
                 query_primitive_counts=(
-                    [1, 0] if phase == "held-out" else ([1, 0] if retained else None)
+                    list(expected_phase.query_primitive_counts)
+                    if expected_phase is not None
+                    else None
                 ),
                 serialized_category_object_counts=(
                     [0, 0, 1, 0, 0]
@@ -3808,8 +3950,17 @@ def test_large_object_cardinality_spools_metadata_instead_of_growing_receipt() -
             candidate_role="reference",
         )
         sequence += 1
-        for audit, phase in zip(audits, ("warmup", "tuning-prefix", "held-out"), strict=True):
+        for audit, phase in zip(
+            audits,
+            ("warmup", "tuning-prefix", "held-out"),
+            strict=True,
+        ):
             retained = phase != "warmup"
+            expected_phase = (
+                contract.controller_expected_counts.phase_counts(phase)
+                if retained
+                else None
+            )
             if phase == "held-out":
                 for ordinal in range(object_count):
                     yield _frame(
@@ -3837,9 +3988,15 @@ def test_large_object_cardinality_spools_metadata_instead_of_growing_receipt() -
                 outcome="complete",
                 failure_code=None,
                 retained_measurement=retained,
-                update_primitive_counts=[0, 0] if retained else None,
+                update_primitive_counts=(
+                    list(expected_phase.update_primitive_counts)
+                    if expected_phase is not None
+                    else None
+                ),
                 query_primitive_counts=(
-                    [1, 0] if phase == "held-out" else ([1, 0] if retained else None)
+                    list(expected_phase.query_primitive_counts)
+                    if expected_phase is not None
+                    else None
                 ),
                 serialized_category_object_counts=(
                     [0, 0, object_count, 0, 0]

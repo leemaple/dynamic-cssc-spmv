@@ -84,13 +84,36 @@ profile anchor sets are all empty, and no admissible Day 1B artifact carries the
 omission. Tests freeze that precondition before the first anchor installation.
 
 The worker receipt gains an open, exact-key input-binding document, so its shape
-change propagates through the enclosing exact-key unit contract. Production and
-private-fixture Day 1B unit schemas therefore advance from v1 to v2 together.
-The heldout fragment schemas stay at v1 because their shape and already-declared
-record semantics do not change. The serialization ledger is independently
-self-describing and advances from v1 to v2 for its new dual-source fields.
+change propagates through the enclosing exact-key unit contract. The initial
+dual-source change advanced the production and private-fixture Day 1B unit
+schemas from v1 to v2 and the independently self-describing serialization
+ledger from v1 to v2. The subsequent controller-count closure advances both
+unit schemas to v3 and the ledger to v3. The heldout fragment schemas stay at
+v1 because their shape and already-declared record semantics do not change.
 
-The v2 unit manifest is also the unit-level authority for the Day 2 size tuple.
+The v3 input carries a controller-owned expected-count preimage for every
+retained phase. That preimage opens the frozen primitive names and serialized
+category taxonomy, exact update/query primitive vectors, logical protocol-object
+multiplicities, and the multiplicities that the worker must physically stream.
+For every non-F1-M category the logical and worker multiplicities are identical.
+For the two F1-M ciphertext categories, the logical multiplicities must equal
+the independently opened controller route totals while the formal weighted
+worker multiplicities are exactly zero. The one-time key inventory is either
+absent or occurs exactly once in the first retained phase. Counting serialized
+equivalence classes therefore cannot conceal a lower logical multiplicity.
+
+The controller accounting and phase documents advance to v2. Each phase now
+opens the primitive inputs needed by the nine serialized categories, including
+metadata units, update/query/result ciphertexts, both F1-M route kinds, and a
+realized version-publication count. A version publication is charged exactly
+once for an update-bearing window and never for a no-update window. The expected
+count document binds the accounting digest, candidate policy, phase set, and
+category order. The worker must match its primitive vectors and accumulated
+protocol-object multiplicities to that pre-dispatch document; the unit verifier
+also binds the opened primitive vectors to the physical record and every ledger
+row to the same logical/worker count pair.
+
+The v3 unit manifest is also the unit-level authority for the Day 2 size tuple.
 It opens the Day 1B source Git identity, Day 2 experiment source identity, outer
 archive and serialized-size-profile digests, the ordinary ciphertext byte size,
 the two category-specific F1-M ciphertext byte sizes, and the rotation/evaluation
@@ -126,8 +149,10 @@ hash alone. Charge classes are nevertheless recomputed from the opened phase
 counts and unit Day 2 size authority for every receipt, including terminal
 receipts.
 
-Opening those preimages advances the F1-M controller summary to v4, route
-coverage to v2, worker input binding to v7, and enclosing worker receipt to v8.
+Opening the controller and route preimages advanced the F1-M controller summary
+to v4 and route coverage to v2. Adding the controller expected-count document
+advances the worker input binding to v8 and the enclosing worker receipt to v9;
+the expected-count and expected-phase-count documents begin at v1.
 The retained unit, ledger, controller summary, context, route, worker-input, and
 worker-receipt schema identifiers are pairwise distinct so an exact-key parser
 cannot silently accept one document family as another.

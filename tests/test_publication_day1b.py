@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import bz2
 import hashlib
-import io
 import json
 import os
 import shutil
@@ -20,6 +19,8 @@ import pytest
 
 import dynamic_cssc.day1_registry as registry_module
 import dynamic_cssc.publication_day1b as day1b_module
+import dynamic_cssc.publication_day1b_accounting as day1b_accounting
+import dynamic_cssc.publication_day1b_expected_counts as expected_counts_module
 import dynamic_cssc.publication_day1b_f1m_aggregation as f1m_aggregation
 import dynamic_cssc.publication_day1b_worker_protocol as worker_protocol
 import dynamic_cssc.publication_statistics as statistics_module
@@ -42,7 +43,6 @@ from dynamic_cssc.publication_day1b import (
     _Day1BWorkerLaunch,
     _produce_publication_day1b_unit_for_test,
     _PublicationScheduleAdapter,
-    _UnitObjectReceiptArchive,
     produce_publication_day1b_unit,
 )
 from dynamic_cssc.publication_day1b_f1m_aggregation import (
@@ -65,7 +65,6 @@ from dynamic_cssc.publication_day1b_worker_protocol import (
     canonical_day1b_expected_f1m_size_class_subroot_sha256,
     canonical_day1b_f1m_cardinality_derivation_root_sha256,
     canonical_day1b_worker_window_audit_bytes,
-    claim_day1b_worker_evidence,
     consume_day1b_worker_frames,
 )
 from dynamic_cssc.publication_schedule import (
@@ -498,7 +497,7 @@ def _trace() -> _Day1BTraceInput:
 
 def _source() -> _Day1BPreparatorySourceAttestation:
     inventory = {
-        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v11",
+        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v12",
         "behavior_set_sha256": "c" * 64,
         "entries": [],
         "role": "day1b",
@@ -647,9 +646,17 @@ def _worker_transcript(
     ):
         retained = phase in candidate.retained_phases
         phase_failed = phase == failed_phase
+        expected_phase = (
+            contract.controller_expected_counts.phase_counts(phase)
+            if retained
+            else None
+        )
         if retained and not phase_failed:
+            assert expected_phase is not None
             category_counts: list[int] = []
-            for category, transaction in contract.serialized_categories:
+            for category_index, (category, transaction) in enumerate(
+                contract.serialized_categories
+            ):
                 f1m_routes = tuple(
                     route
                     for route in expected_f1m_objects
@@ -673,9 +680,13 @@ def _worker_transcript(
                             payload=f"test-only:{identity}".encode("ascii"),
                         )
                     continue
-                report = not (
-                    transaction == "one-time"
-                    and (phase != candidate.retained_phases[0] or omit_first_one_time)
+                multiplicity = (
+                    expected_phase.worker_streamed_protocol_object_counts[
+                        category_index
+                    ]
+                )
+                report = multiplicity > 0 and not (
+                    transaction == "one-time" and omit_first_one_time
                 )
                 category_counts.append(int(report))
                 if not report:
@@ -690,12 +701,10 @@ def _worker_transcript(
                     phase=phase,
                     category=category,
                     object_ordinal=0,
-                    multiplicity=(1 if transaction == "one-time" else 2),
+                    multiplicity=multiplicity,
                     f1m_size_class=None,
                     payload=payload,
                 )
-        candidate_index = FIXED_CANDIDATE_IDS.index(candidate.candidate_id)
-        seed = candidate_index + (1 if phase == "tuning-prefix" else 101)
         emit(
             "phase-result",
             candidate_id=candidate.candidate_id,
@@ -704,13 +713,13 @@ def _worker_transcript(
             failure_code=("candidate-execution-failed" if phase_failed else None),
             retained_measurement=retained,
             update_primitive_counts=(
-                [seed + index for index in range(len(PRIMITIVE_NAMES))]
-                if retained and not phase_failed
+                list(expected_phase.update_primitive_counts)
+                if expected_phase is not None and not phase_failed
                 else None
             ),
             query_primitive_counts=(
-                [seed + 100 + index for index in range(len(PRIMITIVE_NAMES))]
-                if retained and not phase_failed
+                list(expected_phase.query_primitive_counts)
+                if expected_phase is not None and not phase_failed
                 else None
             ),
             serialized_category_object_counts=(
@@ -872,11 +881,19 @@ class _StreamingExecutor:
             window_batches=window_batches,
             expected_size_classes=expected_f1m_objects,
         )
-        expected_serialized_count = (
-            13 if contract_seed.candidate.candidate_role == "reference" else 7
+        f1m_categories = set(
+            worker_protocol.DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
         )
-        if self.omit_first_one_time:
-            expected_serialized_count -= 1
+        expected_serialized_count = sum(
+            int(count > 0)
+            for phase in contract_seed.controller_expected_counts.phases
+            for (category, _transaction), count in zip(
+                contract_seed.controller_expected_counts.serialized_categories,
+                phase.worker_streamed_protocol_object_counts,
+                strict=True,
+            )
+            if category not in f1m_categories
+        )
         contract = contract_seed.bind(
             expected_f1m_size_class_set_sha256=expected_binding_sha256,
             expected_f1m_size_class_count=len(expected_f1m_objects),
@@ -1028,7 +1045,7 @@ def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v11"),
+            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v12"),
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -1132,7 +1149,7 @@ def test_public_producer_checks_profile_before_catalog_trace_or_worker(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v11",
+            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v12",
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -1492,7 +1509,7 @@ def test_day1b_schema_names_are_unambiguous_across_exact_key_contracts() -> None
         if name.endswith("_SCHEMA") and type(value) is str
     }
 
-    assert DAY1B_UNIT_SCHEMA == "dynamic-cssc-publication-day1b-unit-v2"
+    assert DAY1B_UNIT_SCHEMA == "dynamic-cssc-publication-day1b-unit-v3"
     assert DAY1B_UNIT_FRAGMENT_SCHEMA == ("dynamic-cssc-publication-day1b-unit-fragment-v1")
     assert len(set(schemas.values())) == len(schemas)
     retained_document_families = (
@@ -1503,6 +1520,10 @@ def test_day1b_schema_names_are_unambiguous_across_exact_key_contracts() -> None
         f1m_aggregation.DAY1B_F1M_ROUTE_COVERAGE_SCHEMA,
         worker_protocol.DAY1B_WORKER_INPUT_BINDING_SCHEMA,
         worker_protocol.DAY1B_WORKER_RECEIPT_SCHEMA,
+        day1b_accounting.DAY1B_ACCOUNTING_SCHEMA,
+        day1b_accounting.DAY1B_PHASE_ACCOUNTING_SCHEMA,
+        expected_counts_module.DAY1B_CONTROLLER_EXPECTED_COUNTS_SCHEMA,
+        expected_counts_module.DAY1B_CONTROLLER_EXPECTED_PHASE_COUNTS_SCHEMA,
     )
     assert len(set(retained_document_families)) == len(retained_document_families)
 
@@ -1522,7 +1543,7 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
     records = fragment["records"]
 
     assert manifest["schema_version"] == (
-        "dynamic-cssc-publication-day1b-unit-private-test-fixture-v2"
+        "dynamic-cssc-publication-day1b-unit-private-test-fixture-v3"
     )
     assert manifest["artifact_variant"] == {
         "claims_authorized": False,
@@ -1665,10 +1686,28 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
     for record, ledger in zip(records, decoded_ledgers, strict=True):
         cell_index = cell_index_by_binding[record["cell_binding_sha256"]]
         summary = summary_by_candidate_cell[(cell_index, record["candidate_id"])]
+        candidate_index = FIXED_CANDIDATE_IDS.index(record["candidate_id"])
+        worker_receipt = manifest["cell_execution_receipts"][cell_index][
+            "candidate_cell_receipts"
+        ][candidate_index]
+        expected_document = worker_receipt["input_binding_document"][
+            "controller_expected_counts_document"
+        ]
+        expected_phase = next(
+            phase
+            for phase in expected_document["phases"]
+            if phase["phase"] == record["phase"]
+        )
+        expected_category_index = {
+            category[0]: index
+            for index, category in enumerate(expected_document["serialized_categories"])
+        }
         expected_classes = {
             (item.phase, item.category): item.to_document() for item in summary.charged_size_classes
         }
         assert ledger["schema_version"] == day1b_module.DAY1B_SERIALIZATION_LEDGER_SCHEMA
+        assert ledger["controller_accounting_sha256"] == expected_document["accounting_sha256"]
+        assert ledger["controller_expected_counts_sha256"] == _sha(expected_document)
         assert ledger["f1m_controller_context_sha256"] == (summary.context.context_sha256)
         assert ledger["f1m_route_coverage_sha256"] == summary.route_coverage_sha256
         assert ledger["f1m_charged_size_class_set_sha256"] == (
@@ -1684,13 +1723,30 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
         )
         expected_controller_total = 0
         for row in ledger["categories"]:
+            category_index = expected_category_index[row["category"]]
+            expected_logical_count = expected_phase[
+                "logical_protocol_object_counts"
+            ][category_index]
+            expected_worker_count = expected_phase[
+                "worker_streamed_protocol_object_counts"
+            ][category_index]
+            assert row[
+                "controller_expected_logical_protocol_object_count"
+            ] == expected_logical_count
+            assert row[
+                "controller_expected_worker_streamed_protocol_object_count"
+            ] == expected_worker_count
             if row["category"] in worker_protocol.DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES:
                 assert row["charge_authority"] == ("controller-anchored-day2-size-class")
                 assert row["charged_byte_count"] == 0
                 assert row["protocol_object_count"] == 0
+                assert expected_worker_count == 0
                 assert row["serialization_equivalence_class_count"] == 0
                 expected_class = expected_classes.get((record["phase"], row["category"]))
                 assert row["controller_charged_size_class"] == expected_class
+                assert expected_logical_count == (
+                    0 if expected_class is None else expected_class["multiplicity"]
+                )
                 expected_charge = (
                     0 if expected_class is None else expected_class["charged_byte_count"]
                 )
@@ -1698,6 +1754,8 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
                 expected_controller_total += expected_charge
             else:
                 assert row["charge_authority"] == "worker-streamed-spool"
+                assert row["protocol_object_count"] == expected_logical_count
+                assert row["protocol_object_count"] == expected_worker_count
                 assert row["controller_charged_byte_count"] == 0
                 assert row["controller_charged_size_class"] is None
         assert ledger["controller_charged_query_bytes"] == expected_controller_total
@@ -2153,7 +2211,11 @@ def test_day1b_verifier_rejects_rehashed_open_input_binding_splice(
         ("stale-catalog-hash", "retargets its manifest|controller context retargets"),
         ("trace-source-git", "controller context retargets"),
         ("controller-context", "controller context retargets"),
-        ("route-phase-count", "charge-set root"),
+        ("route-phase-count", "charge-set root|open exact input binding"),
+        (
+            "controller-expected-primitive-count",
+            "controller expected primitive counts differ from the physical record",
+        ),
     ),
 )
 def test_day1b_verifier_rejects_rehashed_authority_policy_and_preimage_splices(
@@ -2212,6 +2274,18 @@ def test_day1b_verifier_rejects_rehashed_authority_policy_and_preimage_splices(
         receipt["f1m_controller_context_sha256"] = context_sha256
         receipt["f1m_route_coverage_sha256"] = route_sha256
         _rehash_open_input_receipt(receipt)
+    elif mutation == "controller-expected-primitive-count":
+        expected_document = input_document["controller_expected_counts_document"]
+        expected_phase = expected_document["phases"][0]
+        expected_phase["update_primitive_counts"][0] += 1
+        input_document["controller_expected_counts_sha256"] = _sha(expected_document)
+        candidate_phase = next(
+            phase
+            for phase in receipt["candidate"]["phases"]
+            if phase["phase"] == expected_phase["phase"]
+        )
+        candidate_phase["update_primitive_counts"][0] += 1
+        _rehash_open_input_receipt(receipt)
     else:
         route_document = input_document["f1m_route_coverage_document"]
         route_document["phase_random_route_counts"]["tuning-prefix"] += 1
@@ -2239,7 +2313,10 @@ def test_day1b_verifier_rejects_rehashed_authority_policy_and_preimage_splices(
         ("ledger-v1", "serialization-ledger schema changed"),
         ("receipt-root", "input binding retargets"),
         ("non-f1m-controller-authority", "non-F1-M ledger row claims"),
-        ("f1m-worker-quantity", "does not bind exact object-receipt rows"),
+        (
+            "f1m-worker-quantity",
+            "does not bind exact object-receipt rows|controller expected multiplicity",
+        ),
         ("null-class-charge", "null F1-M controller class carries"),
         ("nonpositive-multiplicity", "controller F1-M charge document changed"),
         ("materialized-controller-object", "controller F1-M charge document changed"),
@@ -2841,7 +2918,7 @@ def test_t2_realized_set_cardinality_is_separate_from_stats_update_denominator()
         summary_freshness,
         summary_audit,
     )
-    f1m_controller_summary = day1b_module._replay_f1m_controller_for_candidate_cell(
+    controller_replay = day1b_module._replay_f1m_controller_for_candidate_cell(
         source=source,
         trace=summary_trace,
         program=summary_program,
@@ -2860,6 +2937,7 @@ def test_t2_realized_set_cardinality_is_separate_from_stats_update_denominator()
         resource_policy=resource_policy,
         expected_complete_audit=summary_audit,
     )
+    f1m_controller_summary = controller_replay.f1m_summary
     failed_measurement = Day1BWorkerPhaseReceipt(
         phase="tuning-prefix",
         retained_measurement=True,
@@ -2880,6 +2958,7 @@ def test_t2_realized_set_cardinality_is_separate_from_stats_update_denominator()
         selection_source="fixed-reference-tuning-prefix",
         worker_object_receipt_spool_sha256="f" * 64,
         f1m_controller_summary=f1m_controller_summary,
+        controller_expected_counts=controller_replay.expected_counts,
     )
     heldout_record, _heldout_ledger = day1b_module._physical_record_and_ledger(
         replace(failed_measurement, phase="held-out"),
@@ -2891,6 +2970,7 @@ def test_t2_realized_set_cardinality_is_separate_from_stats_update_denominator()
         selection_source="fixed-reference-held-out",
         worker_object_receipt_spool_sha256="f" * 64,
         f1m_controller_summary=f1m_controller_summary,
+        controller_expected_counts=controller_replay.expected_counts,
     )
     assert tuning_record["update_count"] == 300
     assert heldout_record["update_count"] == 600
@@ -2915,7 +2995,7 @@ def test_production_f1m_replay_derives_zero_query_coverage_and_closed_context() 
     resource_policy = _resource_policy()
     size_authority = _size_authority()
 
-    summary = day1b_module._replay_f1m_controller_for_candidate_cell(
+    controller_replay = day1b_module._replay_f1m_controller_for_candidate_cell(
         source=source,
         trace=trace,
         program=program,
@@ -2934,6 +3014,7 @@ def test_production_f1m_replay_derives_zero_query_coverage_and_closed_context() 
         resource_policy=resource_policy,
         expected_complete_audit=audit,
     )
+    summary = controller_replay.f1m_summary
 
     assert summary.context.candidate_id == candidate.candidate_id
     assert summary.context.candidate_policy_sha256 == (
@@ -2957,11 +3038,25 @@ def test_production_f1m_replay_derives_zero_query_coverage_and_closed_context() 
         resource_policy_sha256="f" * 64,
         size_authority=size_authority,
         f1m_controller_summary=summary,
+        controller_expected_counts=controller_replay.expected_counts,
+    )
+    f1m_categories = set(
+        worker_protocol.DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
+    )
+    expected_serialized_count = sum(
+        int(count > 0)
+        for phase in controller_replay.expected_counts.phases
+        for (category, _transaction), count in zip(
+            controller_replay.expected_counts.serialized_categories,
+            phase.worker_streamed_protocol_object_counts,
+            strict=True,
+        )
+        if category not in f1m_categories
     )
     contract = seed.bind(
         expected_f1m_size_class_set_sha256="1" * 64,
         expected_f1m_size_class_count=0,
-        expected_serialized_equivalence_class_count=17,
+        expected_serialized_equivalence_class_count=expected_serialized_count,
         expected_f1m_cardinality_derivation_root_sha256="2" * 64,
     )
     assert contract.f1m_controller_context_sha256 == summary.context.context_sha256
@@ -2999,7 +3094,7 @@ def test_worker_seed_rejects_controller_lineage_or_resource_substitution(
     candidate = catalog.candidates[0]
     resource_policy = _resource_policy()
     size_authority = _size_authority()
-    summary = day1b_module._replay_f1m_controller_for_candidate_cell(
+    controller_replay = day1b_module._replay_f1m_controller_for_candidate_cell(
         source=source,
         trace=trace,
         program=program,
@@ -3018,6 +3113,7 @@ def test_worker_seed_rejects_controller_lineage_or_resource_substitution(
         resource_policy=resource_policy,
         expected_complete_audit=audit,
     )
+    summary = controller_replay.f1m_summary
     context_fields = {
         "trace-manifest": "trace_manifest_sha256",
         "candidate-catalog": "candidate_catalog_sha256",
@@ -3064,6 +3160,7 @@ def test_worker_seed_rejects_controller_lineage_or_resource_substitution(
             resource_policy_sha256="f" * 64,
             size_authority=size_authority,
             f1m_controller_summary=summary,
+            controller_expected_counts=controller_replay.expected_counts,
         )
 
 
@@ -3516,7 +3613,7 @@ def test_private_core_requires_one_time_key_in_first_retained_phase(
     assert not output_dir.exists()
 
 
-def test_unit_archive_treats_weighted_f1m_receipts_as_size_classes_not_bindings(
+def test_formal_seed_rejects_worker_materialized_f1m_against_controller_zero_preimage(
     tmp_path: Path,
 ) -> None:
     trace = _trace()
@@ -3536,7 +3633,7 @@ def test_unit_archive_treats_weighted_f1m_receipts_as_size_classes_not_bindings(
         freshness,
         audit,
     )
-    f1m_controller_summary = day1b_module._replay_f1m_controller_for_candidate_cell(
+    controller_replay = day1b_module._replay_f1m_controller_for_candidate_cell(
         source=source,
         trace=trace,
         program=program,
@@ -3556,6 +3653,7 @@ def test_unit_archive_treats_weighted_f1m_receipts_as_size_classes_not_bindings(
         expected_complete_audit=audit,
         accounting_domain=day1b_module._TEST_DAY1B_ACCOUNTING_DOMAIN,
     )
+    f1m_controller_summary = controller_replay.f1m_summary
     seed = day1b_module._candidate_worker_contract_seed(
         trace=trace,
         program=program,
@@ -3567,6 +3665,7 @@ def test_unit_archive_treats_weighted_f1m_receipts_as_size_classes_not_bindings(
         resource_policy_sha256="f" * 64,
         size_authority=size_authority,
         f1m_controller_summary=f1m_controller_summary,
+        controller_expected_counts=controller_replay.expected_counts,
     )
     executor = _StreamingExecutor(tmp_path / "controlled-scratch")
     executor.emit_f1m_routes = True
@@ -3574,28 +3673,12 @@ def test_unit_archive_treats_weighted_f1m_receipts_as_size_classes_not_bindings(
         windows=program.stream_windows(freshness),
         contract_seed=seed,
     )
-    evidence_capability = consume_day1b_worker_frames(
-        launch.frame_chunks,
-        contract=launch.contract,
-        invocation_capability=launch.invocation_capability,
-    )
-    archive = _UnitObjectReceiptArchive()
-    try:
-        with claim_day1b_worker_evidence(evidence_capability) as evidence:
-            copied = io.BytesIO()
-            evidence.copy_object_receipts_to(copied)
-            lines = copied.getvalue().splitlines(keepends=True)
-            f1m_lines = [
-                line for line in lines if b'"category":"query-f1m-random-mask-ciphertexts"' in line
-            ]
-            assert len(f1m_lines) == 2
-            assert all(b'"f1m_size_class":' in line for line in f1m_lines)
-            assert all(b'"query_id"' not in line for line in f1m_lines)
-            assert all(b'"ledger_commitment_token"' not in line for line in f1m_lines)
-            for line in lines:
-                archive.write(line)
-            for line in lines:
-                archive.write(line)
-            assert archive.line_count == 2 * len(lines)
-    finally:
-        archive.close()
+    with pytest.raises(
+        worker_protocol.Day1BWorkerProtocolError,
+        match="protocol-object multiplicities",
+    ):
+        consume_day1b_worker_frames(
+            launch.frame_chunks,
+            contract=launch.contract,
+            invocation_capability=launch.invocation_capability,
+        )

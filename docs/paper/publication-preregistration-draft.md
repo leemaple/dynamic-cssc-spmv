@@ -475,7 +475,7 @@ measurement-method field in this placeholder remains `null`; the separate
 amendment is the sole reviewed source of administrative limits and
 measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v11` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v12` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface, including the amendment and
 `docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
@@ -494,7 +494,7 @@ SHA-256 verification of every serialized input, result, and one-time key bundle.
 Its provisional depth-2/0/0 profile remains explicitly `HOLD` for mixed-circuit
 parameter authority.
 
-The v10 surface also contains a non-authorizing streaming accounting core. It
+The current v12 surface also contains a non-authorizing streaming accounting core. It
 advances one candidate state exactly once per exact Publication Window, derives
 at most one typed query plan per query-bearing window, applies the window's
 integer query multiplicity before the fixed 14-primitive mapping, and retains
@@ -506,6 +506,23 @@ reservation, or transition claim; the ordinary single-query lifecycle smoke is
 the separate evidence path for real no-reuse enforcement. The accounting core
 does not mint a worker invocation, materialize per-query masks or ledger
 transitions, measure serialized OpenFHE sizes, or relax any dispatch gate.
+
+The v12 surface closes count authority separately from serialized-size
+measurement. Before dispatch, the controller projects each deterministic replay
+into an open expected-count document containing the exact retained-phase
+update/query primitive vectors and all nine logical protocol-object
+multiplicities. The worker may measure representative serialized equivalence
+classes, but it cannot select the multiplicity that those classes price.
+Non-F1-M logical and worker-streamed multiplicities must be identical. For the
+two weighted F1-M categories, independently opened route coverage owns the
+nonzero logical multiplicity and the formal worker-streamed multiplicity is
+zero; their byte charge comes only from the anchored Day 2 size class. A
+version-plan publication is counted exactly once for an update-bearing window
+and zero times for a no-update window. Worker phase receipts, object-receipt
+spools, serialization ledgers, and physical primitive-count records must all
+open the same controller preimage. The resulting schema family is Day 1B unit
+v3, serialization ledger v3, accounting/phase accounting v2, worker input
+binding v8, worker receipt v9, and controller expected-count documents v1.
 
 Held-out dispatch remains forbidden until an outcome-blind amendment freezes
 the measured limits and methods, and a repository-owned production candidate-cell

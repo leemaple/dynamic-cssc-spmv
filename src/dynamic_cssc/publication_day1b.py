@@ -59,6 +59,10 @@ from dynamic_cssc.publication_day1b_accounting import (
 from dynamic_cssc.publication_day1b_aggregate_bounds import (
     SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
 )
+from dynamic_cssc.publication_day1b_expected_counts import (
+    Day1BControllerExpectedCounts,
+    derive_day1b_controller_expected_counts,
+)
 from dynamic_cssc.publication_day1b_f1m_aggregation import (
     DAY1B_F1M_ACCOUNTING_BASIS,
     DAY1B_F1M_CHARGED_SIZE_CLASS_SCHEMA,
@@ -130,14 +134,14 @@ from dynamic_cssc.publication_traces import (
     PUBLICATION_TRACE_MANIFEST_SCHEMA,
 )
 
-DAY1B_UNIT_SCHEMA = "dynamic-cssc-publication-day1b-unit-v2"
+DAY1B_UNIT_SCHEMA = "dynamic-cssc-publication-day1b-unit-v3"
 DAY1B_UNIT_FRAGMENT_SCHEMA = "dynamic-cssc-publication-day1b-unit-fragment-v1"
-_TEST_DAY1B_UNIT_SCHEMA = "dynamic-cssc-publication-day1b-unit-private-test-fixture-v2"
+_TEST_DAY1B_UNIT_SCHEMA = "dynamic-cssc-publication-day1b-unit-private-test-fixture-v3"
 _TEST_DAY1B_UNIT_FRAGMENT_SCHEMA = (
     "dynamic-cssc-publication-day1b-unit-fragment-private-test-fixture-v1"
 )
 DAY1B_SERIALIZATION_LEDGER_SCHEMA = (
-    "dynamic-cssc-publication-day1b-serialized-protocol-object-ledger-v2"
+    "dynamic-cssc-publication-day1b-serialized-protocol-object-ledger-v3"
 )
 DAY1B_SERIALIZED_OBJECT_SIZE_AUTHORITY_SCHEMA = (
     "dynamic-cssc-publication-day1b-serialized-object-size-authority-v1"
@@ -392,6 +396,8 @@ _LEDGER_KEYS = frozenset(
         "cell_binding_sha256",
         "phase",
         "candidate_id",
+        "controller_accounting_sha256",
+        "controller_expected_counts_sha256",
         "byte_derivation",
         "ciphertext_count_used_as_byte_proxy",
         "raw_serialized_protocol_bytes_retained",
@@ -414,6 +420,8 @@ _CATEGORY_LEDGER_KEYS = frozenset(
         "charged_byte_count",
         "controller_charged_byte_count",
         "controller_charged_size_class",
+        "controller_expected_logical_protocol_object_count",
+        "controller_expected_worker_streamed_protocol_object_count",
         "object_receipt_spool_line_count",
         "object_receipt_spool_start_line",
         "object_receipt_stream_sha256",
@@ -950,6 +958,27 @@ class _Day1BF1MExecutionLineage:
             _require_sha256(getattr(self, field), f"Day1B F1-M lineage {field}")
 
 
+@dataclass(frozen=True, slots=True)
+class _Day1BControllerReplay:
+    """The two controller-owned preimages produced by one deterministic replay."""
+
+    f1m_summary: Day1BF1MControllerSummary
+    expected_counts: Day1BControllerExpectedCounts
+
+    def __post_init__(self) -> None:
+        if type(self.f1m_summary) is not Day1BF1MControllerSummary:
+            raise TypeError("controller replay requires one exact F1-M summary")
+        if type(self.expected_counts) is not Day1BControllerExpectedCounts:
+            raise TypeError("controller replay requires one exact expected-count preimage")
+        if (
+            self.expected_counts.accounting_sha256
+            != self.f1m_summary.context.accounting_sha256
+        ):
+            raise Day1BWorkerProtocolError(
+                "controller replay summary and expected counts bind different accounting"
+            )
+
+
 class _Day1BExecutionAdapter(Protocol):
     """Launch exactly one canonical candidate×cell worker invocation.
 
@@ -1389,7 +1418,7 @@ def _validate_preparatory_source_attestation(
         inventory.get("role") != EvidenceRole.DAY1B.value
         or inventory.get("source_git_sha") != source.git_sha
         or inventory.get("behavior_set_schema_version")
-        != "dynamic-cssc-day1b-preparatory-behavior-set-v11"
+        != "dynamic-cssc-day1b-preparatory-behavior-set-v12"
     ):
         raise ValueError(
             "preparatory source inventory must bind the DAY1B role, schema, and exact S1"
@@ -1750,6 +1779,7 @@ def _serialized_ledger(
     cell_binding_sha256: str,
     worker_object_receipt_spool_sha256: str,
     f1m_controller_summary: Day1BF1MControllerSummary,
+    controller_expected_counts: Day1BControllerExpectedCounts,
 ) -> tuple[dict[str, object], int, int]:
     if type(categories) is not tuple:
         raise ValueError("complete outcomes require the exact serialized-object category ledger")
@@ -1763,15 +1793,25 @@ def _serialized_ledger(
         "worker object-receipt spool digest",
     )
     controller_charges = _controller_f1m_charge_index(f1m_controller_summary)
+    if (
+        type(controller_expected_counts) is not Day1BControllerExpectedCounts
+        or controller_expected_counts.candidate_id != candidate_id
+        or controller_expected_counts.accounting_sha256
+        != f1m_controller_summary.context.accounting_sha256
+    ):
+        raise ValueError("serialized ledger changed its controller count authority")
     if phase not in f1m_controller_summary.retained_phases:
         raise ValueError("serialized ledger phase is absent from the F1-M controller summary")
+    expected_phase = controller_expected_counts.phase_counts(phase)
     rows: list[dict[str, object]] = []
     totals = {"update": 0, "query": 0, "one-time": 0}
     controller_charged_query_bytes = 0
-    for category, (expected_name, transaction) in zip(
+    for category_index, (category, (expected_name, transaction)) in enumerate(
+        zip(
         categories,
         SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
         strict=True,
+        )
     ):
         if (
             type(category) is not Day1BWorkerSerializedCategoryReceipt
@@ -1781,6 +1821,20 @@ def _serialized_ledger(
             raise ValueError("serialized-object category order changed")
         totals[transaction] += category.charged_byte_count
         row = category.to_document()
+        logical_count = expected_phase.logical_protocol_object_counts[category_index]
+        worker_count = expected_phase.worker_streamed_protocol_object_counts[
+            category_index
+        ]
+        if category.protocol_object_count != worker_count:
+            raise ValueError(
+                "serialized ledger worker multiplicity differs from controller expectation"
+            )
+        row.update(
+            {
+                "controller_expected_logical_protocol_object_count": logical_count,
+                "controller_expected_worker_streamed_protocol_object_count": worker_count,
+            }
+        )
         if expected_name in DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES:
             if (
                 category.charged_byte_count != 0
@@ -1793,6 +1847,13 @@ def _serialized_ledger(
             controller_charge = (
                 0 if controller_class is None else controller_class.charged_byte_count
             )
+            controller_multiplicity = (
+                0 if controller_class is None else controller_class.multiplicity
+            )
+            if controller_multiplicity != logical_count:
+                raise ValueError(
+                    "F1-M controller charge multiplicity differs from expected counts"
+                )
             row.update(
                 {
                     "charge_authority": "controller-anchored-day2-size-class",
@@ -1818,6 +1879,10 @@ def _serialized_ledger(
         "cell_binding_sha256": cell_binding_sha256,
         "phase": phase,
         "candidate_id": candidate_id,
+        "controller_accounting_sha256": controller_expected_counts.accounting_sha256,
+        "controller_expected_counts_sha256": (
+            controller_expected_counts.expected_counts_sha256
+        ),
         "byte_derivation": ("worker-streamed-spool-plus-controller-anchored-day2-size-class-v1"),
         "ciphertext_count_used_as_byte_proxy": False,
         "raw_serialized_protocol_bytes_retained": False,
@@ -1846,9 +1911,17 @@ def _physical_record_and_ledger(
     selection_source: str,
     worker_object_receipt_spool_sha256: str,
     f1m_controller_summary: Day1BF1MControllerSummary,
+    controller_expected_counts: Day1BControllerExpectedCounts,
 ) -> tuple[dict[str, object], dict[str, object]]:
     if type(measurement) is not Day1BWorkerPhaseReceipt:
         raise TypeError("execution adapter measurements must use the exact typed result")
+    if (
+        type(controller_expected_counts) is not Day1BControllerExpectedCounts
+        or controller_expected_counts.candidate_id != candidate_id
+        or controller_expected_counts.accounting_sha256
+        != f1m_controller_summary.context.accounting_sha256
+    ):
+        raise ValueError("physical record changed its controller count authority")
     _require_sha256(
         worker_object_receipt_spool_sha256,
         "worker object-receipt spool digest",
@@ -1878,6 +1951,7 @@ def _physical_record_and_ledger(
             cell_binding_sha256=str(cell["cell_binding_sha256"]),
             worker_object_receipt_spool_sha256=(worker_object_receipt_spool_sha256),
             f1m_controller_summary=f1m_controller_summary,
+            controller_expected_counts=controller_expected_counts,
         )
     else:
         if type(measurement.failure_code) is not str or not measurement.failure_code.strip():
@@ -1900,6 +1974,12 @@ def _physical_record_and_ledger(
             "cell_binding_sha256": cell["cell_binding_sha256"],
             "phase": phase,
             "candidate_id": candidate_id,
+            "controller_accounting_sha256": (
+                controller_expected_counts.accounting_sha256
+            ),
+            "controller_expected_counts_sha256": (
+                controller_expected_counts.expected_counts_sha256
+            ),
             "byte_derivation": None,
             "ciphertext_count_used_as_byte_proxy": False,
             "raw_serialized_protocol_bytes_retained": False,
@@ -1965,6 +2045,7 @@ def _records_for_candidate_cell(
     if type(f1m_controller_summary) is not Day1BF1MControllerSummary:
         raise TypeError("candidate cell requires one exact F1-M controller summary")
     context = f1m_controller_summary.context
+    controller_expected_counts = result.input_binding.controller_expected_counts
     if (
         context.candidate_id != candidate.candidate_id
         or context.candidate_role != expected_role
@@ -1978,6 +2059,10 @@ def _records_for_candidate_cell(
         or context.event_schedule_sha256 != cell["event_schedule_sha256"]
         or context.query_vector_sha256 != cell["query_vector_sha256"]
         or f1m_controller_summary.retained_phases != expected_retained_phases
+        or controller_expected_counts.candidate_id != candidate.candidate_id
+        or controller_expected_counts.accounting_sha256 != context.accounting_sha256
+        or tuple(phase.phase for phase in controller_expected_counts.phases)
+        != expected_retained_phases
     ):
         raise ValueError("candidate receipt and F1-M controller summary do not bind one cell")
     if (
@@ -2065,6 +2150,7 @@ def _records_for_candidate_cell(
             selection_source="fixed-reference-tuning-prefix",
             worker_object_receipt_spool_sha256=(result.object_receipt_spool_sha256),
             f1m_controller_summary=f1m_controller_summary,
+            controller_expected_counts=controller_expected_counts,
         )
         records.append(record)
         ledgers.append(ledger)
@@ -2078,6 +2164,7 @@ def _records_for_candidate_cell(
         selection_source=("fixed-ablation-held-out" if is_ablation else "fixed-reference-held-out"),
         worker_object_receipt_spool_sha256=(result.object_receipt_spool_sha256),
         f1m_controller_summary=f1m_controller_summary,
+        controller_expected_counts=controller_expected_counts,
     )
     records.append(record)
     ledgers.append(ledger)
@@ -2810,6 +2897,16 @@ def _verify_day1b_unit_view(
         )
         if (record["update_count"], record["query_count"]) != expected_counts:
             raise ValueError("Day1B physical record cardinality disagrees with its cell")
+    record_by_candidate_phase = {
+        (
+            str(record["cell_binding_sha256"]),
+            str(record["candidate_id"]),
+            str(record["phase"]),
+        ): record
+        for record in records
+    }
+    if len(record_by_candidate_phase) != len(records):
+        raise ValueError("Day1B physical record candidate-phase identity is duplicated")
 
     execution_receipts = manifest["cell_execution_receipts"]
     if type(execution_receipts) is not list or len(execution_receipts) != 18:
@@ -2956,6 +3053,99 @@ def _verify_day1b_unit_view(
                 raise ValueError(
                     "Day1B worker receipt does not carry one open exact input binding"
                 ) from error
+            if candidate["receipt_origin"] == "worker-complete-transcript":
+                phase_documents = {
+                    phase.get("phase"): phase
+                    for phase in candidate["phases"]
+                    if type(phase) is dict
+                }
+                if len(phase_documents) != len(candidate["phases"]):
+                    raise ValueError("Day1B worker phase identities are not exact and unique")
+                for expected_phase in input_contract.controller_expected_counts.phases:
+                    phase_document = phase_documents.get(expected_phase.phase)
+                    if type(phase_document) is not dict:
+                        raise ValueError(
+                            "Day1B worker phase does not open controller expected counts"
+                        )
+                    if phase_document.get("outcome") == "failed":
+                        if (
+                            phase_document.get("failure_code")
+                            != "candidate-execution-failed"
+                            or phase_document.get("retained_measurement") is not True
+                            or phase_document.get("update_primitive_counts") is not None
+                            or phase_document.get("query_primitive_counts") is not None
+                            or phase_document.get("serialized_categories") is not None
+                        ):
+                            raise ValueError(
+                                "Day1B failed worker phase carries measurement quantities"
+                            )
+                        continue
+                    if (
+                        phase_document.get("outcome") != "complete"
+                        or phase_document.get("retained_measurement") is not True
+                        or phase_document.get("update_primitive_counts")
+                        != list(expected_phase.update_primitive_counts)
+                        or phase_document.get("query_primitive_counts")
+                        != list(expected_phase.query_primitive_counts)
+                    ):
+                        raise ValueError(
+                            "Day1B worker phase does not open controller expected primitive counts"
+                        )
+                    serialized_categories = phase_document.get("serialized_categories")
+                    if type(serialized_categories) is not list or len(
+                        serialized_categories
+                    ) != len(input_contract.serialized_categories):
+                        raise ValueError(
+                            "Day1B worker phase does not open controller expected categories"
+                        )
+                    for category_index, (
+                        category_document,
+                        (expected_category, expected_transaction),
+                    ) in enumerate(
+                        zip(
+                            serialized_categories,
+                            input_contract.serialized_categories,
+                            strict=True,
+                        )
+                    ):
+                        if (
+                            type(category_document) is not dict
+                            or category_document.get("category") != expected_category
+                            or category_document.get("transaction") != expected_transaction
+                            or category_document.get("protocol_object_count")
+                            != expected_phase.worker_streamed_protocol_object_counts[
+                                category_index
+                            ]
+                        ):
+                            raise ValueError(
+                                "Day1B worker phase does not open controller "
+                                "expected multiplicities"
+                            )
+                    physical_record = record_by_candidate_phase[
+                        (
+                            str(receipt["cell_binding_sha256"]),
+                            candidate_id,
+                            expected_phase.phase,
+                        )
+                    ]
+                    for field, expected_vector in (
+                        (
+                            "update_primitive_counts",
+                            expected_phase.update_primitive_counts,
+                        ),
+                        (
+                            "query_primitive_counts",
+                            expected_phase.query_primitive_counts,
+                        ),
+                    ):
+                        record_vector = physical_record[field]
+                        if type(record_vector) is not dict or tuple(
+                            record_vector.get(name) for name in PRIMITIVE_NAMES
+                        ) != tuple(expected_vector):
+                            raise ValueError(
+                                "Day1B controller expected primitive counts differ from "
+                                "the physical record"
+                            )
             expected_phase_ranges = tuple(
                 Day1BWorkerPhaseRange(
                     phase=phase_name,
@@ -3538,11 +3728,23 @@ def _verify_day1b_unit_view(
         )
         worker_receipt = worker_receipts[candidate_key]
         input_contract = worker_contracts[candidate_key]
+        controller_expected_counts = input_contract.controller_expected_counts
         if (
             ledger["worker_object_receipt_spool_sha256"]
             != worker_receipt["object_receipt_spool_sha256"]
         ):
             raise ValueError("Day1B ledger splices a foreign worker receipt spool")
+        if (
+            ledger["controller_expected_counts_sha256"]
+            != input_contract.controller_expected_counts_sha256
+            or ledger["controller_expected_counts_sha256"]
+            != controller_expected_counts.expected_counts_sha256
+            or ledger["controller_accounting_sha256"]
+            != controller_expected_counts.accounting_sha256
+            or ledger["controller_accounting_sha256"]
+            != input_contract.f1m_controller_context.accounting_sha256
+        ):
+            raise ValueError("Day1B ledger splices foreign controller expected counts")
         for ledger_field, receipt_field in (
             ("f1m_controller_context_sha256", "f1m_controller_context_sha256"),
             ("f1m_route_coverage_sha256", "f1m_route_coverage_sha256"),
@@ -3590,6 +3792,9 @@ def _verify_day1b_unit_view(
             raise ValueError("complete record ledger lost its exact category inventory")
         transaction_totals = {"update": 0, "query": 0, "one-time": 0}
         controller_charged_query_bytes = 0
+        expected_phase_counts = controller_expected_counts.phase_counts(
+            str(record["phase"])
+        )
         for category_index, (category_value, expected_pair) in enumerate(
             zip(categories, SERIALIZED_PROTOCOL_OBJECT_CATEGORIES, strict=True)
         ):
@@ -3616,6 +3821,30 @@ def _verify_day1b_unit_view(
                 category["serialization_equivalence_class_count"],
                 "category equivalence-class count",
             )
+            controller_expected_logical_count = _strict_nonnegative_int(
+                category["controller_expected_logical_protocol_object_count"],
+                "category controller-expected logical protocol-object count",
+            )
+            controller_expected_worker_count = _strict_nonnegative_int(
+                category[
+                    "controller_expected_worker_streamed_protocol_object_count"
+                ],
+                "category controller-expected worker protocol-object count",
+            )
+            if (
+                controller_expected_logical_count
+                != expected_phase_counts.logical_protocol_object_counts[
+                    category_index
+                ]
+                or controller_expected_worker_count
+                != expected_phase_counts.worker_streamed_protocol_object_counts[
+                    category_index
+                ]
+                or protocol_object_count != controller_expected_worker_count
+            ):
+                raise ValueError(
+                    "Day1B ledger category differs from controller expected multiplicity"
+                )
             key = (binding, str(record["phase"]), expected_pair[0])
             observed = category_facts.get(key)
             observed_count = 0 if observed is None else observed.line_count
@@ -3658,7 +3887,10 @@ def _verify_day1b_unit_view(
             ):
                 raise ValueError("bridge F1-M row mixes worker and controller charge facts")
             if controller_class_value is None:
-                if controller_charge != 0:
+                if (
+                    controller_charge != 0
+                    or controller_expected_logical_count != 0
+                ):
                     raise ValueError("null F1-M controller class carries a nonzero charge")
                 continue
             controller_class = _exact_object(
@@ -3688,6 +3920,7 @@ def _verify_day1b_unit_view(
                 or controller_class["f1m_kind"] != expected_kind
                 or controller_class["serialized_size_profile_key"] != expected_profile_key
                 or multiplicity <= 0
+                or multiplicity != controller_expected_logical_count
                 or ciphertext_bytes <= 0
                 or ciphertext_bytes != getattr(input_contract, expected_profile_key)
                 or ciphertext_bytes != getattr(size_authority, expected_profile_key)
@@ -4099,11 +4332,15 @@ class _Day1BWorkerContractSeed:
     phase_ranges: tuple[Day1BWorkerPhaseRange, ...]
     resource_limits: Day1BWorkerResourceLimits
     f1m_controller_summary: Day1BF1MControllerSummary
+    controller_expected_counts: Day1BControllerExpectedCounts
 
     def __post_init__(self) -> None:
         if type(self.f1m_controller_summary) is not Day1BF1MControllerSummary:
             raise TypeError("worker seed requires one exact F1-M controller summary")
+        if type(self.controller_expected_counts) is not Day1BControllerExpectedCounts:
+            raise TypeError("worker seed requires one exact controller count preimage")
         summary = self.f1m_controller_summary
+        expected_counts = self.controller_expected_counts
         context = summary.context
         authority = summary.size_authority
         expected_phase_ranges = tuple(
@@ -4134,6 +4371,15 @@ class _Day1BWorkerContractSeed:
             or context.candidate_role != self.candidate.candidate_role
             or context.candidate_policy_sha256 != self.candidate.candidate_policy_digest
             or context.retained_phases != self.candidate.retained_phases
+            or expected_counts.candidate_id != self.candidate.candidate_id
+            or expected_counts.candidate_policy_sha256
+            != self.candidate.candidate_policy_digest
+            or expected_counts.accounting_sha256 != context.accounting_sha256
+            or expected_counts.primitive_names != PRIMITIVE_NAMES
+            or expected_counts.serialized_categories
+            != SERIALIZED_PROTOCOL_OBJECT_CATEGORIES
+            or tuple(phase.phase for phase in expected_counts.phases)
+            != self.candidate.retained_phases
             or context.phase_boundaries != expected_phase_ranges
             or authority.day2_outer_archive_sha256 != self.day2_outer_archive_sha256
             or authority.serialized_object_size_profile_sha256
@@ -4188,6 +4434,10 @@ class _Day1BWorkerContractSeed:
             f1m_route_coverage_sha256=(self.f1m_controller_summary.route_coverage_sha256),
             f1m_charged_size_class_set_sha256=(
                 self.f1m_controller_summary.charged_size_class_set_sha256
+            ),
+            controller_expected_counts=self.controller_expected_counts,
+            controller_expected_counts_sha256=(
+                self.controller_expected_counts.expected_counts_sha256
             ),
             expected_f1m_size_class_set_sha256=expected_f1m_size_class_set_sha256,
             expected_f1m_size_class_count=expected_f1m_size_class_count,
@@ -4361,6 +4611,7 @@ def _candidate_worker_contract_seed(
     resource_policy_sha256: str,
     size_authority: _Day1BSerializedObjectSizeAuthority,
     f1m_controller_summary: Day1BF1MControllerSummary,
+    controller_expected_counts: Day1BControllerExpectedCounts,
 ) -> _Day1BWorkerContractSeed:
     invocation_id = _digest(
         {
@@ -4394,6 +4645,7 @@ def _candidate_worker_contract_seed(
         ),
         resource_limits=resource_policy.to_worker_limits(),
         f1m_controller_summary=f1m_controller_summary,
+        controller_expected_counts=controller_expected_counts,
     )
 
 
@@ -4597,7 +4849,7 @@ def _replay_f1m_controller_for_candidate_cell(
     resource_policy: PublicationDay1BResourcePolicy,
     expected_complete_audit: _CellAudit,
     accounting_domain: Day1BAccountingDomain = PUBLICATION_DAY1B_ACCOUNTING_DOMAIN,
-) -> Day1BF1MControllerSummary:
+) -> _Day1BControllerReplay:
     """Replay one deterministic, independently audited controller accounting pass."""
 
     candidate_spec = _candidate_worker_spec(candidate)
@@ -4643,10 +4895,22 @@ def _replay_f1m_controller_for_candidate_cell(
         accounting=accounting,
         complete_schedule_audit=complete_schedule_audit,
     )
-    return controller.finish(
+    summary = controller.finish(
         context=context,
         accounting=accounting,
         complete_schedule_audit=complete_schedule_audit,
+    )
+    expected_counts = derive_day1b_controller_expected_counts(
+        accounting=accounting,
+        retained_phases=candidate_spec.retained_phases,
+        primitive_names=PRIMITIVE_NAMES,
+        serialized_categories=SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
+        phase_random_route_counts=summary.phase_random_route_counts,
+        phase_dummy_route_counts=summary.phase_dummy_route_counts,
+    )
+    return _Day1BControllerReplay(
+        f1m_summary=summary,
+        expected_counts=expected_counts,
     )
 
 
@@ -4758,7 +5022,7 @@ def _produce_publication_day1b_unit(
                     launch: _Day1BWorkerLaunch | None = None
                     invocation_consumed = False
                     try:
-                        f1m_controller_summary = _replay_f1m_controller_for_candidate_cell(
+                        controller_replay = _replay_f1m_controller_for_candidate_cell(
                             source=source_attestation,
                             trace=trace,
                             program=program,
@@ -4775,6 +5039,7 @@ def _produce_publication_day1b_unit(
                             expected_complete_audit=audit,
                             accounting_domain=accounting_domain,
                         )
+                        f1m_controller_summary = controller_replay.f1m_summary
                         audited_windows = _AuditedWindowStream(
                             program.stream_windows(freshness),
                             program.phase_ranges,
@@ -4791,6 +5056,9 @@ def _produce_publication_day1b_unit(
                             resource_policy_sha256=resource_policy_sha256,
                             size_authority=size_authority,
                             f1m_controller_summary=f1m_controller_summary,
+                            controller_expected_counts=(
+                                controller_replay.expected_counts
+                            ),
                         )
                         launch = execution_adapter.execute_candidate_cell(
                             windows=audited_windows,

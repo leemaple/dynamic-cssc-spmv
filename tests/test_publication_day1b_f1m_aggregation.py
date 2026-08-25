@@ -156,6 +156,21 @@ def _accounting(
                 strategy_metrics_sha256=_digest({"phase": phase, "metrics": "fixture"}),
                 update_primitive_counts=(0,) * len(PRIMITIVE_NAMES),
                 query_primitive_counts=(0,) * len(PRIMITIVE_NAMES),
+                realized_version_publication_count=sum(
+                    int(window.net_update_count > 0) for window in selected
+                ),
+                metadata_units=0,
+                update_encryptions=0,
+                query_ciphertexts=0,
+                result_ciphertexts=0,
+                blinding_mask_ciphertexts=sum(
+                    window.query_count * window.query_plan.random_route_count
+                    for window in selected
+                ),
+                blinding_dummy_ciphertexts=sum(
+                    window.query_count * window.query_plan.dummy_route_count
+                    for window in selected
+                ),
             )
         )
     candidate_id = "reference-a" if len(retained_phases) == 2 else "ablation-a"
@@ -207,7 +222,7 @@ def _context(
     return Day1BF1MControllerContext(
         publication_source_git_sha="1" * 40,
         trace_source_git_sha="2" * 40,
-        publication_behavior_set_schema_version=("dynamic-cssc-day1b-preparatory-behavior-set-v11"),
+        publication_behavior_set_schema_version=("dynamic-cssc-day1b-preparatory-behavior-set-v12"),
         publication_behavior_inventory_sha256="5" * 64,
         terminal_registration_sha256="6" * 64,
         day1_registration_anchor_sha256="7" * 64,

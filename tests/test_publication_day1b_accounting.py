@@ -134,6 +134,51 @@ def test_replay_is_deterministic_and_does_not_retain_query_descriptors() -> None
     assert sum(phase.query_window_count for phase in first.phases) == 2
 
 
+def test_no_update_window_does_not_publish_a_new_version() -> None:
+    windows = (
+        _window(0, "warmup", (0, 0, 0, 1), query_count=0),
+        replace(
+            _window(1, "tuning", (0, 1, 0, 2), query_count=7),
+            set_count=0,
+            updates=(),
+        ),
+        _window(2, "heldout", (0, 0, 1, 3), query_count=11),
+    )
+
+    result = replay_publication_day1b_candidate_cell(
+        candidate=_reserved_candidate(), windows=windows, domain=_domain()
+    )
+
+    assert result.terminal_version_id == "v00000002"
+    assert [
+        phase.realized_version_publication_count for phase in result.phases
+    ] == [1, 0, 1]
+
+
+def test_multiple_updates_in_one_window_publish_exactly_one_version() -> None:
+    warmup = replace(
+        _window(0, "warmup", (0, 0, 0, 1), query_count=0),
+        set_count=2,
+        updates=(
+            ScheduledNetUpdate(0, 0, 0, 1),
+            ScheduledNetUpdate(0, 1, 0, 2),
+        ),
+    )
+    windows = (
+        warmup,
+        _window(1, "tuning", (1, 0, 0, 2), query_count=7),
+        _window(2, "heldout", (1, 1, 0, 3), query_count=11),
+    )
+
+    result = replay_publication_day1b_candidate_cell(
+        candidate=_reserved_candidate(), windows=windows, domain=_domain()
+    )
+
+    assert result.phases[0].realized_net_update_count == 2
+    assert result.phases[0].realized_version_publication_count == 1
+    assert result.terminal_version_id == "v00000003"
+
+
 def test_strong_replay_classifies_uniform_dummy_routes_before_weighting() -> None:
     domain = Day1BAccountingDomain(
         rows=2,

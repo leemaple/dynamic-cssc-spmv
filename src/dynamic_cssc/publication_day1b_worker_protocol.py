@@ -28,6 +28,10 @@ from typing import BinaryIO
 from dynamic_cssc.publication_day1b_aggregate_bounds import (
     DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM,
 )
+from dynamic_cssc.publication_day1b_expected_counts import (
+    Day1BControllerExpectedCounts,
+    Day1BControllerExpectedCountsError,
+)
 from dynamic_cssc.publication_day1b_f1m_aggregation import (
     Day1BF1MAggregationError,
     Day1BF1MControllerContext,
@@ -35,8 +39,8 @@ from dynamic_cssc.publication_day1b_f1m_aggregation import (
 )
 
 DAY1B_WORKER_FRAME_SCHEMA = "dynamic-cssc-publication-day1b-worker-frame-v2"
-DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v7"
-DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v8"
+DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v8"
+DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v9"
 DAY1B_WORKER_WINDOW_AUDIT_SCHEMA = "dynamic-cssc-publication-day1b-worker-window-audit-v1"
 DAY1B_WORKER_F1M_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-f1m-binding-receipt-v1"
 DAY1B_WORKER_F1M_SIZE_CLASS_SCHEMA = "dynamic-cssc-publication-day1b-f1m-size-class-v1"
@@ -105,6 +109,8 @@ _WORKER_INPUT_BINDING_KEYS = frozenset(
         "candidate_catalog_sha256",
         "candidate",
         "ciphertext_bytes",
+        "controller_expected_counts_document",
+        "controller_expected_counts_sha256",
         "day2_outer_archive_sha256",
         "event_schedule_sha256",
         "expected_f1m_size_class_count",
@@ -1073,6 +1079,8 @@ class Day1BWorkerProtocolContract:
     f1m_route_coverage: Day1BF1MRouteCoverage
     f1m_route_coverage_sha256: str
     f1m_charged_size_class_set_sha256: str
+    controller_expected_counts: Day1BControllerExpectedCounts
+    controller_expected_counts_sha256: str
     expected_f1m_size_class_set_sha256: str
     expected_f1m_size_class_count: int
     expected_serialized_equivalence_class_count: int
@@ -1092,6 +1100,7 @@ class Day1BWorkerProtocolContract:
             "f1m_controller_context_sha256",
             "f1m_route_coverage_sha256",
             "f1m_charged_size_class_set_sha256",
+            "controller_expected_counts_sha256",
             "expected_f1m_size_class_set_sha256",
             "expected_f1m_cardinality_derivation_root_sha256",
         ):
@@ -1115,6 +1124,11 @@ class Day1BWorkerProtocolContract:
             )
         context = self.f1m_controller_context
         coverage = self.f1m_route_coverage
+        if type(self.controller_expected_counts) is not Day1BControllerExpectedCounts:
+            raise Day1BWorkerProtocolError(
+                "controller expected counts must be one exact typed preimage"
+            )
+        expected_counts = self.controller_expected_counts
         if (
             context.context_sha256 != self.f1m_controller_context_sha256
             or coverage.route_coverage_sha256 != self.f1m_route_coverage_sha256
@@ -1143,6 +1157,16 @@ class Day1BWorkerProtocolContract:
             or context.candidate_role != self.candidate.candidate_role
             or context.candidate_policy_sha256 != self.candidate.candidate_policy_digest
             or context.retained_phases != self.candidate.retained_phases
+            or expected_counts.expected_counts_sha256
+            != self.controller_expected_counts_sha256
+            or expected_counts.candidate_id != self.candidate.candidate_id
+            or expected_counts.candidate_policy_sha256
+            != self.candidate.candidate_policy_digest
+            or expected_counts.accounting_sha256 != context.accounting_sha256
+            or expected_counts.primitive_names != self.primitive_names
+            or expected_counts.serialized_categories != self.serialized_categories
+            or tuple(phase.phase for phase in expected_counts.phases)
+            != self.candidate.retained_phases
         ):
             raise Day1BWorkerProtocolError(
                 "F1-M retained preimages retarget the worker input-binding facts"
@@ -1224,6 +1248,41 @@ class Day1BWorkerProtocolContract:
             raise Day1BWorkerProtocolError(
                 "all serialized equivalence classes cannot be fewer than F1-M size classes"
             )
+        category_index = {
+            category: index for index, category in enumerate(category_names)
+        }
+        f1m_indices = tuple(
+            category_index[category]
+            for category in DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
+        )
+        non_f1m_equivalence_classes = sum(
+            int(count > 0)
+            for phase in expected_counts.phases
+            for index, count in enumerate(
+                phase.worker_streamed_protocol_object_counts
+            )
+            if index not in f1m_indices
+        )
+        if expected_all_count != non_f1m_equivalence_classes + expected_f1m_count:
+            raise Day1BWorkerProtocolError(
+                "all serialized equivalence classes differ from the controller count preimage"
+            )
+        phase_index = {phase: index for index, phase in enumerate(_PHASE_NAMES)}
+        for phase in expected_counts.phases:
+            index = phase_index[phase.phase]
+            random_count = phase.logical_protocol_object_counts[
+                category_index[DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES[0]]
+            ]
+            dummy_count = phase.logical_protocol_object_counts[
+                category_index[DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES[1]]
+            ]
+            if (
+                random_count != coverage.phase_random_route_counts[index]
+                or dummy_count != coverage.phase_dummy_route_counts[index]
+            ):
+                raise Day1BWorkerProtocolError(
+                    "controller expected F1-M multiplicities differ from opened routes"
+                )
         if type(self.resource_limits) is not Day1BWorkerResourceLimits:
             raise Day1BWorkerProtocolError("resource_limits must be exact typed limits")
         for field in (
@@ -1243,6 +1302,12 @@ class Day1BWorkerProtocolContract:
             "candidate_catalog_sha256": self.candidate_catalog_sha256,
             "candidate": self.candidate.to_document(),
             "ciphertext_bytes": self.ciphertext_bytes,
+            "controller_expected_counts_document": (
+                self.controller_expected_counts.to_document()
+            ),
+            "controller_expected_counts_sha256": (
+                self.controller_expected_counts_sha256
+            ),
             "day2_outer_archive_sha256": self.day2_outer_archive_sha256,
             "event_schedule_sha256": self.event_schedule_sha256,
             "expected_f1m_size_class_count": self.expected_f1m_size_class_count,
@@ -1325,13 +1390,16 @@ class Day1BWorkerProtocolContract:
         ):
             raise Day1BWorkerProtocolError("worker input-binding resource-limit keys are not exact")
         try:
+            controller_expected_counts = Day1BControllerExpectedCounts.from_document(
+                value["controller_expected_counts_document"]
+            )
             f1m_controller_context = Day1BF1MControllerContext.from_document(
                 value["f1m_controller_context_document"]
             )
             f1m_route_coverage = Day1BF1MRouteCoverage.from_document(
                 value["f1m_route_coverage_document"]
             )
-        except Day1BF1MAggregationError as error:
+        except (Day1BF1MAggregationError, Day1BControllerExpectedCountsError) as error:
             raise Day1BWorkerProtocolError(
                 "worker input-binding F1-M retained preimages are malformed"
             ) from error
@@ -1376,6 +1444,10 @@ class Day1BWorkerProtocolContract:
             f1m_route_coverage=f1m_route_coverage,
             f1m_route_coverage_sha256=value["f1m_route_coverage_sha256"],
             f1m_charged_size_class_set_sha256=(value["f1m_charged_size_class_set_sha256"]),
+            controller_expected_counts=controller_expected_counts,
+            controller_expected_counts_sha256=value[
+                "controller_expected_counts_sha256"
+            ],
             expected_f1m_size_class_set_sha256=(value["expected_f1m_size_class_set_sha256"]),
             expected_f1m_size_class_count=value["expected_f1m_size_class_count"],
             expected_serialized_equivalence_class_count=(
@@ -3956,6 +4028,26 @@ class _ReceiptBuilder:
             ):
                 raise Day1BWorkerProtocolError(
                     "serialized category object counts do not match streamed payloads"
+                )
+            expected_counts = self.contract.controller_expected_counts.phase_counts(
+                phase
+            )
+            if (
+                update_counts != expected_counts.update_primitive_counts
+                or query_counts != expected_counts.query_primitive_counts
+            ):
+                raise Day1BWorkerProtocolError(
+                    "worker primitive vectors differ from the controller replay"
+                )
+            observed_protocol_counts = tuple(
+                item.protocol_object_count for item in self.current_categories
+            )
+            if (
+                observed_protocol_counts
+                != expected_counts.worker_streamed_protocol_object_counts
+            ):
+                raise Day1BWorkerProtocolError(
+                    "worker protocol-object multiplicities differ from the controller replay"
                 )
             if bool(audit.realized_query_count) != any(query_counts):
                 raise Day1BWorkerProtocolError(
