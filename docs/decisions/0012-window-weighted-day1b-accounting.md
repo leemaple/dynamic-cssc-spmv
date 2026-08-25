@@ -238,14 +238,24 @@ artifact that declares full query-arrival replay, omits the basis, changes a
 multiplicity, leaves a query-range gap, overlaps ranges, or disagrees with the
 controller's schedule fails closed.
 
-The preparatory v24 source surface exposes the exact typed compilation used for
+The preparatory v25 source surface exposes the exact typed compilation used for
 each query-bearing window through a synchronous, output-only query-execution
 sink. The callback receives the existing compact descriptor and its ordinary or
 strong non-authorizing carrier together, while all three stream/accounting roots
 stay unchanged. The replay itself retains no carrier after the callback returns.
-This is a transport seam for the later production adapter; it does not mint a
-worker invocation, bind a Day 2 plan, execute OpenFHE, or change any authority
-or admission flag.
+The v25 collector commits those ordered pairs to a separate binding root,
+independently reconstructs the existing compact query-window root, and retains
+exactly one private typed carrier: the first query-bearing window in the first
+role-retained phase (tuning-prefix for reference candidates, held-out for the
+ablation). It reconstructs that representative's logical matrix directly from
+the carrier and evaluates the frozen query vector with the plaintext oracle
+only for that representative. Non-representative windows retain neither a
+private carrier nor logical state/output digests, so the work remains
+proportional to distinct layouts and
+performs no OpenFHE execution. The resulting process-local capability is
+single-use and its receipt explicitly denies worker, dispatch, formal,
+publication, complete-cost, and production authority. It still does not bind a
+Day 2 plan or invoke a runner; those remain later production-adapter gates.
 
 ## Consequences
 

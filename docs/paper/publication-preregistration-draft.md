@@ -475,7 +475,7 @@ measurement-method field in this placeholder remains `null`; the separate
 amendment is the sole reviewed source of administrative limits and
 measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v24` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v25` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface, including the amendment and
 `docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
@@ -488,6 +488,14 @@ typed query DAG, real BFV encryption/evaluation/decryption, controller-owned
 exclusive scratch, single-use ledger authorization, exact runner/source/compiler
 identity plus the resolved file-backed OpenFHE linked-library bytes, bounded
 resource observations, and retained binary object verifier.
+The v25 surface additionally commits every compact query-window descriptor and
+its exact same-replay ordinary or strong typed layout to an ordered binding
+root.  It retains only the first query-bearing layout in the candidate's first
+retained phase, independently reconstructs its logical matrix and plaintext
+SpMV result from the frozen query vector, and seals that representative behind
+a single-use process-local capability.  This proves neither an OpenFHE
+execution nor worker, dispatch, formal, or publication authority; all such
+receipt fields remain explicitly false.
 The build-identity v3 subreceipt additionally binds stable filesystem identity,
 Mach-O UUID or ELF build ID, declared install name/SONAME and dependency names
 for the runner and each resolved non-system library; compiler bytes, version,
