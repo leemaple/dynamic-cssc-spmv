@@ -2128,7 +2128,7 @@ def test_day1b_preparatory_behavior_inventory_is_exact_but_non_authorizing(
         DAY1B_PREPARATORY_BEHAVIOR_PATHS
     )
     assert inventory["behavior_set_schema_version"] == (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v14"
+        "dynamic-cssc-day1b-preparatory-behavior-set-v15"
     )
     assert inventory["role"] == "day1b"
     assert inventory["source_git_sha"] == source_git_sha

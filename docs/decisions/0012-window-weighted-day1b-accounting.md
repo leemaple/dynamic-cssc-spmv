@@ -101,6 +101,11 @@ the independently opened controller route totals while the formal weighted
 worker multiplicities are exactly zero. The one-time key inventory is either
 absent or occurs exactly once in the first retained phase. Counting serialized
 equivalence classes therefore cannot conceal a lower logical multiplicity.
+The zero-worker rule is checked at the repository worker-seed boundary and by
+the artifact verifier immediately after reopening the input contract, before
+any complete, failed, or controller-terminal outcome branch. A null quantity
+projection therefore cannot use consistent downstream rehashing to substitute
+the generic materialized-F1-M fixture mode for the formal weighted mode.
 
 The controller accounting and phase documents advance to v2. Each phase now
 opens the primitive inputs needed by the nine serialized categories, including

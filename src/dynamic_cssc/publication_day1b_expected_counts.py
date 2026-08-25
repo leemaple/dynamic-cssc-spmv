@@ -476,6 +476,38 @@ def derive_day1b_controller_expected_counts(
     )
 
 
+def require_formal_day1b_f1m_worker_zero(
+    expected_counts: Day1BControllerExpectedCounts,
+) -> None:
+    """Reject any formal preimage that asks the worker to stream F1-M objects.
+
+    The generic worker protocol retains a materialized-F1-M fixture mode for its
+    isolated protocol tests.  Publication Day 1B uses the weighted formal mode:
+    controller route coverage owns the logical multiplicity and every retained
+    phase must keep both worker-streamed F1-M multiplicities at zero, including
+    phases whose eventual outcome is failed or controller-terminal.
+    """
+
+    if type(expected_counts) is not Day1BControllerExpectedCounts:
+        raise TypeError("formal F1-M validation requires exact controller expected counts")
+    if expected_counts.serialized_categories != SERIALIZED_PROTOCOL_OBJECT_CATEGORIES:
+        raise Day1BControllerExpectedCountsError(
+            "formal F1-M validation requires the exact Day 1B category taxonomy"
+        )
+    category_names = tuple(
+        category for category, _transaction in expected_counts.serialized_categories
+    )
+    f1m_indices = tuple(category_names.index(category) for category in _F1M_CATEGORIES)
+    if any(
+        phase.worker_streamed_protocol_object_counts[index] != 0
+        for phase in expected_counts.phases
+        for index in f1m_indices
+    ):
+        raise Day1BControllerExpectedCountsError(
+            "formal F1-M worker multiplicity must remain zero"
+        )
+
+
 __all__ = (
     "DAY1B_CONTROLLER_EXPECTED_COUNTS_SCHEMA",
     "DAY1B_CONTROLLER_EXPECTED_PHASE_COUNTS_SCHEMA",
@@ -483,4 +515,5 @@ __all__ = (
     "Day1BControllerExpectedCountsError",
     "Day1BControllerExpectedPhaseCounts",
     "derive_day1b_controller_expected_counts",
+    "require_formal_day1b_f1m_worker_zero",
 )

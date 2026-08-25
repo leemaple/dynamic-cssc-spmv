@@ -497,7 +497,7 @@ def _trace() -> _Day1BTraceInput:
 
 def _source() -> _Day1BPreparatorySourceAttestation:
     inventory = {
-        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v14",
+        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v15",
         "behavior_set_sha256": "c" * 64,
         "entries": [],
         "role": "day1b",
@@ -1045,7 +1045,7 @@ def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v14"),
+            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v15"),
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -1149,7 +1149,7 @@ def test_public_producer_checks_profile_before_catalog_trace_or_worker(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v14",
+            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v15",
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -3321,6 +3321,109 @@ def test_mixed_retained_phase_outcome_keeps_complete_charge_and_nulls_failure(
     assert failed_ledger["byte_derivation"] is None
     assert failed_ledger["controller_charged_query_bytes"] is None
     assert failed_ledger["query_serialized_bytes_including_controller_charge"] is None
+
+
+@pytest.mark.parametrize("outcome_path", ("controller-terminal", "mixed-failure"))
+def test_verifier_rejects_rehashed_incomplete_formal_f1m_worker_count_splice(
+    tmp_path: Path,
+    outcome_path: str,
+) -> None:
+    executor = _StreamingExecutor(tmp_path / "controlled-scratch")
+    candidate_cell_count = (
+        len(FRESHNESS_VALUES) * len(RHO_VALUES) * len(FIXED_CANDIDATE_IDS)
+    )
+    if outcome_path == "controller-terminal":
+        executor.terminal_failure_codes = {
+            index: "candidate-execution-failed"
+            for index in range(candidate_cell_count)
+        }
+    else:
+        executor.worker_failed_phases = {
+            index: "held-out" for index in range(candidate_cell_count)
+        }
+    bundle = _produce_publication_day1b_unit_for_test(
+        trace=_trace(),
+        output_dir=tmp_path / "original",
+        source_attestation=_source(),
+        candidate_catalog=_catalog(),
+        resource_policy=_resource_policy(),
+        execution_adapter=executor,
+    )
+    root = tmp_path / outcome_path
+    shutil.copytree(bundle.output_dir, root)
+    manifest = json.loads((root / "publication-day1b-unit-manifest.json").read_bytes())
+    receipt = None
+    expected_phase = None
+    f1m_indices = None
+    for cell_receipt in manifest["cell_execution_receipts"]:
+        for candidate_receipt in cell_receipt["candidate_cell_receipts"]:
+            input_document = candidate_receipt["input_binding_document"]
+            expected_document = input_document["controller_expected_counts_document"]
+            category_names = tuple(
+                item[0] for item in expected_document["serialized_categories"]
+            )
+            candidate_f1m_indices = tuple(
+                category_names.index(category)
+                for category in (
+                    worker_protocol.DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
+                )
+            )
+            candidate_phase = next(
+                phase
+                for phase in expected_document["phases"]
+                if phase["phase"] == "held-out"
+            )
+            if any(
+                candidate_phase["logical_protocol_object_counts"][index] > 0
+                for index in candidate_f1m_indices
+            ):
+                receipt = candidate_receipt
+                expected_phase = candidate_phase
+                f1m_indices = candidate_f1m_indices
+                break
+        if receipt is not None:
+            break
+    assert receipt is not None
+    assert expected_phase is not None
+    assert f1m_indices is not None
+    if outcome_path == "controller-terminal":
+        assert receipt["candidate"]["receipt_origin"] == (
+            "controller-terminal-null-projection"
+        )
+    else:
+        held_out_receipt = next(
+            phase
+            for phase in receipt["candidate"]["phases"]
+            if phase["phase"] == "held-out"
+        )
+        assert held_out_receipt["outcome"] == "failed"
+    input_document = receipt["input_binding_document"]
+    expected_document = input_document["controller_expected_counts_document"]
+    changed = False
+    for category_index in f1m_indices:
+        logical_count = expected_phase["logical_protocol_object_counts"][category_index]
+        if logical_count > 0:
+            expected_phase["worker_streamed_protocol_object_counts"][
+                category_index
+            ] = logical_count
+            changed = True
+            break
+    assert changed, "fixture must expose one positive held-out formal F1-M route count"
+    input_document["controller_expected_counts_sha256"] = _sha(expected_document)
+    _rehash_open_input_receipt(receipt)
+    _rewrite_manifest_and_checksums(root, manifest)
+
+    with pytest.raises(
+        ValueError,
+        match="formal F1-M worker multiplicity must remain zero",
+    ):
+        verify_existing_directory(
+            root,
+            verifier=lambda view: day1b_module._verify_day1b_unit_view(
+                view,
+                artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
+            ),
+        )
 
 
 def test_over_limit_controller_observation_without_matching_terminal_holds_unit(

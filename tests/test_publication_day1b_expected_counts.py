@@ -12,6 +12,7 @@ from dynamic_cssc.publication_day1b_expected_counts import (
     Day1BControllerExpectedCounts,
     Day1BControllerExpectedCountsError,
     Day1BControllerExpectedPhaseCounts,
+    require_formal_day1b_f1m_worker_zero,
 )
 
 
@@ -109,6 +110,29 @@ def test_expected_counts_reject_partial_f1m_worker_multiplicity() -> None:
                 ),
             ),
         )
+
+
+def test_formal_expected_counts_reject_materialized_f1m_worker_mode() -> None:
+    expected = _expected_counts()
+    held_out = expected.phases[1]
+    changed_worker = list(held_out.worker_streamed_protocol_object_counts)
+    changed_worker[5] = held_out.logical_protocol_object_counts[5]
+    materialized_mode = replace(
+        expected,
+        phases=(
+            expected.phases[0],
+            replace(
+                held_out,
+                worker_streamed_protocol_object_counts=tuple(changed_worker),
+            ),
+        ),
+    )
+
+    with pytest.raises(
+        Day1BControllerExpectedCountsError,
+        match="formal F1-M worker multiplicity must remain zero",
+    ):
+        require_formal_day1b_f1m_worker_zero(materialized_mode)
 
 
 def test_expected_counts_digest_commits_to_controller_multiplicity() -> None:

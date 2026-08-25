@@ -62,6 +62,7 @@ from dynamic_cssc.publication_day1b_aggregate_bounds import (
 from dynamic_cssc.publication_day1b_expected_counts import (
     Day1BControllerExpectedCounts,
     derive_day1b_controller_expected_counts,
+    require_formal_day1b_f1m_worker_zero,
 )
 from dynamic_cssc.publication_day1b_f1m_aggregation import (
     DAY1B_F1M_ACCOUNTING_BASIS,
@@ -1418,7 +1419,7 @@ def _validate_preparatory_source_attestation(
         inventory.get("role") != EvidenceRole.DAY1B.value
         or inventory.get("source_git_sha") != source.git_sha
         or inventory.get("behavior_set_schema_version")
-        != "dynamic-cssc-day1b-preparatory-behavior-set-v14"
+        != "dynamic-cssc-day1b-preparatory-behavior-set-v15"
     ):
         raise ValueError(
             "preparatory source inventory must bind the DAY1B role, schema, and exact S1"
@@ -3053,6 +3054,9 @@ def _verify_day1b_unit_view(
                 raise ValueError(
                     "Day1B worker receipt does not carry one open exact input binding"
                 ) from error
+            require_formal_day1b_f1m_worker_zero(
+                input_contract.controller_expected_counts
+            )
             if candidate["receipt_origin"] == "worker-complete-transcript":
                 phase_documents = {
                     phase.get("phase"): phase
@@ -4339,6 +4343,7 @@ class _Day1BWorkerContractSeed:
             raise TypeError("worker seed requires one exact F1-M controller summary")
         if type(self.controller_expected_counts) is not Day1BControllerExpectedCounts:
             raise TypeError("worker seed requires one exact controller count preimage")
+        require_formal_day1b_f1m_worker_zero(self.controller_expected_counts)
         summary = self.f1m_controller_summary
         expected_counts = self.controller_expected_counts
         context = summary.context
