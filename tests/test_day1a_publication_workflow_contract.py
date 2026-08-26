@@ -6,6 +6,8 @@ import textwrap
 from copy import deepcopy
 from pathlib import Path
 
+import pytest
+
 from scripts.run_day1_suite import load_experiment_plan
 
 ROOT = Path(__file__).parents[1]
@@ -104,6 +106,51 @@ def test_publication_workflow_freezes_the_complete_21_by_9_grid() -> None:
     assert "assert len(include) == 21" in workflow
     assert "assert p['cells_expected'] == p['cells_completed'] == 9" in workflow
     assert "assert p['cells_expected'] == p['cells_completed'] == 189" in workflow
+
+
+def test_publication_workflow_has_one_non_admissible_hosted_smoke() -> None:
+    workflow = _workflow(PUBLICATION_WORKFLOW)
+
+    assert "diagnostic_single_shard:" in workflow
+    assert "Run one non-admissible hosted performance smoke without uploading evidence" in workflow
+    assert "if item['workload'] == 'mixed-insert-delete-modify'" in workflow
+    assert "and item['freshness_seconds'] == '1'" in workflow
+    assert "'[NON-ADMISSIBLE SMOKE] '" in workflow
+    assert workflow.count("if: ${{ inputs.diagnostic_single_shard == false }}") == 2
+    assert "github.event.inputs.diagnostic_single_shard" not in workflow
+
+
+@pytest.mark.parametrize(
+    ("diagnostic", "expected_count"),
+    [("false", 21), ("true", 1)],
+)
+def test_publication_matrix_executes_in_full_or_single_shard_mode(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    diagnostic: str,
+    expected_count: int,
+) -> None:
+    workflow = _workflow(PUBLICATION_WORKFLOW)
+    blocks = re.findall(
+        r"(?ms)^ {10}.*?\.venv/bin/python - <<'PY'\n(.*?)^ {10}PY$",
+        workflow,
+    )
+    output = tmp_path / f"matrix-{diagnostic}.txt"
+    monkeypatch.setenv("DIAGNOSTIC_SINGLE_SHARD", diagnostic)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+
+    exec(compile(textwrap.dedent(blocks[1]), "day1a-publication-matrix.py", "exec"))
+
+    matrix = json.loads(output.read_text(encoding="utf-8").removeprefix("matrix=").strip())
+    assert len(matrix["include"]) == expected_count
+    if diagnostic == "true":
+        assert matrix["include"] == [
+            {
+                "workload": "mixed-insert-delete-modify",
+                "freshness_seconds": "1",
+                "freshness_id": "freshness-n1d1s",
+            }
+        ]
 
 
 def test_publication_plan_differs_from_the_historical_plan_only_in_domain_identity() -> None:

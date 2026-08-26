@@ -7,6 +7,11 @@ on:
         description: Canonical nonnegative decimal seed
         required: true
         default: '20260821'
+      diagnostic_single_shard:
+        description: Run one non-admissible hosted performance smoke without uploading evidence
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -109,6 +114,8 @@ jobs:
       - name: Build the exact 7 workload by 3 freshness matrix
         id: build-matrix
         shell: bash
+        env:
+          DIAGNOSTIC_SINGLE_SHARD: ${{ inputs.diagnostic_single_shard }}
         run: |
           .venv/bin/python - <<'PY'
           import json
@@ -139,6 +146,18 @@ jobs:
                       'freshness_id': freshness_path_id(freshness),
                   })
           assert len(include) == 21
+          if os.environ['DIAGNOSTIC_SINGLE_SHARD'] == 'true':
+              include = [
+                  item
+                  for item in include
+                  if item['workload'] == 'mixed-insert-delete-modify'
+                  and item['freshness_seconds'] == '1'
+              ]
+              assert include == [{
+                  'workload': 'mixed-insert-delete-modify',
+                  'freshness_seconds': '1',
+                  'freshness_id': 'freshness-n1d1s',
+              }]
           matrix = json.dumps({'include': include}, separators=(',', ':'))
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
               output.write(f'matrix={matrix}\n')
@@ -152,7 +171,7 @@ jobs:
       fail-fast: false
       max-parallel: 21
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
-    name: Day 1A publication shard (${{ matrix.workload }}, ${{ matrix.freshness_seconds }}s)
+    name: ${{ inputs.diagnostic_single_shard && '[NON-ADMISSIBLE SMOKE] ' || '' }}Day 1A publication shard (${{ matrix.workload }}, ${{ matrix.freshness_seconds }}s)
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -302,6 +321,7 @@ jobs:
           assert '  SHARD_STATUS.json' in checksums
           PY
       - name: Upload uniquely named shard evidence
+        if: ${{ inputs.diagnostic_single_shard == false }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: r2-day1a-publication-shard-${{ github.sha }}-${{ needs.plan.outputs.normalized_seed }}-${{ matrix.workload }}-${{ matrix.freshness_id }}
@@ -311,6 +331,7 @@ jobs:
           retention-days: 30
 
   aggregate:
+    if: ${{ inputs.diagnostic_single_shard == false }}
     needs: [plan, shard]
     runs-on: ubuntu-latest
     timeout-minutes: 30
