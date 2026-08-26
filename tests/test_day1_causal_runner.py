@@ -766,14 +766,20 @@ def test_integer_rho_scaling_is_exactly_equal_to_direct_causal_replay(
         scaled_windows,
         multiplier,
     )
-    assert (
-        run_day1_suite._rescale_causal_cell_queries(  # noqa: SLF001
-            unit,
-            multiplier,
-            UnitCosts(),
-        )
-        == direct_scaled
+    rescaled = run_day1_suite._rescale_causal_cell_queries(  # noqa: SLF001
+        unit,
+        multiplier,
+        UnitCosts(),
     )
+    assert rescaled == direct_scaled
+    unit_span80 = run_day1_suite._candidate_span80(config.rows, unit)  # noqa: SLF001
+    assert run_day1_suite._candidate_span80(  # noqa: SLF001
+        config.rows,
+        rescaled,
+    ) == run_day1_suite._candidate_span80(  # noqa: SLF001
+        config.rows,
+        direct_scaled,
+    ) == unit_span80
 
 
 def test_integer_rho_scaling_rejects_a_spliced_selection_candidate_pool() -> None:
@@ -797,9 +803,15 @@ def test_integer_rho_scaling_rejects_a_spliced_selection_candidate_pool() -> Non
 def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    query_scaled_ratios = (1, 3, 10, 30, 100)
+    plan_payload = _small_experiment_plan()
+    synthetic = plan_payload["synthetic"]
+    assert isinstance(synthetic, dict)
+    synthetic["queries_per_update_grid"] = list(query_scaled_ratios)
     calls: list[str] = []
     generated = 0
     windowized = 0
+    span80_calls = 0
     initial_parameters: list[tuple[tuple[object, ...], dict[str, object]]] = []
     event_parameters: list[dict[str, object]] = []
     freshness_values: list[float] = []
@@ -838,7 +850,7 @@ def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
 
     def fake_plan(_path: object) -> run_day1_suite.ExperimentPlan:
         calls.append("plan")
-        return run_day1_suite.parse_experiment_plan(_small_experiment_plan())
+        return run_day1_suite.parse_experiment_plan(plan_payload)
 
     def fake_initial(*args: object, **kwargs: object) -> dict[tuple[int, int], int]:
         calls.append("initial")
@@ -855,9 +867,10 @@ def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
         nonlocal windowized
         windowized += 1
         freshness_values.append(float(kwargs["max_seconds"]))
+        query_count = query_scaled_ratios[windowized - 1]
         for index in range(10):
             updates = (NetUpdate(0, 0, 0, 1),) if index == 4 else ()
-            yield PublicationWindow(index, index, index + 1, updates, 1, "fixture")
+            yield PublicationWindow(index, index, index + 1, updates, query_count, "fixture")
 
     def fake_cell(**kwargs: object) -> CausalCellResult:
         cell_configs.append(kwargs["base_config"])  # type: ignore[arg-type]
@@ -917,6 +930,17 @@ def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
     monkeypatch.setattr(run_day1_suite, "generate_event_stream", fake_events)
     monkeypatch.setattr(run_day1_suite, "publication_windows", fake_windows)
     monkeypatch.setattr(run_day1_suite, "evaluate_causal_cell", fake_cell)
+    real_candidate_span80 = run_day1_suite._candidate_span80  # noqa: SLF001
+
+    def counted_candidate_span80(
+        rows: int,
+        result: CausalCellResult,
+    ) -> dict[str, dict[int, float]]:
+        nonlocal span80_calls
+        span80_calls += 1
+        return real_candidate_span80(rows, result)
+
+    monkeypatch.setattr(run_day1_suite, "_candidate_span80", counted_candidate_span80)
 
     def fake_records(
         path: Path,
@@ -943,7 +967,7 @@ def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text('{"fixture": true}\n', encoding="utf-8")
     plan_path = tmp_path / "plan.json"
-    plan_path.write_text(json.dumps(_small_experiment_plan()), encoding="utf-8")
+    plan_path.write_text(json.dumps(plan_payload), encoding="utf-8")
 
     args = argparse.Namespace(
         manifest=str(manifest_path),
@@ -962,8 +986,9 @@ def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
 
     assert run_suite(args) == 0
     assert calls == ["manifest", "preflight", "plan", "initial"]
-    assert generated == 1
-    assert windowized == 1
+    assert generated == len(query_scaled_ratios)
+    assert windowized == len(query_scaled_ratios)
+    assert span80_calls == 1
     assert initial_parameters == [((2, 2, 1), {"seed": 7, "matrix_entry_abs_bound": 7})]
     assert event_parameters == [
         {
@@ -974,25 +999,29 @@ def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
             "query_every": 0,
             "matrix_entry_abs_bound": 7,
         }
-    ]
-    assert freshness_values == [1.0]
+    ] * len(query_scaled_ratios)
+    assert freshness_values == [1.0] * len(query_scaled_ratios)
     assert len(cell_configs) == 1
     assert cell_configs[0].effective_slots == 2048
     assert cell_configs[0].partition_rows == 128
-    assert len(written) == 1
+    assert len(written) == len(query_scaled_ratios)
     path, items, metadata = written[0]
     assert path.relative_to(args.output_dir).as_posix() == "zipf/freshness-n1d1s/rho-n1d1"
     expected_candidates = _registered_catalog().candidates
     assert [item.record_kind for item in items].count("fixed-candidate") == len(expected_candidates)
     assert [item.record_kind for item in items].count("tuned-fixed-policy") == 1
     assert [item.record_kind for item in items].count("diagnostic-oracle") == 1
-    assert len(audit_calls) == 3
-    assert all(
-        call["selected_candidate_id"] == expected_candidates[0].candidate_id for call in audit_calls
-    )
-    assert all(
-        call["oracle_candidate_id"] == expected_candidates[0].candidate_id for call in audit_calls
-    )
+    assert len(audit_calls) == 3 * len(query_scaled_ratios)
+    for index, (_, _, cell_metadata) in enumerate(written):
+        cell_audits = audit_calls[index * 3 : (index + 1) * 3]
+        assert all(
+            call["selected_candidate_id"] == cell_metadata["selected_candidate_id"]
+            for call in cell_audits
+        )
+        assert all(
+            call["oracle_candidate_id"] == cell_metadata["oracle_candidate_id"]
+            for call in cell_audits
+        )
     assert all(
         set(call["tuning_results"])
         == {candidate.candidate_id for candidate in _registered_catalog().selection_candidates}
@@ -1003,6 +1032,16 @@ def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
     assert set(span80_by_candidate) == {candidate.candidate_id for candidate in expected_candidates}
     assert span80_by_candidate["padding-reuse"][1] == 0.5
     assert span80_by_candidate["mini-cssc-delta"][1] == 1.0
+    assert all(call[2]["span80_by_candidate"] == span80_by_candidate for call in written)
+    assert [
+        call[2]["query_scaling_source_rho_fraction"] for call in written
+    ] == [None, "1", "1", "1", "1"]
+    assert len(
+        {
+            json.dumps(call[2]["span80_by_candidate"], sort_keys=True, allow_nan=False)
+            for call in written
+        }
+    ) == 1
     assert metadata["effective_slots"] == 2048
     assert metadata["partition_rows"] == 128
     assert metadata["layout_measurement_kind"] == "synthetic-proxy"
@@ -1015,6 +1054,7 @@ def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
     assert not (args.output_dir / "SUITE_STATUS.json").exists()
     shard_status = json.loads((args.output_dir / "SHARD_STATUS.json").read_text(encoding="utf-8"))
     assert shard_status["suite_complete"] is False
+    assert len(shard_status["cells"]) == len(query_scaled_ratios)
     assert shard_status["complete_reference_set"] is True
     assert shard_status["fixed_candidate_count"] == 14
     assert shard_status["reference_candidate_count"] == 13
