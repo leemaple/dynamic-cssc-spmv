@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import re
+import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, replace
 from fractions import Fraction
@@ -1082,6 +1083,7 @@ def run_suite(args: argparse.Namespace) -> int:
     unit_ratio_span80: dict[str, dict[int, float]] | None = None
 
     for ratio in ratio_grid:
+        cell_started_ns = time.monotonic_ns()
         base_events = generate_event_stream(
             workload,
             initial,
@@ -1103,6 +1105,7 @@ def run_suite(args: argparse.Namespace) -> int:
                 query_requires_latest=query_requires_latest,
             )
         )
+        windows_ready_ns = time.monotonic_ns()
         rho_one_available = unit_ratio_windows is not None and unit_ratio_result is not None
         evaluation_mode, query_scaling_source_rho = _causal_evaluation_provenance(
             ratio,
@@ -1128,6 +1131,7 @@ def run_suite(args: argparse.Namespace) -> int:
             if ratio == 1:
                 unit_ratio_windows = windows
                 unit_ratio_result = result
+        evaluation_ready_ns = time.monotonic_ns()
         cell_fixed_candidate_ids = tuple(sorted(result.fixed_results))
         cell_reference_candidate_ids = tuple(sorted(result.tuning_results))
         cell_ablation_candidate_ids = tuple(
@@ -1248,6 +1252,26 @@ def run_suite(args: argparse.Namespace) -> int:
         write_causal_summary(output_dir, records, costs, metadata, **report_audit)
         write_causal_plots(output_dir, records, costs, **report_audit)
         write_checksums(output_dir)
+        cell_completed_ns = time.monotonic_ns()
+        print(
+            "[DEBUG-day1-timing-7f3e] "
+            + json.dumps(
+                {
+                    "artifact_ns": cell_completed_ns - evaluation_ready_ns,
+                    "causal_evaluation_mode": evaluation_mode,
+                    "cell_total_ns": cell_completed_ns - cell_started_ns,
+                    "evaluation_ns": evaluation_ready_ns - windows_ready_ns,
+                    "queries_total": queries_total,
+                    "rho_fraction": str(ratio),
+                    "stage": "producer",
+                    "window_count": len(windows),
+                    "window_generation_ns": windows_ready_ns - cell_started_ns,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
         cells.append(
             {
                 "relative_path": output_dir.relative_to(args.output_dir).as_posix(),

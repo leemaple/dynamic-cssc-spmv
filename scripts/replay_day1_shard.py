@@ -7,6 +7,7 @@ import json
 import os
 import re
 import tempfile
+import time
 from collections.abc import Mapping
 from dataclasses import fields
 from fractions import Fraction
@@ -306,6 +307,7 @@ def _replay_cell(
     query_scaling_source_windows: list[PublicationWindow] | None,
     query_scaling_source_result: CausalCellResult | None,
 ) -> tuple[dict[str, object], list[PublicationWindow], CausalCellResult]:
+    cell_started_ns = time.monotonic_ns()
     integer_correctness = _mapping(
         manifest_payload.get("integer_correctness"), "manifest.integer_correctness"
     )
@@ -367,6 +369,7 @@ def _replay_cell(
         actual_trace = cell_dir / "event-window-trace.jsonl"
         if actual_trace.read_bytes() != expected_trace.read_bytes():
             raise ValueError(f"event-window trace does not match deterministic replay: {cell_dir}")
+    trace_ready_ns = time.monotonic_ns()
 
     costs = UnitCosts()
     if query_scaling_source_rho_fraction is None:
@@ -398,6 +401,7 @@ def _replay_cell(
             multiplier,
             costs,
         )
+    evaluation_ready_ns = time.monotonic_ns()
     metrics_path = cell_dir / "metrics.json"
     payload = _load_json(metrics_path, "metrics.json")
     candidate_ids = tuple(sorted(result.fixed_results))
@@ -529,6 +533,26 @@ def _replay_cell(
         derived_digests = {
             filename: rendered_digests[filename] for filename in DERIVED_ARTIFACT_FILENAMES
         }
+
+    cell_completed_ns = time.monotonic_ns()
+    print(
+        "[DEBUG-day1-timing-7f3e] "
+        + json.dumps(
+            {
+                "causal_evaluation_mode": causal_evaluation_mode,
+                "cell_total_ns": cell_completed_ns - cell_started_ns,
+                "evaluation_ns": evaluation_ready_ns - trace_ready_ns,
+                "rho_fraction": str(ratio),
+                "stage": "replay",
+                "trace_rebuild_ns": trace_ready_ns - cell_started_ns,
+                "validation_and_render_ns": cell_completed_ns - evaluation_ready_ns,
+                "window_count": len(windows),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
 
     return (
         {
