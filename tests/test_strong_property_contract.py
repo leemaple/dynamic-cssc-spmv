@@ -321,6 +321,8 @@ def test_persistent_strong_record_covers_one_exact_multiwave_transition(
     waves = observed["waves"]
     assert [wave["window_index"] for wave in waves] == list(range(10))
     assert [wave["version_ordinal"] for wave in waves] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 9]
+    assert [wave["facts"]["query_count"] for wave in waves] == [0] * 9 + [3]
+    assert all(wave["query_compile"] for wave in waves)
     assert [wave["segment_count"] for wave in waves] == [0, 0, 0, 1, 1, 1, 1, 1, 3, 3]
     assert [wave["page_count"] for wave in waves] == [0, 0, 0, 1, 1, 1, 1, 1, 2, 2]
     assert [wave["facts"]["absorbed_tombstone"] for wave in waves[:3]] == [0, 1, 1]
