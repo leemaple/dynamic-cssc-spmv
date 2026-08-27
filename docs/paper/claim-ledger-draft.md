@@ -19,10 +19,13 @@ JUnit all verify. This R0 evidence does not authorize later registration or
 performance claims.
 
 Current Terminal Registration Freeze lineage: experiment source S1
-`febedea78c88ed779171cedc5dab4be097061a1f`; registration run `33037473603`;
+`b658e2178b210c2cc0012fc61957a3b3a92953bb`; registration run `33070626218`;
 installed registration-anchor SHA-256
-`e8205b65d053077ecf76257fbbe981a52d8886844808e7dcaef3866ded819ec9`; and
-data-only S2 `f158aa7697b8b47a7704c4a4a2028bf6c7c080c4`. This lineage authorizes only
+`7c46266560e51ea2f756b28267225a21a8e96fce0a69707e00805794e9f309a9`;
+Behavior Set SHA-256
+`d64dcfcd48e183736d4a6565cca8d698dbeef700d4cec0af4594b7258016d2b7`; and
+data-only S2 `bb83d4e42209e24df0c71df3eea5df7cbff7e1d5`. Exact-head S2 CI run
+`33073232432` passed 2118 tests with 2 skipped. This lineage authorizes only
 the exact repository-admission statements below. It does not authorize a
 complete-reference Day 1A result, a performance result, or a security claim.
 
@@ -44,7 +47,7 @@ complete-reference Day 1A result, a performance result, or a security claim.
 | ID | Future wording | Required artifact | Current state |
 |---|---|---|---|
 | C1 | The exact Phase 2 base-plus-strong-delta fixture decrypts to the typed and direct plaintext result. | Run `32581653504`, artifact SHA `c5f44b0c9475a66d49b48332e335cb58811cf4eec579ebff631123c4e4711afe` | PASS at `fcb00e0d`; one fixture only |
-| C2 | The strong c=128 candidate is an admitted Day 1 reference. | Zero-argument repository composite registration gate binding correctness, accounting, report schema, tests, and frozen policy | PASS for exact S1/S2 registration scope via run `33037473603`; formal Day 1A complete-reference evidence remains HOLD |
+| C2 | The strong c=128 candidate is an admitted Day 1 reference. | Zero-argument repository composite registration gate binding correctness, accounting, report schema, tests, and frozen policy | PASS for exact S1/S2 registration scope via run `33070626218`; formal Day 1A complete-reference evidence remains HOLD |
 | C3 | The fixed-reference set is complete. | 14 fixed records, 13 references, one ablation, exact rotation/accounting completion proof and replay receipts | HOLD |
 | C4 | The admitted mixed circuit decrypts correctly with adequate parameter margin. | Pinned worst-profile OpenFHE gate with raw decryption/noise evidence | HOLD |
 | C5 | End-to-end execution matches the logical oracle at the qualifying adjacent rho grid points. | R4 artifact on exact experiment snapshot S1, admitted at S2 and analyzed at S3 through an ADR 0010 compatibility receipt | HOLD |

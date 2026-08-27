@@ -357,7 +357,13 @@ For any later evidence role, drift in that role's frozen Behavior Set requires a
 new run; evidence-only and analysis-only snapshots require the separate S1/S2/S3
 compatibility receipt defined by ADR 0010.
 
-**Withheld:** strong registration, mixed-circuit, and R4 results.
+**Latest registration boundary:** the fixed 14/13/1 Day 1 candidate roster is
+repository-admitted only for S1 `b658e2178b210c2cc0012fc61957a3b3a92953bb`
+and data-only S2 `bb83d4e42209e24df0c71df3eea5df7cbff7e1d5` via registration run
+`33070626218`. This is not a Day 1A performance result or a complete-reference
+completion proof.
+
+**Withheld:** formal Day 1A completion, mixed-circuit, and R4 results.
 
 ### 7.2 Causal count results
 

@@ -11,7 +11,7 @@ numbersections: true
 
 本文解释这篇论文“到底想解决什么、核心 idea 是什么、为什么需要这些机制、公式如何连接到实现，以及最后怎样用实验回答问题”。它不是结果论文的替代稿，也不把尚未完成的实验写成结论。
 
-截至 2026-08-27，项目已经完成大部分协议、实现、验证器、工作流和论文方法框架；Terminal Registration Freeze S2 为 `f158aa7697b8b47a7704c4a4a2028bf6c7c080c4`。正式 Day 1A、Day 2、真实语料 Day 1B、mixed-circuit 和 R4 结果尚未全部产生或接纳。因此，本文中的“设计”“机制”“计划验证”与“已经得到的经验结果”会严格分开。
+截至 2026-08-27，项目已经完成大部分协议、实现、验证器、工作流和论文方法框架。当前 Day 1A registration 的实验源 S1 为 `b658e2178b210c2cc0012fc61957a3b3a92953bb`，唯一 data-only Terminal Registration Freeze S2 为 `bb83d4e42209e24df0c71df3eea5df7cbff7e1d5`；S2 的 exact-head CI 已通过。唯一的 NON-ADMISSIBLE 单分片性能诊断 run `33075408647` 已启动但尚未完成，因而仍没有可写入论文的 Day 1A 经验结果。正式 Day 1A、Day 2、真实语料 Day 1B、mixed-circuit 和 R4 结果尚未全部产生或接纳。因此，本文中的“设计”“机制”“计划验证”与“已经得到的经验结果”会严格分开。
 
 # 一句话概括论文 idea
 
@@ -858,8 +858,10 @@ $$
 
 当前 lineage 中：
 
-- `S1 = febedea78c88ed779171cedc5dab4be097061a1f`；
-- `S2 = f158aa7697b8b47a7704c4a4a2028bf6c7c080c4`。
+- `S1 = b658e2178b210c2cc0012fc61957a3b3a92953bb`；
+- 描述性 registration run 为 `33070626218`，其 51-entry Behavior Set digest 为 `d64dcfcd48e183736d4a6565cca8d698dbeef700d4cec0af4594b7258016d2b7`；
+- `S2 = bb83d4e42209e24df0c71df3eea5df7cbff7e1d5`，且 S1 到 S2 只改变 `config/day1-registration-anchors.json`；
+- S2 exact-head CI run `33073232432` 为 2118 passed、2 skipped。
 
 S2 只安装 registration anchor，不授予未来 Day 1A、Day 2 或 Day 1B 结果权威。
 
@@ -949,15 +951,16 @@ $$
 
 - 大部分 typed state、query compiler、`OutputPlan`、F1-M ledger、strong bundle、plaintext oracle、replay validator 与 workflow；
 - S1/S2 registration lineage；
-- S2 exact CI：2095 passed，2 skipped；
-- registration run `33037473603` 及其独立 payload/checksum/source/tree/run 复核；
+- S2 exact CI run `33073232432`：2118 passed，2 skipped；
+- registration run `33070626218` 及其唯一 artifact、内部校验和、source/tree、专用 workflow provenance 和 51 个 Behavior Set Git blob 的独立复核；
+- 跨 job pre-replay exact closed-tree/no-symlink/status-identity blocker 已由代码、测试和 ChatGPT Pro 窄审关闭；
 - methods-first manuscript、preregistration、claim ledger 和 analysis isolation 框架。
 
 本分支已把 `claim-ledger-draft.md` 中落后于当前 S2 anchor 的 strong candidate registration 状态同步为精确 S1/S2 范围内的 `PASS`。该状态只说明固定候选目录可以被仓库承认，绝不等于 formal Day 1A、完整成本或经验结果已经产生；C3 与所有经验 claim 仍保持 `HOLD`。
 
 仍未形成最终论文结论的关键项是：
 
-1. 当前 non-admissible 单分片 Day 1A 诊断必须先通过；
+1. 当前 NON-ADMISSIBLE 单分片 Day 1A 诊断 run `33075408647` 必须先通过；
 2. 正式 21-shard Day 1A 与 aggregate 必须产生并被接纳；
 3. Day 2 calibration、profile/post-run anchors 必须闭合；
 4. 三个真实数据源的 acquisition、transform、30 unit manifests 和 TRACE anchor 必须闭合；
