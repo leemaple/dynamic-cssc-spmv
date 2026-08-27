@@ -22,6 +22,58 @@ def _workflow(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _job_owning(workflow: str, command: str) -> str:
+    job_starts = list(re.finditer(r"(?m)^  ([a-z][a-z0-9-]*):\n", workflow))
+    owners: list[str] = []
+    for index, match in enumerate(job_starts):
+        end = job_starts[index + 1].start() if index + 1 < len(job_starts) else len(workflow)
+        if command in workflow[match.start() : end]:
+            owners.append(match.group(1))
+    assert len(owners) == 1
+    return owners[0]
+
+
+def _job_block(workflow: str, job_name: str) -> str:
+    start_match = re.search(rf"(?m)^  {re.escape(job_name)}:\n", workflow)
+    assert start_match is not None
+    next_match = re.search(r"(?m)^  [a-z][a-z0-9-]*:\n", workflow[start_match.end() :])
+    end = (
+        start_match.end() + next_match.start()
+        if next_match is not None
+        else len(workflow)
+    )
+    return workflow[start_match.start() : end]
+
+
+def test_production_and_independent_replay_have_separate_timeout_budgets() -> None:
+    workflow = _workflow(PUBLICATION_WORKFLOW)
+
+    producer_job = _job_owning(workflow, "python scripts/run_day1_suite.py")
+    replay_job = _job_owning(workflow, "python scripts/replay_day1_shard.py")
+    producer = _job_block(workflow, producer_job)
+    replay = _job_block(workflow, replay_job)
+    pre_replay_name = (
+        "r2-day1a-publication-pre-replay-${{ github.sha }}-"
+        "${{ needs.plan.outputs.normalized_seed }}-${{ matrix.workload }}-"
+        "${{ matrix.freshness_id }}"
+    )
+
+    assert producer_job != replay_job
+    assert producer_job == "produce-shard"
+    assert replay_job == "replay-shard"
+    assert "timeout-minutes: 355" in producer
+    assert "timeout-minutes: 355" in replay
+    assert "needs: [plan, produce-shard]" in replay
+    assert pre_replay_name in producer
+    assert pre_replay_name in replay
+    assert workflow.count(pre_replay_name) == 2
+    assert "retention-days: 1" in producer
+    checksum_guard = "(cd results/day1-shard && sha256sum --check --strict SHA256SUMS)"
+    assert replay.index(checksum_guard) < replay.index("python scripts/replay_day1_shard.py")
+    assert "if: ${{ inputs.diagnostic_single_shard == false }}" in replay
+    assert "needs: [plan, replay-shard]" in _job_block(workflow, "aggregate")
+
+
 def test_publication_workflow_is_manual_hosted_and_syntax_checked() -> None:
     workflow = _workflow(PUBLICATION_WORKFLOW)
 
@@ -29,7 +81,7 @@ def test_publication_workflow_is_manual_hosted_and_syntax_checked() -> None:
     assert "\n  workflow_dispatch:\n" in workflow
     assert "pull_request:" not in workflow
     assert "push:" not in workflow
-    assert workflow.count("runs-on: ubuntu-latest") == 3
+    assert workflow.count("runs-on: ubuntu-latest") == 4
     assert "runs-on: self-hosted" not in workflow
     blocks = re.findall(
         r"(?ms)^ {10}.*?\.venv/bin/python - <<'PY'\n(.*?)^ {10}PY$",
@@ -43,29 +95,29 @@ def test_publication_workflow_is_manual_hosted_and_syntax_checked() -> None:
 def test_publication_workflow_pins_runtime_actions_cache_and_concurrency() -> None:
     workflow = _workflow(PUBLICATION_WORKFLOW)
 
-    assert workflow.count("python-version: '3.12.13'") == 3
+    assert workflow.count("python-version: '3.12.13'") == 4
     assert workflow.count(
         "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"
-    ) == 3
+    ) == 4
     assert workflow.count(
         "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"
-    ) == 3
+    ) == 4
     assert workflow.count(
         "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830"
     ) == 1
     assert workflow.count(
         "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830"
-    ) == 2
+    ) == 3
     assert workflow.count(
         "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
-    ) == 1
+    ) == 2
     assert workflow.count(
         "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-    ) == 2
+    ) == 3
     assert re.search(r"uses:\s+actions/[^\s]+@v[0-9]", workflow) is None
     assert "group: day1a-publication-${{ github.repository_id }}-${{ github.sha }}" in workflow
     assert "cancel-in-progress: false" in workflow
-    assert workflow.count("day1a-publication-python-${{ runner.os }}-py31213-") == 3
+    assert workflow.count("day1a-publication-python-${{ runner.os }}-py31213-") == 4
     assert "key: day1-python-" not in workflow
 
 
