@@ -137,6 +137,9 @@ claim. The current publication materials are:
   non-authorizing Day 1A performance diagnosis and frozen 300-minute stop-loss;
 - [`docs/reviews/day1b-production-admission-contract-review-2026-08-28.md`](docs/reviews/day1b-production-admission-contract-review-2026-08-28.md):
   minimum production-admission bridge and explicitly prohibited scope growth;
+- [`docs/reviews/publication-completion-matrix-2026-08-28.md`](docs/reviews/publication-completion-matrix-2026-08-28.md):
+  requirement-by-requirement evidence status, critical path, and conditional
+  submission schedule;
 - [`docs/reviews/zcode-max-publication-audit-2026-08-23.md`](docs/reviews/zcode-max-publication-audit-2026-08-23.md):
   independent ZCode GLM-5.3 Max submission audit and adjudicated blockers.
 
