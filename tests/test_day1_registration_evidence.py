@@ -422,6 +422,36 @@ def test_clean_integrated_s1_produces_a_closed_observed_environment_archive(
     assert not (output_dir / DAY1_REGISTRATION_ANCHOR_PATH).exists()
 
 
+def test_clean_recovery_branch_s1_produces_and_reinspects_the_closed_archive(
+    tmp_path: Path,
+) -> None:
+    repository, source_sha = _integrated_clean_repository(tmp_path)
+    output_dir = tmp_path / "registration-evidence"
+    head_ref = "refs/heads/codex/day1a-workflow-split"
+
+    completed = _run_producer(
+        repository,
+        source_sha,
+        output_dir,
+        environment_updates={
+            "GITHUB_REF": head_ref,
+            "GITHUB_WORKFLOW_REF": (
+                f"leemaple/dynamic-cssc-spmv/{DEDICATED_WORKFLOW_PATH}@{head_ref}"
+            ),
+        },
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    workflow = json.loads((output_dir / "workflow-provenance.json").read_bytes())
+    assert workflow["ref"] == head_ref
+    assert workflow["workflow_ref"].endswith(f"@{head_ref}")
+    inspection = inspect_day1_registration_evidence_archive(output_dir)
+    assert inspection.source_git_sha == source_sha
+    assert inspection.formal_authority_granted is False
+    assert inspection.catalog_authority_minted is False
+    assert inspection.repository_anchor_installed is False
+
+
 @pytest.mark.parametrize(
     "environment_updates",
     (
@@ -733,6 +763,77 @@ def test_observed_context_is_exact_non_boolean_and_single_use() -> None:
     replay = producer_module._observed_run_context_from_document(context.document())
     with pytest.raises(Day1RegistrationEvidenceHold, match="cannot be replayed"):
         replay.consume()
+
+
+@pytest.mark.parametrize(
+    "head_ref",
+    (
+        "refs/heads/main",
+        "refs/heads/codex/day1a-workflow-split",
+    ),
+)
+def test_observed_context_accepts_an_exact_repository_head_ref(head_ref: str) -> None:
+    import dynamic_cssc.day1_registration_evidence as producer_module
+
+    context = producer_module._observed_run_context_from_document(
+        {
+            "event_name": "workflow_dispatch",
+            "formal_authority_granted": False,
+            "head_sha": "c" * 40,
+            "provider_receipt_verified": False,
+            "ref": head_ref,
+            "repository": "leemaple/dynamic-cssc-spmv",
+            "repository_id": 1341939625,
+            "run_attempt": 1,
+            "run_id": 567890,
+            "run_identity_authority_state": (
+                "descriptive-github-actions-environment-claims-only"
+            ),
+            "workflow_file_sha256": "d" * 64,
+            "workflow_path": DEDICATED_WORKFLOW_PATH,
+            "workflow_ref": (
+                f"leemaple/dynamic-cssc-spmv/{DEDICATED_WORKFLOW_PATH}@{head_ref}"
+            ),
+        }
+    )
+
+    assert context.document()["ref"] == head_ref
+
+
+@pytest.mark.parametrize(
+    "head_ref",
+    (
+        "refs/tags/v1",
+        "refs/heads/../escape",
+        "refs/heads/a.lock",
+        "refs/heads/-option",
+    ),
+)
+def test_observed_context_rejects_a_noncanonical_head_ref(head_ref: str) -> None:
+    import dynamic_cssc.day1_registration_evidence as producer_module
+
+    with pytest.raises(Day1RegistrationEvidenceHold, match="dedicated workflow"):
+        producer_module._observed_run_context_from_document(
+            {
+                "event_name": "workflow_dispatch",
+                "formal_authority_granted": False,
+                "head_sha": "c" * 40,
+                "provider_receipt_verified": False,
+                "ref": head_ref,
+                "repository": "leemaple/dynamic-cssc-spmv",
+                "repository_id": 1341939625,
+                "run_attempt": 1,
+                "run_id": 678901,
+                "run_identity_authority_state": (
+                    "descriptive-github-actions-environment-claims-only"
+                ),
+                "workflow_file_sha256": "d" * 64,
+                "workflow_path": DEDICATED_WORKFLOW_PATH,
+                "workflow_ref": (
+                    f"leemaple/dynamic-cssc-spmv/{DEDICATED_WORKFLOW_PATH}@{head_ref}"
+                ),
+            }
+        )
 
 
 def test_dirty_s1_fails_before_any_archive_member_is_written(tmp_path: Path) -> None:
