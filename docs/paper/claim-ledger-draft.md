@@ -40,7 +40,7 @@ complete-reference Day 1A result, a performance result, or a security claim.
 | D5 | The cloud-segmented strong path uses fixed c=128 pages and private client leader merging. | Phase 2 whole-query artifact plus repository admission | Fixture E4 PASS; candidate registration PASS for exact S1/S2 lineage; performance and security claims HOLD |
 | A1 | CSSC supplies static layout, ColumnIndex reorganization, RowMap recovery, and aggregation. | Gao et al. primary source and local source audit | E0; cite and do not claim |
 | A2 | The non-power-of-two schedule is our corrected CSSC/HElib-compatible interpretation, not verified author code. | CSSC Algorithm 4 audit and cited HElib totalSum source | E0/E1; use explicit caveat |
-| A3 | We make no first encrypted sparse SpMV or first dynamic encrypted database claim. | Related-work boundary review | Frozen non-claim |
+| A3 | We make no first encrypted sparse SpMV/SpMM, encrypted-index or hidden-position, double-ciphertext sparse computation, dynamic encrypted-data, versioned-commitment/freshness/replay, or random output-share/mask claim. | Primary-source gap audit covering CSSC, Lodia, 2DPP, CipherSkip, SparseE, Ferguson/D'Agata, Rhombus, d-DSE, CKKS-Auth Tree, encrypted databases, and secure aggregation | Frozen non-claim; the permitted novelty boundary is only the update-aware CSSC integration stated in D1--D4 |
 
 ## Correctness and completeness claims
 
@@ -66,6 +66,10 @@ complete-reference Day 1A result, a performance result, or a security claim.
 ## Permanent non-claims
 
 - no new homomorphic-encryption primitive;
+- no first/only claim for encrypted indices, hidden nonzero positions,
+  ciphertext--ciphertext sparse multiplication, dynamic encrypted data,
+  versioned commitments, freshness/replay rejection, or canceling/random output
+  shares in isolation;
 - no formal, malicious, adaptive, collusion, side-channel, or traffic-analysis
   security theorem;
 - no author-code reproduction;
