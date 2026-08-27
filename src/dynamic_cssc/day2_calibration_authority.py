@@ -92,6 +92,7 @@ _PAYLOAD_FILENAMES = (
     "contract-bindings.json",
     "rotation-key-plan.json",
     "generated-key-inventory.json",
+    "serialized-object-size-profile.json",
     "operation-profile-set.json",
     "raw-measurement-blocks.json",
     "runtime-isolation-receipt.json",
@@ -193,6 +194,20 @@ _GENERATED_KEY_INVENTORY_KEYS = frozenset(
         "serialized_rotation_key_bytes",
         "eval_mult_key_generated",
         "serialized_eval_mult_key_sha256",
+        "serialized_eval_mult_key_bytes",
+    }
+)
+_SERIALIZED_OBJECT_SIZE_PROFILE_KEYS = frozenset(
+    {
+        "schema_version",
+        "ciphertext_serialization_format",
+        "ciphertext_measurement_method",
+        "ciphertext_bytes",
+        "f1m_ciphertext_construction_profile",
+        "f1m_random_zero_sum_ciphertext_bytes",
+        "f1m_encrypted_zero_dummy_ciphertext_bytes",
+        "generated_key_inventory_sha256",
+        "serialized_rotation_key_inventory_bytes",
         "serialized_eval_mult_key_bytes",
     }
 )
@@ -402,6 +417,7 @@ _PRODUCER_VALIDATION_KEYS = frozenset(
         "operation_profile_set_sha256",
         "rotation_key_plan_sha256",
         "generated_key_inventory_sha256",
+        "serialized_object_size_profile_sha256",
         "runtime_isolation_receipt_sha256",
         "calibration_projection_sha256",
         "candidate_catalog_sha256",
@@ -451,6 +467,12 @@ _POST_RUN_ANCHOR_KEYS = frozenset(
         "operation_profile_set_sha256",
         "rotation_key_plan_sha256",
         "generated_key_inventory_sha256",
+        "serialized_object_size_profile_sha256",
+        "ciphertext_bytes",
+        "f1m_random_zero_sum_ciphertext_bytes",
+        "f1m_encrypted_zero_dummy_ciphertext_bytes",
+        "serialized_rotation_key_inventory_bytes",
+        "serialized_eval_mult_key_bytes",
         "runtime_isolation_receipt_sha256",
         "contract_bindings_sha256",
         "calibration_projection_sha256",
@@ -477,6 +499,12 @@ class Day2CalibrationInspection:
     operation_profile_set_sha256: str
     rotation_key_plan_sha256: str
     generated_key_inventory_sha256: str
+    serialized_object_size_profile_sha256: str
+    ciphertext_bytes: int
+    f1m_random_zero_sum_ciphertext_bytes: int
+    f1m_encrypted_zero_dummy_ciphertext_bytes: int
+    serialized_rotation_key_inventory_bytes: int
+    serialized_eval_mult_key_bytes: int
     runtime_isolation_receipt_sha256: str
     contract_bindings_sha256: str
     calibration_projection_sha256: str
@@ -686,6 +714,13 @@ class _Day2CalibrationReceiptBinding:
     outer_archive_sha256: str
     raw_measurement_blocks_sha256: str
     calibration_projection_sha256: str
+    rotation_key_plan_sha256: str
+    serialized_object_size_profile_sha256: str
+    ciphertext_bytes: int
+    f1m_random_zero_sum_ciphertext_bytes: int
+    f1m_encrypted_zero_dummy_ciphertext_bytes: int
+    serialized_rotation_key_inventory_bytes: int
+    serialized_eval_mult_key_bytes: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -700,6 +735,12 @@ class _Day2CalibrationBinding:
     operation_profile_set_sha256: str
     rotation_key_plan_sha256: str
     generated_key_inventory_sha256: str
+    serialized_object_size_profile_sha256: str
+    ciphertext_bytes: int
+    f1m_random_zero_sum_ciphertext_bytes: int
+    f1m_encrypted_zero_dummy_ciphertext_bytes: int
+    serialized_rotation_key_inventory_bytes: int
+    serialized_eval_mult_key_bytes: int
     runtime_isolation_receipt_sha256: str
     contract_bindings_sha256: str
     calibration_projection_sha256: str
@@ -736,6 +777,34 @@ class Day2CalibrationAuthority:
     @property
     def calibration_projection_sha256(self) -> str:
         return self._binding.calibration_projection_sha256
+
+    @property
+    def rotation_key_plan_sha256(self) -> str:
+        return self._binding.rotation_key_plan_sha256
+
+    @property
+    def serialized_object_size_profile_sha256(self) -> str:
+        return self._binding.serialized_object_size_profile_sha256
+
+    @property
+    def ciphertext_bytes(self) -> int:
+        return self._binding.ciphertext_bytes
+
+    @property
+    def f1m_random_zero_sum_ciphertext_bytes(self) -> int:
+        return self._binding.f1m_random_zero_sum_ciphertext_bytes
+
+    @property
+    def f1m_encrypted_zero_dummy_ciphertext_bytes(self) -> int:
+        return self._binding.f1m_encrypted_zero_dummy_ciphertext_bytes
+
+    @property
+    def serialized_rotation_key_inventory_bytes(self) -> int:
+        return self._binding.serialized_rotation_key_inventory_bytes
+
+    @property
+    def serialized_eval_mult_key_bytes(self) -> int:
+        return self._binding.serialized_eval_mult_key_bytes
 
     def validate_calibration_projection(
         self,
@@ -774,7 +843,7 @@ def _mint_repository_calibration_profile_authority(
         raise Day2CalibrationAuthorityError(
             "repository pre-dispatch warmup block count is not frozen"
         )
-    if experiment_behavior_set_schema_version != "dynamic-cssc-day2-behavior-set-v4":
+    if experiment_behavior_set_schema_version != "dynamic-cssc-day2-behavior-set-v6":
         raise Day2CalibrationAuthorityError(
             "repository pre-dispatch Behavior Set schema is not frozen"
         )
@@ -801,6 +870,13 @@ def _mint_repository_calibration_authority(
     outer_archive_sha256: str,
     raw_measurement_blocks_sha256: str,
     calibration_projection_sha256: str,
+    rotation_key_plan_sha256: str,
+    serialized_object_size_profile_sha256: str,
+    ciphertext_bytes: int,
+    f1m_random_zero_sum_ciphertext_bytes: int,
+    f1m_encrypted_zero_dummy_ciphertext_bytes: int,
+    serialized_rotation_key_inventory_bytes: int,
+    serialized_eval_mult_key_bytes: int,
 ) -> Day2CalibrationAuthority:
     binding = _Day2CalibrationReceiptBinding(
         source_git_sha=_require_lower_git_sha(
@@ -818,6 +894,34 @@ def _mint_repository_calibration_authority(
         calibration_projection_sha256=_require_lower_sha256(
             calibration_projection_sha256,
             "repository calibration projection",
+        ),
+        rotation_key_plan_sha256=_require_lower_sha256(
+            rotation_key_plan_sha256,
+            "repository calibration rotation key plan",
+        ),
+        serialized_object_size_profile_sha256=_require_lower_sha256(
+            serialized_object_size_profile_sha256,
+            "repository calibration serialized-object size profile",
+        ),
+        ciphertext_bytes=_require_positive_int(
+            ciphertext_bytes,
+            "repository calibration ciphertext bytes",
+        ),
+        f1m_random_zero_sum_ciphertext_bytes=_require_positive_int(
+            f1m_random_zero_sum_ciphertext_bytes,
+            "repository calibration F1-M random-zero-sum ciphertext bytes",
+        ),
+        f1m_encrypted_zero_dummy_ciphertext_bytes=_require_positive_int(
+            f1m_encrypted_zero_dummy_ciphertext_bytes,
+            "repository calibration F1-M encrypted-zero-dummy ciphertext bytes",
+        ),
+        serialized_rotation_key_inventory_bytes=_require_positive_int(
+            serialized_rotation_key_inventory_bytes,
+            "repository calibration serialized rotation-key inventory bytes",
+        ),
+        serialized_eval_mult_key_bytes=_require_positive_int(
+            serialized_eval_mult_key_bytes,
+            "repository calibration serialized evaluation multiplication-key bytes",
         ),
     )
     authority = object.__new__(Day2CalibrationAuthority)
@@ -1136,19 +1240,26 @@ def validate_day2_calibration_profile_anchor_document(content: bytes) -> None:
 def _decode_post_run_anchor_set(content: bytes) -> tuple[_Day2CalibrationBinding, ...]:
     payload = _decode_json(content, "Day 2 post-run anchor set")
     _require_exact_keys(payload, _POST_RUN_ANCHOR_SET_KEYS, "Day 2 post-run anchor set")
-    if payload["schema_version"] != "dynamic-cssc-day2-calibration-post-run-anchor-set-v4":
-        raise Day2CalibrationAuthorityError("Day 2 post-run anchor-set schema is not frozen")
     anchors = payload["anchors"]
     if type(anchors) is not list or len(anchors) > 1:
         raise Day2CalibrationAuthorityError(
             "Day 2 post-run anchor set must contain zero or one binding"
         )
+    anchor_set_schema = payload["schema_version"]
+    if anchor_set_schema == "dynamic-cssc-day2-calibration-post-run-anchor-set-v4":
+        if anchors:
+            raise Day2CalibrationAuthorityError(
+                "legacy Day 2 post-run anchor set may only be empty"
+            )
+        return ()
+    if anchor_set_schema != "dynamic-cssc-day2-calibration-post-run-anchor-set-v6":
+        raise Day2CalibrationAuthorityError("Day 2 post-run anchor-set schema is not frozen")
     bindings: list[_Day2CalibrationBinding] = []
     for anchor in anchors:
         _require_exact_keys(anchor, _POST_RUN_ANCHOR_KEYS, "Day 2 post-run anchor")
-        if anchor["schema_version"] != "dynamic-cssc-day2-calibration-post-run-anchor-v4":
+        if anchor["schema_version"] != "dynamic-cssc-day2-calibration-post-run-anchor-v6":
             raise Day2CalibrationAuthorityError("Day 2 post-run anchor schema is not frozen")
-        if anchor["experiment_behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v4":
+        if anchor["experiment_behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v6":
             raise Day2CalibrationAuthorityError("Day 2 post-run Behavior Set schema is not frozen")
         experiment_source_git_sha = _require_lower_git_sha(
             anchor["experiment_source_git_sha"],
@@ -1207,6 +1318,30 @@ def _decode_post_run_anchor_set(content: bytes) -> tuple[_Day2CalibrationBinding
                 generated_key_inventory_sha256=_require_lower_sha256(
                     anchor["generated_key_inventory_sha256"],
                     "Day 2 post-run generated key inventory",
+                ),
+                serialized_object_size_profile_sha256=_require_lower_sha256(
+                    anchor["serialized_object_size_profile_sha256"],
+                    "Day 2 post-run serialized-object size profile",
+                ),
+                ciphertext_bytes=_require_positive_int(
+                    anchor["ciphertext_bytes"],
+                    "Day 2 post-run ciphertext bytes",
+                ),
+                f1m_random_zero_sum_ciphertext_bytes=_require_positive_int(
+                    anchor["f1m_random_zero_sum_ciphertext_bytes"],
+                    "Day 2 post-run F1-M random-zero-sum ciphertext bytes",
+                ),
+                f1m_encrypted_zero_dummy_ciphertext_bytes=_require_positive_int(
+                    anchor["f1m_encrypted_zero_dummy_ciphertext_bytes"],
+                    "Day 2 post-run F1-M encrypted-zero-dummy ciphertext bytes",
+                ),
+                serialized_rotation_key_inventory_bytes=_require_positive_int(
+                    anchor["serialized_rotation_key_inventory_bytes"],
+                    "Day 2 post-run serialized rotation-key inventory bytes",
+                ),
+                serialized_eval_mult_key_bytes=_require_positive_int(
+                    anchor["serialized_eval_mult_key_bytes"],
+                    "Day 2 post-run serialized evaluation multiplication-key bytes",
                 ),
                 runtime_isolation_receipt_sha256=_require_lower_sha256(
                     anchor["runtime_isolation_receipt_sha256"],
@@ -1442,7 +1577,7 @@ def _validate_artifact_behavior_inventory(
         raise Day2CalibrationAuthorityError(
             "artifact Behavior inventory source SHA does not match source provenance"
         )
-    if value["behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v4":
+    if value["behavior_set_schema_version"] != "dynamic-cssc-day2-behavior-set-v6":
         raise Day2CalibrationAuthorityError("artifact Day 2 Behavior Set schema is not frozen")
     entries = value["entries"]
     if type(entries) is not list or not entries:
@@ -1835,7 +1970,7 @@ def _validate_producer_validation(
     calibration_projection_sha256: str,
 ) -> None:
     _require_exact_keys(value, _PRODUCER_VALIDATION_KEYS, "producer validation")
-    if value["schema_version"] != "dynamic-cssc-publication-day2-producer-validation-v1":
+    if value["schema_version"] != "dynamic-cssc-publication-day2-producer-validation-v2":
         raise Day2CalibrationAuthorityError("producer validation schema is not frozen")
     if value["formal_authority_granted"] is not False:
         raise Day2CalibrationAuthorityError("producer validation cannot grant authority")
@@ -1864,6 +1999,9 @@ def _validate_producer_validation(
         "operation_profile_set_sha256": "operation-profile-set.json",
         "rotation_key_plan_sha256": "rotation-key-plan.json",
         "generated_key_inventory_sha256": "generated-key-inventory.json",
+        "serialized_object_size_profile_sha256": (
+            "serialized-object-size-profile.json"
+        ),
         "runtime_isolation_receipt_sha256": "runtime-isolation-receipt.json",
     }
     for producer_field, filename in file_bindings.items():
@@ -1950,6 +2088,84 @@ def _validate_generated_key_inventory(
     _require_positive_int(
         value["serialized_eval_mult_key_bytes"],
         "serialized evaluation multiplication key bytes",
+    )
+
+
+def _validate_serialized_object_size_profile(
+    value: dict[str, object],
+    generated_key_inventory: dict[str, object],
+) -> tuple[int, int, int, int, int]:
+    _require_exact_keys(
+        value,
+        _SERIALIZED_OBJECT_SIZE_PROFILE_KEYS,
+        "serialized object size profile",
+    )
+    if (
+        value["schema_version"]
+        != "dynamic-cssc-publication-day2-serialized-object-size-profile-v2"
+    ):
+        raise Day2CalibrationAuthorityError(
+            "serialized object size-profile schema is not frozen"
+        )
+    if value["ciphertext_serialization_format"] != "openfhe-sertype-binary-v1":
+        raise Day2CalibrationAuthorityError(
+            "ciphertext serialization format is not frozen"
+        )
+    if (
+        value["ciphertext_measurement_method"]
+        != "formal-probe-exact-serialized-byte-length-v1"
+    ):
+        raise Day2CalibrationAuthorityError(
+            "ciphertext size measurement method is not frozen"
+        )
+    if (
+        value["f1m_ciphertext_construction_profile"]
+        != "fresh-bfvrns-encryption-fixed-context-v1"
+    ):
+        raise Day2CalibrationAuthorityError(
+            "F1-M ciphertext construction profile is not frozen"
+        )
+    if value["generated_key_inventory_sha256"] != _sha256(
+        _canonical_json_bytes(generated_key_inventory)
+    ):
+        raise Day2CalibrationAuthorityError(
+            "serialized object size profile does not bind the generated-key inventory"
+        )
+    ciphertext_bytes = _require_positive_int(
+        value["ciphertext_bytes"],
+        "serialized ciphertext bytes",
+    )
+    f1m_random_zero_sum_ciphertext_bytes = _require_positive_int(
+        value["f1m_random_zero_sum_ciphertext_bytes"],
+        "serialized F1-M random-zero-sum ciphertext bytes",
+    )
+    f1m_encrypted_zero_dummy_ciphertext_bytes = _require_positive_int(
+        value["f1m_encrypted_zero_dummy_ciphertext_bytes"],
+        "serialized F1-M encrypted-zero-dummy ciphertext bytes",
+    )
+    rotation_key_bytes = _require_positive_int(
+        value["serialized_rotation_key_inventory_bytes"],
+        "serialized rotation-key inventory bytes",
+    )
+    eval_mult_key_bytes = _require_positive_int(
+        value["serialized_eval_mult_key_bytes"],
+        "serialized evaluation multiplication-key bytes",
+    )
+    if (
+        rotation_key_bytes
+        != generated_key_inventory["serialized_rotation_key_bytes"]
+        or eval_mult_key_bytes
+        != generated_key_inventory["serialized_eval_mult_key_bytes"]
+    ):
+        raise Day2CalibrationAuthorityError(
+            "serialized object size profile disagrees with measured evaluation-key sizes"
+        )
+    return (
+        ciphertext_bytes,
+        f1m_random_zero_sum_ciphertext_bytes,
+        f1m_encrypted_zero_dummy_ciphertext_bytes,
+        rotation_key_bytes,
+        eval_mult_key_bytes,
     )
 
 
@@ -2209,7 +2425,7 @@ def _validate_manifest(members: dict[str, bytes]) -> dict[str, object]:
     manifest = _decode_json(members["CALIBRATION-MANIFEST.json"], "CALIBRATION-MANIFEST.json")
     if set(manifest) != {"schema_version", "evidence_scope", "files"}:
         raise Day2CalibrationAuthorityError("calibration manifest keys must be exact")
-    if manifest["schema_version"] != "dynamic-cssc-publication-day2-calibration-evidence-v1":
+    if manifest["schema_version"] != "dynamic-cssc-publication-day2-calibration-evidence-v2":
         raise Day2CalibrationAuthorityError("calibration manifest schema is not frozen")
     if manifest["evidence_scope"] != EVIDENCE_SCOPE:
         raise Day2CalibrationAuthorityError("calibration evidence scope is not frozen")
@@ -2268,6 +2484,7 @@ def inspect_day2_calibration_archive(
     contract = payloads["contract-bindings.json"]
     rotation_plan = payloads["rotation-key-plan.json"]
     generated_keys = payloads["generated-key-inventory.json"]
+    serialized_size_profile = payloads["serialized-object-size-profile.json"]
     profiles = payloads["operation-profile-set.json"]
     raw = payloads["raw-measurement-blocks.json"]
     _validate_run_status(payloads["RUN_STATUS.json"])
@@ -2276,6 +2493,16 @@ def inspect_day2_calibration_archive(
     _validate_openfhe_build(openfhe)
     rotation_case_ids = _validate_rotation_key_plan(rotation_plan)
     _validate_generated_key_inventory(generated_keys, rotation_plan)
+    (
+        ciphertext_bytes,
+        f1m_random_zero_sum_ciphertext_bytes,
+        f1m_encrypted_zero_dummy_ciphertext_bytes,
+        serialized_rotation_key_inventory_bytes,
+        serialized_eval_mult_key_bytes,
+    ) = _validate_serialized_object_size_profile(
+        serialized_size_profile,
+        generated_keys,
+    )
     _validate_contract_bindings(contract, members)
     warmup_count, measurement_count, cases_by_primitive = _validate_operation_profiles(
         profiles,
@@ -2314,6 +2541,20 @@ def inspect_day2_calibration_archive(
         operation_profile_set_sha256=_sha256(members["operation-profile-set.json"]),
         rotation_key_plan_sha256=_sha256(members["rotation-key-plan.json"]),
         generated_key_inventory_sha256=_sha256(members["generated-key-inventory.json"]),
+        serialized_object_size_profile_sha256=_sha256(
+            members["serialized-object-size-profile.json"]
+        ),
+        ciphertext_bytes=ciphertext_bytes,
+        f1m_random_zero_sum_ciphertext_bytes=(
+            f1m_random_zero_sum_ciphertext_bytes
+        ),
+        f1m_encrypted_zero_dummy_ciphertext_bytes=(
+            f1m_encrypted_zero_dummy_ciphertext_bytes
+        ),
+        serialized_rotation_key_inventory_bytes=(
+            serialized_rotation_key_inventory_bytes
+        ),
+        serialized_eval_mult_key_bytes=serialized_eval_mult_key_bytes,
         runtime_isolation_receipt_sha256=_sha256(members["runtime-isolation-receipt.json"]),
         contract_bindings_sha256=_sha256(members["contract-bindings.json"]),
         calibration_projection_sha256=projection_sha256,
@@ -2531,4 +2772,19 @@ def repository_day2_calibration_authority() -> Day2CalibrationAuthority:
         outer_archive_sha256=binding.outer_archive_sha256,
         raw_measurement_blocks_sha256=binding.raw_measurement_blocks_sha256,
         calibration_projection_sha256=binding.calibration_projection_sha256,
+        rotation_key_plan_sha256=binding.rotation_key_plan_sha256,
+        serialized_object_size_profile_sha256=(
+            binding.serialized_object_size_profile_sha256
+        ),
+        ciphertext_bytes=binding.ciphertext_bytes,
+        f1m_random_zero_sum_ciphertext_bytes=(
+            binding.f1m_random_zero_sum_ciphertext_bytes
+        ),
+        f1m_encrypted_zero_dummy_ciphertext_bytes=(
+            binding.f1m_encrypted_zero_dummy_ciphertext_bytes
+        ),
+        serialized_rotation_key_inventory_bytes=(
+            binding.serialized_rotation_key_inventory_bytes
+        ),
+        serialized_eval_mult_key_bytes=binding.serialized_eval_mult_key_bytes,
     )

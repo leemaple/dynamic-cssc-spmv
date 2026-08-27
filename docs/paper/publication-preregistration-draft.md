@@ -475,7 +475,7 @@ measurement-method field in this placeholder remains `null`; the separate
 amendment is the sole reviewed source of administrative limits and
 measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v10` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v30` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface, including the amendment and
 `docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
@@ -483,18 +483,100 @@ workflow validation is not a
 dispatch receipt or evidence artifact: the workflow has no semantic inputs,
 does not fetch traces or held-out data, does not invoke the producer, uploads
 nothing, and cannot install an anchor. It now builds pinned OpenFHE 1.5.1 and
-runs a private, non-authorizing smoke through the canonical request, arbitrary
-typed query DAG, real BFV encryption/evaluation/decryption, controller-owned
-exclusive scratch, single-use ledger authorization, exact runner/source/compiler
-identity, bounded resource observations, and retained binary object verifier.
+runs private, non-authorizing ordinary and strong smokes through the canonical
+v4 request, their arbitrary typed query DAGs, real BFV
+encryption/evaluation/decryption, controller-owned exclusive scratch,
+single-use kind-specific authorization, exact runner/source/compiler
+identity plus the resolved file-backed OpenFHE linked-library bytes, bounded
+resource observations, and retained binary object verifier.
+The v30 surface additionally exposes one repository-owned replay-and-seal
+wrapper. It derives the exact candidate policy, role-retained phases, and fixed
+65,537 plaintext modulus; internally owns the typed execution sink and closes
+it only against accounting returned by the same replay. Callers cannot provide
+a second carrier stream or accounting result, nor choose the candidate role,
+retained phases, or modulus. Every compact query-window binding commits that
+candidate context together with its exact same-replay ordinary or strong typed
+layout. The wrapper retains only the first query-bearing layout in the
+candidate's first retained phase, independently reconstructs its logical matrix
+and plaintext SpMV result from the frozen query vector, and seals that
+representative behind a single-use process-local capability whose carrier
+reference is released on claim or abandonment. This proves neither an OpenFHE
+execution nor worker, dispatch, formal, or publication authority; all such
+receipt fields remain explicitly false.
+The candidate-cell core now requires that collector-minted capability as an
+adapter argument. It rejects a returned launch unless the capability was
+consumed and the launch's replay receipt agrees with the independently bound
+candidate, policy, retained phases, accounting root, query vector, and frozen
+modulus. Any failure after minting abandons the still-live capability. This is
+an in-process continuity invariant only; it does not authorize the production
+adapter or a held-out dispatch.
+The Day 2 Behavior Set v6 and Day1B v30 surface also preserve the exact formal
+rotation-plan digest in the final read-only Day 2 authority. A separate public
+issuer accepts only canonical `rotation-key-plan.json` bytes, obtains that
+authority from the zero-argument repository seam before and after issuance,
+and mints a single-use capability only when the bytes are the exact preimage of
+the post-run anchored digest. No caller can supply an authority object or
+authorization flag. Its receipt may set only
+`day2_direct_key_plan_authorized=true`; runtime admission, held-out dispatch,
+cost, performance, publication, and security claims remain false, and claim or
+abandonment releases the retained plan bytes. The current empty Day 2 profile
+and post-run anchor sets therefore still issue no such capability.
+The build-identity v3 subreceipt additionally binds stable filesystem identity,
+Mach-O UUID or ELF build ID, declared install name/SONAME and dependency names
+for the runner and each resolved non-system library; compiler bytes, version,
+and target; the CMake executable and version; the runner CMake cache,
+`compile_commands.json`, complete Ninja graph, and rules; and the pinned
+OpenFHE repository/version, clean commit and tree, package config, build cache,
+compile commands, and install manifest. The enclosing runtime receipt is v7 so
+the enlarged nested language cannot be mistaken for an older receipt. It also
+binds the ordinary/strong execution kind and freezes an
+inherited-file-descriptor READY/DONE control protocol. On Linux the
+controller reads the paused process's exact `/proc` executable mappings at
+both control points, admits only the pre-launch runner and resolved linked-file
+closure plus the fixed kernel pseudo-maps, rechecks every admitted file's
+mode, size, and SHA-256 through a no-follow descriptor, binds raw map roots and process
+start-time identity, and requires identical executable mapping sets at DONE.
+Darwin records no mapping admission and remains non-authorizing. This runtime
+witness is still pre-admission evidence: by itself it neither creates a
+production scratch capability nor authorizes a candidate-cell adapter.
+The v7 runtime language additionally distinguishes the non-anchored smoke seam
+from two anchored ordinary/strong entry points. Only the latter accept the
+opaque Day 2 key-plan capability; the deep launcher consumes it internally,
+constructs and verifies the request with that exact plan, cross-checks the
+generated key-material digest and exact-index inventory, and embeds the plan
+receipt. This does not grant dispatch or publication authority.
+The Day1B v30 composition seam then consumes one same-replay representative
+capability together with one anchored Day 2 plan capability, prepares the exact
+ordinary or strong single-use query lifecycle, and records one joint
+replay/runtime/payload receipt. Its output digest must equal the replay oracle
+digest, and its payload-receipt stream, count, and byte total must equal runtime
+v7. It remains pre-admission and cannot mint a worker invocation.
+The v23 surface separately adds one Linux-only production scratch-creation
+seam. Starting from an exact empty launcher-owned mode-0700 parent, it opens
+every path component through held no-follow directory descriptors, creates a
+128-bit exclusive mode-0700 child, opens the two fixed mode-0600 members with
+`openat(O_EXCL|O_NOFOLLOW)`, and opens SQLite through the held
+`/proc/self/fd` directory. It unlinks both names and removes the child directory
+before returning any handle. The typed receipt binds parent/filesystem/root and
+member identities, proves the SQLite connection refers to the held member, and
+sets all dispatch, publication, and formal-authority fields to false. Only an
+exact receipt-correlated capability may set scratch-creation isolation true;
+this fact remains insufficient for candidate execution or held-out dispatch.
 The smoke exercises multiplication without implicit
 relinearization, explicit relinearization, exact-index rotation, plaintext
 selection, ciphertext addition, reconstruction, tail-slot zero checks, and
-SHA-256 verification of every serialized input, result, and one-time key bundle.
-Its provisional depth-2/0/0 profile remains explicitly `HOLD` for mixed-circuit
+SHA-256 verification of every serialized input and result plus a typed
+`D1BKEY01` rotation/eval-mult frame built directly from one key-generation
+session. Its receipt binds the request/input roots, context parameters, full
+rotation plan, required/generated indices, both segment digests, and combined
+frame while keeping context/public-key bytes outside that frame.
+The rotation-plan digest is now the exact SHA-256 of the formal Day 2 compact
+JSON member including its single trailing LF; the Python input seam and C++
+runner independently require that same byte identity. Its provisional
+depth-2/0/0 profile remains explicitly `HOLD` for mixed-circuit
 parameter authority.
 
-The v10 surface also contains a non-authorizing streaming accounting core. It
+The v23 surface also contains a non-authorizing streaming accounting core. It
 advances one candidate state exactly once per exact Publication Window, derives
 at most one typed query plan per query-bearing window, applies the window's
 integer query multiplicity before the fixed 14-primitive mapping, and retains
@@ -506,6 +588,77 @@ reservation, or transition claim; the ordinary single-query lifecycle smoke is
 the separate evidence path for real no-reuse enforcement. The accounting core
 does not mint a worker invocation, materialize per-query masks or ledger
 transitions, measure serialized OpenFHE sizes, or relax any dispatch gate.
+
+The v24 increment adds a second, streaming-only callback at that same replay
+boundary. For each query-bearing window it receives the existing compact
+descriptor together with the exact ordinary `CompiledQuery` or strong execution
+bundle that produced it, and cross-checks the version, plan digests, result
+cardinality, and F1-M routes. The carrier is not retained by the replay and has
+no authority, admission, or dispatch field. With the callback absent or present,
+the accounting, complete window-stream, and query-window-stream roots are
+identical. The production adapter remains uninstalled and all worker
+runtime/admission flags remain false.
+
+The v23 surface closes count authority separately from serialized-size
+measurement. Before dispatch, the controller projects each deterministic replay
+into an open expected-count document containing the exact retained-phase
+update/query primitive vectors and all nine logical protocol-object
+multiplicities. The worker may measure representative serialized equivalence
+classes, but it cannot select the multiplicity that those classes price.
+Non-F1-M logical and worker-streamed multiplicities must be identical. For the
+two weighted F1-M categories, independently opened route coverage owns the
+nonzero logical multiplicity and the formal worker-streamed multiplicity is
+zero; their byte charge comes only from the anchored Day 2 size class. A
+version-plan publication is counted exactly once for an update-bearing window
+and zero times for a no-update window. Worker phase receipts, object-receipt
+spools, serialization ledgers, and physical primitive-count records must all
+open the same controller preimage. The resulting schema family is Day 1B unit
+v4, serialization ledger v5, accounting/phase accounting v2, worker input
+binding v10, worker receipt v10, and controller expected-count documents v3.
+The formal producer and artifact verifier require both F1-M worker-streamed
+multiplicities to remain zero in every retained phase before branching on its
+outcome. Thus a failed or controller-terminal null projection cannot preserve
+an otherwise self-consistent rehashed preimage that switches weighted F1-M back
+to materialized worker mode.
+
+The v23 surface also freezes canonical big-endian binary framing for the three
+metadata categories used in primary communication accounting. A ColumnIndex
+synchronization entry is exactly 64 bytes; patch and full-sync differ only in a
+fixed-position one-byte enum and therefore share one size class. An update-side
+version-plan publication is exactly 144 bytes and occurs only for an actual
+version transition. A per-query version-plan binding is exactly 136 bytes.
+Magic, record kind, zero flags, numeric schema, total length, field ranges,
+digest widths, reserved bytes, and rejection of trailing data are all part of
+the canonical framing. Each size-class descriptor also binds its update/query
+transaction. The controller expected-count preimage opens all three descriptor
+digests and byte counts; every complete ledger row must charge its controller
+multiplicity at exactly that fixed width, with one representative class when
+the multiplicity is nonzero. The artifact verifier independently rejects an
+object receipt whose metadata byte count differs from 64, 144, or 136. This
+closes preparatory size-class pricing, but it does not yet authorize or claim a
+production representative execution.
+
+The v23 surface separately freezes the one-time evaluation-key object as an
+exact two-segment frame. Its 88-byte header is `D1BKEY01`, followed by the
+big-endian rotation-inventory length and 32-byte digest, then the big-endian
+evaluation-multiplication-key length and 32-byte digest. The payload is exactly
+the full Day 1A rotation-key inventory bytes followed by the eval-mult key
+bytes. The size-class descriptor binds both segment lengths to the Day 2 outer
+archive and serialized-object-size-profile roots, so its charged length is
+`88 + rotation_bytes + eval_mult_bytes`. Crypto-context, public-key, label, and
+optional third segments are excluded. The generic OpenFHE runner now builds
+that frame directly from typed rotation and eval-mult outputs of one actual
+context/session, and its pre-admission receipt binds the full supplied plan and
+required/generated indices. The worker input independently opens the exact Day
+2 segment lengths and size-class digest. The streaming verifier checks the
+magic, header lengths, segment digests, exact end-of-frame, and object cap
+without retaining the binary key payload. The first retained-phase object
+receipt and ledger then bind one representative, its exact
+`88 + rotation_bytes + eval_mult_bytes` charge, and the same controller class
+digest; later retained phases bind zero. Production admission remains HOLD:
+query-derived plans grant no authority, and a canonical Day 2 plan remains only
+a bound input until the adapter consumes its independent authority plus the
+runtime mapping, scratch, and representative-DAG capabilities.
 
 Held-out dispatch remains forbidden until an outcome-blind amendment freezes
 the measured limits and methods, and a repository-owned production candidate-cell
@@ -521,8 +674,13 @@ OpenFHE query once per scheduled arrival.
 The ordinary lifecycle still binds the common typed DAG to private global-column
 operands, fresh overlap-only F1-M masks, and a crash-persistent single-use
 commitment. The real OpenFHE smoke verifies that execution path, and formal Day 2
-supplies the anchored primitive timings and serialized ciphertext/key sizes used
-by weighted Day1B accounting. A weighted F1-M equivalence-class receipt proves
+supplies the anchored primitive timings and retains the exact serialized
+ciphertext/key sizes in `serialized-object-size-profile.json`, including
+separate fresh-encryption byte lengths for random-zero-sum and encrypted-zero
+dummy F1-M ciphertexts. Archive validation, post-run anchor v6, and the
+zero-argument repository authority bind those sizes before weighted Day1B
+accounting can consume them. A weighted F1-M
+equivalence-class receipt proves
 its size class, query range, and exact charged multiplicity; it does not claim
 that every fresh mask was materialized during the cost-model experiment. The
 execution basis is part of the worker input digest. Introducing the remaining

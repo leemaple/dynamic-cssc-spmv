@@ -33,6 +33,7 @@ if __package__:
         CausalCellResult,
         ExperimentPlan,
         _candidate_span80,
+        _causal_evaluation_provenance,
         _initial_state_sha256,
         evaluate_causal_cell,
         freshness_path_id,
@@ -49,6 +50,7 @@ else:
         CausalCellResult,
         ExperimentPlan,
         _candidate_span80,
+        _causal_evaluation_provenance,
         _initial_state_sha256,
         evaluate_causal_cell,
         freshness_path_id,
@@ -226,6 +228,8 @@ def _expected_metadata(
     windows: list[PublicationWindow],
     events: list[Event],
     result: CausalCellResult,
+    causal_evaluation_mode: str,
+    query_scaling_source_rho_fraction: str | None,
 ) -> dict[str, object]:
     update_events_total = sum(event.kind == EventKind.SET for event in events)
     queries_total = sum(event.kind == EventKind.QUERY for event in events)
@@ -246,6 +250,8 @@ def _expected_metadata(
         "queries_per_update_target": float(ratio),
         "queries_per_update_fraction": str(ratio),
         "rho_id": rho_path_id(ratio),
+        "causal_evaluation_mode": causal_evaluation_mode,
+        "query_scaling_source_rho_fraction": query_scaling_source_rho_fraction,
         "queries_per_update_scheduled": (
             queries_total / update_events_total if update_events_total else 0.0
         ),
@@ -291,6 +297,8 @@ def _replay_cell(
     ratio: Fraction,
     initial_state: dict[tuple[int, int], int],
     initial_state_sha256: str,
+    causal_evaluation_mode: str,
+    query_scaling_source_rho_fraction: str | None,
 ) -> dict[str, object]:
     integer_correctness = _mapping(
         manifest_payload.get("integer_correctness"), "manifest.integer_correctness"
@@ -460,6 +468,8 @@ def _replay_cell(
         windows=windows,
         events=events,
         result=result,
+        causal_evaluation_mode=causal_evaluation_mode,
+        query_scaling_source_rho_fraction=query_scaling_source_rho_fraction,
     )
     if set(metadata) != set(expected_metadata):
         raise ValueError(
@@ -586,7 +596,14 @@ def replay_shard(
     initial_state_sha256 = _initial_state_sha256(initial_state)
     freshness_id = freshness_path_id(freshness)
     cells: list[dict[str, object]] = []
+    rho_one_available = False
     for ratio in plan.ratio_grid:
+        causal_evaluation_mode, query_scaling_source_rho_fraction = (
+            _causal_evaluation_provenance(
+                ratio,
+                rho_one_available=rho_one_available,
+            )
+        )
         relative_path = Path(workload) / freshness_id / rho_path_id(ratio)
         cell = _replay_cell(
             cell_dir=shard_dir / relative_path,
@@ -600,9 +617,13 @@ def replay_shard(
             ratio=ratio,
             initial_state=initial_state,
             initial_state_sha256=initial_state_sha256,
+            causal_evaluation_mode=causal_evaluation_mode,
+            query_scaling_source_rho_fraction=query_scaling_source_rho_fraction,
         )
         cell["relative_path"] = relative_path.as_posix()
         cells.append(cell)
+        if ratio == 1:
+            rho_one_available = True
 
     receipt: dict[str, object] = {
         "schema": REPLAY_RECEIPT_SCHEMA,

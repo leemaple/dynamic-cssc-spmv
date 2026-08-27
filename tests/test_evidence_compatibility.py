@@ -124,7 +124,31 @@ DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "tests/test_query_accounting.py",
     "tests/test_strong_day1_simulator.py",
     "config/publication-day1b-resource-amendment.json",
+    "docs/decisions/0013-anchor-day2-serialized-size-profile.md",
     "docs/reviews/day1b-resource-amendment-review-2026-08-25.md",
+    "src/dynamic_cssc/day2_openfhe_key_plan.py",
+    "src/dynamic_cssc/openfhe_runtime_admission.py",
+    "src/dynamic_cssc/publication_day1b_aggregate_bounds.py",
+    "src/dynamic_cssc/publication_day1b_expected_counts.py",
+    "src/dynamic_cssc/publication_day1b_f1m_aggregation.py",
+    "src/dynamic_cssc/publication_day1b_key_framing.py",
+    "src/dynamic_cssc/publication_day1b_layout_execution.py",
+    "src/dynamic_cssc/publication_day1b_replay_execution.py",
+    "src/dynamic_cssc/publication_day1b_metadata_framing.py",
+    "src/dynamic_cssc/publication_day1b_openfhe_execution.py",
+    "src/dynamic_cssc/publication_day1b_scratch.py",
+    "tests/test_publication_day1b_aggregate_bounds.py",
+    "tests/test_publication_day1b_expected_counts.py",
+    "tests/test_publication_day1b_f1m_aggregation.py",
+    "tests/test_publication_day1b_key_framing.py",
+    "tests/test_publication_day1b_layout_execution.py",
+    "tests/test_publication_day1b_replay_execution.py",
+    "tests/test_publication_day1b_metadata_framing.py",
+    "tests/test_publication_day1b_openfhe_execution.py",
+    "tests/test_publication_day1b_scratch.py",
+    "tests/test_day2_openfhe_key_plan.py",
+    "tests/test_openfhe_runtime_admission.py",
+    "tests/test_strong_execution_bundle.py",
 )
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
@@ -240,7 +264,11 @@ def _write_day2_post_run_anchors(
         _canonical(
             {
                 "anchors": anchors,
-                "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+                "schema_version": (
+                    "dynamic-cssc-day2-calibration-post-run-anchor-set-v6"
+                    if anchors
+                    else "dynamic-cssc-day2-calibration-post-run-anchor-set-v4"
+                ),
             }
         ),
     )
@@ -2115,7 +2143,7 @@ def test_day1b_preparatory_behavior_inventory_is_exact_but_non_authorizing(
         DAY1B_PREPARATORY_BEHAVIOR_PATHS
     )
     assert inventory["behavior_set_schema_version"] == (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v10"
+        "dynamic-cssc-day1b-preparatory-behavior-set-v30"
     )
     assert inventory["role"] == "day1b"
     assert inventory["source_git_sha"] == source_git_sha

@@ -9,6 +9,9 @@
 #include "cereal/external/rapidjson/writer.h"
 
 #include <algorithm>
+#include <array>
+#include <cerrno>
+#include <charconv>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -23,6 +26,8 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+#include <unistd.h>
 
 #include "include/args.hpp"
 
@@ -41,10 +46,29 @@ constexpr std::uint32_t kMultiplicativeDepth = 2;
 constexpr std::uint32_t kEstimatorEvalAddCount = 0;
 constexpr std::uint32_t kEstimatorKeySwitchCount = 0;
 constexpr std::uint64_t kRequestByteMaximum = 128ULL * 1024ULL * 1024ULL;
-constexpr char kRequestSchema[] = "dynamic-cssc-full-openfhe-query-request-v1";
-constexpr char kResultSchema[] = "dynamic-cssc-full-openfhe-query-result-v1";
+constexpr char kRequestSchema[] = "dynamic-cssc-full-openfhe-query-request-v4";
+constexpr char kResultSchema[] = "dynamic-cssc-full-openfhe-query-result-v4";
 constexpr char kProgramSchema[] = "dynamic-cssc-cloud-program-v1";
 constexpr char kBindingSchema[] = "dynamic-cssc-execution-binding-v1";
+constexpr char kKeyGenerationPlanSchema[] =
+    "dynamic-cssc-openfhe-key-generation-plan-v2";
+constexpr char kQueryDerivedRotationPlanSchema[] =
+    "dynamic-cssc-openfhe-query-derived-rotation-key-plan-v1";
+constexpr char kDay2RotationPlanSchema[] =
+    "dynamic-cssc-publication-rotation-key-plan-v2";
+constexpr char kKeyMaterialInputBindingSchema[] =
+    "dynamic-cssc-openfhe-key-material-input-binding-v2";
+constexpr char kKeyGenerationSessionSchema[] =
+    "dynamic-cssc-openfhe-key-generation-session-v2";
+constexpr char kKeyMaterialReceiptSchema[] =
+    "dynamic-cssc-openfhe-key-material-receipt-v2";
+constexpr char kCombinedKeyFramingSchema[] =
+    "dynamic-cssc-publication-day1b-combined-evaluation-key-framing-v1";
+constexpr char kCombinedKeyMagic[] = "D1BKEY01";
+constexpr char kReadyRecord[] = "D1BRDY01";
+constexpr char kDoneRecord[] = "D1BDON01";
+constexpr char kReadyAcknowledgement[] = "D1BGO001";
+constexpr char kDoneAcknowledgement[] = "D1BGO002";
 constexpr char kCompilerProfile[] = "day1b-full-query-pre-admission-depth2-0-0-v1";
 constexpr char kOpenFHERepository[] = "https://github.com/openfheorg/openfhe-development.git";
 constexpr char kOpenFHEVersion[] = "1.5.1";
@@ -85,8 +109,89 @@ struct OperationCounts {
     std::uint64_t returnResult = 0;
 };
 
+struct KeyGenerationPlan {
+    std::vector<std::int32_t> requiredExactIndices;
+    std::string rotationKeyPlanSha256;
+};
+
+struct KeyMaterialReceipt {
+    std::uint64_t combinedFrameByteCount;
+    std::string combinedFrameSha256;
+    std::string cryptoContextParameterSha256;
+    std::string cryptoContextSerializationSha256;
+    std::uint64_t evalMultSegmentByteCount;
+    std::string evalMultSegmentSha256;
+    std::vector<std::int32_t> generatedExactIndices;
+    std::string inputBindingSha256;
+    std::string keyGenerationPlanSha256;
+    std::string keyGenerationSessionSha256;
+    std::string publicKeySha256;
+    std::string requestSha256;
+    std::vector<std::int32_t> requiredExactIndices;
+    std::string rotationKeyPlanSha256;
+    std::uint64_t rotationSegmentByteCount;
+    std::string rotationSegmentSha256;
+};
+
 [[noreturn]] void Fail(const std::string& message) {
     throw std::runtime_error(message);
+}
+
+int StrictControlDescriptor(const std::string& value, const std::string& field) {
+    int descriptor = -1;
+    const auto parsed = std::from_chars(
+        value.data(), value.data() + value.size(), descriptor);
+    if (value.empty() || parsed.ec != std::errc() ||
+        parsed.ptr != value.data() + value.size() || descriptor <= STDERR_FILENO) {
+        Fail(field + " must be one inherited descriptor greater than stderr");
+    }
+    return descriptor;
+}
+
+void WriteControlRecord(int descriptor, std::string_view value) {
+    std::size_t offset = 0;
+    while (offset < value.size()) {
+        const auto written = ::write(
+            descriptor, value.data() + offset, value.size() - offset);
+        if (written < 0 && errno == EINTR) {
+            continue;
+        }
+        if (written <= 0) {
+            Fail("runtime control record write failed");
+        }
+        offset += static_cast<std::size_t>(written);
+    }
+}
+
+void RequireControlAcknowledgement(int descriptor, std::string_view expected) {
+    std::array<char, 8> received{};
+    std::size_t offset = 0;
+    while (offset < received.size()) {
+        const auto count = ::read(
+            descriptor, received.data() + offset, received.size() - offset);
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        if (count <= 0) {
+            Fail("runtime control acknowledgement ended early");
+        }
+        offset += static_cast<std::size_t>(count);
+    }
+    if (std::string_view(received.data(), received.size()) != expected) {
+        Fail("runtime control acknowledgement changed");
+    }
+}
+
+void ControlPoint(
+    int writeDescriptor,
+    int readDescriptor,
+    std::string_view record,
+    std::string_view acknowledgement) {
+    if (record.size() != 8 || acknowledgement.size() != 8) {
+        Fail("runtime control protocol width changed");
+    }
+    WriteControlRecord(writeDescriptor, record);
+    RequireControlAcknowledgement(readDescriptor, acknowledgement);
 }
 
 std::string ReadFile(const fs::path& path, std::uint64_t maximum) {
@@ -130,9 +235,9 @@ void RequireExactKeys(
 const json::Value& Member(
     const json::Value& object,
     const char* name,
-    const std::string& field) {
+    const std::string_view field) {
     if (!object.IsObject() || !object.HasMember(name)) {
-        Fail(field + " is absent");
+        Fail(std::string(field) + " is absent");
     }
     return object[name];
 }
@@ -190,6 +295,13 @@ void RequireFalse(const json::Value& object, const char* name, const std::string
     const auto& value = Member(object, name, field);
     if (!value.IsBool() || value.GetBool()) {
         Fail(field + " must remain false");
+    }
+}
+
+void RequireTrue(const json::Value& object, const char* name, const std::string& field) {
+    const auto& value = Member(object, name, field);
+    if (!value.IsBool() || !value.GetBool()) {
+        Fail(field + " must remain true");
     }
 }
 
@@ -274,22 +386,28 @@ void ValidateBindings(const json::Value& bindings, const json::Value& program) {
         {"cloud_program_sha256",
          "execution_binding",
          "execution_binding_sha256",
-         "ordinary_private_plan_sha256",
-         "ordinary_query_preparation_sha256"},
+         "execution_kind",
+         "query_preparation_sha256",
+         "query_private_plan_sha256"},
         "bindings");
     const auto cloudDigest = StringMember(
         bindings, "cloud_program_sha256", "cloud_program_sha256");
     const auto bindingDigest = StringMember(
         bindings, "execution_binding_sha256", "execution_binding_sha256");
     const auto privateDigest = StringMember(
-        bindings, "ordinary_private_plan_sha256", "ordinary_private_plan_sha256");
+        bindings, "query_private_plan_sha256", "query_private_plan_sha256");
     const auto preparationDigest = StringMember(
         bindings,
-        "ordinary_query_preparation_sha256",
-        "ordinary_query_preparation_sha256");
+        "query_preparation_sha256",
+        "query_preparation_sha256");
+    const auto executionKind = StringMember(
+        bindings, "execution_kind", "execution_kind");
     if (!LowerSha256(cloudDigest) || !LowerSha256(bindingDigest) ||
         !LowerSha256(privateDigest) || !LowerSha256(preparationDigest)) {
         Fail("binding digests must be lowercase SHA-256 values");
+    }
+    if (executionKind != "ordinary" && executionKind != "strong") {
+        Fail("execution kind changed");
     }
     if (HashUtil::HashString(CanonicalJson(program)) != cloudDigest) {
         Fail("cloud program digest differs from the canonical program");
@@ -383,6 +501,162 @@ std::map<std::int64_t, std::int64_t> ParseRotationCatalog(
         rotations.emplace(logical, openfhe);
     }
     return rotations;
+}
+
+std::vector<std::int32_t> ParseExactRotationIndices(
+    const json::Value& value,
+    const std::string& field) {
+    if (!value.IsArray() || value.Empty()) {
+        Fail(field + " must be one nonempty array");
+    }
+    std::vector<std::int32_t> result;
+    std::set<std::int64_t> residues;
+    std::int64_t previous = std::numeric_limits<std::int64_t>::min();
+    for (const auto& item : value.GetArray()) {
+        const auto index = StrictInteger(item, field + " entry");
+        const auto residue = ((index % 4096) + 4096) % 4096;
+        if (index == 0 || index < -4095 || index > 4095 || index <= previous ||
+            !residues.insert(residue).second) {
+            Fail(field + " must be canonical, nonzero, in range, and modulo-distinct");
+        }
+        previous = index;
+        result.push_back(static_cast<std::int32_t>(index));
+    }
+    return result;
+}
+
+KeyGenerationPlan ParseKeyGenerationPlan(
+    const json::Value& value,
+    const json::Value& bindings,
+    const std::map<std::int64_t, std::int64_t>& programRotations) {
+    RequireExactKeys(
+        value,
+        {"authority_state",
+         "eval_mult_key_required",
+         "formal_authority_granted",
+         "publication_authority",
+         "rotation_key_plan",
+         "rotation_key_plan_sha256",
+         "schema_version"},
+        "key-generation plan");
+    RequireString(
+        value, "authority_state", "pre-admission-only", "key-generation authority state");
+    RequireTrue(value, "eval_mult_key_required", "eval-mult key requirement");
+    RequireFalse(value, "formal_authority_granted", "key-generation formal authority");
+    RequireFalse(value, "publication_authority", "key-generation publication authority");
+    RequireString(value, "schema_version", kKeyGenerationPlanSchema, "key-generation schema");
+    const auto& plan = Member(value, "rotation_key_plan", "rotation key plan");
+    const auto planSha256 = StringMember(
+        value, "rotation_key_plan_sha256", "rotation key-plan SHA-256");
+    if (!LowerSha256(planSha256) ||
+        HashUtil::HashString(CanonicalJson(plan) + "\n") != planSha256) {
+        Fail("rotation key-plan SHA-256 binding changed");
+    }
+    const auto schema = StringMember(plan, "schema_version", "rotation key-plan schema");
+    std::vector<std::int32_t> required;
+    if (schema == kQueryDerivedRotationPlanSchema) {
+        RequireExactKeys(
+            plan,
+            {"coverage_kind",
+             "required_exact_indices",
+             "schema_version",
+             "source_cloud_program_sha256"},
+            "query-derived rotation key plan");
+        const auto coverage = StringMember(plan, "coverage_kind", "rotation coverage kind");
+        const auto sourceCloud = StringMember(
+            plan, "source_cloud_program_sha256", "rotation-plan source cloud program");
+        if (!LowerSha256(sourceCloud) ||
+            sourceCloud != StringMember(
+                               bindings, "cloud_program_sha256", "bound cloud program")) {
+            Fail("query-derived rotation plan source changed");
+        }
+        required = ParseExactRotationIndices(
+            Member(plan, "required_exact_indices", "required rotation indices"),
+            "query-derived required rotation indices");
+        std::vector<std::int32_t> expected;
+        for (const auto& [logical, index] : programRotations) {
+            static_cast<void>(logical);
+            expected.push_back(static_cast<std::int32_t>(index));
+        }
+        std::sort(expected.begin(), expected.end());
+        expected.erase(std::unique(expected.begin(), expected.end()), expected.end());
+        if (expected.empty()) {
+            expected.push_back(1);
+            if (coverage != "minimum-nonempty-program-cover") {
+                Fail("empty program rotation coverage changed");
+            }
+        }
+        else if (coverage != "exact-program-rotation-catalog") {
+            Fail("query-derived rotation coverage changed");
+        }
+        if (required != expected) {
+            Fail("query-derived key plan differs from program rotations");
+        }
+    }
+    else if (schema == kDay2RotationPlanSchema) {
+        RequireExactKeys(
+            plan,
+            {"composite_decompositions",
+             "day1a_authority_receipt_sha256",
+             "day1a_inventory_sha256",
+             "effective_slots",
+             "eval_rotate_case_ids",
+             "inventory_source_schema_version",
+             "key_plan_kind",
+             "planned_exact_indices",
+             "required_exact_indices",
+             "schema_version"},
+            "Day 2 rotation key plan");
+        const auto sourceSchema = StringMember(
+            plan, "inventory_source_schema_version", "rotation inventory source schema");
+        const auto day1aAuthority = StringMember(
+            plan, "day1a_authority_receipt_sha256", "Day1A authority receipt");
+        const auto day1aInventory = StringMember(
+            plan, "day1a_inventory_sha256", "Day1A rotation inventory");
+        if (sourceSchema.empty() || !LowerSha256(day1aAuthority) ||
+            !LowerSha256(day1aInventory)) {
+            Fail("Day 2 rotation-plan source binding changed");
+        }
+        RequireUInt(plan, "effective_slots", kSingleRowSlots, "rotation effective slots");
+        RequireString(
+            plan, "key_plan_kind", "direct-exact-index-v1", "rotation key-plan kind");
+        const auto& decompositions = Member(
+            plan, "composite_decompositions", "rotation composite decompositions");
+        if (!decompositions.IsArray() || !decompositions.Empty()) {
+            Fail("rotation composite decompositions are forbidden");
+        }
+        required = ParseExactRotationIndices(
+            Member(plan, "required_exact_indices", "required rotation indices"),
+            "Day 2 required rotation indices");
+        const auto planned = ParseExactRotationIndices(
+            Member(plan, "planned_exact_indices", "planned rotation indices"),
+            "Day 2 planned rotation indices");
+        if (planned != required) {
+            Fail("Day 2 planned rotation inventory changed");
+        }
+        const auto& caseIds = Member(plan, "eval_rotate_case_ids", "EvalRotate case IDs");
+        if (!caseIds.IsArray() || caseIds.Size() != required.size()) {
+            Fail("EvalRotate case IDs do not exactly cover the key plan");
+        }
+        for (json::SizeType ordinal = 0; ordinal < caseIds.Size(); ++ordinal) {
+            if (!caseIds[ordinal].IsString() ||
+                std::string(caseIds[ordinal].GetString(), caseIds[ordinal].GetStringLength()) !=
+                    "index=" + std::to_string(required.at(ordinal))) {
+                Fail("EvalRotate case ID changed");
+            }
+        }
+        std::set<std::int32_t> requiredSet(required.begin(), required.end());
+        for (const auto& [logical, index] : programRotations) {
+            static_cast<void>(logical);
+            if (!requiredSet.count(static_cast<std::int32_t>(index))) {
+                Fail("Day 2 key plan does not cover a program rotation");
+            }
+        }
+    }
+    else {
+        Fail("rotation key-plan schema is unsupported");
+    }
+    return KeyGenerationPlan{std::move(required), planSha256};
 }
 
 std::unordered_map<std::string, Plaintext> ParsePlaintextMasks(
@@ -479,47 +753,72 @@ std::string SerializeOpenFHE(const Value& value, const std::string& field) {
     return content;
 }
 
-void AppendFramed(
-    std::string& bundle,
-    const std::string& label,
-    const std::string& content) {
-    if (label.size() > std::numeric_limits<std::uint16_t>::max()) {
-        Fail("key-bundle label is too long");
-    }
-    const auto labelSize = static_cast<std::uint16_t>(label.size());
-    bundle.push_back(static_cast<char>((labelSize >> 8) & 0xff));
-    bundle.push_back(static_cast<char>(labelSize & 0xff));
-    bundle.append(label);
-    const auto size = static_cast<std::uint64_t>(content.size());
+void AppendUint64BigEndian(std::string& output, std::uint64_t value) {
     for (int shift = 56; shift >= 0; shift -= 8) {
-        bundle.push_back(static_cast<char>((size >> shift) & 0xff));
+        output.push_back(static_cast<char>((value >> shift) & 0xff));
     }
-    bundle.append(content);
 }
 
-std::string SerializeKeyBundle(
-    const CryptoContext<DCRTPoly>& context,
-    const PublicKey<DCRTPoly>& publicKey,
-    bool hasMultiplication,
-    bool hasRotations) {
-    std::string bundle("dynamic-cssc-openfhe-key-bundle-v1\0", 35);
-    AppendFramed(bundle, "crypto-context", SerializeOpenFHE(context, "crypto context"));
-    AppendFramed(bundle, "public-key", SerializeOpenFHE(publicKey, "public key"));
-    if (hasMultiplication) {
-        std::stringstream stream;
-        if (!context->SerializeEvalMultKey(stream, SerType::BINARY)) {
-            Fail("OpenFHE multiplication-key serialization failed");
-        }
-        AppendFramed(bundle, "eval-mult-keys", stream.str());
+std::string DigestBytes(const std::string& digest) {
+    if (!LowerSha256(digest)) {
+        Fail("OpenFHE serialized segment digest is not lowercase SHA-256");
     }
-    if (hasRotations) {
-        std::stringstream stream;
-        if (!context->SerializeEvalAutomorphismKey(stream, SerType::BINARY)) {
-            Fail("OpenFHE rotation-key serialization failed");
+    std::string result;
+    result.reserve(32);
+    const auto nibble = [](const char value) -> unsigned char {
+        if (value >= '0' && value <= '9') {
+            return static_cast<unsigned char>(value - '0');
         }
-        AppendFramed(bundle, "eval-rotation-keys", stream.str());
+        return static_cast<unsigned char>(value - 'a' + 10);
+    };
+    for (std::size_t index = 0; index < digest.size(); index += 2) {
+        result.push_back(static_cast<char>((nibble(digest[index]) << 4) |
+                                           nibble(digest[index + 1])));
     }
-    return bundle;
+    return result;
+}
+
+std::string SerializeEvalMultKeys(const CryptoContext<DCRTPoly>& context) {
+    std::stringstream stream;
+    if (!context->SerializeEvalMultKey(stream, SerType::BINARY)) {
+        Fail("OpenFHE multiplication-key serialization failed");
+    }
+    const auto content = stream.str();
+    if (content.empty()) {
+        Fail("OpenFHE multiplication-key serialization is empty");
+    }
+    return content;
+}
+
+std::string SerializeRotationKeyInventory(const CryptoContext<DCRTPoly>& context) {
+    std::stringstream stream;
+    if (!context->SerializeEvalAutomorphismKey(stream, SerType::BINARY)) {
+        Fail("OpenFHE rotation-key serialization failed");
+    }
+    const auto content = stream.str();
+    if (content.empty()) {
+        Fail("OpenFHE rotation-key serialization is empty");
+    }
+    return content;
+}
+
+std::string BuildCombinedEvaluationKeyFrame(
+    const std::string& rotationKeys,
+    const std::string& evalMultKeys) {
+    if (rotationKeys.empty() || evalMultKeys.empty()) {
+        Fail("combined evaluation-key segments must be nonempty");
+    }
+    std::string frame(kCombinedKeyMagic, 8);
+    AppendUint64BigEndian(frame, static_cast<std::uint64_t>(rotationKeys.size()));
+    frame.append(DigestBytes(HashUtil::HashString(rotationKeys)));
+    AppendUint64BigEndian(frame, static_cast<std::uint64_t>(evalMultKeys.size()));
+    frame.append(DigestBytes(HashUtil::HashString(evalMultKeys)));
+    frame.append(rotationKeys);
+    frame.append(evalMultKeys);
+    if (frame.size() != 88 + rotationKeys.size() + evalMultKeys.size()) {
+        Fail("combined evaluation-key frame length changed");
+    }
+    return frame;
 }
 
 void WriteNewFile(const fs::path& path, const std::string& content) {
@@ -780,11 +1079,128 @@ void AddUInt(
     object.AddMember(name.Move(), value, allocator);
 }
 
+void AddExactIndices(
+    json::Value& object,
+    const char* key,
+    const std::vector<std::int32_t>& indices,
+    Allocator& allocator) {
+    json::Value name(key, allocator);
+    json::Value values(json::kArrayType);
+    for (const auto index : indices) {
+        values.PushBack(index, allocator);
+    }
+    object.AddMember(name.Move(), values.Move(), allocator);
+}
+
+std::string BuildInputBindingSha256(
+    const json::Document& request,
+    const std::string& keyGenerationPlanSha256) {
+    json::Document binding;
+    binding.SetObject();
+    auto& allocator = binding.GetAllocator();
+    json::Value bindings(Member(request, "bindings", "bindings"), allocator);
+    binding.AddMember("bindings", bindings.Move(), allocator);
+    AddString(
+        binding,
+        "key_generation_plan_sha256",
+        keyGenerationPlanSha256,
+        allocator);
+    AddString(
+        binding,
+        "schema_version",
+        kKeyMaterialInputBindingSchema,
+        allocator);
+    return HashUtil::HashString(CanonicalJson(binding));
+}
+
+KeyMaterialReceipt BuildKeyMaterialReceipt(
+    const json::Document& request,
+    const std::string& requestSha256,
+    const KeyGenerationPlan& plan,
+    const std::string& cryptoContextBytes,
+    const std::string& publicKeyBytes,
+    const std::string& rotationKeys,
+    const std::string& evalMultKeys,
+    const std::string& combinedFrame) {
+    const auto keyGenerationPlanSha256 = HashUtil::HashString(
+        CanonicalJson(Member(request, "key_generation_plan", "key-generation plan")));
+    const auto inputBindingSha256 = BuildInputBindingSha256(
+        request, keyGenerationPlanSha256);
+    const auto contextParameterSha256 = HashUtil::HashString(
+        CanonicalJson(Member(request, "openfhe", "openfhe")));
+    const auto contextSerializationSha256 = HashUtil::HashString(cryptoContextBytes);
+    const auto publicKeySha256 = HashUtil::HashString(publicKeyBytes);
+    const auto rotationSha256 = HashUtil::HashString(rotationKeys);
+    const auto evalMultSha256 = HashUtil::HashString(evalMultKeys);
+
+    json::Document session;
+    session.SetObject();
+    auto& allocator = session.GetAllocator();
+    AddString(
+        session,
+        "crypto_context_parameter_sha256",
+        contextParameterSha256,
+        allocator);
+    AddString(
+        session,
+        "crypto_context_serialization_sha256",
+        contextSerializationSha256,
+        allocator);
+    AddUInt(
+        session,
+        "eval_mult_segment_byte_count",
+        static_cast<std::uint64_t>(evalMultKeys.size()),
+        allocator);
+    AddString(session, "eval_mult_segment_sha256", evalMultSha256, allocator);
+    AddString(session, "input_binding_sha256", inputBindingSha256, allocator);
+    AddString(
+        session,
+        "key_generation_plan_sha256",
+        keyGenerationPlanSha256,
+        allocator);
+    AddString(session, "public_key_sha256", publicKeySha256, allocator);
+    AddString(session, "request_sha256", requestSha256, allocator);
+    AddExactIndices(
+        session, "required_exact_indices", plan.requiredExactIndices, allocator);
+    AddString(
+        session,
+        "rotation_key_plan_sha256",
+        plan.rotationKeyPlanSha256,
+        allocator);
+    AddUInt(
+        session,
+        "rotation_segment_byte_count",
+        static_cast<std::uint64_t>(rotationKeys.size()),
+        allocator);
+    AddString(session, "rotation_segment_sha256", rotationSha256, allocator);
+    AddString(session, "schema_version", kKeyGenerationSessionSchema, allocator);
+    const auto sessionSha256 = HashUtil::HashString(CanonicalJson(session));
+    return KeyMaterialReceipt{
+        static_cast<std::uint64_t>(combinedFrame.size()),
+        HashUtil::HashString(combinedFrame),
+        contextParameterSha256,
+        contextSerializationSha256,
+        static_cast<std::uint64_t>(evalMultKeys.size()),
+        evalMultSha256,
+        plan.requiredExactIndices,
+        inputBindingSha256,
+        keyGenerationPlanSha256,
+        sessionSha256,
+        publicKeySha256,
+        requestSha256,
+        plan.requiredExactIndices,
+        plan.rotationKeyPlanSha256,
+        static_cast<std::uint64_t>(rotationKeys.size()),
+        rotationSha256,
+    };
+}
+
 std::string BuildResult(
     const json::Document& request,
     const std::string& requestSha256,
     const std::vector<DecryptedResult>& decrypted,
     const OperationCounts& counts,
+    const KeyMaterialReceipt& keyMaterialReceipt,
     const std::vector<SerializedReceipt>& receipts,
     bool secondBatchRowZero) {
     json::Document result;
@@ -805,6 +1221,102 @@ std::string BuildResult(
         decryptedValues.PushBack(row.Move(), allocator);
     }
     result.AddMember("decrypted_results", decryptedValues.Move(), allocator);
+
+    json::Value keyGenerationPlan(
+        Member(request, "key_generation_plan", "key-generation plan"), allocator);
+    result.AddMember("key_generation_plan", keyGenerationPlan.Move(), allocator);
+    json::Value keyReceipt(json::kObjectType);
+    AddUInt(
+        keyReceipt,
+        "combined_frame_byte_count",
+        keyMaterialReceipt.combinedFrameByteCount,
+        allocator);
+    AddString(
+        keyReceipt,
+        "combined_frame_sha256",
+        keyMaterialReceipt.combinedFrameSha256,
+        allocator);
+    AddString(
+        keyReceipt,
+        "crypto_context_parameter_sha256",
+        keyMaterialReceipt.cryptoContextParameterSha256,
+        allocator);
+    AddString(
+        keyReceipt,
+        "crypto_context_serialization_sha256",
+        keyMaterialReceipt.cryptoContextSerializationSha256,
+        allocator);
+    AddUInt(
+        keyReceipt,
+        "eval_mult_segment_byte_count",
+        keyMaterialReceipt.evalMultSegmentByteCount,
+        allocator);
+    AddString(
+        keyReceipt,
+        "eval_mult_segment_sha256",
+        keyMaterialReceipt.evalMultSegmentSha256,
+        allocator);
+    keyReceipt.AddMember("formal_authority_granted", false, allocator);
+    AddString(keyReceipt, "framing_schema", kCombinedKeyFramingSchema, allocator);
+    AddExactIndices(
+        keyReceipt,
+        "generated_exact_indices",
+        keyMaterialReceipt.generatedExactIndices,
+        allocator);
+    AddString(
+        keyReceipt,
+        "input_binding_sha256",
+        keyMaterialReceipt.inputBindingSha256,
+        allocator);
+    AddString(
+        keyReceipt,
+        "key_generation_plan_sha256",
+        keyMaterialReceipt.keyGenerationPlanSha256,
+        allocator);
+    AddString(
+        keyReceipt,
+        "key_generation_session_sha256",
+        keyMaterialReceipt.keyGenerationSessionSha256,
+        allocator);
+    AddString(
+        keyReceipt,
+        "public_key_sha256",
+        keyMaterialReceipt.publicKeySha256,
+        allocator);
+    keyReceipt.AddMember("publication_authority", false, allocator);
+    AddString(
+        keyReceipt,
+        "request_sha256",
+        keyMaterialReceipt.requestSha256,
+        allocator);
+    AddExactIndices(
+        keyReceipt,
+        "required_exact_indices",
+        keyMaterialReceipt.requiredExactIndices,
+        allocator);
+    AddString(
+        keyReceipt,
+        "rotation_key_plan_sha256",
+        keyMaterialReceipt.rotationKeyPlanSha256,
+        allocator);
+    AddUInt(
+        keyReceipt,
+        "rotation_segment_byte_count",
+        keyMaterialReceipt.rotationSegmentByteCount,
+        allocator);
+    AddString(
+        keyReceipt,
+        "rotation_segment_sha256",
+        keyMaterialReceipt.rotationSegmentSha256,
+        allocator);
+    keyReceipt.AddMember("same_crypto_context_generation_session", true, allocator);
+    AddString(keyReceipt, "schema_version", kKeyMaterialReceiptSchema, allocator);
+    AddString(
+        keyReceipt,
+        "status",
+        "verified-by-runner-pre-admission-only",
+        allocator);
+    result.AddMember("key_material_receipt", keyReceipt.Move(), allocator);
 
     json::Value openfhe(Member(request, "openfhe", "openfhe"), allocator);
     result.AddMember("openfhe", openfhe.Move(), allocator);
@@ -850,9 +1362,17 @@ std::string BuildResult(
 int main(int argc, char** argv) {
     try {
         const auto args = dynamic_cssc::ParseArgs(argc, argv);
-        if (args.size() != 3 || !args.count("request") || !args.count("result") ||
-            !args.count("object-dir")) {
-            Fail("exactly --request, --result, and --object-dir are required");
+        if (args.size() != 5 || !args.count("request") || !args.count("result") ||
+            !args.count("object-dir") || !args.count("control-write-fd") ||
+            !args.count("control-read-fd")) {
+            Fail("the exact request/result/object/control arguments are required");
+        }
+        const auto controlWriteFd = StrictControlDescriptor(
+            args.at("control-write-fd"), "control-write-fd");
+        const auto controlReadFd = StrictControlDescriptor(
+            args.at("control-read-fd"), "control-read-fd");
+        if (controlWriteFd == controlReadFd) {
+            Fail("runtime control descriptors must be distinct");
         }
         const fs::path requestPath(args.at("request"));
         const fs::path resultPath(args.at("result"));
@@ -862,6 +1382,11 @@ int main(int argc, char** argv) {
             fs::directory_iterator(objectRoot) != fs::directory_iterator()) {
             Fail("object-dir must be an existing direct empty directory");
         }
+        ControlPoint(
+            controlWriteFd,
+            controlReadFd,
+            kReadyRecord,
+            kReadyAcknowledgement);
         const auto requestBytes = ReadFile(requestPath, kRequestByteMaximum);
         json::Document request;
         request.Parse<json::kParseValidateEncodingFlag>(requestBytes.data(), requestBytes.size());
@@ -870,7 +1395,12 @@ int main(int argc, char** argv) {
         }
         RequireExactKeys(
             request,
-            {"bindings", "ciphertext_values", "openfhe", "program", "schema_version"},
+            {"bindings",
+             "ciphertext_values",
+             "key_generation_plan",
+             "openfhe",
+             "program",
+             "schema_version"},
             "request");
         RequireString(request, "schema_version", kRequestSchema, "request schema");
         if (CanonicalJson(request) != requestBytes) {
@@ -904,15 +1434,13 @@ int main(int argc, char** argv) {
             slotCount);
         const auto rotations = ParseRotationCatalog(
             Member(program, "rotation_catalog", "rotation_catalog"), slotCount);
-
+        const auto keyPlan = ParseKeyGenerationPlan(
+            Member(request, "key_generation_plan", "key-generation plan"),
+            Member(request, "bindings", "bindings"),
+            rotations);
         const auto& nodes = Member(program, "nodes", "nodes");
-        bool hasMultiplication = false;
         if (!nodes.IsArray()) {
             Fail("nodes must be an array");
-        }
-        for (const auto& node : nodes.GetArray()) {
-            const auto operation = StringMember(node, "op", "node operation");
-            hasMultiplication = hasMultiplication || operation == "multiply-ciphertexts";
         }
 
         auto context = MakeContext();
@@ -920,22 +1448,24 @@ int main(int argc, char** argv) {
         if (!keyPair.good()) {
             Fail("OpenFHE key generation failed");
         }
-        if (hasMultiplication) {
-            context->EvalMultKeyGen(keyPair.secretKey);
-        }
-        std::vector<std::int32_t> rotationIndices;
-        rotationIndices.reserve(rotations.size());
-        for (const auto& [logical, index] : rotations) {
-            static_cast<void>(logical);
-            rotationIndices.push_back(static_cast<std::int32_t>(index));
-        }
-        std::sort(rotationIndices.begin(), rotationIndices.end());
-        rotationIndices.erase(
-            std::unique(rotationIndices.begin(), rotationIndices.end()),
-            rotationIndices.end());
-        if (!rotationIndices.empty()) {
-            context->EvalRotateKeyGen(keyPair.secretKey, rotationIndices);
-        }
+        context->EvalMultKeyGen(keyPair.secretKey);
+        context->EvalRotateKeyGen(keyPair.secretKey, keyPlan.requiredExactIndices);
+        const auto cryptoContextBytes = SerializeOpenFHE(context, "crypto context");
+        const auto publicKeyBytes = SerializeOpenFHE(keyPair.publicKey, "public key");
+        const auto rotationKeyBytes = SerializeRotationKeyInventory(context);
+        const auto evalMultKeyBytes = SerializeEvalMultKeys(context);
+        const auto combinedKeyFrame = BuildCombinedEvaluationKeyFrame(
+            rotationKeyBytes, evalMultKeyBytes);
+        const auto requestSha256 = HashUtil::HashString(requestBytes);
+        const auto keyMaterialReceipt = BuildKeyMaterialReceipt(
+            request,
+            requestSha256,
+            keyPlan,
+            cryptoContextBytes,
+            publicKeyBytes,
+            rotationKeyBytes,
+            evalMultKeyBytes,
+            combinedKeyFrame);
 
         auto masks = ParsePlaintextMasks(
             context,
@@ -950,11 +1480,7 @@ int main(int argc, char** argv) {
             receipts.size(),
             "one-time-evaluation-key-material",
             "evaluation-key-material",
-            SerializeKeyBundle(
-                context,
-                keyPair.publicKey,
-                hasMultiplication,
-                !rotationIndices.empty())));
+            combinedKeyFrame));
         for (const auto& input : privateInputs) {
             const auto plaintext = context->MakePackedPlaintext(input.values);
             const auto ciphertext = context->Encrypt(keyPair.publicKey, plaintext);
@@ -1025,12 +1551,18 @@ int main(int argc, char** argv) {
         }
         const auto resultBytes = BuildResult(
             request,
-            HashUtil::HashString(requestBytes),
+            requestSha256,
             decrypted,
             counts,
+            keyMaterialReceipt,
             receipts,
             secondBatchRowZero);
         WriteNewFile(resultPath, resultBytes);
+        ControlPoint(
+            controlWriteFd,
+            controlReadFd,
+            kDoneRecord,
+            kDoneAcknowledgement);
         std::cout << resultPath.string() << '\n';
         return 0;
     }

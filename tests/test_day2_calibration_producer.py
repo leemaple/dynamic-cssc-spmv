@@ -78,6 +78,77 @@ def test_generated_key_inventory_rejects_empty_or_spliced_plan_inputs() -> None:
         )
 
 
+def test_serialized_object_size_profile_retains_formal_ciphertext_and_key_lengths() -> None:
+    generated = producer._generated_key_inventory(  # noqa: SLF001
+        rotation_key_plan={"required_exact_indices": [-1, 1]},
+        rotation_key_plan_sha256="a" * 64,
+        serialized_rotation_keys=b"rotation-key-bytes",
+        serialized_eval_mult_keys=b"eval-mult-key-bytes",
+    )
+
+    profile = producer._serialized_object_size_profile(  # noqa: SLF001
+        ciphertext_bytes=34567,
+        f1m_random_zero_sum_ciphertext_bytes=34568,
+        f1m_encrypted_zero_dummy_ciphertext_bytes=34569,
+        generated_key_inventory=generated,
+    )
+
+    assert profile == {
+        "schema_version": (
+            "dynamic-cssc-publication-day2-serialized-object-size-profile-v2"
+        ),
+        "ciphertext_serialization_format": "openfhe-sertype-binary-v1",
+        "ciphertext_measurement_method": (
+            "formal-probe-exact-serialized-byte-length-v1"
+        ),
+        "ciphertext_bytes": 34567,
+        "f1m_ciphertext_construction_profile": (
+            "fresh-bfvrns-encryption-fixed-context-v1"
+        ),
+        "f1m_random_zero_sum_ciphertext_bytes": 34568,
+        "f1m_encrypted_zero_dummy_ciphertext_bytes": 34569,
+        "generated_key_inventory_sha256": hashlib.sha256(_canonical(generated)).hexdigest(),
+        "serialized_rotation_key_inventory_bytes": len(b"rotation-key-bytes"),
+        "serialized_eval_mult_key_bytes": len(b"eval-mult-key-bytes"),
+    }
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "ciphertext_bytes",
+        "f1m_random_zero_sum_ciphertext_bytes",
+        "f1m_encrypted_zero_dummy_ciphertext_bytes",
+    ),
+)
+@pytest.mark.parametrize("invalid_size", [None, True, 0, -1])
+def test_serialized_object_size_profile_rejects_nonpositive_or_nonstrict_sizes(
+    field: str,
+    invalid_size: object,
+) -> None:
+    generated = {
+        "serialized_rotation_key_bytes": 10,
+        "serialized_eval_mult_key_bytes": 20,
+    }
+    sizes: dict[str, object] = {
+        "ciphertext_bytes": 20,
+        "f1m_random_zero_sum_ciphertext_bytes": 30,
+        "f1m_encrypted_zero_dummy_ciphertext_bytes": 40,
+    }
+    sizes[field] = invalid_size
+    with pytest.raises(Day2CalibrationProducerError, match=f"positive {field}"):
+        producer._serialized_object_size_profile(  # noqa: SLF001
+            ciphertext_bytes=sizes["ciphertext_bytes"],
+            f1m_random_zero_sum_ciphertext_bytes=sizes[
+                "f1m_random_zero_sum_ciphertext_bytes"
+            ],
+            f1m_encrypted_zero_dummy_ciphertext_bytes=sizes[
+                "f1m_encrypted_zero_dummy_ciphertext_bytes"
+            ],
+            generated_key_inventory=generated,
+        )
+
+
 def test_canonical_zip_has_fixed_order_timestamp_mode_and_no_compression() -> None:
     members = {"b.json": b"b\n", "a.json": b"a\n"}
     archive_bytes = producer._canonical_zip_bytes(  # noqa: SLF001

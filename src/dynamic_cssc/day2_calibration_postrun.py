@@ -148,7 +148,7 @@ def _proposal_documents(
     if _sha256(inventory_bytes) != inspection.artifact_behavior_inventory_sha256:
         raise Day2CalibrationPostRunError("artifact Behavior inventory identity changed")
     anchor = {
-        "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-v4",
+        "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-v6",
         "experiment_source_git_sha": inspection.source_git_sha,
         "experiment_behavior_set_schema_version": inspection.behavior_set_schema_version,
         "experiment_behavior_set_sha256": inspection.behavior_set_sha256,
@@ -159,12 +159,26 @@ def _proposal_documents(
         "operation_profile_set_sha256": inspection.operation_profile_set_sha256,
         "rotation_key_plan_sha256": inspection.rotation_key_plan_sha256,
         "generated_key_inventory_sha256": inspection.generated_key_inventory_sha256,
+        "serialized_object_size_profile_sha256": (
+            inspection.serialized_object_size_profile_sha256
+        ),
+        "ciphertext_bytes": inspection.ciphertext_bytes,
+        "f1m_random_zero_sum_ciphertext_bytes": (
+            inspection.f1m_random_zero_sum_ciphertext_bytes
+        ),
+        "f1m_encrypted_zero_dummy_ciphertext_bytes": (
+            inspection.f1m_encrypted_zero_dummy_ciphertext_bytes
+        ),
+        "serialized_rotation_key_inventory_bytes": (
+            inspection.serialized_rotation_key_inventory_bytes
+        ),
+        "serialized_eval_mult_key_bytes": inspection.serialized_eval_mult_key_bytes,
         "runtime_isolation_receipt_sha256": inspection.runtime_isolation_receipt_sha256,
         "contract_bindings_sha256": inspection.contract_bindings_sha256,
         "calibration_projection_sha256": inspection.calibration_projection_sha256,
     }
     anchor_document = {
-        "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v4",
+        "schema_version": "dynamic-cssc-day2-calibration-post-run-anchor-set-v6",
         "anchors": [anchor],
     }
     anchor_bytes = _canonical_json_bytes(anchor_document)
@@ -173,7 +187,7 @@ def _proposal_documents(
     except Day2CalibrationAuthorityError as error:
         raise Day2CalibrationPostRunError("post-run anchor proposal is invalid") from error
     inspection_document = {
-        "schema_version": "dynamic-cssc-day2-calibration-inspection-v1",
+        "schema_version": "dynamic-cssc-day2-calibration-inspection-v3",
         **asdict(inspection),
         "formal_authority_granted": False,
     }

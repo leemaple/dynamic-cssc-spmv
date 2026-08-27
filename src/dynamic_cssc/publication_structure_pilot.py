@@ -30,6 +30,7 @@ from pathlib import Path
 
 from dynamic_cssc.publication_traces import (
     _PRODUCTION_CONFIG,
+    PUBLICATION_SOURCE_PARTITION_COUNT,
     CanonicalRawEvent,
     CanonicalRawEventBatch,
     LicenseTermsObject,
@@ -59,7 +60,7 @@ _DATASET_IDS = (
     "nyc-tlc-yellow-2022",
 )
 _SEMANTICS = ("T1", "T2")
-_SOURCE_PARTITIONS = tuple(range(5))
+_SOURCE_PARTITIONS = tuple(range(PUBLICATION_SOURCE_PARTITION_COUNT))
 _SCRATCH_ROOT_ENV = "PUBLICATION_STRUCTURE_PILOT_SCRATCH_ROOT"
 _SCRATCH_DIRECTORY_ENV = ("TMPDIR", "SQLITE_TMPDIR")
 _SCRATCH_LOCK_FILENAME = ".dynamic-cssc-structure-pilot.lock"

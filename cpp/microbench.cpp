@@ -263,16 +263,30 @@ bool IsExactFrozenLabelRotation(
     const std::vector<int64_t>& values,
     std::size_t batchSize,
     int32_t rotationIndex) {
-    if (values.size() != batchSize) {
+    // BFV packed plaintexts expose two independent rows.  EvalRotate by an
+    // index whose magnitude is smaller than one row rotates within each row;
+    // it is not a single cyclic rotation across all batchSize slots.  P0a
+    // measures this exact layout, and the formal Day 2 plan admits only those
+    // direct within-row indices.
+    if (values.size() != batchSize || batchSize < 2 || batchSize % 2 != 0) {
         return false;
     }
-    const auto signedBatchSize = static_cast<std::int64_t>(batchSize);
+    const auto rowSize = batchSize / 2;
+    const auto signedRowSize = static_cast<std::int64_t>(rowSize);
+    if (rotationIndex == 0 ||
+        std::abs(static_cast<std::int64_t>(rotationIndex)) >= signedRowSize) {
+        return false;
+    }
     const auto normalized =
-        (static_cast<std::int64_t>(rotationIndex) % signedBatchSize + signedBatchSize) %
-        signedBatchSize;
+        (static_cast<std::int64_t>(rotationIndex) % signedRowSize + signedRowSize) %
+        signedRowSize;
     for (std::size_t slot = 0; slot < batchSize; ++slot) {
+        const auto rowOffset = (slot / rowSize) * rowSize;
+        const auto rowSlot = slot % rowSize;
         const auto expected = static_cast<std::int64_t>(
-            (static_cast<std::int64_t>(slot) + normalized) % signedBatchSize);
+            rowOffset +
+            static_cast<std::size_t>(
+                (static_cast<std::int64_t>(rowSlot) + normalized) % signedRowSize));
         if (values[slot] != expected) {
             return false;
         }
@@ -310,16 +324,40 @@ class BenchmarkFixture {
             mask_[index] = (index % 2 == 0) ? 1 : 0;
             labels_[index] = static_cast<int64_t>(index);
         }
+        f1mRandomZeroSum_.assign(batchSize_, 0);
+        f1mEncryptedZeroDummy_.assign(batchSize_, 0);
+        if (batchSize_ < 2) {
+            throw std::runtime_error("F1-M serialized-size fixtures require two slots");
+        }
+        f1mRandomZeroSum_[0] = 1;
+        f1mRandomZeroSum_[1] = static_cast<int64_t>(plaintextModulus_ - 1);
         plaintext_ = context_->MakePackedPlaintext(ones_);
         maskPlaintext_ = context_->MakePackedPlaintext(mask_);
         const auto labelPlaintext = context_->MakePackedPlaintext(labels_);
+        const auto f1mRandomPlaintext = context_->MakePackedPlaintext(f1mRandomZeroSum_);
+        const auto f1mDummyPlaintext = context_->MakePackedPlaintext(f1mEncryptedZeroDummy_);
         ciphertext_ = context_->Encrypt(keyPair_.publicKey, plaintext_);
         ciphertext2_ = context_->Encrypt(keyPair_.publicKey, plaintext_);
         labelCiphertext_ = context_->Encrypt(keyPair_.publicKey, labelPlaintext);
+        f1mRandomZeroSumCiphertext_ =
+            context_->Encrypt(keyPair_.publicKey, f1mRandomPlaintext);
+        f1mEncryptedZeroDummyCiphertext_ =
+            context_->Encrypt(keyPair_.publicKey, f1mDummyPlaintext);
 
         std::stringstream ciphertextStream;
         Serial::Serialize(ciphertext_, ciphertextStream, SerType::BINARY);
         serializedCiphertext_ = ciphertextStream.str();
+        std::stringstream f1mRandomStream;
+        Serial::Serialize(f1mRandomZeroSumCiphertext_, f1mRandomStream, SerType::BINARY);
+        serializedF1mRandomZeroSumCiphertext_ = f1mRandomStream.str();
+        std::stringstream f1mDummyStream;
+        Serial::Serialize(
+            f1mEncryptedZeroDummyCiphertext_, f1mDummyStream, SerType::BINARY);
+        serializedF1mEncryptedZeroDummyCiphertext_ = f1mDummyStream.str();
+        if (serializedF1mRandomZeroSumCiphertext_.empty() ||
+            serializedF1mEncryptedZeroDummyCiphertext_.empty()) {
+            throw std::runtime_error("F1-M ciphertext serialization failed");
+        }
 
         std::stringstream rotationKeyStream;
         if (!context_->SerializeEvalAutomorphismKey(rotationKeyStream, SerType::BINARY)) {
@@ -346,6 +384,14 @@ class BenchmarkFixture {
 
     std::size_t ciphertextBytes() const {
         return serializedCiphertext_.size();
+    }
+
+    std::size_t f1mRandomZeroSumCiphertextBytes() const {
+        return serializedF1mRandomZeroSumCiphertext_.size();
+    }
+
+    std::size_t f1mEncryptedZeroDummyCiphertextBytes() const {
+        return serializedF1mEncryptedZeroDummyCiphertext_.size();
     }
 
     std::size_t rotationKeyBytes() const {
@@ -574,15 +620,21 @@ class BenchmarkFixture {
     std::vector<int64_t> ones_;
     std::vector<int64_t> mask_;
     std::vector<int64_t> labels_;
+    std::vector<int64_t> f1mRandomZeroSum_;
+    std::vector<int64_t> f1mEncryptedZeroDummy_;
     Plaintext plaintext_;
     Plaintext maskPlaintext_;
     Ciphertext<DCRTPoly> ciphertext_;
     Ciphertext<DCRTPoly> ciphertext2_;
     Ciphertext<DCRTPoly> labelCiphertext_;
+    Ciphertext<DCRTPoly> f1mRandomZeroSumCiphertext_;
+    Ciphertext<DCRTPoly> f1mEncryptedZeroDummyCiphertext_;
     Ciphertext<DCRTPoly> sink_;
     Plaintext decrypted_;
     DecryptResult decryptResult_;
     std::string serializedCiphertext_;
+    std::string serializedF1mRandomZeroSumCiphertext_;
+    std::string serializedF1mEncryptedZeroDummyCiphertext_;
     std::string serializedRotationKeys_;
     std::string serializedEvalMultKeys_;
     std::vector<std::uint64_t> clientLeft_;
@@ -721,6 +773,20 @@ int main(int argc, char** argv) {
             std::cerr << "at least one nonzero exact rotation index is required\n";
             return 6;
         }
+        if (batchSize < 2 || batchSize % 2 != 0) {
+            std::cerr << "batch size must contain two equal BFV packed rows\n";
+            return 6;
+        }
+        const auto rowSize = static_cast<std::int64_t>(batchSize / 2);
+        if (std::any_of(
+                rotationIndices.begin(),
+                rotationIndices.end(),
+                [rowSize](int32_t value) {
+                    return std::abs(static_cast<std::int64_t>(value)) >= rowSize;
+                })) {
+            std::cerr << "exact rotation indices must remain within one BFV packed row\n";
+            return 6;
+        }
         const auto originalRotationCount = rotationIndices.size();
         std::sort(rotationIndices.begin(), rotationIndices.end());
         rotationIndices.erase(
@@ -773,6 +839,10 @@ int main(int argc, char** argv) {
         WriteIntArray(output, processAffinityCpuList);
         output << ",\n";
         output << "  \"ciphertext_bytes\": " << fixture.ciphertextBytes() << ",\n";
+        output << "  \"f1m_random_zero_sum_ciphertext_bytes\": "
+               << fixture.f1mRandomZeroSumCiphertextBytes() << ",\n";
+        output << "  \"f1m_encrypted_zero_dummy_ciphertext_bytes\": "
+               << fixture.f1mEncryptedZeroDummyCiphertextBytes() << ",\n";
         output << "  \"rotation_key_bytes\": " << fixture.rotationKeyBytes() << ",\n";
         output << "  \"eval_mult_key_bytes\": " << fixture.evalMultKeyBytes() << ",\n";
         output << "  \"operations\": {\n";

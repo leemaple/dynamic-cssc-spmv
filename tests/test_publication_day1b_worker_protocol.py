@@ -6,6 +6,7 @@ import inspect
 import io
 import json
 import os
+import platform
 import sqlite3
 import tempfile
 import threading
@@ -19,10 +20,23 @@ from typing import BinaryIO
 import pytest
 
 import dynamic_cssc.publication_day1b_worker_protocol as worker_protocol
+from dynamic_cssc.day2_calibration_authority import PRIMITIVE_NAMES
+from dynamic_cssc.publication_day1b_expected_counts import (
+    Day1BControllerExpectedCounts,
+    Day1BControllerExpectedPhaseCounts,
+)
+from dynamic_cssc.publication_day1b_f1m_aggregation import (
+    Day1BF1MCompletePhaseAudit,
+    Day1BF1MCompleteScheduleAudit,
+    Day1BF1MControllerContext,
+    Day1BF1MPhaseBoundary,
+    Day1BF1MRouteCoverage,
+)
 from dynamic_cssc.publication_day1b_worker_protocol import (
     DAY1B_WORKER_EXECUTION_BASIS,
     DAY1B_WORKER_EXPECTED_F1M_REGISTRY_DESCRIPTOR_SCHEMA,
     DAY1B_WORKER_FRAME_SCHEMA,
+    DAY1B_WORKER_INPUT_BINDING_SCHEMA,
     DAY1B_WORKER_MAX_HEADER_BYTES,
     DAY1B_WORKER_RECEIPT_SCHEMA,
     DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES,
@@ -44,6 +58,7 @@ from dynamic_cssc.publication_day1b_worker_protocol import (
     _test_only_issue_day1b_anonymous_scratch_capability,
     _test_only_issue_day1b_worker_invocation,
     _test_only_prepare_day1b_expected_f1m_registry,
+    abandon_day1b_anonymous_scratch_capability,
     abandon_day1b_expected_f1m_registry,
     abandon_day1b_worker_evidence,
     abandon_day1b_worker_invocation,
@@ -53,10 +68,30 @@ from dynamic_cssc.publication_day1b_worker_protocol import (
     canonical_day1b_worker_window_audit_bytes,
     claim_day1b_worker_evidence,
     consume_day1b_worker_frames,
+    describe_day1b_anonymous_scratch_capability,
     describe_day1b_expected_f1m_registry,
+    issue_day1b_anonymous_scratch_capability,
 )
 
 _CURRENT_CONTROLLED_SCRATCH: Path
+_FIXTURE_UPDATE_PRIMITIVE_COUNTS = (3, 4) + (0,) * (len(PRIMITIVE_NAMES) - 2)
+_FIXTURE_QUERY_PRIMITIVE_COUNTS = (5, 6) + (0,) * (len(PRIMITIVE_NAMES) - 2)
+_FIXTURE_SERIALIZED_CATEGORIES = (
+    ("update-ciphertexts", "update"),
+    ("query-ciphertexts", "query"),
+    ("query-f1m-random-mask-ciphertexts", "query"),
+    ("query-f1m-encrypted-zero-dummy-ciphertexts", "query"),
+    ("evaluation-keys", "one-time"),
+    ("unused-update-metadata-a", "update"),
+    ("unused-update-metadata-b", "update"),
+    ("unused-query-metadata-a", "query"),
+    ("unused-query-metadata-b", "query"),
+)
+
+
+def _fixture_category_counts(*counts: int) -> list[int]:
+    assert len(counts) == 5
+    return [*counts, 0, 0, 0, 0]
 
 
 @pytest.fixture(autouse=True)
@@ -176,6 +211,145 @@ def _contract(
             else expected_serialized_equivalence_class_count
         )
     )
+    phase_names = ("warmup", "tuning-prefix", "held-out")
+    complete_schedule_audit = Day1BF1MCompleteScheduleAudit(
+        tuple(
+            Day1BF1MCompletePhaseAudit(
+                phase=phase,
+                accepted_group_start=audit.accepted_group_start,
+                accepted_group_end=audit.accepted_group_end,
+                realized_window_count=audit.realized_window_count,
+                realized_set_count=audit.realized_set_count,
+                realized_query_count=audit.realized_query_count,
+                consumed_window_audit_stream_sha256=(
+                    audit.consumed_window_audit_stream_sha256
+                ),
+            )
+            for phase, audit in zip(phase_names, selected_audits, strict=True)
+        )
+    )
+    phase_query_window_counts = tuple(
+        audit.realized_window_count if audit.realized_query_count else 0
+        for audit in selected_audits
+    )
+    context = Day1BF1MControllerContext(
+        publication_source_git_sha="0" * 40,
+        trace_source_git_sha="f" * 40,
+        publication_behavior_set_schema_version="test-behavior-set-v1",
+        publication_behavior_inventory_sha256="0" * 64,
+        terminal_registration_sha256="1" * 64,
+        day1_registration_anchor_sha256="2" * 64,
+        trace_post_run_anchor_sha256="3" * 64,
+        acquisition_bundle_sha256="4" * 64,
+        trace_manifest_sha256="1" * 64,
+        candidate_catalog_sha256="4" * 64,
+        resource_policy_sha256="5" * 64,
+        worker_build_identity_sha256="6" * 64,
+        worker_runtime_identity_sha256="7" * 64,
+        dataset_id="test-dataset",
+        dataset_release="test-release",
+        semantics="insert-only",
+        source_partition=0,
+        unit_identity_sha256="8" * 64,
+        cell_binding_sha256="9" * 64,
+        cell_ordinal=0,
+        freshness="0.1",
+        rho="1",
+        candidate_id=selected_candidate.candidate_id,
+        candidate_role=selected_candidate.candidate_role,
+        candidate_policy_sha256=selected_candidate.candidate_policy_digest,
+        retained_phases=selected_candidate.retained_phases,
+        phase_boundaries=tuple(
+            Day1BF1MPhaseBoundary(
+                phase,
+                audit.accepted_group_start,
+                audit.accepted_group_end,
+            )
+            for phase, audit in zip(phase_names, selected_audits, strict=True)
+        ),
+        event_schedule_sha256="2" * 64,
+        query_vector_sha256="3" * 64,
+        accepted_group_count=selected_audits[-1].accepted_group_end,
+        complete_window_count=complete_schedule_audit.complete_window_count,
+        query_window_count=sum(phase_query_window_counts),
+        zero_query_window_count=(
+            complete_schedule_audit.complete_window_count - sum(phase_query_window_counts)
+        ),
+        total_query_count=sum(complete_schedule_audit.phase_query_counts),
+        phase_window_counts=complete_schedule_audit.phase_window_counts,
+        phase_query_counts=complete_schedule_audit.phase_query_counts,
+        complete_window_stream_sha256="a" * 64,
+        complete_phase_audit_root_sha256=(
+            complete_schedule_audit.complete_phase_audit_root_sha256
+        ),
+        accounting_sha256="b" * 64,
+        query_window_stream_sha256="c" * 64,
+    )
+    phase_random_route_counts = tuple(
+        sum(
+            item.multiplicity
+            for item in selected_expected
+            if item.phase == phase
+            and item.category == "query-f1m-random-mask-ciphertexts"
+        )
+        for phase in phase_names
+    )
+    phase_dummy_route_counts = tuple(
+        sum(
+            item.multiplicity
+            for item in selected_expected
+            if item.phase == phase
+            and item.category == "query-f1m-encrypted-zero-dummy-ciphertexts"
+        )
+        for phase in phase_names
+    )
+    route_coverage = Day1BF1MRouteCoverage(
+        controller_context_sha256=context.context_sha256,
+        day2_outer_archive_sha256="7" * 64,
+        element_count=context.query_window_count,
+        element_stream_sha256="d" * 64,
+        phase_dummy_route_counts=phase_dummy_route_counts,
+        phase_query_counts=context.phase_query_counts,
+        phase_query_window_counts=phase_query_window_counts,
+        phase_random_route_counts=phase_random_route_counts,
+        serialized_object_size_profile_sha256="8" * 64,
+    )
+    serialized_categories = _FIXTURE_SERIALIZED_CATEGORIES
+    retain_non_f1m_fixture_counts = (
+        expected_f1m_objects is None
+        or selected_all_serialized_count > len(selected_expected)
+    )
+    expected_phases: list[Day1BControllerExpectedPhaseCounts] = []
+    for retained_index, phase in enumerate(selected_candidate.retained_phases):
+        phase_index = phase_names.index(phase)
+        logical = (
+            2 if retain_non_f1m_fixture_counts else 0,
+            0,
+            phase_random_route_counts[phase_index],
+            phase_dummy_route_counts[phase_index],
+            int(retain_non_f1m_fixture_counts and retained_index == 0),
+            0,
+            0,
+            0,
+            0,
+        )
+        expected_phases.append(
+            Day1BControllerExpectedPhaseCounts(
+                phase=phase,
+                update_primitive_counts=_FIXTURE_UPDATE_PRIMITIVE_COUNTS,
+                query_primitive_counts=_FIXTURE_QUERY_PRIMITIVE_COUNTS,
+                logical_protocol_object_counts=logical,
+                worker_streamed_protocol_object_counts=logical,
+            )
+        )
+    controller_expected_counts = Day1BControllerExpectedCounts(
+        candidate_id=selected_candidate.candidate_id,
+        candidate_policy_sha256=selected_candidate.candidate_policy_digest,
+        accounting_sha256=context.accounting_sha256,
+        primitive_names=PRIMITIVE_NAMES,
+        serialized_categories=serialized_categories,
+        phases=tuple(expected_phases),
+    )
     return Day1BWorkerProtocolContract(
         invocation_id="6" * 64,
         trace_manifest_sha256="1" * 64,
@@ -183,6 +357,14 @@ def _contract(
         query_vector_sha256="3" * 64,
         candidate_catalog_sha256="4" * 64,
         resource_policy_sha256="5" * 64,
+        day2_outer_archive_sha256="7" * 64,
+        serialized_object_size_profile_sha256="8" * 64,
+        ciphertext_bytes=64,
+        f1m_random_zero_sum_ciphertext_bytes=65,
+        f1m_encrypted_zero_dummy_ciphertext_bytes=66,
+        serialized_rotation_key_inventory_bytes=None,
+        serialized_eval_mult_key_bytes=None,
+        combined_evaluation_key_size_class_sha256=None,
         freshness="0.1",
         rho="1",
         execution_basis=DAY1B_WORKER_EXECUTION_BASIS,
@@ -192,15 +374,18 @@ def _contract(
             Day1BWorkerPhaseRange("tuning", 10, 40),
             Day1BWorkerPhaseRange("heldout", 40, 100),
         ),
-        primitive_names=("encrypt", "serialize_ciphertext"),
-        serialized_categories=(
-            ("update-ciphertexts", "update"),
-            ("query-ciphertexts", "query"),
-            ("query-f1m-random-mask-ciphertexts", "query"),
-            ("query-f1m-encrypted-zero-dummy-ciphertexts", "query"),
-            ("evaluation-keys", "one-time"),
-        ),
+        primitive_names=PRIMITIVE_NAMES,
+        serialized_categories=serialized_categories,
         f1m_size_class_categories=DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES,
+        f1m_controller_context=context,
+        f1m_controller_context_sha256=context.context_sha256,
+        f1m_route_coverage=route_coverage,
+        f1m_route_coverage_sha256=route_coverage.route_coverage_sha256,
+        f1m_charged_size_class_set_sha256="c" * 64,
+        controller_expected_counts=controller_expected_counts,
+        controller_expected_counts_sha256=(
+            controller_expected_counts.expected_counts_sha256
+        ),
         expected_f1m_size_class_set_sha256=(
             canonical_day1b_expected_f1m_size_class_set_sha256(selected_expected)
         ),
@@ -486,9 +671,7 @@ def _fixture_registry_inputs(
                 private_plan_digest=cardinality.private_plan_digest,
                 execution_binding_digest=cardinality.execution_binding_digest,
                 size_class_subroot_sha256=(
-                    canonical_day1b_expected_f1m_size_class_subroot_sha256(
-                        phase_routes[phase]
-                    )
+                    canonical_day1b_expected_f1m_size_class_subroot_sha256(phase_routes[phase])
                 ),
             )
         )
@@ -579,8 +762,7 @@ def _complete_transcript(
             random_route = next(
                 item
                 for item in selected_expected
-                if item.phase == phase
-                and item.category == "query-f1m-random-mask-ciphertexts"
+                if item.phase == phase and item.category == "query-f1m-random-mask-ciphertexts"
             )
             dummy_route = next(
                 item
@@ -636,10 +818,22 @@ def _complete_transcript(
             outcome="complete",
             failure_code=None,
             retained_measurement=retained,
-            update_primitive_counts=[3, 4] if retained else None,
-            query_primitive_counts=[5, 6] if retained else None,
+            update_primitive_counts=(
+                list(_FIXTURE_UPDATE_PRIMITIVE_COUNTS) if retained else None
+            ),
+            query_primitive_counts=(
+                list(_FIXTURE_QUERY_PRIMITIVE_COUNTS) if retained else None
+            ),
             serialized_category_object_counts=(
-                [1, 0, 1, 1, int(phase == candidate.retained_phases[0])] if retained else None
+                _fixture_category_counts(
+                    1,
+                    0,
+                    1,
+                    1,
+                    int(phase == candidate.retained_phases[0]),
+                )
+                if retained
+                else None
             ),
             phase_audit=audit.to_document(),
         )
@@ -660,6 +854,7 @@ def _outcome_transcript(
     contract: Day1BWorkerProtocolContract,
     *,
     outcomes: tuple[tuple[str, str | None], ...],
+    omit_f1m_from_complete_phases: bool = False,
 ) -> bytes:
     assert len(outcomes) == 3
     candidate = contract.candidate
@@ -673,6 +868,7 @@ def _outcome_transcript(
         ),
     ]
     sequence = 2
+    expected_f1m = _expected_f1m_objects(candidate.candidate_id)
     for audit, phase, (outcome, failure_code) in zip(
         _phase_audits(),
         ("warmup", "tuning-prefix", "held-out"),
@@ -681,6 +877,67 @@ def _outcome_transcript(
     ):
         retained = phase in candidate.retained_phases
         complete = outcome == "complete"
+        expected_phase = (
+            contract.controller_expected_counts.phase_counts(phase)
+            if retained
+            else None
+        )
+        equivalence_class_counts: list[int] | None = None
+        if retained and complete:
+            assert expected_phase is not None
+            equivalence_class_counts = []
+            for category_index, (category, _transaction) in enumerate(
+                contract.serialized_categories
+            ):
+                multiplicity = (
+                    expected_phase.worker_streamed_protocol_object_counts[
+                        category_index
+                    ]
+                )
+                if (
+                    omit_f1m_from_complete_phases
+                    and category in contract.f1m_size_class_categories
+                ):
+                    equivalence_class_counts.append(0)
+                    continue
+                if multiplicity == 0:
+                    equivalence_class_counts.append(0)
+                    continue
+                if category in contract.f1m_size_class_categories:
+                    matching = tuple(
+                        item
+                        for item in expected_f1m
+                        if item.phase == phase and item.category == category
+                    )
+                    assert sum(item.multiplicity for item in matching) == multiplicity
+                else:
+                    matching = (None,)
+                equivalence_class_counts.append(len(matching))
+                for ordinal, expected_object in enumerate(matching):
+                    frames.append(
+                        _frame(
+                            sequence,
+                            "serialized-object",
+                            candidate_id=candidate.candidate_id,
+                            phase=phase,
+                            category=category,
+                            object_ordinal=ordinal,
+                            multiplicity=(
+                                multiplicity
+                                if expected_object is None
+                                else expected_object.multiplicity
+                            ),
+                            f1m_size_class=(
+                                None
+                                if expected_object is None
+                                else expected_object.f1m_size_class.to_document()
+                            ),
+                            payload=(
+                                f"{candidate.candidate_id}:{phase}:{category}:{ordinal}"
+                            ).encode(),
+                        )
+                    )
+                    sequence += 1
         frames.append(
             _frame(
                 sequence,
@@ -690,11 +947,17 @@ def _outcome_transcript(
                 outcome=outcome,
                 failure_code=failure_code,
                 retained_measurement=retained,
-                update_primitive_counts=[0, 0] if retained and complete else None,
-                query_primitive_counts=[1, 0] if retained and complete else None,
-                serialized_category_object_counts=(
-                    [0, 0, 0, 0, 0] if retained and complete else None
+                update_primitive_counts=(
+                    list(expected_phase.update_primitive_counts)
+                    if retained and complete and expected_phase is not None
+                    else None
                 ),
+                query_primitive_counts=(
+                    list(expected_phase.query_primitive_counts)
+                    if retained and complete and expected_phase is not None
+                    else None
+                ),
+                serialized_category_object_counts=equivalence_class_counts,
                 phase_audit=audit.to_document(),
             )
         )
@@ -789,6 +1052,8 @@ def test_streaming_decoder_hashes_payloads_without_retaining_raw_bytes() -> None
     assert hashlib.sha256(expected).hexdigest().encode() in spooled
     assert b"reference-a:tuning-prefix:update" not in _canonical_bytes(receipt.to_document())
     assert receipt.input_binding_sha256 == contract.input_binding_sha256
+    assert receipt.input_binding_document == contract.input_binding_document()
+    assert receipt.to_document()["input_binding_document"] == contract.input_binding_document()
     assert receipt.controller_expected_serialized_equivalence_class_count == 7
     assert receipt.object_receipt_line_count == 7
     evidence.close()
@@ -944,9 +1209,18 @@ def test_expected_registry_is_bound_to_exact_predispatch_context(splice: str) ->
     if splice == "invocation":
         other = replace(base, invocation_id="7" * 64)
     elif splice == "candidate":
-        other = replace(
-            base,
+        candidate_splice = _contract(
             candidate=replace(base.candidate, candidate_id="reference-b"),
+            expected_f1m_objects=expected,
+            expected_serialized_equivalence_class_count=(
+                base.expected_serialized_equivalence_class_count
+            ),
+        )
+        other = replace(
+            candidate_splice,
+            expected_f1m_cardinality_derivation_root_sha256=(
+                base.expected_f1m_cardinality_derivation_root_sha256
+            ),
         )
     else:
         other = replace(
@@ -1106,15 +1380,11 @@ def test_expected_f1m_registry_checks_controlled_scratch_cap_incrementally() -> 
                 multiplicity=100_000,
                 f1m_size_class=Day1BF1MSizeClass(
                     version_id="version-0001",
-                    output_plan_digest=hashlib.sha256(
-                        b"plan:reference-a:held-out"
-                    ).hexdigest(),
+                    output_plan_digest=hashlib.sha256(b"plan:reference-a:held-out").hexdigest(),
                     component_id=f"component-{ordinal}",
                     output_block_id="block-0",
                     f1m_kind="random-zero-sum",
-                    private_plan_digest=hashlib.sha256(
-                        b"private:reference-a:held-out"
-                    ).hexdigest(),
+                    private_plan_digest=hashlib.sha256(b"private:reference-a:held-out").hexdigest(),
                     execution_binding_digest=hashlib.sha256(
                         b"execution:reference-a:held-out"
                     ).hexdigest(),
@@ -1250,6 +1520,7 @@ def test_anonymous_scratch_capability_is_opaque_single_use_and_context_bound() -
         Day1BAnonymousScratchCapability()
 
     capability, contract, audits = _scratch_capability()
+    assert describe_day1b_anonymous_scratch_capability(capability) is None
     with pytest.raises(TypeError, match="not a caller boolean"):
         bool(capability)
     scratch = worker_protocol._ControlledScratch(
@@ -1266,9 +1537,21 @@ def test_anonymous_scratch_capability_is_opaque_single_use_and_context_bound() -
     scratch.close()
 
     capability, contract, audits = _scratch_capability()
+    changed_context = replace(
+        contract.f1m_controller_context,
+        resource_policy_sha256="f" * 64,
+    )
+    changed_coverage = replace(
+        contract.f1m_route_coverage,
+        controller_context_sha256=changed_context.context_sha256,
+    )
     changed = replace(
         contract,
         resource_policy_sha256="f" * 64,
+        f1m_controller_context=changed_context,
+        f1m_controller_context_sha256=changed_context.context_sha256,
+        f1m_route_coverage=changed_coverage,
+        f1m_route_coverage_sha256=changed_coverage.route_coverage_sha256,
     )
     with pytest.raises(Day1BWorkerProtocolError, match="pre-dispatch context"):
         worker_protocol._ControlledScratch(
@@ -1276,6 +1559,58 @@ def test_anonymous_scratch_capability_is_opaque_single_use_and_context_bound() -
             contract=changed,
             controller_phase_audits=audits,
         )
+    _assert_no_live_controlled_scratch()
+
+
+@pytest.mark.skipif(
+    platform.system() != "Linux",
+    reason="production anonymous scratch uses Linux openat and /proc/self/fd",
+)
+def test_production_anonymous_scratch_capability_is_exact_and_pathless() -> None:
+    os.chmod(_CURRENT_CONTROLLED_SCRATCH, 0o700)
+    contract = _contract()
+    audits = _phase_audits()
+    capability = issue_day1b_anonymous_scratch_capability(
+        contract=contract,
+        controller_phase_audits=audits,
+        launcher_scratch_parent=_CURRENT_CONTROLLED_SCRATCH,
+    )
+    creation_receipt = describe_day1b_anonymous_scratch_capability(capability)
+    assert creation_receipt is not None
+    assert creation_receipt.to_document()["formal_authority_granted"] is False
+    assert creation_receipt.to_document()["production_execution_admissible"] is False
+    assert not tuple(_CURRENT_CONTROLLED_SCRATCH.iterdir())
+
+    scratch = worker_protocol._ControlledScratch(
+        capability,
+        contract=contract,
+        controller_phase_audits=audits,
+    )
+    assert scratch.anonymous_scratch_creation_isolation_verified is True
+    assert scratch.anonymous_scratch_creation_receipt is creation_receipt
+    with pytest.raises(Day1BWorkerProtocolError, match="consumed"):
+        describe_day1b_anonymous_scratch_capability(capability)
+
+    connection: sqlite3.Connection | None = None
+    spool: BinaryIO | None = None
+    try:
+        connection = scratch.create_sqlite_connection("binding-index.sqlite3")
+        spool = scratch.create_binary_file("object-receipts.jsonl")
+        connection.execute("CREATE TABLE witness(value INTEGER NOT NULL)")
+        connection.execute("INSERT INTO witness VALUES (11)")
+        connection.commit()
+        spool.write(b'{"object":"production-scratch-witness"}\n')
+        spool.flush()
+        scratch.require_within_cap()
+        assert connection.execute("SELECT value FROM witness").fetchall() == [(11,)]
+        assert scratch.peak_bytes > 0
+        assert not tuple(_CURRENT_CONTROLLED_SCRATCH.iterdir())
+    finally:
+        if connection is not None:
+            connection.close()
+        if spool is not None:
+            spool.close()
+        scratch.close()
     _assert_no_live_controlled_scratch()
 
 
@@ -1292,6 +1627,22 @@ def test_unclaimed_anonymous_scratch_capability_closes_both_handles_on_collectio
     assert all(file.closed for file in handles)
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         connection.execute("SELECT 1")
+    _assert_no_live_controlled_scratch()
+
+
+def test_abandoned_anonymous_scratch_capability_closes_every_handle() -> None:
+    capability, _contract_value, _audits = _scratch_capability()
+    handles = tuple(item[1] for item in capability._binding.members)
+    connection = capability._binding.sqlite_connection
+    assert connection is not None
+
+    abandon_day1b_anonymous_scratch_capability(capability)
+
+    assert all(file.closed for file in handles)
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        connection.execute("SELECT 1")
+    with pytest.raises(Day1BWorkerProtocolError, match="consumed"):
+        describe_day1b_anonymous_scratch_capability(capability)
     _assert_no_live_controlled_scratch()
 
 
@@ -1745,16 +2096,24 @@ def test_controller_registry_contract_types_are_explicit_public_api() -> None:
         "Day1BF1MWindowCardinality",
         "Day1BAnonymousScratchCapability",
         "Day1BWorkerPhaseReceipt",
+        "abandon_day1b_anonymous_scratch_capability",
         "canonical_day1b_expected_f1m_size_class_subroot_sha256",
         "canonical_day1b_f1m_cardinality_derivation_root_sha256",
         "canonical_day1b_f1m_query_id",
+        "describe_day1b_anonymous_scratch_capability",
+        "issue_day1b_anonymous_scratch_capability",
     }
 
     assert expected_exports <= set(worker_protocol.__all__)
     assert not any(
-        "scratch" in name and ("issue" in name or "mint" in name)
+        "scratch" in name and "mint" in name
         for name in worker_protocol.__all__
     )
+    assert {
+        name
+        for name in worker_protocol.__all__
+        if "scratch" in name and "issue" in name
+    } == {"issue_day1b_anonymous_scratch_capability"}
 
 
 def test_repeated_abandon_closes_every_anonymous_handle(
@@ -2018,13 +2377,13 @@ def test_all_serialized_count_is_exact_bound_and_not_a_boolean() -> None:
     with pytest.raises(Day1BWorkerProtocolError, match="integer"):
         replace(base, expected_serialized_equivalence_class_count=True)
 
-    changed = replace(
-        base,
-        expected_serialized_equivalence_class_count=(
-            base.expected_serialized_equivalence_class_count + 1
-        ),
-    )
-    assert changed.input_binding_sha256 != base.input_binding_sha256
+    with pytest.raises(Day1BWorkerProtocolError, match="controller count preimage"):
+        replace(
+            base,
+            expected_serialized_equivalence_class_count=(
+                base.expected_serialized_equivalence_class_count + 1
+            ),
+        )
 
 
 def test_contract_rejects_full_query_replay_as_the_day1b_execution_basis() -> None:
@@ -2033,25 +2392,18 @@ def test_contract_rejects_full_query_replay_as_the_day1b_execution_basis() -> No
     with pytest.raises(Day1BWorkerProtocolError, match="window-weighted"):
         replace(base, execution_basis="full-query-arrival-replay")
 
-    assert base.input_binding_document()["execution_basis"] == (
-        DAY1B_WORKER_EXECUTION_BASIS
-    )
+    assert base.input_binding_document()["execution_basis"] == (DAY1B_WORKER_EXECUTION_BASIS)
 
 
 def test_successful_transcript_must_match_all_serialized_count_exactly() -> None:
     base = _contract()
-    contract = replace(
-        base,
-        expected_serialized_equivalence_class_count=(
-            base.expected_serialized_equivalence_class_count + 1
-        ),
-    )
-
-    with pytest.raises(
-        Day1BWorkerProtocolError,
-        match="all serialized equivalence class count",
-    ):
-        _consume((_complete_transcript(contract),), contract=contract)
+    with pytest.raises(Day1BWorkerProtocolError, match="controller count preimage"):
+        replace(
+            base,
+            expected_serialized_equivalence_class_count=(
+                base.expected_serialized_equivalence_class_count + 1
+            ),
+        )
     _assert_no_live_controlled_scratch()
 
 
@@ -2116,9 +2468,7 @@ def test_receipt_preserves_weighted_window_batch_and_range_facts() -> None:
     assert receipt.controller_f1m_window_batch_stream_sha256 == (
         descriptor.controller_f1m_window_batch_stream_sha256
     )
-    assert receipt.controller_expected_f1m_phase_query_counts == (
-        descriptor.phase_query_counts
-    )
+    assert receipt.controller_expected_f1m_phase_query_counts == (descriptor.phase_query_counts)
     assert receipt.weighted_query_range_coverage_verified is True
     assert receipt.worker_observed_f1m_materialized_binding_count == 0
     assert receipt.pre_dispatch_context_sha256 == descriptor.pre_dispatch_context_sha256
@@ -2126,10 +2476,13 @@ def test_receipt_preserves_weighted_window_batch_and_range_facts() -> None:
         descriptor.controller_registered_scratch_bytes_checkpoint_maximum
     )
     assert DAY1B_WORKER_RECEIPT_SCHEMA == (
-        "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v5"
+        "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v10"
     )
-    assert 0 < receipt.controller_observed_registered_scratch_peak_bytes <= (
-        receipt.controller_registered_scratch_bytes_checkpoint_maximum
+    assert DAY1B_WORKER_RECEIPT_SCHEMA != DAY1B_WORKER_INPUT_BINDING_SCHEMA
+    assert (
+        0
+        < receipt.controller_observed_registered_scratch_peak_bytes
+        <= (receipt.controller_registered_scratch_bytes_checkpoint_maximum)
     )
     assert receipt.candidate.peak_scratch_bytes == 8_000
     assert receipt.anonymous_scratch_creation_isolation_verified is False
@@ -2144,6 +2497,11 @@ def test_receipt_preserves_weighted_window_batch_and_range_facts() -> None:
     )
     assert receipt.production_execution_admissible is False
     document = receipt.to_document()
+    assert document["f1m_controller_context_sha256"] == (contract.f1m_controller_context_sha256)
+    assert document["f1m_route_coverage_sha256"] == (contract.f1m_route_coverage_sha256)
+    assert document["f1m_charged_size_class_set_sha256"] == (
+        contract.f1m_charged_size_class_set_sha256
+    )
     assert document["controller_observed_registered_scratch_peak_bytes"] == (
         receipt.controller_observed_registered_scratch_peak_bytes
     )
@@ -2264,9 +2622,7 @@ def test_registry_rejects_cardinality_subroot_batch_range_and_input_root_splices
             selected_window_batches=(
                 replace(
                     window_batches[0],
-                    first_global_query_ordinal=(
-                        window_batches[0].first_global_query_ordinal + 1
-                    ),
+                    first_global_query_ordinal=(window_batches[0].first_global_query_ordinal + 1),
                 ),
                 *window_batches[1:],
             )
@@ -2392,6 +2748,89 @@ def test_byte_caps_are_not_inferred_from_expected_route_count() -> None:
     _assert_no_live_controlled_scratch()
 
 
+def test_worker_input_binding_commits_to_aggregate_f1m_summary_roots() -> None:
+    contract = _contract()
+    document = contract.input_binding_document()
+
+    assert document["schema_version"].endswith("-v10")
+    assert Day1BWorkerProtocolContract.from_input_binding_document(document) == contract
+    assert document["controller_expected_counts_document"] == (
+        contract.controller_expected_counts.to_document()
+    )
+    assert document["controller_expected_counts_sha256"] == (
+        contract.controller_expected_counts.expected_counts_sha256
+    )
+    assert document["f1m_controller_context_document"] == (
+        contract.f1m_controller_context.to_document()
+    )
+    assert document["f1m_controller_context_sha256"] == (
+        contract.f1m_controller_context.context_sha256
+    )
+    assert document["f1m_route_coverage_document"] == contract.f1m_route_coverage.to_document()
+    assert document["f1m_route_coverage_sha256"] == (
+        contract.f1m_route_coverage.route_coverage_sha256
+    )
+    assert document["f1m_charged_size_class_set_sha256"] == "c" * 64
+    assert document["serialized_rotation_key_inventory_bytes"] is None
+    assert document["serialized_eval_mult_key_bytes"] is None
+    assert document["combined_evaluation_key_size_class_sha256"] is None
+    for field in (
+        "f1m_controller_context_sha256",
+        "f1m_route_coverage_sha256",
+        "f1m_charged_size_class_set_sha256",
+    ):
+        mutated = dict(document)
+        mutated[field] = "f" * 64
+        assert hashlib.sha256(_canonical_bytes(mutated)).hexdigest() != (
+            contract.input_binding_sha256
+        )
+
+
+def test_worker_input_binding_document_parser_rejects_noncanonical_preimages() -> None:
+    document = _contract().input_binding_document()
+    document["unexpected"] = True
+
+    with pytest.raises(Day1BWorkerProtocolError, match="keys are not exact"):
+        Day1BWorkerProtocolContract.from_input_binding_document(document)
+
+
+def test_every_retained_receipt_line_uses_the_inclusive_aggregate_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = _contract()
+    evidence = claim_day1b_worker_evidence(
+        _consume((_complete_transcript(contract),), contract=contract)
+    )
+    destination = io.BytesIO()
+    evidence.copy_object_receipts_to(destination)
+    evidence.close()
+    lines = destination.getvalue().splitlines(keepends=True)
+    documents = tuple(json.loads(line) for line in lines)
+
+    assert lines
+    assert all(
+        len(line) <= worker_protocol.DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM
+        for line in lines
+    )
+    assert {document["category"] for document in documents} >= {
+        "update-ciphertexts",
+        "query-f1m-random-mask-ciphertexts",
+    }
+    first_ordinary_line = next(
+        line
+        for line, document in zip(lines, documents, strict=True)
+        if document["category"] == "update-ciphertexts"
+    )
+    monkeypatch.setattr(
+        worker_protocol,
+        "DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM",
+        len(first_ordinary_line) - 1,
+    )
+    with pytest.raises(Day1BWorkerProtocolError, match="receipt exceeds.*bound"):
+        _consume((_complete_transcript(contract),), contract=contract)
+    _assert_no_live_controlled_scratch()
+
+
 @pytest.mark.parametrize(
     "failure_code",
     (
@@ -2440,6 +2879,8 @@ def test_launcher_terminal_missing_result_preserves_taxonomy_and_expected_size_c
     assert receipt.object_receipt_line_count == 0
     assert receipt.worker_observed_f1m_materialized_binding_count == 0
     assert receipt.weighted_query_range_coverage_verified is True
+    assert receipt.input_binding_document == contract.input_binding_document()
+    assert receipt.input_binding_sha256 == contract.input_binding_sha256
     evidence.close()
 
 
@@ -2743,7 +3184,9 @@ def test_json_booleans_cannot_alias_protocol_integers() -> None:
             lambda header, payload: (
                 {
                     **header,
-                    "serialized_category_object_counts": [True, 0, 1, 1, 1],
+                    "serialized_category_object_counts": _fixture_category_counts(
+                        True, 0, 1, 1, 1
+                    ),
                 },
                 payload,
             ),
@@ -2882,11 +3325,17 @@ def test_query_primitive_vector_must_match_controller_realized_query_presence() 
     no_query_primitives = _rewrite_first_frame(
         _complete_transcript(contract),
         "phase-result",
-        lambda header, payload: ({**header, "query_primitive_counts": [0, 0]}, payload),
+        lambda header, payload: (
+            {
+                **header,
+                "query_primitive_counts": [0] * len(PRIMITIVE_NAMES),
+            },
+            payload,
+        ),
         predicate=lambda header: header["phase"] == "tuning-prefix",
     )
 
-    with pytest.raises(Day1BWorkerProtocolError, match="primitive vector.*realized query"):
+    with pytest.raises(Day1BWorkerProtocolError, match="primitive vectors.*controller replay"):
         _consume((no_query_primitives,), contract=contract)
     _assert_no_live_controlled_scratch()
 
@@ -2945,14 +3394,8 @@ def test_f1m_representative_payload_digest_may_repeat_across_size_classes() -> N
 
 
 def test_f1m_window_equivalence_class_charges_exact_query_multiplicity() -> None:
-    audits = tuple(
-        replace(audit, realized_query_count=3)
-        for audit in _phase_audits()
-    )
-    expected = tuple(
-        replace(item, multiplicity=3)
-        for item in _expected_f1m_objects("reference-a")
-    )
+    audits = tuple(replace(audit, realized_query_count=3) for audit in _phase_audits())
+    expected = tuple(replace(item, multiplicity=3) for item in _expected_f1m_objects("reference-a"))
     contract = _contract(
         expected_f1m_objects=expected,
         expected_serialized_equivalence_class_count=len(expected) + 3,
@@ -2988,8 +3431,7 @@ def test_f1m_window_equivalence_class_charges_exact_query_multiplicity() -> None
             }
             assert {category.protocol_object_count for category in f1m.values()} == {3}
             assert {
-                category.serialization_equivalence_class_count
-                for category in f1m.values()
+                category.serialization_equivalence_class_count for category in f1m.values()
             } == {1}
 
 
@@ -3076,6 +3518,27 @@ def test_f1m_worker_size_class_must_match_controller_expected_descriptor() -> No
         _consume((spliced,), contract=contract)
 
 
+def test_same_equivalence_class_count_cannot_hide_a_multiplicity_tamper() -> None:
+    contract = _contract()
+    transcript = _complete_transcript(contract)
+    spliced = _rewrite_first_frame(
+        transcript,
+        "serialized-object",
+        lambda header, payload: ({**header, "multiplicity": 1}, payload),
+        predicate=lambda header: (
+            header["candidate_id"] == "reference-a"
+            and header["phase"] == "tuning-prefix"
+            and header["category"] == "update-ciphertexts"
+        ),
+    )
+
+    with pytest.raises(
+        Day1BWorkerProtocolError,
+        match="protocol-object multiplicities",
+    ):
+        _consume((spliced,), contract=contract)
+
+
 def test_f1m_controller_expected_route_set_rejects_worker_omission_and_extra() -> None:
     base_expected = _expected_f1m_objects("reference-a")
     missing_from_controller = base_expected[1:]
@@ -3099,7 +3562,10 @@ def test_f1m_controller_expected_route_set_rejects_worker_omission_and_extra() -
     omitted_contract = _contract(expected_f1m_objects=expected_with_unobserved)
     with pytest.raises(
         Day1BWorkerProtocolError,
-        match="missing.*F1-M|expected.*unobserved|query range fields|cardinality",
+        match=(
+            "missing.*F1-M|expected.*unobserved|query range fields|cardinality|"
+            "protocol-object multiplicities"
+        ),
     ):
         _consume(
             (_complete_transcript(omitted_contract),),
@@ -3187,9 +3653,13 @@ def test_late_phase_failure_cannot_hide_missing_routes_from_earlier_complete_pha
             ("complete", None),
             ("failed", "candidate-execution-failed"),
         ),
+        omit_f1m_from_complete_phases=True,
     )
 
-    with pytest.raises(Day1BWorkerProtocolError, match="complete phase.*F1-M|F1-M.*unobserved"):
+    with pytest.raises(
+        Day1BWorkerProtocolError,
+        match="complete phase.*F1-M|F1-M.*unobserved|protocol-object multiplicities",
+    ):
         _consume((transcript,), contract=contract)
 
 
@@ -3223,7 +3693,10 @@ def test_both_f1m_ciphertext_categories_require_size_class_descriptors() -> None
         for item in base.serialized_categories
         if item[0] != "query-f1m-random-mask-ciphertexts"
     )
-    with pytest.raises(Day1BWorkerProtocolError, match="required.*F1-M.*category"):
+    with pytest.raises(
+        Day1BWorkerProtocolError,
+        match="required.*F1-M.*category|retained preimages",
+    ):
         replace(
             base,
             serialized_categories=without_random_mask,
@@ -3237,26 +3710,16 @@ def test_positive_query_can_have_zero_f1m_routes_when_output_plan_has_no_shares(
         contract,
         outcomes=(("complete", None), ("complete", None), ("complete", None)),
     )
-    nonzero_query = _rewrite_first_frame(
-        transcript,
-        "phase-result",
-        lambda header, payload: (
-            {**header, "query_primitive_counts": [1, 0]},
-            payload,
-        ),
-        predicate=lambda header: header["phase"] == "tuning-prefix",
-    )
-
     evidence = claim_day1b_worker_evidence(
         _consume(
-            (nonzero_query,),
+            (transcript,),
             contract=contract,
             expected_f1m_objects=(),
         )
     )
     tuning = evidence.receipt.candidate.phases[1]
     assert tuning.outcome == "complete"
-    assert tuning.query_primitive_counts == (1, 0)
+    assert tuning.query_primitive_counts == _FIXTURE_QUERY_PRIMITIVE_COUNTS
     assert evidence.receipt.controller_expected_f1m_size_class_count == 0
     evidence.close()
 
@@ -3285,6 +3748,11 @@ def test_positive_query_accepts_exact_expected_size_classes_of_only_one_f1m_kind
         strict=True,
     ):
         retained = phase in candidate.retained_phases
+        expected_phase = (
+            contract.controller_expected_counts.phase_counts(phase)
+            if retained
+            else None
+        )
         if phase == "held-out":
             frames.append(
                 _frame(
@@ -3314,14 +3782,20 @@ def test_positive_query_accepts_exact_expected_size_classes_of_only_one_f1m_kind
                 outcome="complete",
                 failure_code=None,
                 retained_measurement=retained,
-                update_primitive_counts=[0, 0] if retained else None,
+                update_primitive_counts=(
+                    list(expected_phase.update_primitive_counts)
+                    if expected_phase is not None
+                    else None
+                ),
                 query_primitive_counts=(
-                    [1, 0] if phase == "held-out" else ([1, 0] if retained else None)
+                    list(expected_phase.query_primitive_counts)
+                    if expected_phase is not None
+                    else None
                 ),
                 serialized_category_object_counts=(
-                    [0, 0, 1, 0, 0]
+                    _fixture_category_counts(0, 0, 1, 0, 0)
                     if phase == "held-out"
-                    else ([0, 0, 0, 0, 0] if retained else None)
+                    else (_fixture_category_counts(0, 0, 0, 0, 0) if retained else None)
                 ),
                 phase_audit=audit.to_document(),
             )
@@ -3600,8 +4074,17 @@ def test_large_object_cardinality_spools_metadata_instead_of_growing_receipt() -
             candidate_role="reference",
         )
         sequence += 1
-        for audit, phase in zip(audits, ("warmup", "tuning-prefix", "held-out"), strict=True):
+        for audit, phase in zip(
+            audits,
+            ("warmup", "tuning-prefix", "held-out"),
+            strict=True,
+        ):
             retained = phase != "warmup"
+            expected_phase = (
+                contract.controller_expected_counts.phase_counts(phase)
+                if retained
+                else None
+            )
             if phase == "held-out":
                 for ordinal in range(object_count):
                     yield _frame(
@@ -3629,14 +4112,20 @@ def test_large_object_cardinality_spools_metadata_instead_of_growing_receipt() -
                 outcome="complete",
                 failure_code=None,
                 retained_measurement=retained,
-                update_primitive_counts=[0, 0] if retained else None,
+                update_primitive_counts=(
+                    list(expected_phase.update_primitive_counts)
+                    if expected_phase is not None
+                    else None
+                ),
                 query_primitive_counts=(
-                    [1, 0] if phase == "held-out" else ([1, 0] if retained else None)
+                    list(expected_phase.query_primitive_counts)
+                    if expected_phase is not None
+                    else None
                 ),
                 serialized_category_object_counts=(
-                    [0, 0, object_count, 0, 0]
+                    _fixture_category_counts(0, 0, object_count, 0, 0)
                     if phase == "held-out"
-                    else ([0, 0, 0, 0, 0] if retained else None)
+                    else (_fixture_category_counts(0, 0, 0, 0, 0) if retained else None)
                 ),
                 phase_audit=audit.to_document(),
             )

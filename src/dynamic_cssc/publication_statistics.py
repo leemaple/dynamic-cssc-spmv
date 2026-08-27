@@ -39,6 +39,7 @@ from dynamic_cssc.evidence_compatibility import (
     verify_evidence_compatibility,
 )
 from dynamic_cssc.publication_schedule import ACCEPTED_EVENT_SCHEDULE_SCHEMA
+from dynamic_cssc.publication_traces import PUBLICATION_SOURCE_PARTITION_COUNT
 
 HELDOUT_SCHEMA = "dynamic-cssc-publication-heldout-v7"
 HELDOUT_RECORD_SCHEMA = "dynamic-cssc-publication-heldout-record-v4"
@@ -529,7 +530,7 @@ def _sampling_stream_known_answer_sha256() -> str:
             calibration.randbelow(14) for _ in range(20)
         ],
         "partition_resampling_primary_first_20_randbelow_5": [
-            partition.randbelow(5) for _ in range(20)
+            partition.randbelow(PUBLICATION_SOURCE_PARTITION_COUNT) for _ in range(20)
         ],
     }
     return hashlib.sha256(canonical_json_bytes(answer)).hexdigest()
@@ -846,7 +847,7 @@ def _decode_trace_bindings(
         (dataset_id, semantics, partition)
         for dataset_id in DATASET_IDS
         for semantics in SEMANTICS
-        for partition in range(5)
+        for partition in range(PUBLICATION_SOURCE_PARTITION_COUNT)
     )
     if len(raw_trace_units) != len(expected_unit_keys):
         raise ValueError("trace_units must contain exactly 30 canonical trace units")
@@ -883,7 +884,7 @@ def _decode_trace_bindings(
         trace_units[expected_key] = unit
 
     for dataset_id in DATASET_IDS:
-        for partition in range(5):
+        for partition in range(PUBLICATION_SOURCE_PARTITION_COUNT):
             t1 = trace_units[(dataset_id, "T1", partition)]
             t2 = trace_units[(dataset_id, "T2", partition)]
             for shared_field in (
@@ -903,7 +904,7 @@ def _decode_trace_bindings(
         (dataset_id, semantics, partition, freshness, rho)
         for dataset_id in DATASET_IDS
         for semantics in SEMANTICS
-        for partition in range(5)
+        for partition in range(PUBLICATION_SOURCE_PARTITION_COUNT)
         for freshness in FRESHNESS_VALUES
         for rho in RHO_VALUES
     )
@@ -1107,7 +1108,7 @@ def _decode_record(
     if type(semantics) is not str or semantics not in SEMANTICS:
         raise ValueError(f"{field}.semantics must be T1 or T2")
     source_partition = _strict_int(source_partition, f"{field}.source_partition")
-    if source_partition not in range(5):
+    if source_partition not in range(PUBLICATION_SOURCE_PARTITION_COUNT):
         raise ValueError(f"{field}.source_partition must be in [0, 4]")
     if type(freshness) is not str or freshness not in FRESHNESS_VALUES:
         raise ValueError(f"{field}.freshness_seconds is not a primary freshness value")
@@ -1316,7 +1317,7 @@ def _decode_input(payload: object) -> _DecodedInput:
         (dataset_id, semantics, partition, freshness, rho)
         for dataset_id in DATASET_IDS
         for semantics in SEMANTICS
-        for partition in range(5)
+        for partition in range(PUBLICATION_SOURCE_PARTITION_COUNT)
         for freshness in FRESHNESS_VALUES
         for rho in RHO_VALUES
     )
@@ -1659,7 +1660,11 @@ def _partition_resampling_group(
     distributions: dict[str, list[Fraction]] = {rho: [] for rho in RHO_VALUES}
     for _ in range(PARTITION_RESAMPLING_REPETITIONS):
         sampled_partitions = {
-            dataset_id: tuple(sampler.randbelow(5) for _ in range(5)) for dataset_id in DATASET_IDS
+            dataset_id: tuple(
+                sampler.randbelow(PUBLICATION_SOURCE_PARTITION_COUNT)
+                for _ in range(PUBLICATION_SOURCE_PARTITION_COUNT)
+            )
+            for dataset_id in DATASET_IDS
         }
         for rho in RHO_VALUES:
             sample = [
@@ -1875,7 +1880,7 @@ def _nested_group(
                 effects = [
                     effects_by_cell[(dataset_id, partition, rho)]
                     for dataset_id in DATASET_IDS
-                    for partition in range(5)
+                    for partition in range(PUBLICATION_SOURCE_PARTITION_COUNT)
                 ]
                 median = _median(effects)
                 all_positive = all(effect > 0 for effect in effects)
@@ -1883,7 +1888,7 @@ def _nested_group(
                 all_nondominated = all(
                     nondominated_by_cell[(dataset_id, partition, rho)]
                     for dataset_id in DATASET_IDS
-                    for partition in range(5)
+                    for partition in range(PUBLICATION_SOURCE_PARTITION_COUNT)
                 )
                 rho_gate = all_positive and median_threshold and all_nondominated
                 classifications.append(
@@ -2026,7 +2031,7 @@ def analyze_publication_results(
             effect_values = [
                 effects_by_group[group_key][(dataset_id, partition, rho)]
                 for dataset_id in DATASET_IDS
-                for partition in range(5)
+                for partition in range(PUBLICATION_SOURCE_PARTITION_COUNT)
                 if (dataset_id, partition, rho) in effects_by_group[group_key]
             ]
             complete_effects = len(effect_values) == 15

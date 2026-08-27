@@ -49,7 +49,7 @@ if(BUILD_TESTING)
       --noise-budget-profile day2_mult_only
       --warmups 0
       --repetitions 1
-      --indices 1
+      --indices 1,-1,4095,-4095
   )
 endif()
 

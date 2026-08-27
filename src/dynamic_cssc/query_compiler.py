@@ -660,15 +660,10 @@ def compile_query(
         shares=(*base_plan.shares, *extra_shares),
     )
     output_analysis = analyze_output_plan(output_plan)
-    multiplicity = {
-        logical: sum(
-            candidate == logical
-            for share in output_plan.shares
-            for _, candidate in share.slot_to_logical
-        )
-        for share in output_plan.shares
-        for _, logical in share.slot_to_logical
-    }
+    multiplicity: dict[int, int] = {}
+    for share in output_plan.shares:
+        for _, logical in share.slot_to_logical:
+            multiplicity[logical] = multiplicity.get(logical, 0) + 1
     masked_share_ids = {
         (share.component_id, share.output_block_id)
         for share in output_plan.shares

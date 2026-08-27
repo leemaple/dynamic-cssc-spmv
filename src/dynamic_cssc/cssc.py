@@ -165,6 +165,9 @@ def _physical_capacities(
     return tuple(result)
 
 
+_VALIDATED_SPARSE_STATE_TOKEN = object()
+
+
 def publish_component(
     state: Mapping[Coordinate, int],
     *,
@@ -175,6 +178,7 @@ def publish_component(
     component_prefix: str,
     partition_rows: int | None = None,
     physical_capacities: Sequence[int] | None = None,
+    _validation_capability: object | None = None,
 ) -> PublishedComponent:
     """Publish exact CSSC value/ColumnIndex metadata for one matrix component.
 
@@ -197,7 +201,12 @@ def publish_component(
     ):
         raise ValueError("partition_rows must be in (0, effective_slots]")
 
-    entries = _validate_sparse_state(state, rows=rows, cols=cols)
+    if _validation_capability is None:
+        entries = _validate_sparse_state(state, rows=rows, cols=cols)
+    elif _validation_capability is _VALIDATED_SPARSE_STATE_TOKEN and type(state) is dict:
+        entries = tuple(sorted(state.items()))
+    else:
+        raise TypeError("validated sparse publication requires a repository-minted capability")
     entries_by_row: list[list[tuple[int, int]]] = [[] for _ in range(rows)]
     for (row, global_col), value in entries:
         entries_by_row[row].append((global_col, value))
@@ -304,6 +313,32 @@ def publish_component(
         blocks=tuple(blocks),
         _coordinate_slots=tuple(sorted(placements)),
         _available_slots=tuple(available_slots),
+    )
+
+
+def _publish_validated_component(
+    state: dict[Coordinate, int],
+    *,
+    rows: int,
+    cols: int,
+    effective_slots: int,
+    version_id: str,
+    component_prefix: str,
+    partition_rows: int | None = None,
+    physical_capacities: Sequence[int] | None = None,
+) -> PublishedComponent:
+    """Publish a state already proved valid by the strategy transition boundary."""
+
+    return publish_component(
+        state,
+        rows=rows,
+        cols=cols,
+        effective_slots=effective_slots,
+        version_id=version_id,
+        component_prefix=component_prefix,
+        partition_rows=partition_rows,
+        physical_capacities=physical_capacities,
+        _validation_capability=_VALIDATED_SPARSE_STATE_TOKEN,
     )
 
 

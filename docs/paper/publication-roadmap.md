@@ -117,6 +117,16 @@ block contains all 14 primitives in the deterministic
 SHAKE256/Fisher--Yates order derived from seed `2026082302`, its block ordinal,
 and a calibration-only domain. Store every raw case timing, warm-up decision,
 host/compiler/OpenFHE identity, CPU affinity, and uncertainty summary.
+
+The formal archive also retains the probe's exact OpenFHE binary ciphertext
+lengths in `serialized-object-size-profile.json`: the generic probe ciphertext
+and separately freshly encrypted F1-M random-zero-sum and encrypted-zero-dummy
+ciphertexts under the same fixed BFVRNS context. It binds those values to the
+measured evaluation-key inventory and carries the profile digest and all byte
+values through post-run anchor v6. Day1B may consume those values only through
+the final repository Day2 authority; fixture lengths, ciphertext-count proxies,
+cross-category size assumptions, and caller-supplied sizes are inadmissible.
+
 The closed publication vocabulary is `client_merge`, `client_reorder_element`,
 `decrypt`, `deserialize_ciphertext`, `encode`, `encrypt`,
 `eval_add_ciphertext`, `eval_mult_plaintext_mask`,
@@ -369,7 +379,7 @@ previously reviewed schema-source Git/Behavior-inventory binding; authority and
 worker/runtime identity are structurally absent. Its non-self-referential
 semantic digest and immutable decoded record do not lift the repository
 `HOLD`. The real amendment and its outcome-blind review receipt are now frozen
-as pre-`S1` DAY1B Behavior Set v10 members. The resource loader can project its
+as pre-`S1` DAY1B Behavior Set v30 members. The resource loader can project its
 non-authorizing budget, after which the independent profile, trace, worker, and
 anchor gates still fail closed.
 
@@ -388,22 +398,82 @@ implementation evidence only. It cannot dispatch until the trace and catalog
 authorities, repository execution adapter, and outcome-blind resource policy
 are installed, and it is not a 30-unit publication artifact.
 
-The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v10,
+The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v30,
 the unchanged empirical-null/authority-false `PENDING-FREEZE` placeholder, the
 separate reviewed resource-only amendment, and a manual no-input validation
 workflow. These freeze the current validator, protocol, administrative safety
 budgets, scheduling, provenance, and artifact-installation source surface; they
 do not create empirical resource results, authorize dispatch, publish an
-artifact, or grant a claim. A controller-owned pre-admission OpenFHE runtime now consumes the
-single-use ordinary-query authorization immediately before launch, owns and
-removes exclusive private scratch, binds the runner/source/compiler identity,
+artifact, or grant a claim. A controller-owned pre-admission OpenFHE runtime now
+consumes single-use ordinary and strong query authorizations immediately before
+launch, owns and removes exclusive private scratch, binds the
+runner/source/compiler identity and resolved file-backed OpenFHE library bytes,
 verifies result and serialized-object bytes, and records resource observations
-with authority fields false. The production two-path seam verifies the pending
+with authority fields false. Thin kind-specific adapters share that private
+launcher and the v4 native request/result language.
+Its build-identity v3 subreceipt now includes stable runner/library filesystem
+identity, Mach-O UUID or ELF build ID, install-name/SONAME and dependency-name
+inventories, compiler bytes/version/target, CMake executable/version, complete
+runner CMake/Ninja inputs, and the pinned clean OpenFHE source plus package,
+build, compile-command, and install-manifest digests. Runtime receipt v7 makes
+that nested-language change explicit and adds an inherited-FD READY/DONE
+protocol. On Linux, the controller pauses the runner at each point, verifies
+the exact pre-admitted runner/library executable mapping closure from `/proc`,
+rehashes each admitted file through a no-follow descriptor, binds the raw
+mapping roots and process start-time identity, and requires the
+same executable map set at DONE. Darwin produces no mapping admission. The
+receipt remains pre-admission and cannot substitute for a production scratch
+capability or candidate-cell adapter.
+The separate Linux production scratch seam now opens every parent component
+without following symlinks, creates an exclusive private child and two fixed
+members relative to held directory descriptors, opens SQLite through
+`/proc/self/fd`, then unlinks every member and removes the child before it
+returns an opaque single-use capability. Its exact identity receipt can set
+scratch-creation isolation true, but every authority and production-admission
+field remains false. This closes the launcher scratch-creation subgate only;
+the candidate-cell adapter and held-out dispatch remain on `HOLD`.
+The runner now generates the full supplied exact-index rotation inventory and
+eval-mult keys in one context/session, constructs the exact `D1BKEY01` frame,
+uses those keys in the same typed DAG, and returns a request/plan/segment/frame-
+bound receipt. Its rotation-plan hash now equals the exact LF-terminated
+`rotation-key-plan.json` member emitted by Day 2, and both Python and C++ reject
+alternate whitespace, ordering, or newline bytes. Query-derived plans and
+unanchored canonical Day 2 plan inputs remain pre-admission only. The v30
+source now preserves the rotation-plan digest in final Day 2 authority and can
+mint one opaque single-use plan capability only for the exact post-run anchored
+byte preimage; every runtime, dispatch, cost, performance, publication, and
+security flag remains false. With the current empty Day 2 anchors, no
+capability can be issued. The production two-path seam verifies the pending
 placeholder and reviewed amendment, then stops on the next missing profile gate
 before catalog, trace, worker, or output access. The workflow performs only
 hash-locked source-contract tests, static validation, amendment validation, and
 a real non-authorizing runtime smoke; it neither invokes the producer nor
 fetches or uploads publication data.
+
+The v30 runtime surface includes separate ordinary and strong anchored entry points. They
+accept no caller-supplied plan object: the deep launcher consumes the opaque
+Day 2 plan capability before request construction, uses that exact plan for
+generation and verification, cross-checks the resulting key-material receipt,
+and records the plan receipt in runtime receipt v7. The manual native smoke
+remains explicitly non-anchored, and this integration still supplies neither a
+production candidate-cell adapter nor dispatch authority.
+
+The same v30 surface now composes a collector-minted same-replay representative
+with one such anchored plan in a single-use pre-admission execution boundary.
+The joint receipt opens the replay and representative bindings, exact lifecycle
+authorization, runtime v7 receipt, reconstructed-output digest, and ordered
+serialized-payload receipt stream. Both capabilities are consumed on success
+or failure. The production worker invocation, registered scratch ownership,
+and candidate-cell transcript remain the next independent gates.
+
+The candidate-cell core now passes that collector-minted capability directly
+to its execution adapter and requires its exact consumed terminal state before
+accepting a launch. The launch binds the replay receipt back to the worker
+contract's candidate, policy, retained phases, controller accounting root,
+query vector, and modulus. Controller or adapter failures abandon every
+still-live capability. This closes the in-process replay-to-worker handoff, but
+the repository production adapter, worker admission receipt, and dispatch
+authority remain absent.
 
 The sole numeric exception in that pending document is the already
 preregistered, non-empirical protocol invariant
@@ -412,12 +482,13 @@ preregistered, non-empirical protocol invariant
 resource limit or authorize execution; every empirical numeric and method
 choice remains `null`.
 
-The remaining Day1B `HOLD` set is explicit: a controlled-scratch high-water and
-isolation method, linked-library/build
-admission, a production candidate-cell worker adapter that implements ADR 0012
-window-weighted equivalence accounting and consumes the anchored Day 2 OpenFHE
-timing/size profile, the TRACE post-run anchor, and the Day-1 registration
-anchor. Full per-query-arrival OpenFHE replay is forbidden: the frozen schedule
+The remaining Day1B `HOLD` set is explicit: production integration of the
+controlled-scratch high-water and new creation-isolation capability, binding
+the Linux READY/DONE mapping receipt into a production candidate-cell worker adapter,
+consumption of the independently verified Day 2 plan capability, ADR 0012
+window-weighted equivalence accounting, the anchored Day 2 OpenFHE timing/size
+profile, the TRACE post-run anchor, and the Day-1 registration anchor. Full
+per-query-arrival OpenFHE replay is forbidden: the frozen schedule
 would otherwise require 530,097,064 arrivals per trace unit and
 15,902,911,920 across all 30 units without adding independent layout states or
 measurements.

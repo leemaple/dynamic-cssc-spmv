@@ -21,6 +21,9 @@ from typing import Literal, cast
 from dynamic_cssc.day1_registry import RegisteredCandidate
 from dynamic_cssc.events import NetUpdate, PublicationWindow
 from dynamic_cssc.metrics import StrategyMetrics
+from dynamic_cssc.publication_day1b_layout_execution import (
+    Day1BQueryLayoutExecution,
+)
 from dynamic_cssc.publication_primitive_accounting import (
     PublicationPrimitiveAccounting,
     publication_primitive_accounting,
@@ -34,8 +37,8 @@ from dynamic_cssc.selection import (
 from dynamic_cssc.simulator import (
     QueryPlanAccounting,
     WindowAccounting,
-    account_strong_transition,
-    account_transition,
+    account_strong_transition_with_bundle,
+    account_transition_with_compiled,
 )
 from dynamic_cssc.strategy_state import (
     StrategyKind,
@@ -47,9 +50,9 @@ from dynamic_cssc.strategy_state import (
     initialize_strong_strategy,
 )
 
-DAY1B_ACCOUNTING_SCHEMA = "dynamic-cssc-publication-day1b-accounting-v1"
-DAY1B_QUERY_WINDOW_SCHEMA = "dynamic-cssc-publication-day1b-query-window-accounting-v1"
-DAY1B_PHASE_ACCOUNTING_SCHEMA = "dynamic-cssc-publication-day1b-phase-accounting-v1"
+DAY1B_ACCOUNTING_SCHEMA = "dynamic-cssc-publication-day1b-accounting-v2"
+DAY1B_QUERY_WINDOW_SCHEMA = "dynamic-cssc-publication-day1b-query-window-accounting-v2"
+DAY1B_PHASE_ACCOUNTING_SCHEMA = "dynamic-cssc-publication-day1b-phase-accounting-v2"
 DAY1B_ACCOUNTING_EXECUTION_BASIS = "window-weighted-equivalence-v1"
 
 SourcePhase = Literal["warmup", "tuning", "heldout"]
@@ -311,6 +314,13 @@ class Day1BPhaseAccounting:
     strategy_metrics_sha256: str
     update_primitive_counts: tuple[int, ...]
     query_primitive_counts: tuple[int, ...]
+    realized_version_publication_count: int
+    metadata_units: int
+    update_encryptions: int
+    query_ciphertexts: int
+    result_ciphertexts: int
+    blinding_mask_ciphertexts: int
+    blinding_dummy_ciphertexts: int
 
     def __post_init__(self) -> None:
         if self.phase not in _WORKER_PHASES:
@@ -327,6 +337,13 @@ class Day1BPhaseAccounting:
             "realized_net_update_count",
             "realized_query_count",
             "query_window_count",
+            "realized_version_publication_count",
+            "metadata_units",
+            "update_encryptions",
+            "query_ciphertexts",
+            "result_ciphertexts",
+            "blinding_mask_ciphertexts",
+            "blinding_dummy_ciphertexts",
         ):
             value = getattr(self, field)
             if type(value) is not int or value < 0:
@@ -345,15 +362,24 @@ class Day1BPhaseAccounting:
             "accepted_group_end": self.accepted_group_end,
             "accepted_group_start": self.accepted_group_start,
             "phase": self.phase,
+            "blinding_dummy_ciphertexts": self.blinding_dummy_ciphertexts,
+            "blinding_mask_ciphertexts": self.blinding_mask_ciphertexts,
+            "metadata_units": self.metadata_units,
             "query_primitive_counts": list(self.query_primitive_counts),
+            "query_ciphertexts": self.query_ciphertexts,
             "query_window_count": self.query_window_count,
             "query_window_stream_sha256": self.query_window_stream_sha256,
             "realized_net_update_count": self.realized_net_update_count,
             "realized_query_count": self.realized_query_count,
             "realized_set_count": self.realized_set_count,
+            "realized_version_publication_count": (
+                self.realized_version_publication_count
+            ),
             "realized_window_count": self.realized_window_count,
+            "result_ciphertexts": self.result_ciphertexts,
             "schema_version": DAY1B_PHASE_ACCOUNTING_SCHEMA,
             "strategy_metrics_sha256": self.strategy_metrics_sha256,
+            "update_encryptions": self.update_encryptions,
             "update_primitive_counts": list(self.update_primitive_counts),
         }
 
@@ -468,6 +494,7 @@ class _PhaseAccumulator:
         "query_hasher",
         "query_window_count",
         "set_count",
+        "version_publication_count",
         "window_count",
     )
 
@@ -480,6 +507,7 @@ class _PhaseAccumulator:
         )
         self.window_count = 0
         self.set_count = 0
+        self.version_publication_count = 0
         self.query_window_count = 0
         self.accepted_group_start: int | None = None
         self.accepted_group_end: int | None = None
@@ -487,7 +515,13 @@ class _PhaseAccumulator:
             "dynamic-cssc-publication-day1b-phase-query-window-stream-v1"
         )
 
-    def add_window(self, window: ExactPublicationWindow, accounting: WindowAccounting) -> None:
+    def add_window(
+        self,
+        window: ExactPublicationWindow,
+        accounting: WindowAccounting,
+        *,
+        version_changed: bool,
+    ) -> None:
         if self.accepted_group_start is None:
             self.accepted_group_start = window.accepted_group_start
         elif window.accepted_group_start != self.accepted_group_end:
@@ -497,6 +531,9 @@ class _PhaseAccumulator:
         self.accepted_group_end = window.accepted_group_end
         self.window_count += 1
         self.set_count += window.set_count
+        if type(version_changed) is not bool:
+            raise TypeError("version_changed must be an exact boolean")
+        self.version_publication_count += int(version_changed)
         self.metrics.merge(accounting.metrics)
 
     def finish(self, effective_slots: int) -> Day1BPhaseAccounting:
@@ -508,6 +545,8 @@ class _PhaseAccumulator:
             self.metrics,
             effective_slots=effective_slots,
         )
+        if type(self.metrics.metadata_units) is not int:
+            raise AssertionError("phase metadata-unit count is not exact")
         return Day1BPhaseAccounting(
             phase=self.phase,
             accepted_group_start=self.accepted_group_start,
@@ -521,6 +560,13 @@ class _PhaseAccumulator:
             strategy_metrics_sha256=_sha256(asdict(self.metrics)),
             update_primitive_counts=primitive.update_counts,
             query_primitive_counts=primitive.query_counts,
+            realized_version_publication_count=self.version_publication_count,
+            metadata_units=self.metrics.metadata_units,
+            update_encryptions=self.metrics.update_encryptions,
+            query_ciphertexts=self.metrics.query_ciphertexts,
+            result_ciphertexts=self.metrics.result_ciphertexts,
+            blinding_mask_ciphertexts=self.metrics.blinding_mask_ciphertexts,
+            blinding_dummy_ciphertexts=self.metrics.blinding_dummy_ciphertexts,
         )
 
 
@@ -596,14 +642,20 @@ def replay_publication_day1b_candidate_cell(
     windows: Iterable[ExactPublicationWindow],
     domain: Day1BAccountingDomain = PUBLICATION_DAY1B_ACCOUNTING_DOMAIN,
     query_window_sink: Callable[[Day1BQueryWindowAccounting], None] | None = None,
+    query_execution_sink: (
+        Callable[[Day1BQueryWindowAccounting, Day1BQueryLayoutExecution], None]
+        | None
+    ) = None,
 ) -> PublicationDay1BAccounting:
-    """Replay one candidate continuously and stream one descriptor per query window."""
+    """Replay continuously and stream compact and typed query-window views."""
 
     candidate_document = _candidate_document(candidate)
     if type(domain) is not Day1BAccountingDomain:
         raise TypeError("domain must be an exact Day1BAccountingDomain")
     if query_window_sink is not None and not callable(query_window_sink):
         raise TypeError("query_window_sink must be callable or None")
+    if query_execution_sink is not None and not callable(query_execution_sink):
+        raise TypeError("query_execution_sink must be callable or None")
     try:
         iterator = iter(windows)
     except TypeError as error:
@@ -660,21 +712,37 @@ def replay_publication_day1b_candidate_cell(
             raise PublicationDay1BAccountingError("window exact fields are malformed")
 
         adapted = _adapt_window(window)
+        previous_version_id = state.version_id
         if candidate.strategy == "Packed-COO-Cloud-Segmented-Delta":
             if type(state) is not StrongStrategyState:
                 raise AssertionError("strong candidate state type changed")
             transition = advance_strong_publication(state, adapted)
-            accounting = account_strong_transition(transition)
+            accounting, strong_bundle = account_strong_transition_with_bundle(
+                transition
+            )
+            ordinary_compilation = None
             state = transition.state
         else:
             if type(state) is not StrategyState:
                 raise AssertionError("ordinary candidate state type changed")
             transition = advance_publication(state, adapted)
-            accounting = account_transition(transition)
+            accounting, ordinary_compilation = account_transition_with_compiled(
+                transition
+            )
+            strong_bundle = None
             state = transition.state
 
         accumulator = phase_accumulators[phase]
-        accumulator.add_window(window, accounting)
+        version_changed = state.version_id != previous_version_id
+        if version_changed != bool(window.updates):
+            raise AssertionError(
+                "candidate version must advance exactly once for every update-bearing window"
+            )
+        accumulator.add_window(
+            window,
+            accounting,
+            version_changed=version_changed,
+        )
         window_hasher.add(_exact_window_document(window))
         if window.query_count:
             if accounting.query_plan is None:
@@ -699,7 +767,29 @@ def replay_publication_day1b_candidate_cell(
             query_hasher.add(document)
             if query_window_sink is not None:
                 query_window_sink(descriptor)
-        elif accounting.query_plan is not None or accounting.rotations_per_query:
+            if query_execution_sink is not None:
+                query_execution_sink(
+                    descriptor,
+                    Day1BQueryLayoutExecution(
+                        phase=descriptor.phase,
+                        window_index=descriptor.window_index,
+                        accepted_group_start=descriptor.accepted_group_start,
+                        accepted_group_end=descriptor.accepted_group_end,
+                        first_global_query_ordinal=(
+                            descriptor.first_global_query_ordinal
+                        ),
+                        query_count=descriptor.query_count,
+                        query_plan=descriptor.query_plan,
+                        ordinary_compilation=ordinary_compilation,
+                        strong_bundle=strong_bundle,
+                    )
+                )
+        elif (
+            accounting.query_plan is not None
+            or accounting.rotations_per_query
+            or ordinary_compilation is not None
+            or strong_bundle is not None
+        ):
             raise AssertionError("zero-query window created query accounting")
 
         global_query_ordinal += window.query_count

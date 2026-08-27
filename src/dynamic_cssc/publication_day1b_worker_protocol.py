@@ -25,9 +25,33 @@ from fractions import Fraction
 from pathlib import Path
 from typing import BinaryIO
 
+from dynamic_cssc.publication_day1b_aggregate_bounds import (
+    DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM,
+)
+from dynamic_cssc.publication_day1b_expected_counts import (
+    Day1BControllerExpectedCounts,
+    Day1BControllerExpectedCountsError,
+)
+from dynamic_cssc.publication_day1b_f1m_aggregation import (
+    Day1BF1MAggregationError,
+    Day1BF1MControllerContext,
+    Day1BF1MRouteCoverage,
+)
+from dynamic_cssc.publication_day1b_key_framing import (
+    DAY1B_COMBINED_EVALUATION_KEY_CATEGORY,
+    Day1BCombinedEvaluationKeyFrameStreamValidator,
+    Day1BCombinedEvaluationKeyFramingError,
+)
+from dynamic_cssc.publication_day1b_scratch import (
+    DAY1B_ANONYMOUS_SCRATCH_MEMBER_NAMES,
+    Day1BAnonymousScratchCreationError,
+    Day1BAnonymousScratchCreationReceipt,
+    open_linux_day1b_anonymous_scratch,
+)
+
 DAY1B_WORKER_FRAME_SCHEMA = "dynamic-cssc-publication-day1b-worker-frame-v2"
-DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v3"
-DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v5"
+DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v10"
+DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v10"
 DAY1B_WORKER_WINDOW_AUDIT_SCHEMA = "dynamic-cssc-publication-day1b-worker-window-audit-v1"
 DAY1B_WORKER_F1M_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-f1m-binding-receipt-v1"
 DAY1B_WORKER_F1M_SIZE_CLASS_SCHEMA = "dynamic-cssc-publication-day1b-f1m-size-class-v1"
@@ -49,6 +73,8 @@ _DAY1B_WORKER_EXPECTED_F1M_SIZE_CLASS_SUBROOT_SCHEMA = (
     "dynamic-cssc-publication-day1b-expected-f1m-size-class-subroot-v3"
 )
 DAY1B_WORKER_MAX_HEADER_BYTES = 16_384
+if not (0 < DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM <= DAY1B_WORKER_MAX_HEADER_BYTES):
+    raise RuntimeError("aggregate receipt bound must fit one worker frame header")
 DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES = (
     "query-f1m-random-mask-ciphertexts",
     "query-f1m-encrypted-zero-dummy-ciphertexts",
@@ -88,6 +114,56 @@ _INVOCATION_LOCK = threading.Lock()
 _EXPECTED_REGISTRY_LOCK = threading.Lock()
 _ANONYMOUS_SCRATCH_LOCK = threading.Lock()
 _COMMON_FRAME_KEYS = frozenset({"frame_kind", "payload_byte_count", "schema_version", "sequence"})
+_WORKER_INPUT_BINDING_KEYS = frozenset(
+    {
+        "schema_version",
+        "candidate_catalog_sha256",
+        "candidate",
+        "ciphertext_bytes",
+        "combined_evaluation_key_size_class_sha256",
+        "controller_expected_counts_document",
+        "controller_expected_counts_sha256",
+        "day2_outer_archive_sha256",
+        "event_schedule_sha256",
+        "expected_f1m_size_class_count",
+        "expected_f1m_size_class_set_sha256",
+        "expected_f1m_cardinality_derivation_root_sha256",
+        "expected_serialized_equivalence_class_count",
+        "execution_basis",
+        "freshness",
+        "f1m_encrypted_zero_dummy_ciphertext_bytes",
+        "f1m_random_zero_sum_ciphertext_bytes",
+        "f1m_size_class_categories",
+        "f1m_controller_context_document",
+        "f1m_controller_context_sha256",
+        "f1m_route_coverage_document",
+        "f1m_route_coverage_sha256",
+        "f1m_charged_size_class_set_sha256",
+        "phase_ranges",
+        "primitive_names",
+        "query_vector_sha256",
+        "invocation_id",
+        "resource_limits",
+        "resource_policy_sha256",
+        "rho",
+        "serialized_object_size_profile_sha256",
+        "serialized_eval_mult_key_bytes",
+        "serialized_rotation_key_inventory_bytes",
+        "serialized_categories",
+        "trace_manifest_sha256",
+    }
+)
+_WORKER_INPUT_CANDIDATE_KEYS = frozenset(
+    {
+        "candidate_id",
+        "candidate_policy_digest",
+        "candidate_role",
+        "f1m_policy",
+        "retained_phases",
+        "strategy",
+    }
+)
+_WORKER_INPUT_PHASE_RANGE_KEYS = frozenset({"phase", "accepted_group_start", "accepted_group_end"})
 _FRAME_KEYS = {
     "cell-start": _COMMON_FRAME_KEYS | {"input_binding"},
     "candidate-start": _COMMON_FRAME_KEYS | {"candidate_id", "candidate_role"},
@@ -854,9 +930,7 @@ def canonical_day1b_f1m_cardinality_derivation_root_sha256(
             {
                 "window_batch_stream_sha256": window_batch_hasher.hexdigest(),
                 "size_class_set_sha256": (
-                    canonical_day1b_expected_f1m_size_class_set_sha256(
-                        expected_size_classes
-                    )
+                    canonical_day1b_expected_f1m_size_class_set_sha256(expected_size_classes)
                 ),
                 "schema_version": "dynamic-cssc-day1b-f1m-cardinality-derivation-v4",
                 "window_cardinality_stream_sha256": window_hasher.hexdigest(),
@@ -1001,6 +1075,14 @@ class Day1BWorkerProtocolContract:
     query_vector_sha256: str
     candidate_catalog_sha256: str
     resource_policy_sha256: str
+    day2_outer_archive_sha256: str
+    serialized_object_size_profile_sha256: str
+    ciphertext_bytes: int
+    f1m_random_zero_sum_ciphertext_bytes: int
+    f1m_encrypted_zero_dummy_ciphertext_bytes: int
+    serialized_rotation_key_inventory_bytes: int | None
+    serialized_eval_mult_key_bytes: int | None
+    combined_evaluation_key_size_class_sha256: str | None
     freshness: str
     rho: str
     execution_basis: str
@@ -1009,6 +1091,13 @@ class Day1BWorkerProtocolContract:
     primitive_names: tuple[str, ...]
     serialized_categories: tuple[tuple[str, str], ...]
     f1m_size_class_categories: tuple[str, ...]
+    f1m_controller_context: Day1BF1MControllerContext
+    f1m_controller_context_sha256: str
+    f1m_route_coverage: Day1BF1MRouteCoverage
+    f1m_route_coverage_sha256: str
+    f1m_charged_size_class_set_sha256: str
+    controller_expected_counts: Day1BControllerExpectedCounts
+    controller_expected_counts_sha256: str
     expected_f1m_size_class_set_sha256: str
     expected_f1m_size_class_count: int
     expected_serialized_equivalence_class_count: int
@@ -1022,7 +1111,13 @@ class Day1BWorkerProtocolContract:
             "query_vector_sha256",
             "candidate_catalog_sha256",
             "resource_policy_sha256",
+            "day2_outer_archive_sha256",
+            "serialized_object_size_profile_sha256",
             "invocation_id",
+            "f1m_controller_context_sha256",
+            "f1m_route_coverage_sha256",
+            "f1m_charged_size_class_set_sha256",
+            "controller_expected_counts_sha256",
             "expected_f1m_size_class_set_sha256",
             "expected_f1m_cardinality_derivation_root_sha256",
         ):
@@ -1036,6 +1131,65 @@ class Day1BWorkerProtocolContract:
         if type(self.candidate) is not Day1BWorkerCandidateSpec:
             raise Day1BWorkerProtocolError(
                 "candidate must be one exact typed candidate-cell identity"
+            )
+        if (
+            type(self.f1m_controller_context) is not Day1BF1MControllerContext
+            or type(self.f1m_route_coverage) is not Day1BF1MRouteCoverage
+        ):
+            raise Day1BWorkerProtocolError(
+                "F1-M controller context and route coverage must be exact typed preimages"
+            )
+        context = self.f1m_controller_context
+        coverage = self.f1m_route_coverage
+        if type(self.controller_expected_counts) is not Day1BControllerExpectedCounts:
+            raise Day1BWorkerProtocolError(
+                "controller expected counts must be one exact typed preimage"
+            )
+        expected_counts = self.controller_expected_counts
+        combined_key_size_class = (
+            expected_counts.combined_evaluation_key_size_class
+        )
+        if (
+            context.context_sha256 != self.f1m_controller_context_sha256
+            or coverage.route_coverage_sha256 != self.f1m_route_coverage_sha256
+            or coverage.controller_context_sha256 != context.context_sha256
+            or coverage.day2_outer_archive_sha256 != self.day2_outer_archive_sha256
+            or coverage.serialized_object_size_profile_sha256
+            != self.serialized_object_size_profile_sha256
+            or coverage.element_count != context.query_window_count
+            or coverage.phase_query_counts != context.phase_query_counts
+            or any(
+                query_windows > all_windows
+                for query_windows, all_windows in zip(
+                    coverage.phase_query_window_counts,
+                    context.phase_window_counts,
+                    strict=True,
+                )
+            )
+            or context.trace_manifest_sha256 != self.trace_manifest_sha256
+            or context.event_schedule_sha256 != self.event_schedule_sha256
+            or context.query_vector_sha256 != self.query_vector_sha256
+            or context.candidate_catalog_sha256 != self.candidate_catalog_sha256
+            or context.resource_policy_sha256 != self.resource_policy_sha256
+            or context.freshness != self.freshness
+            or context.rho != self.rho
+            or context.candidate_id != self.candidate.candidate_id
+            or context.candidate_role != self.candidate.candidate_role
+            or context.candidate_policy_sha256 != self.candidate.candidate_policy_digest
+            or context.retained_phases != self.candidate.retained_phases
+            or expected_counts.expected_counts_sha256
+            != self.controller_expected_counts_sha256
+            or expected_counts.candidate_id != self.candidate.candidate_id
+            or expected_counts.candidate_policy_sha256
+            != self.candidate.candidate_policy_digest
+            or expected_counts.accounting_sha256 != context.accounting_sha256
+            or expected_counts.primitive_names != self.primitive_names
+            or expected_counts.serialized_categories != self.serialized_categories
+            or tuple(phase.phase for phase in expected_counts.phases)
+            != self.candidate.retained_phases
+        ):
+            raise Day1BWorkerProtocolError(
+                "F1-M retained preimages retarget the worker input-binding facts"
             )
         if (
             type(self.phase_ranges) is not tuple
@@ -1072,6 +1226,47 @@ class Day1BWorkerProtocolContract:
             category_names.append(item[0])
         if len(category_names) != len(set(category_names)):
             raise Day1BWorkerProtocolError("serialized category names must be unique")
+        formal_key_category_present = (
+            DAY1B_COMBINED_EVALUATION_KEY_CATEGORY in category_names
+        )
+        if formal_key_category_present:
+            if (
+                combined_key_size_class is None
+                or combined_key_size_class.day2_outer_archive_sha256
+                != self.day2_outer_archive_sha256
+                or combined_key_size_class.serialized_object_size_profile_sha256
+                != self.serialized_object_size_profile_sha256
+                or combined_key_size_class.serialized_rotation_key_inventory_bytes
+                != self.serialized_rotation_key_inventory_bytes
+                or combined_key_size_class.serialized_eval_mult_key_bytes
+                != self.serialized_eval_mult_key_bytes
+                or combined_key_size_class.combined_evaluation_key_size_class_sha256
+                != self.combined_evaluation_key_size_class_sha256
+            ):
+                raise Day1BWorkerProtocolError(
+                    "combined evaluation-key class retargets worker input authority"
+                )
+            _sha256(
+                self.combined_evaluation_key_size_class_sha256,
+                "combined_evaluation_key_size_class_sha256",
+            )
+            _strict_positive(
+                self.serialized_rotation_key_inventory_bytes,
+                "serialized_rotation_key_inventory_bytes",
+            )
+            _strict_positive(
+                self.serialized_eval_mult_key_bytes,
+                "serialized_eval_mult_key_bytes",
+            )
+        elif (
+            combined_key_size_class is not None
+            or self.serialized_rotation_key_inventory_bytes is not None
+            or self.serialized_eval_mult_key_bytes is not None
+            or self.combined_evaluation_key_size_class_sha256 is not None
+        ):
+            raise Day1BWorkerProtocolError(
+                "generic worker taxonomy claims a formal combined evaluation-key class"
+            )
         if (
             type(self.f1m_size_class_categories) is not tuple
             or any(type(category) is not str for category in self.f1m_size_class_categories)
@@ -1114,14 +1309,77 @@ class Day1BWorkerProtocolContract:
             raise Day1BWorkerProtocolError(
                 "all serialized equivalence classes cannot be fewer than F1-M size classes"
             )
+        category_index = {
+            category: index for index, category in enumerate(category_names)
+        }
+        f1m_indices = tuple(
+            category_index[category]
+            for category in DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
+        )
+        non_f1m_equivalence_classes = sum(
+            int(count > 0)
+            for phase in expected_counts.phases
+            for index, count in enumerate(
+                phase.worker_streamed_protocol_object_counts
+            )
+            if index not in f1m_indices
+        )
+        if expected_all_count != non_f1m_equivalence_classes + expected_f1m_count:
+            raise Day1BWorkerProtocolError(
+                "all serialized equivalence classes differ from the controller count preimage"
+            )
+        phase_index = {phase: index for index, phase in enumerate(_PHASE_NAMES)}
+        for phase in expected_counts.phases:
+            index = phase_index[phase.phase]
+            random_count = phase.logical_protocol_object_counts[
+                category_index[DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES[0]]
+            ]
+            dummy_count = phase.logical_protocol_object_counts[
+                category_index[DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES[1]]
+            ]
+            if (
+                random_count != coverage.phase_random_route_counts[index]
+                or dummy_count != coverage.phase_dummy_route_counts[index]
+            ):
+                raise Day1BWorkerProtocolError(
+                    "controller expected F1-M multiplicities differ from opened routes"
+                )
         if type(self.resource_limits) is not Day1BWorkerResourceLimits:
             raise Day1BWorkerProtocolError("resource_limits must be exact typed limits")
+        for field in (
+            "ciphertext_bytes",
+            "f1m_random_zero_sum_ciphertext_bytes",
+            "f1m_encrypted_zero_dummy_ciphertext_bytes",
+        ):
+            object_bytes = _strict_positive(getattr(self, field), field)
+            if object_bytes > self.resource_limits.serialized_object_bytes_maximum:
+                raise Day1BWorkerProtocolError(
+                    f"anchored {field} exceeds the serialized-object cap"
+                )
+        if combined_key_size_class is not None and (
+            combined_key_size_class.serialized_byte_count
+            > self.resource_limits.serialized_object_bytes_maximum
+        ):
+            raise Day1BWorkerProtocolError(
+                "anchored combined evaluation-key frame exceeds the serialized-object cap"
+            )
 
     def input_binding_document(self) -> dict[str, object]:
         return {
             "schema_version": DAY1B_WORKER_INPUT_BINDING_SCHEMA,
             "candidate_catalog_sha256": self.candidate_catalog_sha256,
             "candidate": self.candidate.to_document(),
+            "ciphertext_bytes": self.ciphertext_bytes,
+            "combined_evaluation_key_size_class_sha256": (
+                self.combined_evaluation_key_size_class_sha256
+            ),
+            "controller_expected_counts_document": (
+                self.controller_expected_counts.to_document()
+            ),
+            "controller_expected_counts_sha256": (
+                self.controller_expected_counts_sha256
+            ),
+            "day2_outer_archive_sha256": self.day2_outer_archive_sha256,
             "event_schedule_sha256": self.event_schedule_sha256,
             "expected_f1m_size_class_count": self.expected_f1m_size_class_count,
             "expected_f1m_size_class_set_sha256": (self.expected_f1m_size_class_set_sha256),
@@ -1133,7 +1391,16 @@ class Day1BWorkerProtocolContract:
             ),
             "execution_basis": self.execution_basis,
             "freshness": self.freshness,
+            "f1m_encrypted_zero_dummy_ciphertext_bytes": (
+                self.f1m_encrypted_zero_dummy_ciphertext_bytes
+            ),
+            "f1m_random_zero_sum_ciphertext_bytes": (self.f1m_random_zero_sum_ciphertext_bytes),
             "f1m_size_class_categories": list(self.f1m_size_class_categories),
+            "f1m_controller_context_document": self.f1m_controller_context.to_document(),
+            "f1m_controller_context_sha256": self.f1m_controller_context_sha256,
+            "f1m_route_coverage_document": self.f1m_route_coverage.to_document(),
+            "f1m_route_coverage_sha256": self.f1m_route_coverage_sha256,
+            "f1m_charged_size_class_set_sha256": (self.f1m_charged_size_class_set_sha256),
             "phase_ranges": [phase.to_document() for phase in self.phase_ranges],
             "primitive_names": list(self.primitive_names),
             "query_vector_sha256": self.query_vector_sha256,
@@ -1141,9 +1408,143 @@ class Day1BWorkerProtocolContract:
             "resource_limits": self.resource_limits.to_document(),
             "resource_policy_sha256": self.resource_policy_sha256,
             "rho": self.rho,
+            "serialized_object_size_profile_sha256": (self.serialized_object_size_profile_sha256),
+            "serialized_eval_mult_key_bytes": self.serialized_eval_mult_key_bytes,
+            "serialized_rotation_key_inventory_bytes": (
+                self.serialized_rotation_key_inventory_bytes
+            ),
             "serialized_categories": [list(item) for item in self.serialized_categories],
             "trace_manifest_sha256": self.trace_manifest_sha256,
         }
+
+    @classmethod
+    def from_input_binding_document(
+        cls,
+        value: object,
+    ) -> Day1BWorkerProtocolContract:
+        """Open one exact canonical worker input-binding preimage."""
+
+        if type(value) is not dict or set(value) != _WORKER_INPUT_BINDING_KEYS:
+            raise Day1BWorkerProtocolError("worker input-binding document keys are not exact")
+        if value["schema_version"] != DAY1B_WORKER_INPUT_BINDING_SCHEMA:
+            raise Day1BWorkerProtocolError("worker input-binding schema changed")
+        candidate = value["candidate"]
+        if type(candidate) is not dict or set(candidate) != _WORKER_INPUT_CANDIDATE_KEYS:
+            raise Day1BWorkerProtocolError("worker input-binding candidate keys are not exact")
+        retained_phases = candidate["retained_phases"]
+        if type(retained_phases) is not list:
+            raise Day1BWorkerProtocolError(
+                "worker input-binding retained phases are not an exact list"
+            )
+        phase_ranges = value["phase_ranges"]
+        if (
+            type(phase_ranges) is not list
+            or len(phase_ranges) != len(_AUDIT_PHASE_NAMES)
+            or any(
+                type(item) is not dict or set(item) != _WORKER_INPUT_PHASE_RANGE_KEYS
+                for item in phase_ranges
+            )
+        ):
+            raise Day1BWorkerProtocolError("worker input-binding phase ranges are not exact")
+        primitive_names = value["primitive_names"]
+        f1m_categories = value["f1m_size_class_categories"]
+        serialized_categories = value["serialized_categories"]
+        if type(primitive_names) is not list or type(f1m_categories) is not list:
+            raise Day1BWorkerProtocolError(
+                "worker input-binding tuple projections are not exact lists"
+            )
+        if type(serialized_categories) is not list or any(
+            type(item) is not list or len(item) != 2 for item in serialized_categories
+        ):
+            raise Day1BWorkerProtocolError(
+                "worker input-binding serialized categories are not exact"
+            )
+        resource_limits = value["resource_limits"]
+        if type(resource_limits) is not dict or set(resource_limits) != set(
+            Day1BWorkerResourceLimits.__dataclass_fields__
+        ):
+            raise Day1BWorkerProtocolError("worker input-binding resource-limit keys are not exact")
+        try:
+            controller_expected_counts = Day1BControllerExpectedCounts.from_document(
+                value["controller_expected_counts_document"]
+            )
+            f1m_controller_context = Day1BF1MControllerContext.from_document(
+                value["f1m_controller_context_document"]
+            )
+            f1m_route_coverage = Day1BF1MRouteCoverage.from_document(
+                value["f1m_route_coverage_document"]
+            )
+        except (Day1BF1MAggregationError, Day1BControllerExpectedCountsError) as error:
+            raise Day1BWorkerProtocolError(
+                "worker input-binding F1-M retained preimages are malformed"
+            ) from error
+        contract = cls(
+            invocation_id=value["invocation_id"],
+            trace_manifest_sha256=value["trace_manifest_sha256"],
+            event_schedule_sha256=value["event_schedule_sha256"],
+            query_vector_sha256=value["query_vector_sha256"],
+            candidate_catalog_sha256=value["candidate_catalog_sha256"],
+            resource_policy_sha256=value["resource_policy_sha256"],
+            day2_outer_archive_sha256=value["day2_outer_archive_sha256"],
+            serialized_object_size_profile_sha256=(value["serialized_object_size_profile_sha256"]),
+            ciphertext_bytes=value["ciphertext_bytes"],
+            f1m_random_zero_sum_ciphertext_bytes=(value["f1m_random_zero_sum_ciphertext_bytes"]),
+            f1m_encrypted_zero_dummy_ciphertext_bytes=(
+                value["f1m_encrypted_zero_dummy_ciphertext_bytes"]
+            ),
+            serialized_rotation_key_inventory_bytes=(
+                value["serialized_rotation_key_inventory_bytes"]
+            ),
+            serialized_eval_mult_key_bytes=value["serialized_eval_mult_key_bytes"],
+            combined_evaluation_key_size_class_sha256=(
+                value["combined_evaluation_key_size_class_sha256"]
+            ),
+            freshness=value["freshness"],
+            rho=value["rho"],
+            execution_basis=value["execution_basis"],
+            candidate=Day1BWorkerCandidateSpec(
+                candidate_id=candidate["candidate_id"],
+                candidate_role=candidate["candidate_role"],
+                strategy=candidate["strategy"],
+                f1m_policy=candidate["f1m_policy"],
+                candidate_policy_digest=candidate["candidate_policy_digest"],
+                retained_phases=tuple(retained_phases),
+            ),
+            phase_ranges=tuple(
+                Day1BWorkerPhaseRange(
+                    phase=item["phase"],
+                    accepted_group_start=item["accepted_group_start"],
+                    accepted_group_end=item["accepted_group_end"],
+                )
+                for item in phase_ranges
+            ),
+            primitive_names=tuple(primitive_names),
+            serialized_categories=tuple(tuple(item) for item in serialized_categories),
+            f1m_size_class_categories=tuple(f1m_categories),
+            f1m_controller_context=f1m_controller_context,
+            f1m_controller_context_sha256=value["f1m_controller_context_sha256"],
+            f1m_route_coverage=f1m_route_coverage,
+            f1m_route_coverage_sha256=value["f1m_route_coverage_sha256"],
+            f1m_charged_size_class_set_sha256=(value["f1m_charged_size_class_set_sha256"]),
+            controller_expected_counts=controller_expected_counts,
+            controller_expected_counts_sha256=value[
+                "controller_expected_counts_sha256"
+            ],
+            expected_f1m_size_class_set_sha256=(value["expected_f1m_size_class_set_sha256"]),
+            expected_f1m_size_class_count=value["expected_f1m_size_class_count"],
+            expected_serialized_equivalence_class_count=(
+                value["expected_serialized_equivalence_class_count"]
+            ),
+            expected_f1m_cardinality_derivation_root_sha256=(
+                value["expected_f1m_cardinality_derivation_root_sha256"]
+            ),
+            resource_limits=Day1BWorkerResourceLimits(**resource_limits),
+        )
+        if contract.input_binding_document() != value:
+            raise Day1BWorkerProtocolError(
+                "worker input-binding document is not its exact typed projection"
+            )
+        return contract
 
     @property
     def input_binding_sha256(self) -> str:
@@ -1288,7 +1689,10 @@ class Day1BWorkerCandidateReceipt:
 
 @dataclass(frozen=True, slots=True)
 class Day1BWorkerCellReceipt:
-    input_binding_sha256: str
+    input_binding: Day1BWorkerProtocolContract
+    f1m_controller_context_sha256: str
+    f1m_route_coverage_sha256: str
+    f1m_charged_size_class_set_sha256: str
     candidate: Day1BWorkerCandidateReceipt
     controller_schedule_phase_audits: tuple[Day1BWorkerPhaseAudit, ...]
     worker_declared_phase_audits_match_controller_schedule_audits: bool
@@ -1315,17 +1719,49 @@ class Day1BWorkerCellReceipt:
     object_receipt_byte_count: int
 
     def __post_init__(self) -> None:
-        if _strict_nonnegative(
-            self.worker_observed_f1m_materialized_binding_count,
-            "worker_observed_f1m_materialized_binding_count",
-        ) != 0:
+        if type(self.input_binding) is not Day1BWorkerProtocolContract:
+            raise Day1BWorkerProtocolError(
+                "worker receipt input binding must be one exact typed contract"
+            )
+        for field in (
+            "f1m_controller_context_sha256",
+            "f1m_route_coverage_sha256",
+            "f1m_charged_size_class_set_sha256",
+        ):
+            _sha256(getattr(self, field), field)
+        binding = self.input_binding
+        if (
+            self.f1m_controller_context_sha256 != binding.f1m_controller_context_sha256
+            or self.f1m_route_coverage_sha256 != binding.f1m_route_coverage_sha256
+            or self.f1m_charged_size_class_set_sha256 != binding.f1m_charged_size_class_set_sha256
+            or self.candidate.candidate_id != binding.candidate.candidate_id
+            or self.candidate.candidate_role != binding.candidate.candidate_role
+            or self.controller_expected_f1m_size_class_set_sha256
+            != binding.expected_f1m_size_class_set_sha256
+            or self.controller_expected_f1m_size_class_count
+            != binding.expected_f1m_size_class_count
+            or self.controller_f1m_cardinality_derivation_root_sha256
+            != binding.expected_f1m_cardinality_derivation_root_sha256
+            or self.controller_expected_serialized_equivalence_class_count
+            != binding.expected_serialized_equivalence_class_count
+            or self.controller_registered_scratch_bytes_checkpoint_maximum
+            != binding.resource_limits.controller_registered_scratch_bytes_checkpoint_maximum
+        ):
+            raise Day1BWorkerProtocolError(
+                "worker receipt retargets its exact input-binding contract"
+            )
+        if (
+            _strict_nonnegative(
+                self.worker_observed_f1m_materialized_binding_count,
+                "worker_observed_f1m_materialized_binding_count",
+            )
+            != 0
+        ):
             raise Day1BWorkerProtocolError(
                 "weighted Day1B cannot report materialized per-query F1-M bindings"
             )
         if type(self.weighted_query_range_coverage_verified) is not bool:
-            raise Day1BWorkerProtocolError(
-                "weighted query-range coverage must be an exact boolean"
-            )
+            raise Day1BWorkerProtocolError("weighted query-range coverage must be an exact boolean")
         if self.production_execution_admissible and not (
             self.anonymous_scratch_creation_isolation_verified
             and self.weighted_query_range_coverage_verified
@@ -1333,6 +1769,14 @@ class Day1BWorkerCellReceipt:
             raise Day1BWorkerProtocolError(
                 "weighted production admission requires isolation and range verification"
             )
+
+    @property
+    def input_binding_document(self) -> dict[str, object]:
+        return self.input_binding.input_binding_document()
+
+    @property
+    def input_binding_sha256(self) -> str:
+        return self.input_binding.input_binding_sha256
 
     def to_document(self) -> dict[str, object]:
         document: dict[str, object] = {
@@ -1390,6 +1834,10 @@ class Day1BWorkerCellReceipt:
             "anonymous_scratch_creation_isolation_verified": (
                 self.anonymous_scratch_creation_isolation_verified
             ),
+            "f1m_charged_size_class_set_sha256": (self.f1m_charged_size_class_set_sha256),
+            "f1m_controller_context_sha256": self.f1m_controller_context_sha256,
+            "f1m_route_coverage_sha256": self.f1m_route_coverage_sha256,
+            "input_binding_document": self.input_binding_document,
             "input_binding_sha256": self.input_binding_sha256,
             "object_receipt_byte_count": self.object_receipt_byte_count,
             "object_receipt_line_count": self.object_receipt_line_count,
@@ -1408,9 +1856,7 @@ class Day1BWorkerCellReceipt:
             "worker_observed_f1m_materialized_binding_count": (
                 self.worker_observed_f1m_materialized_binding_count
             ),
-            "weighted_query_range_coverage_verified": (
-                self.weighted_query_range_coverage_verified
-            ),
+            "weighted_query_range_coverage_verified": (self.weighted_query_range_coverage_verified),
         }
         document["worker_candidate_cell_receipt_sha256"] = hashlib.sha256(
             _canonical_json_bytes(document)
@@ -1418,10 +1864,7 @@ class Day1BWorkerCellReceipt:
         return document
 
 
-_ANONYMOUS_SCRATCH_MEMBER_NAMES = (
-    "binding-index.sqlite3",
-    "object-receipts.jsonl",
-)
+_ANONYMOUS_SCRATCH_MEMBER_NAMES = DAY1B_ANONYMOUS_SCRATCH_MEMBER_NAMES
 _ANONYMOUS_SQLITE_APPLICATION_ID = int.from_bytes(b"DYCS", "big")
 
 
@@ -1431,6 +1874,7 @@ class _AnonymousScratchBinding:
     controller_registered_scratch_bytes_checkpoint_maximum: int
     members: tuple[tuple[str, BinaryIO, tuple[int, int]], ...]
     anonymous_scratch_creation_isolation_verified: bool
+    creation_receipt: Day1BAnonymousScratchCreationReceipt | None = None
     sqlite_connection: sqlite3.Connection | None = None
 
 
@@ -1498,6 +1942,37 @@ def _claim_anonymous_scratch_capability(
     return binding
 
 
+def describe_day1b_anonymous_scratch_capability(
+    capability: Day1BAnonymousScratchCapability,
+) -> Day1BAnonymousScratchCreationReceipt | None:
+    """Describe a still-live scratch creation receipt without consuming handles."""
+
+    if type(capability) is not Day1BAnonymousScratchCapability:
+        raise TypeError("anonymous scratch must be one exact launcher-minted capability")
+    presented = getattr(capability, "_binding", None)
+    with _ANONYMOUS_SCRATCH_LOCK:
+        active = _ISSUED_ANONYMOUS_SCRATCH.get(id(capability))
+        if (
+            active is None
+            or active[0]() is not capability
+            or active[1] is not presented
+            or type(presented) is not _AnonymousScratchBinding
+        ):
+            raise Day1BWorkerProtocolError(
+                "anonymous scratch capability is absent, unissued, or consumed"
+            )
+        return presented.creation_receipt
+
+
+def abandon_day1b_anonymous_scratch_capability(
+    capability: Day1BAnonymousScratchCapability,
+) -> None:
+    """Consume an unused scratch capability and close every held handle."""
+
+    binding = _claim_anonymous_scratch_capability(capability)
+    _close_anonymous_scratch_binding(binding)
+
+
 class _ControlledScratch:
     """Claimed launcher handles; this class performs no pathname mutation."""
 
@@ -1527,9 +2002,14 @@ class _ControlledScratch:
                 raise Day1BWorkerProtocolError(
                     "anonymous scratch capability differs from pre-dispatch context or cap"
                 )
-            if binding.anonymous_scratch_creation_isolation_verified:
+            creation_receipt = binding.creation_receipt
+            if (
+                type(binding.anonymous_scratch_creation_isolation_verified) is not bool
+                or binding.anonymous_scratch_creation_isolation_verified
+                != (type(creation_receipt) is Day1BAnonymousScratchCreationReceipt)
+            ):
                 raise Day1BWorkerProtocolError(
-                    "test-only anonymous scratch cannot verify creation isolation"
+                    "anonymous scratch creation-isolation receipt is not exact"
                 )
             if tuple(item[0] for item in binding.members) != _ANONYMOUS_SCRATCH_MEMBER_NAMES:
                 raise Day1BWorkerProtocolError(
@@ -1559,6 +2039,22 @@ class _ControlledScratch:
                 identities.add(observed_identity)
                 files[name] = file
                 expected_identities[name] = identity
+            if creation_receipt is not None:
+                receipt_members = {
+                    item.role: item for item in creation_receipt.members
+                }
+                for name, file, identity in binding.members:
+                    observed = os.fstat(file.fileno())
+                    receipt_member = receipt_members.get(name)
+                    if (
+                        receipt_member is None
+                        or (receipt_member.device, receipt_member.inode) != identity
+                        or receipt_member.mode != stat.S_IMODE(observed.st_mode)
+                        or receipt_member.owner_uid != observed.st_uid
+                    ):
+                        raise Day1BWorkerProtocolError(
+                            "anonymous scratch member differs from its creation receipt"
+                        )
         except BaseException:
             _close_anonymous_scratch_binding(binding)
             raise
@@ -1570,6 +2066,7 @@ class _ControlledScratch:
         self.anonymous_scratch_creation_isolation_verified = (
             binding.anonymous_scratch_creation_isolation_verified
         )
+        self.anonymous_scratch_creation_receipt = creation_receipt
         self._peak_bytes = 0
         self._closed = False
         self._lock = threading.Lock()
@@ -1804,9 +2301,7 @@ class Day1BExpectedF1MRegistryDescriptor:
             "phase_size_class_counts": dict(
                 zip(_PHASE_NAMES, self.phase_size_class_counts, strict=True)
             ),
-            "phase_query_counts": dict(
-                zip(_PHASE_NAMES, self.phase_query_counts, strict=True)
-            ),
+            "phase_query_counts": dict(zip(_PHASE_NAMES, self.phase_query_counts, strict=True)),
             "phase_dummy_route_counts": dict(
                 zip(_PHASE_NAMES, self.phase_dummy_route_counts, strict=True)
             ),
@@ -1818,9 +2313,7 @@ class Day1BExpectedF1MRegistryDescriptor:
             ),
             "pre_dispatch_context_sha256": self.pre_dispatch_context_sha256,
             "pre_dispatch_execution_admissible": self.pre_dispatch_execution_admissible,
-            "weighted_query_range_coverage_verified": (
-                self.weighted_query_range_coverage_verified
-            ),
+            "weighted_query_range_coverage_verified": (self.weighted_query_range_coverage_verified),
         }
 
     @classmethod
@@ -2084,8 +2577,7 @@ def _insert_expected_f1m(
     first_query, query_count, version_id, output_plan, private_plan, execution = window
     if not (
         first_query <= item.first_global_query_ordinal
-        and item.first_global_query_ordinal + item.multiplicity
-        <= first_query + query_count
+        and item.first_global_query_ordinal + item.multiplicity <= first_query + query_count
     ):
         raise Day1BWorkerProtocolError(
             "expected F1-M size-class query range is outside its controller window"
@@ -2220,15 +2712,11 @@ class _ExpectedF1MRegistry:
             start=1,
         ):
             if type(raw_row) is not Day1BF1MWindowBatch:
-                raise Day1BWorkerProtocolError(
-                    "F1-M window-batch stream contains a non-exact row"
-                )
+                raise Day1BWorkerProtocolError("F1-M window-batch stream contains a non-exact row")
             row = raw_row
             order = phase_order[row.phase], row.window_index
             if previous is not None and order <= previous:
-                raise Day1BWorkerProtocolError(
-                    "F1-M window batches are not unique canonical order"
-                )
+                raise Day1BWorkerProtocolError("F1-M window batches are not unique canonical order")
             previous = order
             if count > 1:
                 hasher.update(b",")
@@ -2255,9 +2743,7 @@ class _ExpectedF1MRegistry:
             hasher.update(raw[:-1])
         hasher.update(
             b'],"schema_version":'
-            + json.dumps(_DAY1B_WORKER_EXPECTED_F1M_SIZE_CLASS_SUBROOT_SCHEMA).encode(
-                "ascii"
-            )
+            + json.dumps(_DAY1B_WORKER_EXPECTED_F1M_SIZE_CLASS_SUBROOT_SCHEMA).encode("ascii")
             + b"}\n"
         )
         return hasher.hexdigest()
@@ -2285,8 +2771,7 @@ class _ExpectedF1MRegistry:
                 (phase, window_index),
             ).fetchone()
             if (query_count == 0 and window_batch is not None) or (
-                query_count > 0
-                and window_batch != (first_query, query_count, expected_subroot)
+                query_count > 0 and window_batch != (first_query, query_count, expected_subroot)
             ):
                 raise Day1BWorkerProtocolError(
                     "F1-M window batch does not exactly cover its query-bearing window"
@@ -2394,8 +2879,7 @@ class _ExpectedF1MRegistry:
         phase_query_counts = tuple(
             int(
                 self.connection.execute(
-                    "SELECT COALESCE(SUM(query_count),0) FROM f1m_window_batches "
-                    "WHERE phase=?",
+                    "SELECT COALESCE(SUM(query_count),0) FROM f1m_window_batches WHERE phase=?",
                     (phase,),
                 ).fetchone()[0]
             )
@@ -2806,6 +3290,47 @@ def _test_only_issue_day1b_anonymous_scratch_capability(
         ),
         members=tuple(members),
         anonymous_scratch_creation_isolation_verified=False,
+        creation_receipt=None,
+        sqlite_connection=sqlite_connection,
+    )
+    try:
+        return _mint_anonymous_scratch_capability(binding)
+    except BaseException:
+        _close_anonymous_scratch_binding(binding)
+        raise
+
+
+def issue_day1b_anonymous_scratch_capability(
+    *,
+    contract: Day1BWorkerProtocolContract,
+    controller_phase_audits: tuple[Day1BWorkerPhaseAudit, ...],
+    launcher_scratch_parent: Path,
+) -> Day1BAnonymousScratchCapability:
+    """Mint one Linux production scratch capability; execution remains unauthorized."""
+
+    if type(contract) is not Day1BWorkerProtocolContract:
+        raise TypeError("contract must be an exact Day1BWorkerProtocolContract")
+    _validate_controller_phase_audits(contract, controller_phase_audits)
+    pre_dispatch_context_sha256 = _pre_dispatch_context_sha256(
+        contract,
+        controller_phase_audits,
+    )
+    scratch_bytes_checkpoint_maximum = (
+        contract.resource_limits.controller_registered_scratch_bytes_checkpoint_maximum
+    )
+    try:
+        opened = open_linux_day1b_anonymous_scratch(launcher_scratch_parent)
+    except Day1BAnonymousScratchCreationError as error:
+        raise Day1BWorkerProtocolError(
+            "production anonymous scratch creation failed closed"
+        ) from error
+    members, sqlite_connection, creation_receipt = opened.transfer()
+    binding = _AnonymousScratchBinding(
+        pre_dispatch_context_sha256=pre_dispatch_context_sha256,
+        controller_registered_scratch_bytes_checkpoint_maximum=scratch_bytes_checkpoint_maximum,
+        members=members,
+        anonymous_scratch_creation_isolation_verified=True,
+        creation_receipt=creation_receipt,
         sqlite_connection=sqlite_connection,
     )
     try:
@@ -2948,6 +3473,10 @@ class _ObjectReceiptSpool:
                 "transaction": transaction,
             }
         )
+        if len(line) > DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM:
+            raise Day1BWorkerProtocolError(
+                "canonical serialized-object receipt exceeds frozen 2 KiB bound"
+            )
         if self.byte_count + len(line) > (
             self._limits.serialized_object_receipt_spool_bytes_maximum
         ):
@@ -3674,6 +4203,26 @@ class _ReceiptBuilder:
                 raise Day1BWorkerProtocolError(
                     "serialized category object counts do not match streamed payloads"
                 )
+            expected_counts = self.contract.controller_expected_counts.phase_counts(
+                phase
+            )
+            if (
+                update_counts != expected_counts.update_primitive_counts
+                or query_counts != expected_counts.query_primitive_counts
+            ):
+                raise Day1BWorkerProtocolError(
+                    "worker primitive vectors differ from the controller replay"
+                )
+            observed_protocol_counts = tuple(
+                item.protocol_object_count for item in self.current_categories
+            )
+            if (
+                observed_protocol_counts
+                != expected_counts.worker_streamed_protocol_object_counts
+            ):
+                raise Day1BWorkerProtocolError(
+                    "worker protocol-object multiplicities differ from the controller replay"
+                )
             if bool(audit.realized_query_count) != any(query_counts):
                 raise Day1BWorkerProtocolError(
                     "query primitive vector does not match controller-realized query presence"
@@ -3833,7 +4382,10 @@ class _ReceiptBuilder:
                 "controller-owned pre-dispatch count"
             )
         return Day1BWorkerCellReceipt(
-            input_binding_sha256=self.contract.input_binding_sha256,
+            input_binding=self.contract,
+            f1m_controller_context_sha256=(self.contract.f1m_controller_context_sha256),
+            f1m_route_coverage_sha256=self.contract.f1m_route_coverage_sha256,
+            f1m_charged_size_class_set_sha256=(self.contract.f1m_charged_size_class_set_sha256),
             candidate=self.completed_candidate,
             controller_schedule_phase_audits=controller_phase_audits,
             worker_declared_phase_audits_match_controller_schedule_audits=True,
@@ -3909,6 +4461,12 @@ def _validate_frame_header(
             raise Day1BWorkerProtocolError("serialized-object payload must be nonempty")
         if payload_count > contract.resource_limits.serialized_object_bytes_maximum:
             raise Day1BWorkerProtocolError("serialized-object payload exceeds the frozen cap")
+        if header["category"] == DAY1B_COMBINED_EVALUATION_KEY_CATEGORY:
+            size_class = contract.controller_expected_counts.combined_evaluation_key_size_class
+            if size_class is None or payload_count != size_class.serialized_byte_count:
+                raise Day1BWorkerProtocolError(
+                    "combined evaluation-key payload length differs from its controller size class"
+                )
     elif payload_count != 0:
         raise Day1BWorkerProtocolError("control worker frames cannot carry a binary payload")
     return kind
@@ -3954,7 +4512,10 @@ def _controller_terminal_receipt(
     outcome = _OUTCOME_BY_FAILURE_CODE[failure_code]
     spool_sha256, spool_line_count, spool_byte_count = spool.seal(required_observed_f1m_phases=())
     return Day1BWorkerCellReceipt(
-        input_binding_sha256=contract.input_binding_sha256,
+        input_binding=contract,
+        f1m_controller_context_sha256=contract.f1m_controller_context_sha256,
+        f1m_route_coverage_sha256=contract.f1m_route_coverage_sha256,
+        f1m_charged_size_class_set_sha256=(contract.f1m_charged_size_class_set_sha256),
         candidate=Day1BWorkerCandidateReceipt(
             candidate_id=contract.candidate.candidate_id,
             candidate_role=contract.candidate.candidate_role,
@@ -4086,11 +4647,13 @@ def _consume_claimed_day1b_worker_frames(
     header_length: int | None = None
     payload_remaining = 0
     payload_hasher: hashlib._Hash | None = None  # type: ignore[attr-defined]
+    payload_key_validator: Day1BCombinedEvaluationKeyFrameStreamValidator | None = None
     current_header: dict[str, object] | None = None
     expected_sequence = 0
 
     def accept_header(raw_header: bytes) -> None:
-        nonlocal current_header, payload_remaining, payload_hasher, expected_sequence
+        nonlocal current_header, payload_remaining, payload_hasher
+        nonlocal payload_key_validator, expected_sequence
         header = _decode_header(raw_header)
         if expected_sequence >= contract.resource_limits.worker_frame_count_maximum:
             raise Day1BWorkerProtocolError("worker frame count exceeds frozen cap")
@@ -4106,6 +4669,13 @@ def _consume_claimed_day1b_worker_frames(
             if kind != "serialized-object":  # pragma: no cover - checked above
                 raise Day1BWorkerProtocolError("only serialized objects may carry payloads")
             payload_hasher = hashlib.sha256()
+            if header["category"] == DAY1B_COMBINED_EVALUATION_KEY_CATEGORY:
+                payload_key_validator = Day1BCombinedEvaluationKeyFrameStreamValidator(
+                    expected_rotation_key_inventory_bytes=(
+                        contract.serialized_rotation_key_inventory_bytes
+                    ),
+                    expected_eval_mult_key_bytes=contract.serialized_eval_mult_key_bytes,
+                )
         else:
             builder.accept(header, None)
             current_header = None
@@ -4121,12 +4691,28 @@ def _consume_claimed_day1b_worker_frames(
                 if payload_remaining:
                     take = min(payload_remaining, len(raw_chunk) - position)
                     assert payload_hasher is not None and current_header is not None
-                    payload_hasher.update(memoryview(raw_chunk)[position : position + take])
+                    fragment = memoryview(raw_chunk)[position : position + take]
+                    payload_hasher.update(fragment)
+                    if payload_key_validator is not None:
+                        try:
+                            payload_key_validator.accept(fragment)
+                        except Day1BCombinedEvaluationKeyFramingError as error:
+                            raise Day1BWorkerProtocolError(
+                                "combined evaluation-key payload is not its canonical frame"
+                            ) from error
                     position += take
                     payload_remaining -= take
                     if payload_remaining == 0:
+                        if payload_key_validator is not None:
+                            try:
+                                payload_key_validator.finish()
+                            except Day1BCombinedEvaluationKeyFramingError as error:
+                                raise Day1BWorkerProtocolError(
+                                    "combined evaluation-key payload is not its canonical frame"
+                                ) from error
                         builder.accept(current_header, payload_hasher.hexdigest())
                         payload_hasher = None
+                        payload_key_validator = None
                         current_header = None
                     continue
                 if header_length is None:
@@ -4223,6 +4809,7 @@ __all__ = (
     "Day1BWorkerProtocolError",
     "Day1BWorkerResourceLimits",
     "Day1BWorkerSerializedCategoryReceipt",
+    "abandon_day1b_anonymous_scratch_capability",
     "abandon_day1b_worker_evidence",
     "abandon_day1b_expected_f1m_registry",
     "abandon_day1b_worker_invocation",
@@ -4234,4 +4821,6 @@ __all__ = (
     "claim_day1b_worker_evidence",
     "consume_day1b_worker_frames",
     "describe_day1b_expected_f1m_registry",
+    "describe_day1b_anonymous_scratch_capability",
+    "issue_day1b_anonymous_scratch_capability",
 )

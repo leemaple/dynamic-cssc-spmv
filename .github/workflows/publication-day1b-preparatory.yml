@@ -39,7 +39,7 @@ jobs:
         run: |
           scripts/bootstrap_openfhe.sh
           scripts/build_cpp.sh
-      - name: Execute and independently verify the OpenFHE query smoke
+      - name: Execute and independently verify both OpenFHE query smokes
         env:
           PYTHONPATH: src:.
         run: >-
@@ -72,40 +72,78 @@ jobs:
           PYTHONPATH: src:.
         run: |
           .venv/bin/python -m pytest -q \
+            tests/test_day2_openfhe_key_plan.py \
             tests/test_evidence_compatibility.py \
             tests/test_openfhe_query_runner.py \
             tests/test_openfhe_query_runtime.py \
+            tests/test_openfhe_runtime_admission.py \
             tests/test_ordinary_query_lifecycle.py \
             tests/test_publication_day1b.py \
             tests/test_publication_day1b_accounting.py \
+            tests/test_publication_day1b_expected_counts.py \
+            tests/test_publication_day1b_key_framing.py \
+            tests/test_publication_day1b_layout_execution.py \
+            tests/test_publication_day1b_replay_execution.py \
+            tests/test_publication_day1b_metadata_framing.py \
+            tests/test_publication_day1b_openfhe_execution.py \
+            tests/test_publication_day1b_scratch.py \
             tests/test_publication_day1b_worker_protocol.py \
             tests/test_publication_day1b_workflow_contract.py \
             tests/test_query_accounting.py \
+            tests/test_strong_execution_bundle.py \
             tests/test_strong_day1_simulator.py
           .venv/bin/python -m ruff check \
             scripts/run_publication_day1b.py \
             scripts/run_openfhe_query_smoke.py \
+            src/dynamic_cssc/day2_openfhe_key_plan.py \
             src/dynamic_cssc/evidence_compatibility.py \
             src/dynamic_cssc/openfhe_query_runner.py \
             src/dynamic_cssc/openfhe_query_runtime.py \
+            src/dynamic_cssc/openfhe_runtime_admission.py \
             src/dynamic_cssc/ordinary_query_lifecycle.py \
             src/dynamic_cssc/publication_day1b.py \
             src/dynamic_cssc/publication_day1b_accounting.py \
+            src/dynamic_cssc/publication_day1b_expected_counts.py \
+            src/dynamic_cssc/publication_day1b_key_framing.py \
+            src/dynamic_cssc/publication_day1b_layout_execution.py \
+            src/dynamic_cssc/publication_day1b_replay_execution.py \
+            src/dynamic_cssc/publication_day1b_metadata_framing.py \
+            src/dynamic_cssc/publication_day1b_openfhe_execution.py \
+            src/dynamic_cssc/publication_day1b_scratch.py \
+            src/dynamic_cssc/publication_day1b_worker_protocol.py \
             src/dynamic_cssc/simulator.py \
+            tests/test_day2_openfhe_key_plan.py \
             tests/test_evidence_compatibility.py \
             tests/test_openfhe_query_runner.py \
             tests/test_openfhe_query_runtime.py \
+            tests/test_openfhe_runtime_admission.py \
             tests/test_ordinary_query_lifecycle.py \
             tests/test_publication_day1b.py \
             tests/test_publication_day1b_accounting.py \
+            tests/test_publication_day1b_expected_counts.py \
+            tests/test_publication_day1b_key_framing.py \
+            tests/test_publication_day1b_layout_execution.py \
+            tests/test_publication_day1b_replay_execution.py \
+            tests/test_publication_day1b_metadata_framing.py \
+            tests/test_publication_day1b_openfhe_execution.py \
+            tests/test_publication_day1b_scratch.py \
+            tests/test_publication_day1b_worker_protocol.py \
             tests/test_publication_day1b_workflow_contract.py \
             tests/test_query_accounting.py \
+            tests/test_strong_execution_bundle.py \
             tests/test_strong_day1_simulator.py
           git diff --check
       - name: Record the deliberate execution boundary
         run: |
           echo 'The PENDING-FREEZE placeholder remains immutable.'
           echo 'The reviewed amendment supplies administrative safety budgets only.'
-          echo 'The generic OpenFHE query runtime passed a non-authorizing smoke.'
+          echo 'The ordinary and strong OpenFHE query paths passed a non-authorizing smoke.'
+          echo 'The typed final-anchor Day2 key-plan capability remains unavailable without evidence.'
+          echo 'The anchored runtime consumes that capability internally and records its receipt.'
+          echo 'The same-replay representative/runtime/payload composition remains pre-admission only.'
+          echo 'The candidate-cell seam requires a consumed same-replay capability and its bound receipt.'
+          echo 'Its typed D1BKEY01 key receipt remains pre-admission only.'
+          echo 'Its Linux READY/DONE executable-map receipt remains pre-admission only.'
+          echo 'Linux launcher-owned pathless scratch creation remains pre-admission only.'
           echo 'The production Day1B candidate worker and admission receipt remain absent.'
           echo 'No publication execution or artifact production is permitted.'

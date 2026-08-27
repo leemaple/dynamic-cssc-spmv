@@ -39,6 +39,7 @@ CANONICAL_RAW_EVENT_SCHEMA = "dynamic-cssc-canonical-raw-event-v1"
 PUBLICATION_MAPPING_SCHEMA = "dynamic-cssc-publication-mapping-v1"
 PUBLICATION_QUERY_VECTOR_SCHEMA = "dynamic-cssc-publication-query-vector-v1"
 PUBLICATION_QUERY_VECTOR_SEED = 2026082302
+PUBLICATION_SOURCE_PARTITION_COUNT = 5
 PUBLICATION_TRACE_MANIFEST_SCHEMA = "dynamic-cssc-publication-trace-manifest-v7"
 PUBLICATION_TRANSITION_SCHEMA = "dynamic-cssc-publication-transition-v3"
 REPOSITORY_PROVENANCE_SCHEMA = "dynamic-cssc-repository-provenance-v1"
@@ -164,7 +165,7 @@ class _TraceConfig:
     cols: int = 8193
     mapping_prefix_numerator: int = 1
     mapping_prefix_denominator: int = 10
-    source_partitions: int = 5
+    source_partitions: int = PUBLICATION_SOURCE_PARTITION_COUNT
     coefficient_cap: int = 7
     event_window_size: int = 32_768
     accepted_events_per_second: int = 128

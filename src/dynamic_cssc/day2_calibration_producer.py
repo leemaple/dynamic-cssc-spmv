@@ -58,6 +58,7 @@ _PAYLOAD_FILENAMES = (
     "contract-bindings.json",
     "rotation-key-plan.json",
     "generated-key-inventory.json",
+    "serialized-object-size-profile.json",
     "operation-profile-set.json",
     "raw-measurement-blocks.json",
     "runtime-isolation-receipt.json",
@@ -88,6 +89,8 @@ _PROBE_KEYS = frozenset(
         "required_exact_rotation_indices",
         "process_affinity_cpu_list",
         "ciphertext_bytes",
+        "f1m_random_zero_sum_ciphertext_bytes",
+        "f1m_encrypted_zero_dummy_ciphertext_bytes",
         "rotation_key_bytes",
         "eval_mult_key_bytes",
         "operations",
@@ -238,6 +241,69 @@ def _generated_key_inventory(
         "eval_mult_key_generated": True,
         "serialized_eval_mult_key_sha256": _sha256(serialized_eval_mult_keys),
         "serialized_eval_mult_key_bytes": len(serialized_eval_mult_keys),
+    }
+
+
+def _serialized_object_size_profile(
+    *,
+    ciphertext_bytes: object,
+    f1m_random_zero_sum_ciphertext_bytes: object,
+    f1m_encrypted_zero_dummy_ciphertext_bytes: object,
+    generated_key_inventory: dict[str, object],
+) -> dict[str, object]:
+    """Bind category-specific formal-probe ciphertext lengths to measured keys."""
+
+    for field, value in (
+        ("ciphertext_bytes", ciphertext_bytes),
+        (
+            "f1m_random_zero_sum_ciphertext_bytes",
+            f1m_random_zero_sum_ciphertext_bytes,
+        ),
+        (
+            "f1m_encrypted_zero_dummy_ciphertext_bytes",
+            f1m_encrypted_zero_dummy_ciphertext_bytes,
+        ),
+    ):
+        if type(value) is not int or value <= 0:
+            raise Day2CalibrationProducerError(
+                f"serialized object size profile requires positive {field}"
+            )
+    if type(generated_key_inventory) is not dict:
+        raise Day2CalibrationProducerError(
+            "serialized object size profile requires a generated-key inventory"
+        )
+    rotation_key_bytes = generated_key_inventory.get(
+        "serialized_rotation_key_bytes"
+    )
+    eval_mult_key_bytes = generated_key_inventory.get("serialized_eval_mult_key_bytes")
+    if (
+        type(rotation_key_bytes) is not int
+        or rotation_key_bytes <= 0
+        or type(eval_mult_key_bytes) is not int
+        or eval_mult_key_bytes <= 0
+    ):
+        raise Day2CalibrationProducerError(
+            "serialized object size profile requires positive evaluation-key sizes"
+        )
+    return {
+        "schema_version": "dynamic-cssc-publication-day2-serialized-object-size-profile-v2",
+        "ciphertext_serialization_format": "openfhe-sertype-binary-v1",
+        "ciphertext_measurement_method": "formal-probe-exact-serialized-byte-length-v1",
+        "ciphertext_bytes": ciphertext_bytes,
+        "f1m_ciphertext_construction_profile": (
+            "fresh-bfvrns-encryption-fixed-context-v1"
+        ),
+        "f1m_random_zero_sum_ciphertext_bytes": (
+            f1m_random_zero_sum_ciphertext_bytes
+        ),
+        "f1m_encrypted_zero_dummy_ciphertext_bytes": (
+            f1m_encrypted_zero_dummy_ciphertext_bytes
+        ),
+        "generated_key_inventory_sha256": _sha256(
+            _canonical_json_bytes(generated_key_inventory)
+        ),
+        "serialized_rotation_key_inventory_bytes": rotation_key_bytes,
+        "serialized_eval_mult_key_bytes": eval_mult_key_bytes,
     }
 
 
@@ -869,7 +935,7 @@ def _extract_formal_probe(
     rotation_key_plan: dict[str, object],
     rotation_key_bytes: int,
     eval_mult_key_bytes: int,
-) -> dict[str, object]:
+) -> tuple[dict[str, object], int, int, int]:
     if type(document) is not dict or set(document) != _PROBE_KEYS:
         raise Day2CalibrationProducerError("formal probe keys are not exact")
     expected_indices = rotation_key_plan["required_exact_indices"]
@@ -888,8 +954,15 @@ def _extract_formal_probe(
         or document["eval_mult_key_bytes"] != eval_mult_key_bytes
     ):
         raise Day2CalibrationProducerError("formal probe identity does not match its profile")
-    if type(document["ciphertext_bytes"]) is not int or document["ciphertext_bytes"] <= 0:
-        raise Day2CalibrationProducerError("formal probe ciphertext size is invalid")
+    for field in (
+        "ciphertext_bytes",
+        "f1m_random_zero_sum_ciphertext_bytes",
+        "f1m_encrypted_zero_dummy_ciphertext_bytes",
+    ):
+        if type(document[field]) is not int or document[field] <= 0:
+            raise Day2CalibrationProducerError(
+                f"formal probe {field} size is invalid"
+            )
     raw = document["raw_measurement_blocks"]
     if type(raw) is not dict:
         raise Day2CalibrationProducerError("formal probe raw blocks are absent")
@@ -906,7 +979,12 @@ def _extract_formal_probe(
         or len(raw["blocks"]) != CALIBRATION_MEASUREMENT_BLOCK_COUNT
     ):
         raise Day2CalibrationProducerError("formal probe block contract is incomplete")
-    return raw
+    return (
+        raw,
+        document["ciphertext_bytes"],
+        document["f1m_random_zero_sum_ciphertext_bytes"],
+        document["f1m_encrypted_zero_dummy_ciphertext_bytes"],
+    )
 
 
 def _decode_probe(path: Path) -> dict[str, object]:
@@ -939,7 +1017,12 @@ def _run_formal_probe(
     rotation_key_plan: dict[str, object],
     openfhe_build: dict[str, object],
     environment: dict[str, str],
-) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+) -> tuple[
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+]:
     if not hasattr(os, "sched_getaffinity"):
         raise Day2CalibrationProducerError("formal calibration requires Linux CPU affinity")
     available = sorted(os.sched_getaffinity(0))
@@ -1036,7 +1119,12 @@ def _run_formal_probe(
     probe_document = _decode_probe(probe_output)
     if probe_document.get("process_affinity_cpu_list") != effective_cpus:
         raise Day2CalibrationProducerError("formal probe affinity differs from taskset")
-    raw = _extract_formal_probe(
+    (
+        raw,
+        ciphertext_bytes,
+        f1m_random_zero_sum_ciphertext_bytes,
+        f1m_encrypted_zero_dummy_ciphertext_bytes,
+    ) = _extract_formal_probe(
         document=probe_document,
         rotation_key_plan=rotation_key_plan,
         rotation_key_bytes=len(rotation_keys),
@@ -1048,6 +1136,16 @@ def _run_formal_probe(
         serialized_rotation_keys=rotation_keys,
         serialized_eval_mult_keys=eval_mult_keys,
     )
+    serialized_size_profile = _serialized_object_size_profile(
+        ciphertext_bytes=ciphertext_bytes,
+        f1m_random_zero_sum_ciphertext_bytes=(
+            f1m_random_zero_sum_ciphertext_bytes
+        ),
+        f1m_encrypted_zero_dummy_ciphertext_bytes=(
+            f1m_encrypted_zero_dummy_ciphertext_bytes
+        ),
+        generated_key_inventory=generated,
+    )
     host = _host_profile(
         openfhe_build=openfhe_build,
         effective_cpus=effective_cpus,
@@ -1055,7 +1153,7 @@ def _run_formal_probe(
         thermal_after=thermal_after,
         environment=environment,
     )
-    return raw, generated, host
+    return raw, generated, serialized_size_profile, host
 
 
 def _render_archive(
@@ -1067,7 +1165,7 @@ def _render_archive(
         raise Day2CalibrationProducerError("formal archive payload set is not closed")
     encoded = {name: _canonical_json_bytes(payloads[name]) for name in _PAYLOAD_FILENAMES}
     manifest = {
-        "schema_version": "dynamic-cssc-publication-day2-calibration-evidence-v1",
+        "schema_version": "dynamic-cssc-publication-day2-calibration-evidence-v2",
         "evidence_scope": EVIDENCE_SCOPE,
         "files": [
             {"path": name, "sha256": _sha256(encoded[name]), "bytes": len(encoded[name])}
@@ -1155,7 +1253,7 @@ def produce_day2_calibration_archive_from_isolated_worker(
         execution_root=execution_root,
         environment=environment,
     )
-    raw, generated, host = _run_formal_probe(
+    raw, generated, serialized_size_profile, host = _run_formal_probe(
         repository_root=repository_root,
         execution_root=execution_root,
         probe_binary=probe_binary,
@@ -1183,10 +1281,11 @@ def produce_day2_calibration_archive_from_isolated_worker(
     profiles_bytes = _canonical_json_bytes(profiles)
     rotation_bytes = _canonical_json_bytes(rotation_plan)
     generated_bytes = _canonical_json_bytes(generated)
+    serialized_size_profile_bytes = _canonical_json_bytes(serialized_size_profile)
     isolation_bytes = _canonical_json_bytes(isolation_receipt)
     projection_sha256 = _sha256(_canonical_json_bytes(_calibration_projection(raw)))
     producer_validation = {
-        "schema_version": "dynamic-cssc-publication-day2-producer-validation-v1",
+        "schema_version": "dynamic-cssc-publication-day2-producer-validation-v2",
         "status": "pass",
         "formal_authority_granted": False,
         "validator_source_sha256": openfhe_build["bundle_validator_sha256"],
@@ -1197,6 +1296,9 @@ def produce_day2_calibration_archive_from_isolated_worker(
         "operation_profile_set_sha256": _sha256(profiles_bytes),
         "rotation_key_plan_sha256": _sha256(rotation_bytes),
         "generated_key_inventory_sha256": _sha256(generated_bytes),
+        "serialized_object_size_profile_sha256": _sha256(
+            serialized_size_profile_bytes
+        ),
         "runtime_isolation_receipt_sha256": _sha256(isolation_bytes),
         "calibration_projection_sha256": projection_sha256,
         "candidate_catalog_sha256": contract["candidate_catalog_sha256"],
@@ -1222,6 +1324,7 @@ def produce_day2_calibration_archive_from_isolated_worker(
         "contract-bindings.json": contract,
         "rotation-key-plan.json": rotation_plan,
         "generated-key-inventory.json": generated,
+        "serialized-object-size-profile.json": serialized_size_profile,
         "operation-profile-set.json": profiles,
         "raw-measurement-blocks.json": raw,
         "runtime-isolation-receipt.json": isolation_receipt,
@@ -1252,6 +1355,13 @@ def produce_day2_calibration_archive_from_isolated_worker(
         or inspection.operation_profile_set_sha256 != _sha256(profiles_bytes)
         or inspection.rotation_key_plan_sha256 != _sha256(rotation_bytes)
         or inspection.generated_key_inventory_sha256 != _sha256(generated_bytes)
+        or inspection.serialized_object_size_profile_sha256
+        != _sha256(serialized_size_profile_bytes)
+        or inspection.ciphertext_bytes != serialized_size_profile["ciphertext_bytes"]
+        or inspection.f1m_random_zero_sum_ciphertext_bytes
+        != serialized_size_profile["f1m_random_zero_sum_ciphertext_bytes"]
+        or inspection.f1m_encrypted_zero_dummy_ciphertext_bytes
+        != serialized_size_profile["f1m_encrypted_zero_dummy_ciphertext_bytes"]
         or inspection.runtime_isolation_receipt_sha256 != _sha256(isolation_bytes)
     ):
         raise Day2CalibrationProducerError("formal archive inspection identity changed")

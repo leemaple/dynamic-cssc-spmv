@@ -44,8 +44,8 @@ from dynamic_cssc.simulator import (
     SimulationConfig,
     SimulationResult,
     SimulationTarget,
-    simulate_strong_reference,
-    simulate_targets,
+    simulate_strong_reference_causal,
+    simulate_targets_causal,
 )
 from dynamic_cssc.span80 import span80_curve
 from dynamic_cssc.workloads import (
@@ -103,6 +103,7 @@ class CausalCellResult:
     tuned_policy: StrategyMetrics
     oracle_candidate_id: str
     offline_oracle: StrategyMetrics
+    selection_candidates: tuple[FixedCandidate, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,6 +178,56 @@ def _normalize_candidate_results(
     return normalized
 
 
+def _assemble_causal_cell(
+    *,
+    warmup_end: int,
+    tuning_end: int,
+    tuning_results: dict[str, SimulationResult],
+    fixed_results: dict[str, SimulationResult],
+    selection_candidates: tuple[FixedCandidate, ...],
+    costs: UnitCosts,
+) -> CausalCellResult:
+    tuning_metrics = {
+        candidate_id: result.metrics for candidate_id, result in tuning_results.items()
+    }
+    selected = select_tuned_fixed_candidate(selection_candidates, tuning_metrics, costs)
+    fixed_metrics = {candidate_id: result.metrics for candidate_id, result in fixed_results.items()}
+    selected_metric = fixed_metrics[selected.candidate_id]
+    tuned_policy = replace(
+        selected_metric,
+        strategy="TunedFixedPolicy",
+        category="tuned-fixed-policy",
+        source="tuning-prefix-frozen",
+    )
+    selection_ids = {candidate.candidate_id for candidate in selection_candidates}
+    ranked_oracle = [
+        (metric.predicted_time(costs), candidate_id)
+        for candidate_id, metric in fixed_metrics.items()
+        if candidate_id in selection_ids
+        if isfinite(metric.predicted_time(costs))
+    ]
+    if not ranked_oracle:
+        raise ValueError("no fixed candidate has a finite held-out predicted_time")
+    _, oracle_candidate_id = min(ranked_oracle)
+    offline_oracle = replace(
+        fixed_metrics[oracle_candidate_id],
+        strategy="BestFixed-Offline-Oracle",
+        category="diagnostic-oracle",
+        source="held-out-hindsight-diagnostic",
+    )
+    return CausalCellResult(
+        warmup_end=warmup_end,
+        tuning_end=tuning_end,
+        tuning_results=tuning_results,
+        fixed_results=fixed_results,
+        selected_candidate_id=selected.candidate_id,
+        tuned_policy=tuned_policy,
+        oracle_candidate_id=oracle_candidate_id,
+        offline_oracle=offline_oracle,
+        selection_candidates=selection_candidates,
+    )
+
+
 def _evaluate_causal_cell(
     *,
     windows: list[PublicationWindow],
@@ -212,32 +263,33 @@ def _evaluate_causal_cell(
         if candidate.candidate_id != STRONG_REFERENCE_CANDIDATE_ID
     )
 
-    tuning_replay = windows[:tuning_end]
-    ordinary_tuning_results = simulate_targets_fn(
-        tuning_replay,
+    ordinary_all_tuning_results, ordinary_fixed_results = simulate_targets_fn(
+        windows,
         initial_state,
-        _candidate_targets(base_config, tuning_ordinary),
-        measure_from=warmup_end,
+        _candidate_targets(base_config, held_out_ordinary),
+        warmup_end=warmup_end,
+        tuning_end=tuning_end,
     )
+    ordinary_tuning_results = {
+        candidate.candidate_id: ordinary_all_tuning_results[candidate.candidate_id]
+        for candidate in tuning_ordinary
+    }
     ordinary_tuning_results = _normalize_candidate_results(
         tuning_ordinary,
         ordinary_tuning_results,
     )
-    strong_tuning_result = simulate_strong_fn(
-        tuning_replay,
+    strong_tuning_result, strong_fixed_result = simulate_strong_fn(
+        windows,
         initial_state,
         _candidate_config(base_config, strong_candidate),
-        measure_from=warmup_end,
+        warmup_end=warmup_end,
+        tuning_end=tuning_end,
     )
     strong_tuning = _normalize_candidate_results(
         (strong_candidate,),
         {strong_candidate.candidate_id: strong_tuning_result},
     )
     tuning_results = {**ordinary_tuning_results, **strong_tuning}
-    tuning_metrics = {
-        candidate_id: result.metrics for candidate_id, result in tuning_results.items()
-    }
-
     selection_candidates = tuple(
         FixedCandidate(
             candidate_id=candidate.candidate_id,
@@ -248,62 +300,22 @@ def _evaluate_causal_cell(
         )
         for candidate in catalog.selection_candidates
     )
-    selected = select_tuned_fixed_candidate(selection_candidates, tuning_metrics, costs)
-
-    ordinary_fixed_results = simulate_targets_fn(
-        windows,
-        initial_state,
-        _candidate_targets(base_config, held_out_ordinary),
-        measure_from=tuning_end,
-    )
     ordinary_fixed_results = _normalize_candidate_results(
         held_out_ordinary,
         ordinary_fixed_results,
-    )
-    strong_fixed_result = simulate_strong_fn(
-        windows,
-        initial_state,
-        _candidate_config(base_config, strong_candidate),
-        measure_from=tuning_end,
     )
     strong_fixed = _normalize_candidate_results(
         (strong_candidate,),
         {strong_candidate.candidate_id: strong_fixed_result},
     )
     fixed_results = {**ordinary_fixed_results, **strong_fixed}
-    fixed_metrics = {candidate_id: result.metrics for candidate_id, result in fixed_results.items()}
-
-    selected_metric = fixed_metrics[selected.candidate_id]
-    tuned_policy = replace(
-        selected_metric,
-        strategy="TunedFixedPolicy",
-        category="tuned-fixed-policy",
-        source="tuning-prefix-frozen",
-    )
-    ranked_oracle = [
-        (metric.predicted_time(costs), candidate_id)
-        for candidate_id, metric in fixed_metrics.items()
-        if candidate_id in {candidate.candidate_id for candidate in catalog.selection_candidates}
-        if isfinite(metric.predicted_time(costs))
-    ]
-    if not ranked_oracle:
-        raise ValueError("no fixed candidate has a finite held-out predicted_time")
-    _, oracle_candidate_id = min(ranked_oracle)
-    offline_oracle = replace(
-        fixed_metrics[oracle_candidate_id],
-        strategy="BestFixed-Offline-Oracle",
-        category="diagnostic-oracle",
-        source="held-out-hindsight-diagnostic",
-    )
-    return CausalCellResult(
+    return _assemble_causal_cell(
         warmup_end=warmup_end,
         tuning_end=tuning_end,
         tuning_results=tuning_results,
         fixed_results=fixed_results,
-        selected_candidate_id=selected.candidate_id,
-        tuned_policy=tuned_policy,
-        oracle_candidate_id=oracle_candidate_id,
-        offline_oracle=offline_oracle,
+        selection_candidates=selection_candidates,
+        costs=costs,
     )
 
 
@@ -325,8 +337,114 @@ def evaluate_causal_cell(
         split=split,
         costs=costs,
         catalog=catalog,
-        simulate_targets_fn=simulate_targets,
-        simulate_strong_fn=simulate_strong_reference,
+        simulate_targets_fn=simulate_targets_causal,
+        simulate_strong_fn=simulate_strong_reference_causal,
+    )
+
+
+_QUERY_LINEAR_METRIC_FIELDS = (
+    "queries",
+    "query_ciphertexts",
+    "result_ciphertexts",
+    "cc_multiplications",
+    "relinearizations",
+    "rotations",
+    "additions",
+    "plaintext_masks",
+    "blinding_mask_ciphertexts",
+    "blinding_dummy_ciphertexts",
+    "blinding_encryptions",
+    "blinding_additions",
+    "decryptions",
+    "client_merges",
+    "mask_random_elements",
+    "mask_mapped_elements",
+    "client_reorder_elements",
+)
+
+
+def _causal_evaluation_provenance(
+    ratio: Fraction,
+    *,
+    rho_one_available: bool,
+) -> tuple[str, str | None]:
+    """Describe the exact replay path selected for one ordered rho cell."""
+
+    if type(ratio) is not Fraction:
+        raise TypeError("ratio must be an exact Fraction")
+    if type(rho_one_available) is not bool:
+        raise TypeError("rho_one_available must be an exact bool")
+    if ratio.denominator == 1 and ratio > 1 and rho_one_available:
+        return "exact-query-linearity-from-rho-1", "1"
+    return "full-state-replay", None
+
+
+def _query_scaled_windows(
+    unit_windows: list[PublicationWindow],
+    scaled_windows: list[PublicationWindow],
+    multiplier: int,
+) -> bool:
+    if type(multiplier) is not int or multiplier < 1:
+        raise ValueError("query multiplier must be a positive strict integer")
+    return len(unit_windows) == len(scaled_windows) and all(
+        replace(unit, query_count=unit.query_count * multiplier) == scaled
+        for unit, scaled in zip(unit_windows, scaled_windows, strict=True)
+    )
+
+
+def _scale_simulation_queries(
+    result: SimulationResult,
+    multiplier: int,
+) -> SimulationResult:
+    if type(multiplier) is not int or multiplier < 1:
+        raise ValueError("query multiplier must be a positive strict integer")
+    metrics = replace(
+        result.metrics,
+        **{
+            field: getattr(result.metrics, field) * multiplier
+            for field in _QUERY_LINEAR_METRIC_FIELDS
+        },
+    )
+    inventory = result.rotation_inventory
+    return SimulationResult(
+        metrics=metrics,
+        overflow_by_row=dict(result.overflow_by_row),
+        rotation_inventory=replace(
+            inventory,
+            measured_counts_by_exact_index=tuple(
+                (index, count * multiplier)
+                for index, count in inventory.measured_counts_by_exact_index
+            ),
+        ),
+    )
+
+
+def _rescale_causal_cell_queries(
+    result: CausalCellResult,
+    multiplier: int,
+    costs: UnitCosts,
+) -> CausalCellResult:
+    tuning_results = {
+        candidate_id: _scale_simulation_queries(simulation, multiplier)
+        for candidate_id, simulation in result.tuning_results.items()
+    }
+    fixed_results = {
+        candidate_id: _scale_simulation_queries(simulation, multiplier)
+        for candidate_id, simulation in result.fixed_results.items()
+    }
+    selection_candidates = result.selection_candidates
+    selection_ids = tuple(candidate.candidate_id for candidate in selection_candidates)
+    if len(selection_ids) != len(set(selection_ids)) or set(selection_ids) != set(tuning_results):
+        raise ValueError(
+            "rho=1 selection candidates must exactly match the tuning-result candidate pool"
+        )
+    return _assemble_causal_cell(
+        warmup_end=result.warmup_end,
+        tuning_end=result.tuning_end,
+        tuning_results=tuning_results,
+        fixed_results=fixed_results,
+        selection_candidates=selection_candidates,
+        costs=costs,
     )
 
 
@@ -959,6 +1077,9 @@ def run_suite(args: argparse.Namespace) -> int:
     ablation_candidate_ids: tuple[str, ...] | None = None
     workload_offset = experiment_plan.workloads.index(workload)
     workload_seed = seed + workload_offset + 1
+    unit_ratio_windows: list[PublicationWindow] | None = None
+    unit_ratio_result: CausalCellResult | None = None
+    unit_ratio_span80: dict[str, dict[int, float]] | None = None
 
     for ratio in ratio_grid:
         base_events = generate_event_stream(
@@ -982,13 +1103,31 @@ def run_suite(args: argparse.Namespace) -> int:
                 query_requires_latest=query_requires_latest,
             )
         )
-        result = evaluate_causal_cell(
-            windows=windows,
-            initial_state=initial,
-            base_config=base_config,
-            split=split,
-            costs=costs,
+        rho_one_available = unit_ratio_windows is not None and unit_ratio_result is not None
+        evaluation_mode, query_scaling_source_rho = _causal_evaluation_provenance(
+            ratio,
+            rho_one_available=rho_one_available,
         )
+        if query_scaling_source_rho is not None:
+            if unit_ratio_windows is None or unit_ratio_result is None:
+                raise AssertionError("rho=1 scaling provenance requires its exact replay")
+            multiplier = ratio.numerator
+            if not _query_scaled_windows(unit_ratio_windows, windows, multiplier):
+                raise ValueError(
+                    "integer-rho query scaling requires an exact rho=1 window trajectory"
+                )
+            result = _rescale_causal_cell_queries(unit_ratio_result, multiplier, costs)
+        else:
+            result = evaluate_causal_cell(
+                windows=windows,
+                initial_state=initial,
+                base_config=base_config,
+                split=split,
+                costs=costs,
+            )
+            if ratio == 1:
+                unit_ratio_windows = windows
+                unit_ratio_result = result
         cell_fixed_candidate_ids = tuple(sorted(result.fixed_results))
         cell_reference_candidate_ids = tuple(sorted(result.tuning_results))
         cell_ablation_candidate_ids = tuple(
@@ -1012,6 +1151,16 @@ def run_suite(args: argparse.Namespace) -> int:
             or cell_ablation_candidate_ids != ablation_candidate_ids
         ):
             raise ValueError("candidate role IDs changed between cells in one shard")
+        if query_scaling_source_rho is not None:
+            if query_scaling_source_rho != "1":
+                raise AssertionError("span80 reuse requires exact rho=1 provenance")
+            if unit_ratio_span80 is None:
+                raise AssertionError("rho=1 span80 provenance requires its exact curve")
+            span80_by_candidate = unit_ratio_span80
+        else:
+            span80_by_candidate = _candidate_span80(rows, result)
+            if ratio == 1:
+                unit_ratio_span80 = span80_by_candidate
         held_out = windows[result.tuning_end :]
         rho_id = rho_path_id(ratio)
         output_dir = args.output_dir / workload / freshness_path_id(freshness_seconds) / rho_id
@@ -1054,6 +1203,8 @@ def run_suite(args: argparse.Namespace) -> int:
             "queries_per_update_target": float(ratio),
             "queries_per_update_fraction": str(ratio),
             "rho_id": rho_id,
+            "causal_evaluation_mode": evaluation_mode,
+            "query_scaling_source_rho_fraction": query_scaling_source_rho,
             "queries_per_update_scheduled": (
                 queries_total / update_events_total if update_events_total else 0.0
             ),
@@ -1069,7 +1220,7 @@ def run_suite(args: argparse.Namespace) -> int:
             "ablation_candidate_count": len(result.fixed_results) - len(result.tuning_results),
             "selected_candidate_id": result.selected_candidate_id,
             "oracle_candidate_id": result.oracle_candidate_id,
-            "span80_by_candidate": _candidate_span80(rows, result),
+            "span80_by_candidate": span80_by_candidate,
             "experiment_plan_sha256": experiment_plan_sha256,
             "manifest_sha256": manifest_sha256,
             "initial_state_sha256": initial_state_sha256,
