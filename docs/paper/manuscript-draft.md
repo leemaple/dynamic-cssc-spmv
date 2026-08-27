@@ -104,7 +104,8 @@ Scatter--Gather--Apply design reported by the public SparseE program abstract
 [@wei2026sparsee]. Rhombus separately shows plaintext-matrix/encrypted-vector
 two-party MVM with additive output shares [@he2024rhombus]. These works rule out
 broad claims of first encrypted indices, first sparsity-aware FHE multiplication,
-first ciphertext--ciphertext sparse multiplication, or first masked MVM output.
+first ciphertext--ciphertext sparse multiplication, or first use of random
+sharing to split an MVM output.
 Our claimed gap is the narrower mutable CSSC publication and reconstruction
 contract; it is not a new static packing or cryptographic primitive.
 
