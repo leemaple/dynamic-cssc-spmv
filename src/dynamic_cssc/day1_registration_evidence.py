@@ -45,7 +45,6 @@ _PRIVATE_TEST_RUN_AUTHORITY = "private-fixed-test-fixture-non-production"
 _OBSERVED_RUN_AUTHORITY = "descriptive-github-actions-environment-claims-only"
 _OBSERVED_REPOSITORY = "leemaple/dynamic-cssc-spmv"
 _OBSERVED_REPOSITORY_ID = 1341939625
-_OBSERVED_REF = "refs/heads/main"
 _STRONG_SOURCE_HOLD = "HOLD-until-zero-argument-hardened-strong-source-attestation-is-frozen"
 _STRONG_SOURCE_VERIFIED = "historical-source-git-object-attested-descriptive"
 _DEDICATED_WORKFLOW_PATH = ".github/workflows/day1-registration-evidence.yml"
@@ -97,6 +96,36 @@ class Day1RegistrationEvidenceError(ValueError):
 
 class Day1RegistrationEvidenceHold(RuntimeError):
     """Required repository-owned registration production policy is not frozen."""
+
+
+def _observed_workflow_ref_for_head(value: object) -> str | None:
+    prefix = "refs/heads/"
+    if type(value) is not str or not value.startswith(prefix):
+        return None
+    branch = value.removeprefix(prefix)
+    components = branch.split("/")
+    if (
+        not branch
+        or branch == "@"
+        or branch.startswith("-")
+        or branch.endswith(("/", "."))
+        or ".." in branch
+        or "@{" in branch
+        or any(
+            ord(character) < 0x20
+            or ord(character) == 0x7F
+            or character in " ~^:?*[\\"
+            for character in branch
+        )
+        or any(
+            not component
+            or component.startswith(".")
+            or component.endswith(".lock")
+            for component in components
+        )
+    ):
+        return None
+    return f"{_OBSERVED_REPOSITORY}/{_DEDICATED_WORKFLOW_PATH}@{value}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,12 +296,12 @@ def _observed_run_context_from_document(
     document: object,
 ) -> _ObservedDay1RegistrationRunContext:
     value = _require_exact_keys(document, _OBSERVED_CONTEXT_KEYS, "observed run context")
-    expected_workflow_ref = f"{_OBSERVED_REPOSITORY}/{_DEDICATED_WORKFLOW_PATH}@{_OBSERVED_REF}"
+    expected_workflow_ref = _observed_workflow_ref_for_head(value["ref"])
     if (
-        value["repository"] != _OBSERVED_REPOSITORY
+        expected_workflow_ref is None
+        or value["repository"] != _OBSERVED_REPOSITORY
         or value["repository_id"] != _OBSERVED_REPOSITORY_ID
         or value["event_name"] != "workflow_dispatch"
-        or value["ref"] != _OBSERVED_REF
         or value["workflow_path"] != _DEDICATED_WORKFLOW_PATH
         or value["workflow_ref"] != expected_workflow_ref
         or value["run_identity_authority_state"] != _OBSERVED_RUN_AUTHORITY
@@ -1372,12 +1401,12 @@ def _validate_workflow_and_strong(
             ),
             "observed workflow provenance",
         )
-        expected_workflow_ref = f"{_OBSERVED_REPOSITORY}/{_DEDICATED_WORKFLOW_PATH}@{_OBSERVED_REF}"
+        expected_workflow_ref = _observed_workflow_ref_for_head(workflow["ref"])
         if (
-            workflow["repository"] != _OBSERVED_REPOSITORY
+            expected_workflow_ref is None
+            or workflow["repository"] != _OBSERVED_REPOSITORY
             or workflow["repository_id"] != _OBSERVED_REPOSITORY_ID
             or workflow["event_name"] != "workflow_dispatch"
-            or workflow["ref"] != _OBSERVED_REF
             or workflow["head_sha"] != source_sha
             or workflow["workflow_file_sha256"] != workflow_source_sha256
             or workflow["workflow_path"] != _DEDICATED_WORKFLOW_PATH
