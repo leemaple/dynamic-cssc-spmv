@@ -13,6 +13,64 @@ dispatch 权限或发表授权。
 - 纠错轮：输入 913 tokens，输出 4,675 tokens。
 - 未记录、显示或写入任何 API key。
 
+## 可追溯性补记
+
+原始 Fable 5 提问没有逐字写入 exact Git SHA、tree 或一个待批准的代码
+diff。这是记录缺陷，不能事后改写成当时已经具备的门禁证据。因此本咨询的
+`CONDITIONAL PASS` 永久只作 stop-loss/adversarial advisory，既不是
+`AGENTS.md` 所定义的 publication-gate `PASS`，也不批准任何代码、锚点或
+实验 dispatch。
+
+可由不可变 Git/GitHub 元数据追溯的原始事实边界如下：
+
+- 决策问题：在尚无可采信经验结果、NON-ADMISSIBLE Day1A 诊断超出 300 分钟
+  操作门槛的情况下，是停止项目、继续扩张治理代码，还是先做最小性能根因
+  诊断。
+- 被观察的仓库/运行快照：branch `main`，commit
+  `f158aa7697b8b47a7704c4a4a2028bf6c7c080c4`，tree
+  `69022d77f04acdc166f7d007bfe690661e359312`，workflow run
+  `33040816357`。该 run 最终 `cancelled`，API artifact count 为零；它从未成为
+  publication evidence。
+- Bounded diff：无待批准实现 diff。Fable 被问的是上述固定 source/run 上的
+  继续/止损决策；后来的 replay scaling、timing instrumentation、workflow split
+  和 handoff 修复均不在原始审查包中，必须由各自 exact-head 测试和 CI 独立
+  决定。
+- 原始材料范围：论文贡献/claim 边界、冻结预注册、14-candidate/30-unit 设计、
+  F1-M、Day1/Day2/R4 证据边界、当前 HOLD，以及 run `33040816357` 的已观察
+  状态。直接观察与推断在下文分别记录；高-rho replay 重算在咨询后才成为待
+  检验假设。
+
+同阶段的相同 publication-readiness 事实包只存在于历史 commit
+`b9420ccdae5f64753e4b2d9a1b29e343a5ecb2c0` 的
+`docs/reviews/publication-readiness-2026-08-27.md`（blob
+`ebe2fabce2104ba6b62c3b5ac1da0ca23e463231`），不属于当前 lineage。该
+commit-qualified 历史记录中，ChatGPT Pro verdict 为 `AMEND`，ZCode GLM-5.3
+Max verdict 也为 `AMEND`；二者都认为工程管道接近完成，但经验结果近零、不可
+投稿。Fable 是用户明确要求的额外挑战审查，不是用来覆盖这两个 `AMEND` 的
+多数票。该旁支继承的旧 `f158aa7` S2 及其 formal-Day1A 路线已废弃；这份旧
+lineage 文件只能证明当时的 advisory verdict，不能向当前 lineage 转移 anchor、
+实验或 publication authority。
+
+后续组合 pre-S1 门槛的 merge-base 是
+`febedea78c88ed779171cedc5dab4be097061a1f`；集成复审的 exact base/head 是
+`9d07336aef5569076614ef0bac8c7869110ad281..085968e6d4764659783c4ccbd419eaf46ce59b82`。
+该 bounded diff 恰好是六个按原顺序 cherry-pick 的提交：
+`71de2ec5d95d5131aa513f31025e1e304db7c8e2`、
+`a54c3cdee9099557b831c5cfbb7ff338cece0ba2`、
+`48773d91c67c9a16d951e841f6210c3920e41637`、
+`e7b4edd60929c8cfb8bc2a0abb71e58f47d9b310`、
+`9f73247fa393da7f5016cb378381040270c57873` 和
+`085968e6d4764659783c4ccbd419eaf46ce59b82`；head tree 为
+`50ccbd267826c973f42b6c484b8ebf85ef57141c`。ChatGPT Pro 对这个同一 bounded
+组合包给出 `PASS`、P0/P1 均为零；ZCode 因额度/通道不可用被记录为
+`unavailable`，按 `AGENTS.md` 在下一门槛重试而不阻塞本地与 CI 核验；独立
+Spec 复审为 `PASS`，Standards 复审则因本节此前缺失而给出 `AMEND`。exact-head
+CI run `33088579097` 随后成功（2128 passed、2 skipped；唯一 skips 是未构建的
+real OpenFHE runner），R0 artifact `9654443047` 的 provider digest 为
+`sha256:23ea6721edddee88cd5789a9a31009aadc8cc043884ea0ca855106d8f8125c7a`。
+这些事实仍只见证其各自 exact predecessor；本补记产生的新 commit 必须重新通过
+自己的 exact-head CI，才可进入新的 descriptive S1 registration。
+
 ## 送审问题
 
 评审包覆盖论文贡献边界、数学不变量、14 个候选、30 个 paired units、
@@ -142,7 +200,10 @@ Fable 5 纠错轮保留的唯一条件性 estimand 问题已经由代码与测�
 
 1. 回归测试在修复前稳定观察到 replay 对九个 rho 全部调用完整
    `evaluate_causal_cell`，修复后只完整重放五个 rho，并从独立重放的 rho=1
-   精确派生 rho=3/10/30/100；validator identity 已提升为 v3。
+   精确派生 rho=3/10/30/100；初始 scaling 修复把 validator identity 提升为
+   v3，后续 exact closed-tree handoff 又把 replay receipt/validator 分别提升为
+   v2/v4。当前组合 pre-S1 必须以 v2/v4 为最终合同，不能把中间 v3 当成最终
+   validator 身份。
 2. run `33040816357` 在 GitHub 的 355 分钟 job 上限处自然取消。producer 成功但
    用时 273.90 分钟；旧 replay 又运行 81.08 分钟仍未完成，receipt、guard、
    upload 与 aggregate 均未发生。因此 producer 与 replay 共享一个 timeout
