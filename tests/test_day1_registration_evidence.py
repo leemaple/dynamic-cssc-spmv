@@ -102,6 +102,18 @@ def _integrated_clean_repository(tmp_path: Path) -> tuple[Path, str]:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
 
+    # This fixture models the exact pre-S1 repository consumed by the
+    # registration producer.  Reset the copied phase-transition state so the
+    # fixture remains pre-S1 after the real repository installs an S2 anchor.
+    (repository / DAY1_REGISTRATION_ANCHOR_PATH).write_bytes(
+        _canonical(
+            {
+                "anchors": [],
+                "schema_version": "dynamic-cssc-day1-registration-anchor-set-v1",
+            }
+        )
+    )
+
     # The private archive fixture intentionally does not claim a historical-source
     # attestation. Keep its descriptive strong anchor readable while the central
     # hardened source-attestation migration is landing concurrently.
