@@ -17,6 +17,11 @@
   tests, and descriptive registration. Their closure comments explicitly keep
   formal Day 1A, calibration, Day 1B/TRACE, R4, performance, complete-cost, and
   security claims on `HOLD`; issue state is not evidence authority.
+- Current independent engineering blockers are tracked by GitHub issue #35
+  (minimal Day 1B production-admission bridge) and issue #36 (authoritative
+  real-source acquisition and TRACE bundle). Day 1A receives a new issue only
+  if the active diagnostic reaches a terminal NO-GO; Day 2 remains downstream
+  of formal Day 1A and is not duplicated as a premature tracker.
 
 This matrix keeps the requested end state intact: reproducible formal
 experiments and evidence, followed by a submission-ready manuscript. A green
