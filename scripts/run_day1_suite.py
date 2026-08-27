@@ -1079,6 +1079,7 @@ def run_suite(args: argparse.Namespace) -> int:
     workload_seed = seed + workload_offset + 1
     unit_ratio_windows: list[PublicationWindow] | None = None
     unit_ratio_result: CausalCellResult | None = None
+    unit_ratio_span80: dict[str, dict[int, float]] | None = None
 
     for ratio in ratio_grid:
         base_events = generate_event_stream(
@@ -1150,6 +1151,16 @@ def run_suite(args: argparse.Namespace) -> int:
             or cell_ablation_candidate_ids != ablation_candidate_ids
         ):
             raise ValueError("candidate role IDs changed between cells in one shard")
+        if query_scaling_source_rho is not None:
+            if query_scaling_source_rho != "1":
+                raise AssertionError("span80 reuse requires exact rho=1 provenance")
+            if unit_ratio_span80 is None:
+                raise AssertionError("rho=1 span80 provenance requires its exact curve")
+            span80_by_candidate = unit_ratio_span80
+        else:
+            span80_by_candidate = _candidate_span80(rows, result)
+            if ratio == 1:
+                unit_ratio_span80 = span80_by_candidate
         held_out = windows[result.tuning_end :]
         rho_id = rho_path_id(ratio)
         output_dir = args.output_dir / workload / freshness_path_id(freshness_seconds) / rho_id
@@ -1209,7 +1220,7 @@ def run_suite(args: argparse.Namespace) -> int:
             "ablation_candidate_count": len(result.fixed_results) - len(result.tuning_results),
             "selected_candidate_id": result.selected_candidate_id,
             "oracle_candidate_id": result.oracle_candidate_id,
-            "span80_by_candidate": _candidate_span80(rows, result),
+            "span80_by_candidate": span80_by_candidate,
             "experiment_plan_sha256": experiment_plan_sha256,
             "manifest_sha256": manifest_sha256,
             "initial_state_sha256": initial_state_sha256,

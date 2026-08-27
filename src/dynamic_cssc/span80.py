@@ -8,7 +8,8 @@ def _prune_dominated(states: dict[int, int]) -> dict[int, int]:
 
     frontier: dict[int, int] = {}
     best_weight = -1
-    for selected, covered_weight in sorted(states.items()):
+    for selected in sorted(states):
+        covered_weight = states[selected]
         if covered_weight > best_weight:
             frontier[selected] = covered_weight
             best_weight = covered_weight
