@@ -73,7 +73,6 @@ from dynamic_cssc.publication_day1b_replay_execution import (
 from dynamic_cssc.publication_day1b_worker_protocol import (
     DAY1B_WORKER_FRAME_SCHEMA,
     Day1BControllerExpectedF1MObject,
-    Day1BF1MSizeClass,
     Day1BF1MWindowBatch,
     Day1BF1MWindowCardinality,
     Day1BWorkerPhaseAudit,
@@ -82,9 +81,6 @@ from dynamic_cssc.publication_day1b_worker_protocol import (
     _require_test_invocation_issuer,
     _test_only_issue_day1b_worker_invocation,
     _test_only_prepare_day1b_expected_f1m_registry,
-    canonical_day1b_expected_f1m_size_class_set_sha256,
-    canonical_day1b_expected_f1m_size_class_subroot_sha256,
-    canonical_day1b_f1m_cardinality_derivation_root_sha256,
     canonical_day1b_worker_window_audit_bytes,
     consume_day1b_worker_frames,
 )
@@ -522,7 +518,7 @@ def _trace() -> _Day1BTraceInput:
 
 def _source() -> _Day1BPreparatorySourceAttestation:
     inventory = {
-        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v30",
+        "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v31",
         "behavior_set_sha256": "c" * 64,
         "entries": [],
         "role": "day1b",
@@ -837,109 +833,18 @@ class _StreamingExecutor:
     def _registry_inputs(
         self,
         seed: _Day1BWorkerContractSeed,
-        audits: tuple[Day1BWorkerPhaseAudit, ...],
     ) -> tuple[
         tuple[Day1BF1MWindowCardinality, ...],
         tuple[Day1BF1MWindowBatch, ...],
         tuple[Day1BControllerExpectedF1MObject, ...],
     ]:
-        audit_by_phase = dict(zip(("warmup", "tuning-prefix", "held-out"), audits, strict=True))
-        first_query_by_phase: dict[str, int] = {}
-        next_query = 0
-        for phase in ("warmup", "tuning-prefix", "held-out"):
-            first_query_by_phase[phase] = next_query
-            next_query += audit_by_phase[phase].realized_query_count
+        """Expose one narrow fault-injection seam for negative adapter tests."""
 
-        cardinalities: list[Day1BF1MWindowCardinality] = []
-        window_batches: list[Day1BF1MWindowBatch] = []
-        expected_f1m_objects: list[Day1BControllerExpectedF1MObject] = []
-        for phase in seed.candidate.retained_phases:
-            audit = audit_by_phase[phase]
-            phase_identity = f"{seed.invocation_id}:{phase}"
-            version_id = f"version-{seed.invocation_id[:16]}-{phase}"
-            output_plan_digest = hashlib.sha256(
-                f"output-plan:{phase_identity}".encode("ascii")
-            ).hexdigest()
-            private_plan_digest = hashlib.sha256(
-                f"test-only-private-plan:{phase_identity}".encode("ascii")
-            ).hexdigest()
-            execution_binding_digest = hashlib.sha256(
-                f"test-only-execution:{phase_identity}".encode("ascii")
-            ).hexdigest()
-            window_index = {
-                "warmup": 0,
-                "tuning-prefix": 1,
-                "held-out": 2,
-            }[phase]
-            first_query = first_query_by_phase[phase]
-            phase_routes: list[Day1BControllerExpectedF1MObject] = []
-            if audit.realized_query_count:
-                global_query_ordinal = first_query
-                if self.emit_f1m_routes:
-                    size_class = Day1BF1MSizeClass(
-                        version_id=version_id,
-                        output_plan_digest=output_plan_digest,
-                        component_id="component-0",
-                        output_block_id="block-0",
-                        f1m_kind="random-zero-sum",
-                        private_plan_digest=private_plan_digest,
-                        execution_binding_digest=execution_binding_digest,
-                    )
-                    route = Day1BControllerExpectedF1MObject(
-                        phase=phase,
-                        window_index=window_index,
-                        first_global_query_ordinal=global_query_ordinal,
-                        category="query-f1m-random-mask-ciphertexts",
-                        object_ordinal=0,
-                        f1m_size_class=size_class,
-                        multiplicity=audit.realized_query_count,
-                    )
-                    phase_routes.append(route)
-                    expected_f1m_objects.append(route)
-                    query_routes = (route,)
-                else:
-                    query_routes = ()
-                window_batches.append(
-                    Day1BF1MWindowBatch(
-                        phase=phase,
-                        window_index=window_index,
-                        first_global_query_ordinal=global_query_ordinal,
-                        query_count=audit.realized_query_count,
-                        version_id=version_id,
-                        output_plan_digest=output_plan_digest,
-                        private_plan_digest=private_plan_digest,
-                        execution_binding_digest=execution_binding_digest,
-                        size_class_subroot_sha256=(
-                            canonical_day1b_expected_f1m_size_class_subroot_sha256(query_routes)
-                        ),
-                    )
-                )
-            cardinalities.append(
-                Day1BF1MWindowCardinality(
-                    phase=phase,
-                    window_index=window_index,
-                    accepted_group_start=audit.accepted_group_start,
-                    accepted_group_end=audit.accepted_group_end,
-                    first_global_query_ordinal=first_query,
-                    query_count=audit.realized_query_count,
-                    version_id=version_id,
-                    output_plan_digest=output_plan_digest,
-                    private_plan_digest=private_plan_digest,
-                    execution_binding_digest=execution_binding_digest,
-                    f1m_policy=seed.candidate.f1m_policy,
-                    returned_share_count=int(self.emit_f1m_routes),
-                    overlap_masked_share_count=int(self.emit_f1m_routes),
-                    expected_random_route_count=sum(route.multiplicity for route in phase_routes),
-                    expected_dummy_route_count=0,
-                    expected_size_class_subroot_sha256=(
-                        canonical_day1b_expected_f1m_size_class_subroot_sha256(tuple(phase_routes))
-                    ),
-                )
-            )
+        inputs = seed.f1m_registry_inputs
         return (
-            tuple(cardinalities),
-            tuple(window_batches),
-            tuple(expected_f1m_objects),
+            inputs.window_cardinalities,
+            inputs.window_batches,
+            inputs.expected_f1m_objects,
         )
 
     def execute_candidate_cell(
@@ -960,37 +865,9 @@ class _StreamingExecutor:
             )
         audits = _worker_audits(windows)
         cardinalities, window_batches, expected_f1m_objects = self._registry_inputs(
-            contract_seed, audits
+            contract_seed
         )
-        expected_binding_sha256 = canonical_day1b_expected_f1m_size_class_set_sha256(
-            expected_f1m_objects
-        )
-        cardinality_root_sha256 = canonical_day1b_f1m_cardinality_derivation_root_sha256(
-            window_cardinalities=cardinalities,
-            window_batches=window_batches,
-            expected_size_classes=expected_f1m_objects,
-        )
-        f1m_categories = set(
-            worker_protocol.DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
-        )
-        expected_serialized_count = sum(
-            int(count > 0)
-            for phase in contract_seed.controller_expected_counts.phases
-            for (category, _transaction), count in zip(
-                contract_seed.controller_expected_counts.serialized_categories,
-                phase.worker_streamed_protocol_object_counts,
-                strict=True,
-            )
-            if category not in f1m_categories
-        )
-        contract = contract_seed.bind(
-            expected_f1m_size_class_set_sha256=expected_binding_sha256,
-            expected_f1m_size_class_count=len(expected_f1m_objects),
-            expected_serialized_equivalence_class_count=(
-                expected_serialized_count + len(expected_f1m_objects)
-            ),
-            expected_f1m_cardinality_derivation_root_sha256=(cardinality_root_sha256),
-        )
+        contract = contract_seed.bind()
         registry = _test_only_prepare_day1b_expected_f1m_registry(
             contract=contract,
             controller_phase_audits=audits,
@@ -1027,7 +904,9 @@ class _StreamingExecutor:
                         _worker_transcript(
                             contract,
                             audits,
-                            expected_f1m_objects=expected_f1m_objects,
+                            expected_f1m_objects=(
+                                expected_f1m_objects if self.emit_f1m_routes else ()
+                            ),
                             omit_first_one_time=self.omit_first_one_time,
                             failed_phase=self.worker_failed_phases.get(call_index),
                         ),
@@ -1135,7 +1014,7 @@ def test_public_producer_is_two_path_deep_seam_and_holds_before_writing(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v30"),
+            "behavior_set_schema_version": ("dynamic-cssc-day1b-preparatory-behavior-set-v31"),
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -1239,7 +1118,7 @@ def test_public_producer_checks_profile_before_catalog_trace_or_worker(
         day1b_module,
         "capture_behavior_inventory",
         lambda role, source_git_sha, repository_root: {
-            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v30",
+            "behavior_set_schema_version": "dynamic-cssc-day1b-preparatory-behavior-set-v31",
             "behavior_set_sha256": "2" * 64,
             "entries": [],
             "role": "day1b",
@@ -1599,7 +1478,7 @@ def test_day1b_schema_names_are_unambiguous_across_exact_key_contracts() -> None
         if name.endswith("_SCHEMA") and type(value) is str
     }
 
-    assert DAY1B_UNIT_SCHEMA == "dynamic-cssc-publication-day1b-unit-v4"
+    assert DAY1B_UNIT_SCHEMA == "dynamic-cssc-publication-day1b-unit-v5"
     assert DAY1B_UNIT_FRAGMENT_SCHEMA == ("dynamic-cssc-publication-day1b-unit-fragment-v1")
     assert len(set(schemas.values())) == len(schemas)
     retained_document_families = (
@@ -1618,10 +1497,10 @@ def test_day1b_schema_names_are_unambiguous_across_exact_key_contracts() -> None
         expected_counts_module.DAY1B_CONTROLLER_EXPECTED_PHASE_COUNTS_SCHEMA,
     )
     assert len(set(retained_document_families)) == len(retained_document_families)
-    assert worker_protocol.DAY1B_WORKER_INPUT_BINDING_SCHEMA.endswith("-v10")
-    assert worker_protocol.DAY1B_WORKER_RECEIPT_SCHEMA.endswith("-v10")
-    assert day1b_module.DAY1B_SERIALIZATION_LEDGER_SCHEMA.endswith("-v5")
-    assert DAY1B_UNIT_SCHEMA.endswith("-v4")
+    assert worker_protocol.DAY1B_WORKER_INPUT_BINDING_SCHEMA.endswith("-v11")
+    assert worker_protocol.DAY1B_WORKER_RECEIPT_SCHEMA.endswith("-v11")
+    assert day1b_module.DAY1B_SERIALIZATION_LEDGER_SCHEMA.endswith("-v6")
+    assert DAY1B_UNIT_SCHEMA.endswith("-v5")
 
 
 def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
@@ -1639,7 +1518,7 @@ def test_private_typed_core_writes_one_stats_composable_18_cell_486_record_unit(
     records = fragment["records"]
 
     assert manifest["schema_version"] == (
-        "dynamic-cssc-publication-day1b-unit-private-test-fixture-v4"
+        "dynamic-cssc-publication-day1b-unit-private-test-fixture-v5"
     )
     assert manifest["artifact_variant"] == {
         "claims_authorized": False,
@@ -3362,32 +3241,63 @@ def test_production_f1m_replay_derives_zero_query_coverage_and_closed_context() 
         size_authority=size_authority,
         f1m_controller_summary=summary,
         controller_expected_counts=controller_replay.expected_counts,
+        f1m_registry_inputs=controller_replay.f1m_registry_inputs,
     )
-    f1m_categories = set(
-        worker_protocol.DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
-    )
-    expected_serialized_count = sum(
-        int(count > 0)
-        for phase in controller_replay.expected_counts.phases
-        for (category, _transaction), count in zip(
-            controller_replay.expected_counts.serialized_categories,
-            phase.worker_streamed_protocol_object_counts,
-            strict=True,
-        )
-        if category not in f1m_categories
-    )
-    contract = seed.bind(
-        expected_f1m_size_class_set_sha256="1" * 64,
-        expected_f1m_size_class_count=0,
-        expected_serialized_equivalence_class_count=expected_serialized_count,
-        expected_f1m_cardinality_derivation_root_sha256="2" * 64,
-    )
+    contract = seed.bind()
     assert contract.f1m_controller_context_sha256 == summary.context.context_sha256
     assert contract.f1m_route_coverage_sha256 == summary.route_coverage_sha256
     assert contract.f1m_charged_size_class_set_sha256 == (summary.charged_size_class_set_sha256)
     abandon_day1b_candidate_replay_capability(
         controller_replay.candidate_replay_capability
     )
+
+
+def test_f1m_registry_keeps_each_retained_zero_query_window_without_execution() -> None:
+    candidate = day1b_module._candidate_worker_spec(_catalog().candidates[0])
+    plans = tuple(
+        day1b_accounting.Day1BWindowPlanAccounting(
+            phase=phase,
+            window_index=index,
+            accepted_group_start=index * 10,
+            accepted_group_end=(index + 1) * 10,
+            first_global_query_ordinal=0,
+            query_count=0,
+            version_id="v00000000",
+            output_plan_digest=None,
+            private_plan_digest=None,
+            execution_binding_digest=None,
+            returned_share_count=0,
+            overlap_masked_share_count=0,
+            f1m_routes=(),
+        )
+        for index, phase in enumerate(("tuning-prefix", "held-out"))
+    )
+
+    inputs = day1b_module._derive_day1b_f1m_registry_inputs(
+        window_plans=plans,
+        candidate=candidate,
+    )
+
+    assert tuple(row.phase for row in inputs.window_cardinalities) == (
+        "tuning-prefix",
+        "held-out",
+    )
+    assert all(row.query_count == 0 for row in inputs.window_cardinalities)
+    assert all(row.output_plan_digest is None for row in inputs.window_cardinalities)
+    assert all(row.private_plan_digest is None for row in inputs.window_cardinalities)
+    assert all(row.execution_binding_digest is None for row in inputs.window_cardinalities)
+    assert inputs.window_batches == ()
+    assert inputs.expected_f1m_objects == ()
+    with pytest.raises(
+        day1b_accounting.PublicationDay1BAccountingError,
+        match="zero-query window cannot claim a query plan",
+    ):
+        replace(plans[0], output_plan_digest="1" * 64)
+    with pytest.raises(
+        day1b_accounting.PublicationDay1BAccountingError,
+        match="zero-query window cannot claim a query plan",
+    ):
+        replace(plans[0], returned_share_count=1)
 
 
 def test_controller_replay_abandons_a_minted_capability_on_post_replay_failure(
@@ -3559,6 +3469,7 @@ def test_worker_seed_rejects_controller_lineage_or_resource_substitution(
             size_authority=size_authority,
             f1m_controller_summary=summary,
             controller_expected_counts=controller_replay.expected_counts,
+            f1m_registry_inputs=controller_replay.f1m_registry_inputs,
         )
     abandon_day1b_candidate_replay_capability(
         controller_replay.candidate_replay_capability
@@ -3725,13 +3636,12 @@ def test_mixed_retained_phase_outcome_keeps_complete_charge_and_nulls_failure(
 
 
 @pytest.mark.parametrize("outcome_path", ("controller-terminal", "mixed-failure"))
-def test_verifier_rejects_self_consistent_incomplete_formal_f1m_worker_count_splice(
+def test_producer_rejects_mixed_formal_f1m_mode_before_any_outcome_projection(
     tmp_path: Path,
     outcome_path: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     original_derive = day1b_module.derive_day1b_controller_expected_counts
-    original_formal_check = day1b_module.require_formal_day1b_f1m_worker_zero
 
     def derive_materialized_incomplete_phase(
         **kwargs: object,
@@ -3788,105 +3698,20 @@ def test_verifier_rejects_self_consistent_incomplete_formal_f1m_worker_count_spl
         executor.worker_failed_phases = {
             index: "held-out" for index in range(candidate_cell_count)
         }
-    bundle = _produce_publication_day1b_unit_for_test(
-        trace=_trace(),
-        output_dir=tmp_path / "self-consistent-malicious-unit",
-        source_attestation=_source(),
-        candidate_catalog=_catalog(),
-        resource_policy=_resource_policy(),
-        execution_adapter=executor,
-    )
-    bypassed_verification = verify_existing_directory(
-        bundle.output_dir,
-        verifier=lambda view: day1b_module._verify_day1b_unit_view(
-            view,
-            artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
-        ),
-    )
-    assert bypassed_verification.cardinality == (18, 252, 486, 486)
-
-    manifest = json.loads(bundle.manifest_path.read_bytes())
-    receipt = None
-    expected_phase = None
-    f1m_indices = None
-    for cell_receipt in manifest["cell_execution_receipts"]:
-        for candidate_receipt in cell_receipt["candidate_cell_receipts"]:
-            input_document = candidate_receipt["input_binding_document"]
-            expected_document = input_document["controller_expected_counts_document"]
-            category_names = tuple(
-                item[0] for item in expected_document["serialized_categories"]
-            )
-            candidate_f1m_indices = tuple(
-                category_names.index(category)
-                for category in (
-                    worker_protocol.DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
-                )
-            )
-            candidate_phase = next(
-                phase
-                for phase in expected_document["phases"]
-                if phase["phase"] == "held-out"
-            )
-            if any(
-                candidate_phase["logical_protocol_object_counts"][index] > 0
-                for index in candidate_f1m_indices
-            ):
-                receipt = candidate_receipt
-                expected_phase = candidate_phase
-                f1m_indices = candidate_f1m_indices
-                break
-        if receipt is not None:
-            break
-    assert receipt is not None
-    assert expected_phase is not None
-    assert f1m_indices is not None
-    if outcome_path == "controller-terminal":
-        assert receipt["candidate"]["receipt_origin"] == (
-            "controller-terminal-null-projection"
-        )
-    else:
-        held_out_receipt = next(
-            phase
-            for phase in receipt["candidate"]["phases"]
-            if phase["phase"] == "held-out"
-        )
-        assert held_out_receipt["outcome"] == "failed"
-    changed = False
-    for category_index in f1m_indices:
-        logical_count = expected_phase["logical_protocol_object_counts"][category_index]
-        if logical_count > 0:
-            assert (
-                expected_phase["worker_streamed_protocol_object_counts"][
-                    category_index
-                ]
-                == logical_count
-            )
-            changed = True
-            break
-    assert changed, "fixture must expose one positive held-out formal F1-M route count"
-
-    monkeypatch.setattr(
-        day1b_module,
-        "derive_day1b_controller_expected_counts",
-        original_derive,
-    )
-    monkeypatch.setattr(
-        day1b_module,
-        "require_formal_day1b_f1m_worker_zero",
-        original_formal_check,
-    )
-
+    output_dir = tmp_path / "self-consistent-malicious-unit"
     with pytest.raises(
-        ValueError,
-        match="formal F1-M worker multiplicity must remain zero",
+        PublicationDay1BHold,
+        match="candidate-cell worker evidence failed closed validation",
     ):
-        verify_existing_directory(
-            bundle.output_dir,
-            verifier=lambda view: day1b_module._verify_day1b_unit_view(
-                view,
-                artifact_variant_token=day1b_module._TEST_ARTIFACT_VARIANT_TOKEN,
-            ),
+        _produce_publication_day1b_unit_for_test(
+            trace=_trace(),
+            output_dir=output_dir,
+            source_attestation=_source(),
+            candidate_catalog=_catalog(),
+            resource_policy=_resource_policy(),
+            execution_adapter=executor,
         )
+    assert not output_dir.exists()
 
 
 def test_over_limit_controller_observation_without_matching_terminal_holds_unit(
@@ -4172,13 +3997,12 @@ def test_private_core_holds_on_window_batch_subroot_splice(
         def _registry_inputs(
             self,
             seed: _Day1BWorkerContractSeed,
-            audits: tuple[Day1BWorkerPhaseAudit, ...],
         ) -> tuple[
             tuple[Day1BF1MWindowCardinality, ...],
             tuple[Day1BF1MWindowBatch, ...],
             tuple[Day1BControllerExpectedF1MObject, ...],
         ]:
-            cardinalities, window_batches, expected = super()._registry_inputs(seed, audits)
+            cardinalities, window_batches, expected = super()._registry_inputs(seed)
             if len(self.calls) == 1:
                 window_batches = (
                     replace(window_batches[0], size_class_subroot_sha256="f" * 64),
@@ -4266,7 +4090,8 @@ def test_formal_seed_rejects_worker_materialized_f1m_against_controller_zero_pre
     resource_policy = _resource_policy()
     size_authority = _size_authority()
     catalog = _catalog()
-    candidate = catalog.candidates[0]
+    candidate = catalog.candidates[-1]
+    assert candidate.strategy == "Packed-COO-Cloud-Segmented-Delta"
     audit = day1b_module._complete_cell_audit(program, freshness)
     cell = day1b_module._cell_document(
         day1b_module._trace_unit_document(trace, source),
@@ -4297,6 +4122,7 @@ def test_formal_seed_rejects_worker_materialized_f1m_against_controller_zero_pre
         accounting_domain=day1b_module._TEST_DAY1B_ACCOUNTING_DOMAIN,
     )
     f1m_controller_summary = controller_replay.f1m_summary
+    assert controller_replay.f1m_registry_inputs.expected_f1m_objects
     seed = day1b_module._candidate_worker_contract_seed(
         trace=trace,
         program=program,
@@ -4309,6 +4135,7 @@ def test_formal_seed_rejects_worker_materialized_f1m_against_controller_zero_pre
         size_authority=size_authority,
         f1m_controller_summary=f1m_controller_summary,
         controller_expected_counts=controller_replay.expected_counts,
+        f1m_registry_inputs=controller_replay.f1m_registry_inputs,
     )
     executor = _StreamingExecutor(tmp_path / "controlled-scratch")
     executor.emit_f1m_routes = True
@@ -4321,7 +4148,7 @@ def test_formal_seed_rejects_worker_materialized_f1m_against_controller_zero_pre
     )
     with pytest.raises(
         worker_protocol.Day1BWorkerProtocolError,
-        match="protocol-object multiplicities",
+        match="formal weighted mode forbids worker F1-M objects",
     ):
         consume_day1b_worker_frames(
             launch.frame_chunks,

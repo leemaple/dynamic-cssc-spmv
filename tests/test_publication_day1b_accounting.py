@@ -6,6 +6,7 @@ from fractions import Fraction
 
 import pytest
 
+import dynamic_cssc.strategy_state as strategy_state
 from dynamic_cssc.day1_registry import RegisteredCandidate
 from dynamic_cssc.day2_calibration_authority import PRIMITIVE_NAMES
 from dynamic_cssc.publication_day1b_accounting import (
@@ -273,6 +274,45 @@ def test_strong_replay_classifies_uniform_dummy_routes_before_weighting() -> Non
     ]
     tuning = result.phases[1]
     assert tuning.query_primitive_counts[PRIMITIVE_NAMES.index("encrypt")] == 12
+
+
+def test_strong_zero_query_window_does_not_compile_a_query_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    compile_calls: list[tuple[object, object]] = []
+    original_compile = strategy_state._compile_strong_bundle
+
+    def observe_compile(base: object, delta: object) -> object:
+        compile_calls.append((base, delta))
+        return original_compile(base, delta)
+
+    monkeypatch.setattr(strategy_state, "_compile_strong_bundle", observe_compile)
+
+    result = replay_publication_day1b_candidate_cell(
+        candidate=_strong_candidate(),
+        windows=(
+            _window(0, "warmup", (0, 0, 0, 1), query_count=0),
+            replace(
+                _window(1, "tuning", (0, 1, 0, 2), query_count=0),
+                set_count=0,
+                updates=(),
+            ),
+            _window(2, "heldout", (1, 0, 0, 3), query_count=0),
+        ),
+        domain=Day1BAccountingDomain(
+            rows=2,
+            cols=4,
+            effective_slots=128,
+            partition_rows=1,
+            matrix_value_bound=7,
+            max_row_nnz=4,
+            strong_segment_width=128,
+        ),
+    )
+
+    assert result.realized_window_count == 3
+    assert result.realized_query_window_count == 0
+    assert compile_calls == []
 
 
 def test_query_execution_sink_is_streaming_and_stops_on_sink_failure() -> None:

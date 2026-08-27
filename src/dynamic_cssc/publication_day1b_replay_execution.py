@@ -23,6 +23,7 @@ from dynamic_cssc.plaintext_oracle import direct_spmv
 from dynamic_cssc.publication_day1b_accounting import (
     Day1BAccountingDomain,
     Day1BQueryWindowAccounting,
+    Day1BWindowPlanAccounting,
     PublicationDay1BAccounting,
     _candidate_document,
     replay_publication_day1b_candidate_cell,
@@ -924,6 +925,7 @@ def replay_and_seal_publication_day1b_candidate(
     query_vector_canonical_bytes: bytes,
     query_vector_sha256: str,
     query_window_sink: Callable[[Day1BQueryWindowAccounting], None] | None = None,
+    window_plan_sink: Callable[[Day1BWindowPlanAccounting], None] | None = None,
 ) -> tuple[PublicationDay1BAccounting, Day1BCandidateReplayCapability]:
     """Own one exact replay call and seal its role-derived representative.
 
@@ -944,6 +946,7 @@ def replay_and_seal_publication_day1b_candidate(
         domain=domain,
         query_window_sink=query_window_sink,
         query_execution_sink=collector.accept,
+        window_plan_sink=window_plan_sink,
     )
     return accounting, collector.finish(accounting)
 

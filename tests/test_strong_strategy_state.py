@@ -13,6 +13,7 @@ from dynamic_cssc.events import NetUpdate, PublicationWindow
 from dynamic_cssc.strategy_state import (
     StrongStrategyConfig,
     StrongStrategyState,
+    StrongTransition,
     advance_strong_publication,
     decode_strong_state,
     initialize_strong_strategy,
@@ -59,6 +60,12 @@ def test_strong_snapshot_is_independent_and_query_only_compiles_without_advancin
     assert transition.facts.query_count == 3
     assert transition.execution_bundle == compile_strong_execution(state.base, state.delta)
     assert transition.output_plan == transition.execution_bundle.output_plan
+    with pytest.raises(ValueError, match="present exactly for a query-bearing transition"):
+        replace(transition, facts=replace(transition.facts, query_count=0))
+
+
+def test_strong_transition_has_one_bundle_owned_output_plan_truth_source() -> None:
+    assert "output_plan" not in {field.name for field in fields(StrongTransition)}
 
 
 def test_base_updates_and_reserved_reuse_precede_strong_overflow_with_exact_facts() -> None:

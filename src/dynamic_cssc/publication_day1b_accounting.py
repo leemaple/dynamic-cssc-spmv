@@ -35,6 +35,7 @@ from dynamic_cssc.selection import (
     build_fixed_candidates,
 )
 from dynamic_cssc.simulator import (
+    F1MRouteAccounting,
     QueryPlanAccounting,
     WindowAccounting,
     account_strong_transition_with_bundle,
@@ -52,6 +53,7 @@ from dynamic_cssc.strategy_state import (
 
 DAY1B_ACCOUNTING_SCHEMA = "dynamic-cssc-publication-day1b-accounting-v2"
 DAY1B_QUERY_WINDOW_SCHEMA = "dynamic-cssc-publication-day1b-query-window-accounting-v2"
+DAY1B_WINDOW_PLAN_SCHEMA = "dynamic-cssc-publication-day1b-window-plan-accounting-v1"
 DAY1B_PHASE_ACCOUNTING_SCHEMA = "dynamic-cssc-publication-day1b-phase-accounting-v2"
 DAY1B_ACCOUNTING_EXECUTION_BASIS = "window-weighted-equivalence-v1"
 
@@ -296,6 +298,104 @@ class Day1BQueryWindowAccounting:
                 "denominator": self.start_time.denominator,
                 "numerator": self.start_time.numerator,
             },
+            "window_index": self.window_index,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class Day1BWindowPlanAccounting:
+    """Version/plan facts for every window, including windows with no query."""
+
+    phase: WorkerPhase
+    window_index: int
+    accepted_group_start: int
+    accepted_group_end: int
+    first_global_query_ordinal: int
+    query_count: int
+    version_id: str
+    output_plan_digest: str | None
+    private_plan_digest: str | None
+    execution_binding_digest: str | None
+    returned_share_count: int
+    overlap_masked_share_count: int
+    f1m_routes: tuple[F1MRouteAccounting, ...]
+
+    def __post_init__(self) -> None:
+        if self.phase not in _WORKER_PHASES:
+            raise PublicationDay1BAccountingError("window-plan phase is not frozen")
+        for field in (
+            "window_index",
+            "accepted_group_start",
+            "first_global_query_ordinal",
+            "query_count",
+            "returned_share_count",
+            "overlap_masked_share_count",
+        ):
+            value = getattr(self, field)
+            if type(value) is not int or value < 0:
+                raise PublicationDay1BAccountingError(
+                    f"window-plan {field} must be a nonnegative strict integer"
+                )
+        if (
+            type(self.accepted_group_end) is not int
+            or self.accepted_group_end <= self.accepted_group_start
+        ):
+            raise PublicationDay1BAccountingError("window-plan accepted range is empty")
+        if type(self.version_id) is not str or _VERSION_ID.fullmatch(self.version_id) is None:
+            raise PublicationDay1BAccountingError("window-plan version identity is not exact")
+        if type(self.f1m_routes) is not tuple or any(
+            type(route) is not F1MRouteAccounting for route in self.f1m_routes
+        ):
+            raise PublicationDay1BAccountingError(
+                "window-plan F1-M routes must be an exact tuple"
+            )
+        if self.query_count == 0:
+            if (
+                self.output_plan_digest is not None
+                or self.private_plan_digest is not None
+                or self.execution_binding_digest is not None
+                or self.returned_share_count != 0
+                or self.overlap_masked_share_count != 0
+                or self.f1m_routes
+            ):
+                raise PublicationDay1BAccountingError(
+                    "zero-query window cannot claim a query plan, shares, execution, "
+                    "or F1-M routes"
+                )
+        else:
+            for field in ("output_plan_digest", "private_plan_digest"):
+                _require_sha256(getattr(self, field), f"window-plan {field}")
+            _require_sha256(
+                self.execution_binding_digest,
+                "window-plan execution_binding_digest",
+            )
+        if self.overlap_masked_share_count > self.returned_share_count:
+            raise PublicationDay1BAccountingError(
+                "window-plan overlap count exceeds returned shares"
+            )
+        if self.query_count and (
+            sum(route.kind == "random-zero-sum" for route in self.f1m_routes)
+            != self.overlap_masked_share_count
+        ):
+            raise PublicationDay1BAccountingError(
+                "query-bearing window plan changed its overlap-route cardinality"
+            )
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "accepted_group_end": self.accepted_group_end,
+            "accepted_group_start": self.accepted_group_start,
+            "execution_binding_digest": self.execution_binding_digest,
+            "f1m_routes": [route.to_document() for route in self.f1m_routes],
+            "first_global_query_ordinal": self.first_global_query_ordinal,
+            "output_plan_digest": self.output_plan_digest,
+            "overlap_masked_share_count": self.overlap_masked_share_count,
+            "phase": self.phase,
+            "private_plan_digest": self.private_plan_digest,
+            "query_count": self.query_count,
+            "returned_share_count": self.returned_share_count,
+            "schema_version": DAY1B_WINDOW_PLAN_SCHEMA,
+            "version_id": self.version_id,
             "window_index": self.window_index,
         }
 
@@ -646,6 +746,7 @@ def replay_publication_day1b_candidate_cell(
         Callable[[Day1BQueryWindowAccounting, Day1BQueryLayoutExecution], None]
         | None
     ) = None,
+    window_plan_sink: Callable[[Day1BWindowPlanAccounting], None] | None = None,
 ) -> PublicationDay1BAccounting:
     """Replay continuously and stream compact and typed query-window views."""
 
@@ -656,6 +757,8 @@ def replay_publication_day1b_candidate_cell(
         raise TypeError("query_window_sink must be callable or None")
     if query_execution_sink is not None and not callable(query_execution_sink):
         raise TypeError("query_execution_sink must be callable or None")
+    if window_plan_sink is not None and not callable(window_plan_sink):
+        raise TypeError("window_plan_sink must be callable or None")
     try:
         iterator = iter(windows)
     except TypeError as error:
@@ -674,6 +777,7 @@ def replay_publication_day1b_candidate_cell(
     previous_phase_index = 0
     previous_accepted_group_end = 0
     global_query_ordinal = 0
+    version_plan_cache: dict[str, QueryPlanAccounting] = {}
 
     for window in iterator:
         if type(window) is not ExactPublicationWindow:
@@ -713,6 +817,7 @@ def replay_publication_day1b_candidate_cell(
 
         adapted = _adapt_window(window)
         previous_version_id = state.version_id
+        previous_version_ordinal = state.version_ordinal
         if candidate.strategy == "Packed-COO-Cloud-Segmented-Delta":
             if type(state) is not StrongStrategyState:
                 raise AssertionError("strong candidate state type changed")
@@ -722,6 +827,7 @@ def replay_publication_day1b_candidate_cell(
             )
             ordinary_compilation = None
             state = transition.state
+            projected_plan = accounting.query_plan
         else:
             if type(state) is not StrategyState:
                 raise AssertionError("ordinary candidate state type changed")
@@ -731,6 +837,20 @@ def replay_publication_day1b_candidate_cell(
             )
             strong_bundle = None
             state = transition.state
+            projected_plan = accounting.query_plan
+
+        if window.query_count:
+            if projected_plan is None:
+                raise AssertionError("query-bearing window lost its typed query plan")
+            if projected_plan.version_id != state.version_id:
+                raise AssertionError("query plan does not bind the current candidate version")
+            cached_plan = version_plan_cache.get(state.version_id)
+            if cached_plan is None:
+                version_plan_cache[state.version_id] = projected_plan
+            elif cached_plan != projected_plan:
+                raise AssertionError("one version produced two query-plan identities")
+        elif projected_plan is not None:
+            raise AssertionError("zero-query window created a typed query plan")
 
         accumulator = phase_accumulators[phase]
         version_changed = state.version_id != previous_version_id
@@ -738,15 +858,48 @@ def replay_publication_day1b_candidate_cell(
             raise AssertionError(
                 "candidate version must advance exactly once for every update-bearing window"
             )
+        if state.version_ordinal != previous_version_ordinal + int(bool(window.updates)):
+            raise AssertionError(
+                "candidate version ordinal must advance exactly once for every "
+                "update-bearing window"
+            )
         accumulator.add_window(
             window,
             accounting,
             version_changed=version_changed,
         )
         window_hasher.add(_exact_window_document(window))
+        window_plan = Day1BWindowPlanAccounting(
+            phase=_WORKER_PHASE_BY_SOURCE[phase],
+            window_index=window.index,
+            accepted_group_start=window.accepted_group_start,
+            accepted_group_end=window.accepted_group_end,
+            first_global_query_ordinal=global_query_ordinal,
+            query_count=window.query_count,
+            version_id=state.version_id,
+            output_plan_digest=(
+                projected_plan.output_plan_digest if projected_plan is not None else None
+            ),
+            private_plan_digest=(
+                projected_plan.private_plan_digest if projected_plan is not None else None
+            ),
+            execution_binding_digest=(
+                projected_plan.execution_binding_digest
+                if projected_plan is not None
+                else None
+            ),
+            returned_share_count=(
+                projected_plan.returned_share_count if projected_plan is not None else 0
+            ),
+            overlap_masked_share_count=(
+                projected_plan.random_route_count if projected_plan is not None else 0
+            ),
+            f1m_routes=(projected_plan.f1m_routes if projected_plan is not None else ()),
+        )
+        if window_plan_sink is not None:
+            window_plan_sink(window_plan)
         if window.query_count:
-            if accounting.query_plan is None:
-                raise AssertionError("query-bearing window lost its typed query plan")
+            assert accounting.query_plan is not None
             descriptor = Day1BQueryWindowAccounting(
                 phase=_WORKER_PHASE_BY_SOURCE[phase],
                 window_index=window.index,
@@ -843,9 +996,11 @@ __all__ = (
     "DAY1B_ACCOUNTING_SCHEMA",
     "DAY1B_PHASE_ACCOUNTING_SCHEMA",
     "DAY1B_QUERY_WINDOW_SCHEMA",
+    "DAY1B_WINDOW_PLAN_SCHEMA",
     "Day1BAccountingDomain",
     "Day1BPhaseAccounting",
     "Day1BQueryWindowAccounting",
+    "Day1BWindowPlanAccounting",
     "PUBLICATION_DAY1B_ACCOUNTING_DOMAIN",
     "PublicationDay1BAccounting",
     "PublicationDay1BAccountingError",

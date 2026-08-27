@@ -53,6 +53,7 @@ from dynamic_cssc.publication_artifact_install import (
 from dynamic_cssc.publication_day1b_accounting import (
     PUBLICATION_DAY1B_ACCOUNTING_DOMAIN,
     Day1BAccountingDomain,
+    Day1BWindowPlanAccounting,
     PublicationDay1BAccounting,
 )
 from dynamic_cssc.publication_day1b_aggregate_bounds import (
@@ -103,6 +104,10 @@ from dynamic_cssc.publication_day1b_worker_protocol import (
     DAY1B_WORKER_RECEIPT_SCHEMA,
     DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES,
     Day1BClaimedWorkerEvidence,
+    Day1BControllerExpectedF1MObject,
+    Day1BF1MSizeClass,
+    Day1BF1MWindowBatch,
+    Day1BF1MWindowCardinality,
     Day1BWorkerCandidateSpec,
     Day1BWorkerCellReceipt,
     Day1BWorkerInvocationCapability,
@@ -114,6 +119,9 @@ from dynamic_cssc.publication_day1b_worker_protocol import (
     Day1BWorkerResourceLimits,
     Day1BWorkerSerializedCategoryReceipt,
     abandon_day1b_worker_invocation,
+    canonical_day1b_expected_f1m_size_class_set_sha256,
+    canonical_day1b_expected_f1m_size_class_subroot_sha256,
+    canonical_day1b_f1m_cardinality_derivation_root_sha256,
     canonical_day1b_worker_window_audit_bytes,
     claim_day1b_worker_evidence,
     consume_day1b_worker_frames,
@@ -152,14 +160,14 @@ from dynamic_cssc.publication_traces import (
     PUBLICATION_TRACE_MANIFEST_SCHEMA,
 )
 
-DAY1B_UNIT_SCHEMA = "dynamic-cssc-publication-day1b-unit-v4"
+DAY1B_UNIT_SCHEMA = "dynamic-cssc-publication-day1b-unit-v5"
 DAY1B_UNIT_FRAGMENT_SCHEMA = "dynamic-cssc-publication-day1b-unit-fragment-v1"
-_TEST_DAY1B_UNIT_SCHEMA = "dynamic-cssc-publication-day1b-unit-private-test-fixture-v4"
+_TEST_DAY1B_UNIT_SCHEMA = "dynamic-cssc-publication-day1b-unit-private-test-fixture-v5"
 _TEST_DAY1B_UNIT_FRAGMENT_SCHEMA = (
     "dynamic-cssc-publication-day1b-unit-fragment-private-test-fixture-v1"
 )
 DAY1B_SERIALIZATION_LEDGER_SCHEMA = (
-    "dynamic-cssc-publication-day1b-serialized-protocol-object-ledger-v5"
+    "dynamic-cssc-publication-day1b-serialized-protocol-object-ledger-v6"
 )
 DAY1B_SERIALIZED_OBJECT_SIZE_AUTHORITY_SCHEMA = (
     "dynamic-cssc-publication-day1b-serialized-object-size-authority-v1"
@@ -980,11 +988,111 @@ class _Day1BF1MExecutionLineage:
 
 
 @dataclass(frozen=True, slots=True)
+class _Day1BF1MRegistryInputs:
+    """Same-replay, controller-derived preimage for one bounded F1-M registry."""
+
+    window_cardinalities: tuple[Day1BF1MWindowCardinality, ...]
+    window_batches: tuple[Day1BF1MWindowBatch, ...]
+    expected_f1m_objects: tuple[Day1BControllerExpectedF1MObject, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.window_cardinalities) is not tuple or any(
+            type(row) is not Day1BF1MWindowCardinality
+            for row in self.window_cardinalities
+        ):
+            raise TypeError("F1-M registry cardinalities must be an exact tuple")
+        if type(self.window_batches) is not tuple or any(
+            type(row) is not Day1BF1MWindowBatch for row in self.window_batches
+        ):
+            raise TypeError("F1-M registry batches must be an exact tuple")
+        if type(self.expected_f1m_objects) is not tuple or any(
+            type(row) is not Day1BControllerExpectedF1MObject
+            for row in self.expected_f1m_objects
+        ):
+            raise TypeError("F1-M registry objects must be an exact tuple")
+        phase_order = {
+            phase: index
+            for index, phase in enumerate(
+                ("warmup", "tuning-prefix", "held-out")
+            )
+        }
+        cardinality_order = tuple(
+            (phase_order[row.phase], row.window_index)
+            for row in self.window_cardinalities
+        )
+        batch_order = tuple(
+            (phase_order[row.phase], row.window_index) for row in self.window_batches
+        )
+        if cardinality_order != tuple(sorted(set(cardinality_order))):
+            raise Day1BWorkerProtocolError(
+                "F1-M registry cardinalities are not unique canonical order"
+            )
+        if batch_order != tuple(sorted(set(batch_order))):
+            raise Day1BWorkerProtocolError(
+                "F1-M registry batches are not unique canonical order"
+            )
+        canonical_day1b_expected_f1m_size_class_set_sha256(
+            self.expected_f1m_objects
+        )
+
+    @property
+    def size_class_set_sha256(self) -> str:
+        return canonical_day1b_expected_f1m_size_class_set_sha256(
+            self.expected_f1m_objects
+        )
+
+    @property
+    def cardinality_derivation_root_sha256(self) -> str:
+        return canonical_day1b_f1m_cardinality_derivation_root_sha256(
+            window_cardinalities=self.window_cardinalities,
+            window_batches=self.window_batches,
+            expected_size_classes=self.expected_f1m_objects,
+        )
+
+    def phase_cardinality_totals(
+        self,
+    ) -> tuple[
+        tuple[int, int, int],
+        tuple[int, int, int],
+        tuple[int, int, int],
+        tuple[int, int, int],
+    ]:
+        phases = ("warmup", "tuning-prefix", "held-out")
+        return (
+            tuple(
+                sum(row.phase == phase for row in self.window_cardinalities)
+                for phase in phases
+            ),
+            tuple(
+                sum(row.query_count for row in self.window_cardinalities if row.phase == phase)
+                for phase in phases
+            ),
+            tuple(
+                sum(
+                    row.expected_random_route_count
+                    for row in self.window_cardinalities
+                    if row.phase == phase
+                )
+                for phase in phases
+            ),
+            tuple(
+                sum(
+                    row.expected_dummy_route_count
+                    for row in self.window_cardinalities
+                    if row.phase == phase
+                )
+                for phase in phases
+            ),
+        )  # type: ignore[return-value]
+
+
+@dataclass(frozen=True, slots=True)
 class _Day1BControllerReplay:
     """The two controller-owned preimages produced by one deterministic replay."""
 
     f1m_summary: Day1BF1MControllerSummary
     expected_counts: Day1BControllerExpectedCounts
+    f1m_registry_inputs: _Day1BF1MRegistryInputs
     candidate_replay_capability: Day1BCandidateReplayCapability
 
     def __post_init__(self) -> None:
@@ -992,6 +1100,8 @@ class _Day1BControllerReplay:
             raise TypeError("controller replay requires one exact F1-M summary")
         if type(self.expected_counts) is not Day1BControllerExpectedCounts:
             raise TypeError("controller replay requires one exact expected-count preimage")
+        if type(self.f1m_registry_inputs) is not _Day1BF1MRegistryInputs:
+            raise TypeError("controller replay requires one exact F1-M registry preimage")
         if type(self.candidate_replay_capability) is not Day1BCandidateReplayCapability:
             raise TypeError("controller replay requires one exact replay capability")
         if (
@@ -1461,7 +1571,7 @@ def _validate_preparatory_source_attestation(
         inventory.get("role") != EvidenceRole.DAY1B.value
         or inventory.get("source_git_sha") != source.git_sha
         or inventory.get("behavior_set_schema_version")
-        != "dynamic-cssc-day1b-preparatory-behavior-set-v30"
+        != "dynamic-cssc-day1b-preparatory-behavior-set-v31"
     ):
         raise ValueError(
             "preparatory source inventory must bind the DAY1B role, schema, and exact S1"
@@ -3517,9 +3627,15 @@ def _verify_day1b_unit_view(
                 "worker observed F1-M size-class count",
             )
             if candidate["receipt_origin"] == "worker-complete-transcript":
-                if observed_size_classes != expected_size_classes:
+                required_observed_size_classes = (
+                    expected_size_classes
+                    if input_contract.worker_streams_f1m_size_classes
+                    else 0
+                )
+                if observed_size_classes != required_observed_size_classes:
                     raise ValueError(
-                        "complete worker receipt does not cover every expected F1-M size class"
+                        "complete worker receipt does not match its worker-streamed "
+                        "F1-M size-class mode"
                     )
             elif observed_size_classes != 0:
                 raise ValueError(
@@ -4570,12 +4686,15 @@ class _Day1BWorkerContractSeed:
     resource_limits: Day1BWorkerResourceLimits
     f1m_controller_summary: Day1BF1MControllerSummary
     controller_expected_counts: Day1BControllerExpectedCounts
+    f1m_registry_inputs: _Day1BF1MRegistryInputs
 
     def __post_init__(self) -> None:
         if type(self.f1m_controller_summary) is not Day1BF1MControllerSummary:
             raise TypeError("worker seed requires one exact F1-M controller summary")
         if type(self.controller_expected_counts) is not Day1BControllerExpectedCounts:
             raise TypeError("worker seed requires one exact controller count preimage")
+        if type(self.f1m_registry_inputs) is not _Day1BF1MRegistryInputs:
+            raise TypeError("worker seed requires one exact F1-M registry preimage")
         require_formal_day1b_f1m_worker_zero(self.controller_expected_counts)
         require_formal_day1b_fixed_width_metadata_size_classes(
             self.controller_expected_counts
@@ -4585,12 +4704,52 @@ class _Day1BWorkerContractSeed:
         )
         summary = self.f1m_controller_summary
         expected_counts = self.controller_expected_counts
+        registry_inputs = self.f1m_registry_inputs
         combined_key_size_class = (
             expected_counts.combined_evaluation_key_size_class
         )
         assert combined_key_size_class is not None
         context = summary.context
         authority = summary.size_authority
+        retained_phase_set = set(self.candidate.retained_phases)
+        (
+            registry_phase_window_counts,
+            registry_phase_query_counts,
+            registry_phase_random_counts,
+            registry_phase_dummy_counts,
+        ) = registry_inputs.phase_cardinality_totals()
+        expected_registry_phase_window_counts = tuple(
+            count if phase in retained_phase_set else 0
+            for phase, count in zip(
+                ("warmup", "tuning-prefix", "held-out"),
+                context.phase_window_counts,
+                strict=True,
+            )
+        )
+        expected_registry_phase_query_counts = tuple(
+            count if phase in retained_phase_set else 0
+            for phase, count in zip(
+                ("warmup", "tuning-prefix", "held-out"),
+                summary.phase_query_counts,
+                strict=True,
+            )
+        )
+        expected_registry_phase_random_counts = tuple(
+            count if phase in retained_phase_set else 0
+            for phase, count in zip(
+                ("warmup", "tuning-prefix", "held-out"),
+                summary.phase_random_route_counts,
+                strict=True,
+            )
+        )
+        expected_registry_phase_dummy_counts = tuple(
+            count if phase in retained_phase_set else 0
+            for phase, count in zip(
+                ("warmup", "tuning-prefix", "held-out"),
+                summary.phase_dummy_route_counts,
+                strict=True,
+            )
+        )
         expected_phase_ranges = tuple(
             Day1BF1MPhaseBoundary(
                 {"warmup": "warmup", "tuning": "tuning-prefix", "heldout": "held-out"}[phase.phase],
@@ -4653,23 +4812,38 @@ class _Day1BWorkerContractSeed:
             != self.resource_limits.serialized_object_bytes_maximum
             or summary.serialized_payload_bytes_per_cell_maximum
             != self.resource_limits.serialized_payload_bytes_per_cell_maximum
+            or registry_phase_window_counts
+            != expected_registry_phase_window_counts
+            or registry_phase_query_counts
+            != expected_registry_phase_query_counts
+            or registry_phase_random_counts
+            != expected_registry_phase_random_counts
+            or registry_phase_dummy_counts
+            != expected_registry_phase_dummy_counts
         ):
             raise Day1BWorkerProtocolError(
                 "worker seed and F1-M controller summary do not bind one candidate cell"
             )
 
-    def bind(
-        self,
-        *,
-        expected_f1m_size_class_set_sha256: str,
-        expected_f1m_size_class_count: int,
-        expected_serialized_equivalence_class_count: int,
-        expected_f1m_cardinality_derivation_root_sha256: str,
-    ) -> Day1BWorkerProtocolContract:
+    def bind(self) -> Day1BWorkerProtocolContract:
+        """Bind only the exact controller preimages carried by this seed."""
+
         combined_key_size_class = (
             self.controller_expected_counts.combined_evaluation_key_size_class
         )
         assert combined_key_size_class is not None
+        f1m_categories = set(DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES)
+        expected_serialized_equivalence_class_count = sum(
+            int(count > 0)
+            for phase in self.controller_expected_counts.phases
+            for (category, _transaction), count in zip(
+                self.controller_expected_counts.serialized_categories,
+                phase.worker_streamed_protocol_object_counts,
+                strict=True,
+            )
+            if category not in f1m_categories
+        )
+        registry_inputs = self.f1m_registry_inputs
         return Day1BWorkerProtocolContract(
             invocation_id=self.invocation_id,
             trace_manifest_sha256=self.trace_manifest_sha256,
@@ -4710,13 +4884,17 @@ class _Day1BWorkerContractSeed:
             controller_expected_counts_sha256=(
                 self.controller_expected_counts.expected_counts_sha256
             ),
-            expected_f1m_size_class_set_sha256=expected_f1m_size_class_set_sha256,
-            expected_f1m_size_class_count=expected_f1m_size_class_count,
+            expected_f1m_size_class_set_sha256=(
+                registry_inputs.size_class_set_sha256
+            ),
+            expected_f1m_size_class_count=len(
+                registry_inputs.expected_f1m_objects
+            ),
             expected_serialized_equivalence_class_count=(
                 expected_serialized_equivalence_class_count
             ),
             expected_f1m_cardinality_derivation_root_sha256=(
-                expected_f1m_cardinality_derivation_root_sha256
+                registry_inputs.cardinality_derivation_root_sha256
             ),
             resource_limits=self.resource_limits,
         )
@@ -4724,16 +4902,7 @@ class _Day1BWorkerContractSeed:
     def require_exact_bound_contract(self, contract: Day1BWorkerProtocolContract) -> None:
         if type(contract) is not Day1BWorkerProtocolContract:
             raise TypeError("worker launch contract must be exact typed protocol input")
-        expected = self.bind(
-            expected_f1m_size_class_set_sha256=contract.expected_f1m_size_class_set_sha256,
-            expected_f1m_size_class_count=contract.expected_f1m_size_class_count,
-            expected_serialized_equivalence_class_count=(
-                contract.expected_serialized_equivalence_class_count
-            ),
-            expected_f1m_cardinality_derivation_root_sha256=(
-                contract.expected_f1m_cardinality_derivation_root_sha256
-            ),
-        )
+        expected = self.bind()
         if contract != expected:
             raise Day1BWorkerProtocolError(
                 "worker launch retargeted repository-owned candidate-cell contract facts"
@@ -4870,6 +5039,138 @@ def _candidate_worker_spec(candidate: RegisteredCandidate) -> Day1BWorkerCandida
     )
 
 
+def _derive_day1b_f1m_registry_inputs(
+    *,
+    window_plans: tuple[Day1BWindowPlanAccounting, ...],
+    candidate: Day1BWorkerCandidateSpec,
+) -> _Day1BF1MRegistryInputs:
+    """Project same-replay window plans into the bounded worker registry schema."""
+
+    if type(window_plans) is not tuple or any(
+        type(plan) is not Day1BWindowPlanAccounting for plan in window_plans
+    ):
+        raise TypeError("Day1B registry input requires an exact window-plan tuple")
+    if type(candidate) is not Day1BWorkerCandidateSpec:
+        raise TypeError("Day1B registry input requires one exact candidate spec")
+    category_order = {
+        category: index
+        for index, category in enumerate(
+            DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
+        )
+    }
+    next_object_ordinal: dict[tuple[str, str], int] = {}
+    cardinalities: list[Day1BF1MWindowCardinality] = []
+    batches: list[Day1BF1MWindowBatch] = []
+    expected_objects: list[Day1BControllerExpectedF1MObject] = []
+    previous_order: tuple[int, int] | None = None
+    phase_order = {
+        phase: index
+        for index, phase in enumerate(("warmup", "tuning-prefix", "held-out"))
+    }
+    for plan in window_plans:
+        order = phase_order[plan.phase], plan.window_index
+        if previous_order is not None and order <= previous_order:
+            raise Day1BWorkerProtocolError(
+                "same-replay window plans are not unique canonical order"
+            )
+        previous_order = order
+        if plan.phase not in candidate.retained_phases:
+            continue
+        if (
+            candidate.f1m_policy == "uniform-random-or-zero"
+            and plan.query_count
+            and len(plan.f1m_routes) != plan.returned_share_count
+        ):
+            raise Day1BWorkerProtocolError(
+                "uniform F1-M registry must classify every returned share"
+            )
+        if candidate.f1m_policy == "overlap-only" and any(
+            route.kind == "encrypted-zero-dummy" for route in plan.f1m_routes
+        ):
+            raise Day1BWorkerProtocolError(
+                "overlap-only F1-M registry cannot contain dummy routes"
+            )
+        phase_objects: list[Day1BControllerExpectedF1MObject] = []
+        for route in plan.f1m_routes:
+            if plan.execution_binding_digest is None:
+                raise AssertionError("query-bearing F1-M route lost its execution binding")
+            ordinal_key = plan.phase, route.category
+            object_ordinal = next_object_ordinal.get(ordinal_key, 0)
+            next_object_ordinal[ordinal_key] = object_ordinal + 1
+            phase_objects.append(
+                Day1BControllerExpectedF1MObject(
+                    phase=plan.phase,
+                    window_index=plan.window_index,
+                    first_global_query_ordinal=plan.first_global_query_ordinal,
+                    multiplicity=plan.query_count,
+                    category=route.category,
+                    object_ordinal=object_ordinal,
+                    f1m_size_class=Day1BF1MSizeClass(
+                        version_id=plan.version_id,
+                        output_plan_digest=plan.output_plan_digest,
+                        component_id=route.component_id,
+                        output_block_id=route.output_block_id,
+                        f1m_kind=route.kind,
+                        private_plan_digest=plan.private_plan_digest,
+                        execution_binding_digest=plan.execution_binding_digest,
+                    ),
+                )
+            )
+        phase_objects.sort(
+            key=lambda row: (row.object_ordinal, category_order[row.category])
+        )
+        expected_objects.extend(phase_objects)
+        size_class_subroot = canonical_day1b_expected_f1m_size_class_subroot_sha256(
+            tuple(phase_objects)
+        )
+        random_route_count = sum(
+            route.kind == "random-zero-sum" for route in plan.f1m_routes
+        )
+        dummy_route_count = sum(
+            route.kind == "encrypted-zero-dummy" for route in plan.f1m_routes
+        )
+        cardinalities.append(
+            Day1BF1MWindowCardinality(
+                phase=plan.phase,
+                window_index=plan.window_index,
+                accepted_group_start=plan.accepted_group_start,
+                accepted_group_end=plan.accepted_group_end,
+                first_global_query_ordinal=plan.first_global_query_ordinal,
+                query_count=plan.query_count,
+                version_id=plan.version_id,
+                output_plan_digest=plan.output_plan_digest,
+                private_plan_digest=plan.private_plan_digest,
+                execution_binding_digest=plan.execution_binding_digest,
+                f1m_policy=candidate.f1m_policy,
+                returned_share_count=plan.returned_share_count,
+                overlap_masked_share_count=plan.overlap_masked_share_count,
+                expected_random_route_count=(plan.query_count * random_route_count),
+                expected_dummy_route_count=(plan.query_count * dummy_route_count),
+                expected_size_class_subroot_sha256=size_class_subroot,
+            )
+        )
+        if plan.query_count:
+            assert plan.execution_binding_digest is not None
+            batches.append(
+                Day1BF1MWindowBatch(
+                    phase=plan.phase,
+                    window_index=plan.window_index,
+                    first_global_query_ordinal=plan.first_global_query_ordinal,
+                    query_count=plan.query_count,
+                    version_id=plan.version_id,
+                    output_plan_digest=plan.output_plan_digest,
+                    private_plan_digest=plan.private_plan_digest,
+                    execution_binding_digest=plan.execution_binding_digest,
+                    size_class_subroot_sha256=size_class_subroot,
+                )
+            )
+    return _Day1BF1MRegistryInputs(
+        window_cardinalities=tuple(cardinalities),
+        window_batches=tuple(batches),
+        expected_f1m_objects=tuple(expected_objects),
+    )
+
+
 def _candidate_worker_contract_seed(
     *,
     trace: _Day1BTraceInput,
@@ -4883,6 +5184,7 @@ def _candidate_worker_contract_seed(
     size_authority: _Day1BSerializedObjectSizeAuthority,
     f1m_controller_summary: Day1BF1MControllerSummary,
     controller_expected_counts: Day1BControllerExpectedCounts,
+    f1m_registry_inputs: _Day1BF1MRegistryInputs,
 ) -> _Day1BWorkerContractSeed:
     invocation_id = _digest(
         {
@@ -4921,6 +5223,7 @@ def _candidate_worker_contract_seed(
         resource_limits=resource_policy.to_worker_limits(),
         f1m_controller_summary=f1m_controller_summary,
         controller_expected_counts=controller_expected_counts,
+        f1m_registry_inputs=f1m_registry_inputs,
     )
 
 
@@ -5143,6 +5446,7 @@ def _replay_f1m_controller_for_candidate_cell(
         program.phase_ranges,
         program.rho,
     )
+    window_plans: list[Day1BWindowPlanAccounting] = []
     accounting, candidate_replay_capability = replay_and_seal_publication_day1b_candidate(
         candidate=candidate,
         windows=audited_windows,
@@ -5150,6 +5454,7 @@ def _replay_f1m_controller_for_candidate_cell(
         query_vector_canonical_bytes=trace.query_vector_canonical_bytes,
         query_vector_sha256=trace.query_vector_sha256,
         query_window_sink=controller.accept_query_window,
+        window_plan_sink=window_plans.append,
     )
     try:
         replay_audit = audited_windows.finish()
@@ -5194,9 +5499,14 @@ def _replay_f1m_controller_for_candidate_cell(
             ),
             serialized_eval_mult_key_bytes=size_authority.serialized_eval_mult_key_bytes,
         )
+        registry_inputs = _derive_day1b_f1m_registry_inputs(
+            window_plans=tuple(window_plans),
+            candidate=candidate_spec,
+        )
         return _Day1BControllerReplay(
             f1m_summary=summary,
             expected_counts=expected_counts,
+            f1m_registry_inputs=registry_inputs,
             candidate_replay_capability=candidate_replay_capability,
         )
     except BaseException:
@@ -5353,6 +5663,9 @@ def _produce_publication_day1b_unit(
                             f1m_controller_summary=f1m_controller_summary,
                             controller_expected_counts=(
                                 controller_replay.expected_counts
+                            ),
+                            f1m_registry_inputs=(
+                                controller_replay.f1m_registry_inputs
                             ),
                         )
                         launch = execution_adapter.execute_candidate_cell(

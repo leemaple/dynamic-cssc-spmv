@@ -16,6 +16,7 @@ from .strategy_state import (
     StrongStrategyState,
     StrongTransition,
     Transition,
+    TransitionFacts,
     _assert_strong_strategy_invariants,
     _validated_predecessor,
     advance_publication,
@@ -272,6 +273,9 @@ class _QueryAccountingTemplate:
 
 def _query_shape(transition: Transition | StrongTransition) -> tuple[object, ...]:
     state = transition.state
+    output_plan = transition.output_plan
+    if output_plan is None:
+        raise AssertionError("query shape requires a typed output plan")
     components = (
         (state.base,)
         if isinstance(state, StrongStrategyState) or state.delta is None
@@ -286,11 +290,11 @@ def _query_shape(transition: Transition | StrongTransition) -> tuple[object, ...
     )
     output_shape = tuple(
         (share.component_id, share.output_block_id, share.slot_to_logical)
-        for share in transition.output_plan.shares
+        for share in output_plan.shares
     )
     return (
-        transition.output_plan.logical_output_size,
-        transition.output_plan.slot_count,
+        output_plan.logical_output_size,
+        output_plan.slot_count,
         component_shape,
         output_shape,
     )
@@ -357,11 +361,10 @@ def _cached_strong_accounting(
         accounting = account_strong_transition(transition)
         cache[shape] = _query_template(accounting)
         return accounting
-    zero_query = replace(
-        transition,
-        facts=replace(transition.facts, query_count=0),
+    update_only = _strong_update_accounting(
+        replace(transition.facts, query_count=0)
     )
-    return _apply_query_template(account_strong_transition(zero_query), template, queries)
+    return _apply_query_template(update_only, template, queries)
 
 
 def _is_strict_int(value: object) -> bool:
@@ -414,6 +417,56 @@ def account_transition(transition: Transition) -> WindowAccounting:
     return accounting
 
 
+def project_transition_query_plan(
+    transition: Transition,
+) -> tuple[QueryPlanAccounting, CompiledQuery]:
+    """Compile the deterministic query layout for one published ordinary version.
+
+    This projection is query-arrival independent.  It does not prepare operands,
+    reserve F1-M randomness, authorize execution, or claim that a query ran.
+    """
+
+    state = transition.state
+    components = (state.base,) if state.delta is None else (state.base, state.delta)
+    compiled = compile_query(
+        components,
+        client_lane_segments=state.coo_segments,
+        f1m_policy="overlap-only",
+    )
+    if canonical_output_plan_payload(compiled.output_plan) != canonical_output_plan_payload(
+        transition.output_plan
+    ):
+        raise AssertionError("compiled OutputPlan must canonically match the transition OutputPlan")
+    f1m_result_routes = tuple(
+        (result_ordinal, route)
+        for result_ordinal, route in enumerate(compiled.result_routes)
+        if route.f1m_ciphertext_id is not None
+    )
+    routes = tuple(
+        F1MRouteAccounting(
+            result_id=route.result_id,
+            result_ordinal=result_ordinal,
+            f1m_route_ordinal=f1m_route_ordinal,
+            component_id=route.component_id,
+            output_block_id=route.output_block_id,
+            kind="random-zero-sum",
+        )
+        for f1m_route_ordinal, (result_ordinal, route) in enumerate(f1m_result_routes)
+    )
+    return (
+        QueryPlanAccounting(
+            version_id=compiled.cloud_plan.binding.version_id,
+            cloud_program_digest=compiled.cloud_program_digest,
+            output_plan_digest=compiled.output_plan_digest,
+            execution_binding_digest=compiled.execution_binding_digest,
+            private_plan_digest=compiled.private_plan_digest,
+            returned_share_count=len(compiled.result_routes),
+            f1m_routes=routes,
+        ),
+        compiled,
+    )
+
+
 def account_transition_with_compiled(
     transition: Transition,
 ) -> tuple[WindowAccounting, CompiledQuery | None]:
@@ -450,16 +503,7 @@ def account_transition_with_compiled(
     if queries == 0:
         return WindowAccounting(metrics, (), None), None
 
-    components = (state.base,) if state.delta is None else (state.base, state.delta)
-    compiled = compile_query(
-        components,
-        client_lane_segments=state.coo_segments,
-        f1m_policy="overlap-only",
-    )
-    if canonical_output_plan_payload(compiled.output_plan) != canonical_output_plan_payload(
-        transition.output_plan
-    ):
-        raise AssertionError("compiled OutputPlan must canonically match the transition OutputPlan")
+    query_plan, compiled = project_transition_query_plan(transition)
 
     counts = compiled.cloud_counts
     analysis = compiled.output_analysis
@@ -488,37 +532,13 @@ def account_transition_with_compiled(
     rotations = _rotation_counts_for_program(compiled.cloud_plan.program)
     if sum(rotations.values()) != counts.rotations:
         raise AssertionError("exact rotation counts must reconcile with the query DAG")
-    f1m_result_routes = tuple(
-        (result_ordinal, route)
-        for result_ordinal, route in enumerate(compiled.result_routes)
-        if route.f1m_ciphertext_id is not None
-    )
-    routes = tuple(
-        F1MRouteAccounting(
-            result_id=route.result_id,
-            result_ordinal=result_ordinal,
-            f1m_route_ordinal=f1m_route_ordinal,
-            component_id=route.component_id,
-            output_block_id=route.output_block_id,
-            kind="random-zero-sum",
-        )
-        for f1m_route_ordinal, (result_ordinal, route) in enumerate(f1m_result_routes)
-    )
-    if len(routes) * queries != metrics.blinding_mask_ciphertexts:
+    if query_plan.random_route_count * queries != metrics.blinding_mask_ciphertexts:
         raise AssertionError("ordinary F1-M route classes must reconcile with metrics")
     return (
         WindowAccounting(
             metrics,
             tuple(sorted(rotations.items())),
-            QueryPlanAccounting(
-                version_id=compiled.cloud_plan.binding.version_id,
-                cloud_program_digest=compiled.cloud_program_digest,
-                output_plan_digest=compiled.output_plan_digest,
-                execution_binding_digest=compiled.execution_binding_digest,
-                private_plan_digest=compiled.private_plan_digest,
-                returned_share_count=len(compiled.result_routes),
-                f1m_routes=routes,
-            ),
+            query_plan,
         ),
         compiled,
     )
@@ -531,6 +551,38 @@ def account_strong_transition(transition: StrongTransition) -> WindowAccounting:
     return accounting
 
 
+def project_strong_query_plan(bundle: StrongExecutionBundle) -> QueryPlanAccounting:
+    """Project one strong version's deterministic query layout without execution."""
+
+    if type(bundle) is not StrongExecutionBundle:
+        raise TypeError("strong query-plan projection requires an exact execution bundle")
+    masked_share_ids = _masked_output_share_ids(bundle.output_plan)
+    routes = tuple(
+        F1MRouteAccounting(
+            result_id=route.result_id,
+            result_ordinal=result_ordinal,
+            f1m_route_ordinal=result_ordinal,
+            component_id=route.component_id,
+            output_block_id=route.output_block_id,
+            kind=(
+                "random-zero-sum"
+                if route.output_share_id in masked_share_ids
+                else "encrypted-zero-dummy"
+            ),
+        )
+        for result_ordinal, route in enumerate(bundle.result_routes)
+    )
+    return QueryPlanAccounting(
+        version_id=bundle.cloud_plan.binding.version_id,
+        cloud_program_digest=bundle.cloud_program_digest,
+        output_plan_digest=bundle.output_plan_digest,
+        execution_binding_digest=bundle.execution_binding_digest,
+        private_plan_digest=bundle.private_plan_digest,
+        returned_share_count=len(bundle.result_routes),
+        f1m_routes=routes,
+    )
+
+
 def account_strong_transition_with_bundle(
     transition: StrongTransition,
 ) -> tuple[WindowAccounting, StrongExecutionBundle | None]:
@@ -541,33 +593,18 @@ def account_strong_transition_with_bundle(
     """
 
     facts = transition.facts
-    if facts.rebuilt_ciphertexts != 0:
-        raise AssertionError("the frozen strong policy must not compact or rebuild the base")
-    metrics = StrategyMetrics(
-        strategy=STRONG_REFERENCE_STRATEGY,
-        category="reference",
-        windows=1,
-        queries=facts.query_count,
-        updates=facts.updates,
-        update_encryptions=facts.value_patch_chunks + facts.delta_rebuilt_ciphertexts,
-        update_ciphertexts=facts.value_patch_chunks + facts.delta_rebuilt_ciphertexts,
-        compaction_ciphertexts=0,
-        ci_patch_entries=facts.ci_patch_entries,
-        ci_full_sync_entries=facts.ci_full_sync_entries,
-        metadata_units=facts.ci_patch_entries + facts.ci_full_sync_entries,
-        overflow_updates=facts.overflow,
-        absorbed_updates=(
-            facts.absorbed_tombstone + facts.absorbed_natural_padding + facts.absorbed_reserved
-        ),
-        source="persistent-state-predicted",
-    )
+    update_only = _strong_update_accounting(facts)
     queries = facts.query_count
     if queries == 0:
-        return WindowAccounting(metrics, (), None), None
+        return update_only, None
 
-    counts = transition.execution_bundle.cloud_counts
-    analysis = transition.execution_bundle.output_analysis
-    f1m = transition.execution_bundle.f1m_counts
+    metrics = update_only.metrics
+    bundle = transition.execution_bundle
+    if bundle is None or transition.output_plan is None:
+        raise AssertionError("query-bearing strong transition lost its typed query bundle")
+    counts = bundle.cloud_counts
+    analysis = bundle.output_analysis
+    f1m = bundle.f1m_counts
     query_ciphertexts = dict(counts.ciphertext_inputs_by_role).get("query", 0)
     if not (
         query_ciphertexts == counts.multiply_ciphertexts == counts.relinearizations
@@ -598,29 +635,14 @@ def account_strong_transition_with_bundle(
     metrics.mask_random_elements = queries * f1m.random_elements
     metrics.mask_mapped_elements = queries * analysis.mask_mapped_elements
     metrics.client_reorder_elements = queries * analysis.client_reorder_elements
-    rotations = _rotation_counts_for_program(transition.execution_bundle.cloud_plan.program)
+    rotations = _rotation_counts_for_program(bundle.cloud_plan.program)
     if sum(rotations.values()) != counts.rotations:
         raise AssertionError("exact rotation counts must reconcile with the query DAG")
-    masked_share_ids = _masked_output_share_ids(transition.execution_bundle.output_plan)
-    routes = tuple(
-        F1MRouteAccounting(
-            result_id=route.result_id,
-            result_ordinal=result_ordinal,
-            f1m_route_ordinal=result_ordinal,
-            component_id=route.component_id,
-            output_block_id=route.output_block_id,
-            kind=(
-                "random-zero-sum"
-                if route.output_share_id in masked_share_ids
-                else "encrypted-zero-dummy"
-            ),
-        )
-        for result_ordinal, route in enumerate(transition.execution_bundle.result_routes)
-    )
+    query_plan = project_strong_query_plan(bundle)
     if (
-        sum(route.kind == "random-zero-sum" for route in routes) * queries
+        query_plan.random_route_count * queries
         != metrics.blinding_mask_ciphertexts
-        or sum(route.kind == "encrypted-zero-dummy" for route in routes) * queries
+        or query_plan.dummy_route_count * queries
         != metrics.blinding_dummy_ciphertexts
     ):
         raise AssertionError("strong F1-M route classes must reconcile with metrics")
@@ -628,18 +650,36 @@ def account_strong_transition_with_bundle(
         WindowAccounting(
             metrics,
             tuple(sorted(rotations.items())),
-            QueryPlanAccounting(
-                version_id=transition.state.version_id,
-                cloud_program_digest=transition.execution_bundle.cloud_program_digest,
-                output_plan_digest=transition.execution_bundle.output_plan_digest,
-                execution_binding_digest=(transition.execution_bundle.execution_binding_digest),
-                private_plan_digest=transition.execution_bundle.private_plan_digest,
-                returned_share_count=len(transition.execution_bundle.result_routes),
-                f1m_routes=routes,
-            ),
+            query_plan,
         ),
-        transition.execution_bundle,
+        bundle,
     )
+
+
+def _strong_update_accounting(facts: TransitionFacts) -> WindowAccounting:
+    """Build update-only strong accounting without fabricating query state."""
+
+    if facts.rebuilt_ciphertexts != 0:
+        raise AssertionError("the frozen strong policy must not compact or rebuild the base")
+    metrics = StrategyMetrics(
+        strategy=STRONG_REFERENCE_STRATEGY,
+        category="reference",
+        windows=1,
+        queries=facts.query_count,
+        updates=facts.updates,
+        update_encryptions=facts.value_patch_chunks + facts.delta_rebuilt_ciphertexts,
+        update_ciphertexts=facts.value_patch_chunks + facts.delta_rebuilt_ciphertexts,
+        compaction_ciphertexts=0,
+        ci_patch_entries=facts.ci_patch_entries,
+        ci_full_sync_entries=facts.ci_full_sync_entries,
+        metadata_units=facts.ci_patch_entries + facts.ci_full_sync_entries,
+        overflow_updates=facts.overflow,
+        absorbed_updates=(
+            facts.absorbed_tombstone + facts.absorbed_natural_padding + facts.absorbed_reserved
+        ),
+        source="persistent-state-predicted",
+    )
+    return WindowAccounting(metrics, (), None)
 
 
 def simulate_strong_reference(

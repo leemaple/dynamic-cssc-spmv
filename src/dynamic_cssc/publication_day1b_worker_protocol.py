@@ -50,13 +50,13 @@ from dynamic_cssc.publication_day1b_scratch import (
 )
 
 DAY1B_WORKER_FRAME_SCHEMA = "dynamic-cssc-publication-day1b-worker-frame-v2"
-DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v10"
-DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v10"
+DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v11"
+DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v11"
 DAY1B_WORKER_WINDOW_AUDIT_SCHEMA = "dynamic-cssc-publication-day1b-worker-window-audit-v1"
 DAY1B_WORKER_F1M_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-f1m-binding-receipt-v1"
 DAY1B_WORKER_F1M_SIZE_CLASS_SCHEMA = "dynamic-cssc-publication-day1b-f1m-size-class-v1"
 DAY1B_WORKER_F1M_WINDOW_CARDINALITY_SCHEMA = (
-    "dynamic-cssc-publication-day1b-f1m-window-cardinality-v2"
+    "dynamic-cssc-publication-day1b-f1m-window-cardinality-v3"
 )
 DAY1B_WORKER_F1M_WINDOW_BATCH_SCHEMA = "dynamic-cssc-publication-day1b-f1m-window-batch-v1"
 DAY1B_WORKER_EXPECTED_F1M_OBJECT_SCHEMA = (
@@ -586,9 +586,9 @@ class Day1BF1MWindowCardinality:
     first_global_query_ordinal: int
     query_count: int
     version_id: str
-    output_plan_digest: str
-    private_plan_digest: str
-    execution_binding_digest: str
+    output_plan_digest: str | None
+    private_plan_digest: str | None
+    execution_binding_digest: str | None
     f1m_policy: str
     returned_share_count: int
     overlap_masked_share_count: int
@@ -616,13 +616,26 @@ class Day1BF1MWindowCardinality:
         )
         query_count = _strict_nonnegative(self.query_count, "F1-M cardinality query_count")
         _nonempty_string(self.version_id, "F1-M cardinality version_id")
-        for field in (
-            "output_plan_digest",
-            "private_plan_digest",
-            "execution_binding_digest",
-            "expected_size_class_subroot_sha256",
-        ):
-            _sha256(getattr(self, field), f"F1-M cardinality {field}")
+        _sha256(
+            self.expected_size_class_subroot_sha256,
+            "F1-M cardinality expected_size_class_subroot_sha256",
+        )
+        if query_count == 0:
+            if (
+                self.output_plan_digest is not None
+                or self.private_plan_digest is not None
+                or self.execution_binding_digest is not None
+            ):
+                raise Day1BWorkerProtocolError(
+                    "zero-query F1-M cardinality cannot claim a query-plan binding"
+                )
+        else:
+            for field in (
+                "output_plan_digest",
+                "private_plan_digest",
+                "execution_binding_digest",
+            ):
+                _sha256(getattr(self, field), f"F1-M cardinality {field}")
         if type(self.f1m_policy) is not str or self.f1m_policy not in {
             "overlap-only",
             "uniform-random-or-zero",
@@ -639,6 +652,10 @@ class Day1BF1MWindowCardinality:
         if masked > returned:
             raise Day1BWorkerProtocolError(
                 "F1-M overlap-masked share count exceeds returned shares"
+            )
+        if query_count == 0 and (returned != 0 or masked != 0):
+            raise Day1BWorkerProtocolError(
+                "zero-query F1-M cardinality cannot claim returned shares"
             )
         expected_random = query_count * masked
         expected_dummy = (
@@ -913,7 +930,7 @@ def canonical_day1b_f1m_cardinality_derivation_root_sha256(
             window_hasher.update(b",")
         window_hasher.update(_canonical_json_bytes(row.to_document())[:-1])
     window_hasher.update(
-        b'],"schema_version":"dynamic-cssc-day1b-f1m-window-cardinality-set-v3"}\n'
+        b'],"schema_version":"dynamic-cssc-day1b-f1m-window-cardinality-set-v4"}\n'
     )
 
     window_batch_hasher = hashlib.sha256()
@@ -932,7 +949,7 @@ def canonical_day1b_f1m_cardinality_derivation_root_sha256(
                 "size_class_set_sha256": (
                     canonical_day1b_expected_f1m_size_class_set_sha256(expected_size_classes)
                 ),
-                "schema_version": "dynamic-cssc-day1b-f1m-cardinality-derivation-v4",
+                "schema_version": "dynamic-cssc-day1b-f1m-cardinality-derivation-v5",
                 "window_cardinality_stream_sha256": window_hasher.hexdigest(),
             }
         )
@@ -1297,6 +1314,12 @@ class Day1BWorkerProtocolContract:
             raise Day1BWorkerProtocolError(
                 "required F1-M ciphertext categories must carry size-class descriptors"
             )
+        if self.f1m_size_class_categories != (
+            DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
+        ):
+            raise Day1BWorkerProtocolError(
+                "F1-M size-class categories must equal the frozen two-category grammar"
+            )
         expected_f1m_count = _strict_nonnegative(
             self.expected_f1m_size_class_count,
             "expected_f1m_size_class_count",
@@ -1305,17 +1328,10 @@ class Day1BWorkerProtocolContract:
             self.expected_serialized_equivalence_class_count,
             "expected_serialized_equivalence_class_count",
         )
-        if expected_all_count < expected_f1m_count:
-            raise Day1BWorkerProtocolError(
-                "all serialized equivalence classes cannot be fewer than F1-M size classes"
-            )
         category_index = {
             category: index for index, category in enumerate(category_names)
         }
-        f1m_indices = tuple(
-            category_index[category]
-            for category in DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
-        )
+        f1m_indices = self._f1m_size_class_category_indices()
         non_f1m_equivalence_classes = sum(
             int(count > 0)
             for phase in expected_counts.phases
@@ -1324,7 +1340,27 @@ class Day1BWorkerProtocolContract:
             )
             if index not in f1m_indices
         )
-        if expected_all_count != non_f1m_equivalence_classes + expected_f1m_count:
+        f1m_worker_counts = tuple(
+            phase.worker_streamed_protocol_object_counts[index]
+            for phase in expected_counts.phases
+            for index in f1m_indices
+        )
+        f1m_logical_counts = tuple(
+            phase.logical_protocol_object_counts[index]
+            for phase in expected_counts.phases
+            for index in f1m_indices
+        )
+        if any(f1m_worker_counts) and f1m_worker_counts != f1m_logical_counts:
+            raise Day1BWorkerProtocolError(
+                "worker-streamed F1-M mode must cover every logical F1-M multiplicity"
+            )
+        worker_f1m_equivalence_classes = (
+            expected_f1m_count if any(f1m_worker_counts) else 0
+        )
+        if (
+            expected_all_count
+            != non_f1m_equivalence_classes + worker_f1m_equivalence_classes
+        ):
             raise Day1BWorkerProtocolError(
                 "all serialized equivalence classes differ from the controller count preimage"
             )
@@ -1550,6 +1586,31 @@ class Day1BWorkerProtocolContract:
     def input_binding_sha256(self) -> str:
         return hashlib.sha256(_canonical_json_bytes(self.input_binding_document())).hexdigest()
 
+    def _f1m_size_class_category_indices(self) -> tuple[int, ...]:
+        category_names = tuple(
+            category for category, _transaction in self.serialized_categories
+        )
+        return tuple(
+            category_names.index(category)
+            for category in self.f1m_size_class_categories
+        )
+
+    def worker_streams_f1m_size_classes_in_phase(self, phase: str) -> bool:
+        expected = self.controller_expected_counts.phase_counts(phase)
+        return any(
+            expected.worker_streamed_protocol_object_counts[index] > 0
+            for index in self._f1m_size_class_category_indices()
+        )
+
+    @property
+    def worker_streams_f1m_size_classes(self) -> bool:
+        """Whether this exact contract materializes any F1-M worker frame."""
+
+        return any(
+            self.worker_streams_f1m_size_classes_in_phase(phase.phase)
+            for phase in self.controller_expected_counts.phases
+        )
+
 
 def _pre_dispatch_context_sha256(
     contract: Day1BWorkerProtocolContract,
@@ -1760,14 +1821,38 @@ class Day1BWorkerCellReceipt:
             raise Day1BWorkerProtocolError(
                 "weighted Day1B cannot report materialized per-query F1-M bindings"
             )
-        if type(self.weighted_query_range_coverage_verified) is not bool:
-            raise Day1BWorkerProtocolError("weighted query-range coverage must be an exact boolean")
-        if self.production_execution_admissible and not (
-            self.anonymous_scratch_creation_isolation_verified
-            and self.weighted_query_range_coverage_verified
+        worker_observed_f1m_size_class_count = _strict_nonnegative(
+            self.worker_observed_f1m_size_class_count,
+            "worker_observed_f1m_size_class_count",
+        )
+        if (
+            not binding.worker_streams_f1m_size_classes
+            and worker_observed_f1m_size_class_count != 0
         ):
             raise Day1BWorkerProtocolError(
-                "weighted production admission requires isolation and range verification"
+                "formal weighted mode forbids worker-observed F1-M size classes"
+            )
+        for field in (
+            "worker_declared_phase_audits_match_controller_schedule_audits",
+            "runtime_state_continuity_verified",
+            "anonymous_scratch_creation_isolation_verified",
+            "weighted_query_range_coverage_verified",
+            "production_execution_admissible",
+        ):
+            if type(getattr(self, field)) is not bool:
+                raise Day1BWorkerProtocolError(
+                    f"worker receipt {field} must be an exact boolean"
+                )
+        if self.production_execution_admissible and not (
+            self.worker_declared_phase_audits_match_controller_schedule_audits
+            and self.runtime_state_continuity_verified
+            and self.anonymous_scratch_creation_isolation_verified
+            and self.weighted_query_range_coverage_verified
+            and worker_observed_f1m_size_class_count == 0
+        ):
+            raise Day1BWorkerProtocolError(
+                "weighted production admission requires exact replay/runtime/isolation/range "
+                "verification and zero worker-observed F1-M size classes"
             )
 
     @property
@@ -2398,12 +2483,17 @@ def _create_expected_f1m_tables(connection: sqlite3.Connection) -> None:
         "phase TEXT NOT NULL, window_index INTEGER NOT NULL, "
         "accepted_group_start INTEGER NOT NULL, accepted_group_end INTEGER NOT NULL, "
         "first_global_query_ordinal INTEGER NOT NULL, query_count INTEGER NOT NULL, "
-        "version_id TEXT NOT NULL, output_plan_digest TEXT NOT NULL, "
-        "private_plan_digest TEXT NOT NULL, execution_binding_digest TEXT NOT NULL, "
+        "version_id TEXT NOT NULL, output_plan_digest TEXT, "
+        "private_plan_digest TEXT, execution_binding_digest TEXT, "
         "f1m_policy TEXT NOT NULL, "
         "expected_random_route_count INTEGER NOT NULL, "
         "expected_dummy_route_count INTEGER NOT NULL, "
         "expected_size_class_subroot_sha256 TEXT NOT NULL, "
+        "CHECK(query_count >= 0), "
+        "CHECK((query_count = 0 AND output_plan_digest IS NULL "
+        "AND private_plan_digest IS NULL AND execution_binding_digest IS NULL) OR "
+        "(query_count > 0 AND output_plan_digest IS NOT NULL "
+        "AND private_plan_digest IS NOT NULL AND execution_binding_digest IS NOT NULL)), "
         "PRIMARY KEY(phase, window_index)) WITHOUT ROWID"
     )
     connection.execute(
@@ -2693,7 +2783,7 @@ class _ExpectedF1MRegistry:
             hasher.update(_canonical_json_bytes(row.to_document())[:-1])
             _insert_f1m_window_cardinality(self.connection, row)
             self._checkpoint(count)
-        hasher.update(b'],"schema_version":"dynamic-cssc-day1b-f1m-window-cardinality-set-v3"}\n')
+        hasher.update(b'],"schema_version":"dynamic-cssc-day1b-f1m-window-cardinality-set-v4"}\n')
         self.connection.commit()
         self.scratch.require_within_cap()
         return hasher.hexdigest()
@@ -2891,7 +2981,7 @@ class _ExpectedF1MRegistry:
                 {
                     "size_class_set_sha256": size_class_set_sha256,
                     "window_batch_stream_sha256": window_batch_root,
-                    "schema_version": "dynamic-cssc-day1b-f1m-cardinality-derivation-v4",
+                    "schema_version": "dynamic-cssc-day1b-f1m-cardinality-derivation-v5",
                     "window_cardinality_stream_sha256": window_root,
                 }
             )
@@ -3340,6 +3430,81 @@ def issue_day1b_anonymous_scratch_capability(
         raise
 
 
+def _prepare_expected_f1m_registry_from_scratch(
+    *,
+    scratch_capability: Day1BAnonymousScratchCapability,
+    contract: Day1BWorkerProtocolContract,
+    controller_phase_audits: tuple[Day1BWorkerPhaseAudit, ...],
+    window_cardinalities: Iterable[Day1BF1MWindowCardinality],
+    window_batches: Iterable[Day1BF1MWindowBatch],
+    expected_f1m_objects: Iterable[Day1BControllerExpectedF1MObject],
+    require_creation_isolation: bool,
+) -> Day1BExpectedF1MRegistryCapability:
+    if type(require_creation_isolation) is not bool:
+        raise TypeError("registry scratch-isolation requirement must be an exact boolean")
+    scratch = _ControlledScratch(
+        scratch_capability,
+        contract=contract,
+        controller_phase_audits=controller_phase_audits,
+    )
+    registry = _ExpectedF1MRegistry(
+        scratch,
+        contract=contract,
+        controller_phase_audits=controller_phase_audits,
+        window_cardinalities=window_cardinalities,
+        window_batches=window_batches,
+        expected_f1m_objects=expected_f1m_objects,
+    )
+    try:
+        if (
+            require_creation_isolation
+            and not registry.descriptor.anonymous_scratch_creation_isolation_verified
+        ):
+            raise Day1BWorkerProtocolError(
+                "production expected F1-M registry lacks exact scratch isolation"
+            )
+        return _mint_expected_registry_capability(registry)
+    except BaseException:
+        with suppress(BaseException):
+            registry.close()
+        raise
+
+
+def prepare_day1b_expected_f1m_registry(
+    *,
+    contract: Day1BWorkerProtocolContract,
+    controller_phase_audits: tuple[Day1BWorkerPhaseAudit, ...],
+    window_cardinalities: Iterable[Day1BF1MWindowCardinality],
+    window_batches: Iterable[Day1BF1MWindowBatch],
+    expected_f1m_objects: Iterable[Day1BControllerExpectedF1MObject],
+    launcher_scratch_parent: Path,
+) -> Day1BExpectedF1MRegistryCapability:
+    """Build the production registry inside one launcher-created scratch lease.
+
+    This is the sole non-fixture registry constructor.  It creates and consumes
+    the Linux anonymous-scratch capability internally, so a caller cannot splice
+    an unverified handle set or a scratch-isolation boolean into the registry.
+    The returned registry remains pre-dispatch evidence; a separate production
+    execution receipt is still required before any worker invocation may be
+    minted.
+    """
+
+    scratch_capability = issue_day1b_anonymous_scratch_capability(
+        contract=contract,
+        controller_phase_audits=controller_phase_audits,
+        launcher_scratch_parent=launcher_scratch_parent,
+    )
+    return _prepare_expected_f1m_registry_from_scratch(
+        scratch_capability=scratch_capability,
+        contract=contract,
+        controller_phase_audits=controller_phase_audits,
+        window_cardinalities=window_cardinalities,
+        window_batches=window_batches,
+        expected_f1m_objects=expected_f1m_objects,
+        require_creation_isolation=True,
+    )
+
+
 def _test_only_prepare_day1b_expected_f1m_registry(
     *,
     contract: Day1BWorkerProtocolContract,
@@ -3360,25 +3525,15 @@ def _test_only_prepare_day1b_expected_f1m_registry(
         controller_phase_audits=controller_phase_audits,
         controlled_scratch_root=controlled_scratch_root,
     )
-    scratch = _ControlledScratch(
-        scratch_capability,
-        contract=contract,
-        controller_phase_audits=controller_phase_audits,
-    )
-    registry = _ExpectedF1MRegistry(
-        scratch,
+    return _prepare_expected_f1m_registry_from_scratch(
+        scratch_capability=scratch_capability,
         contract=contract,
         controller_phase_audits=controller_phase_audits,
         window_cardinalities=window_cardinalities,
         window_batches=window_batches,
         expected_f1m_objects=expected_f1m_objects,
+        require_creation_isolation=False,
     )
-    try:
-        return _mint_expected_registry_capability(registry)
-    except BaseException:
-        with suppress(BaseException):
-            registry.close()
-        raise
 
 
 class _ObjectReceiptSpool:
@@ -3390,6 +3545,9 @@ class _ObjectReceiptSpool:
         registry: _ExpectedF1MRegistry,
     ) -> None:
         self._contract = contract
+        self._worker_streams_f1m_size_classes = (
+            contract.worker_streams_f1m_size_classes
+        )
         self._limits = contract.resource_limits
         self._scratch, self._digests = registry.transfer_to_spool()
         self._file: BinaryIO | None = None
@@ -3434,6 +3592,10 @@ class _ObjectReceiptSpool:
         if next_payload_bytes > self._limits.serialized_payload_bytes_per_cell_maximum:
             raise Day1BWorkerProtocolError("serialized payload bytes exceed frozen cell cap")
         if receipt.f1m_size_class is not None:
+            if not self._worker_streams_f1m_size_classes:
+                raise Day1BWorkerProtocolError(
+                    "formal weighted mode forbids worker F1-M objects"
+                )
             size_class_sha256 = hashlib.sha256(
                 _canonical_json_bytes(receipt.f1m_size_class.to_document())
             ).hexdigest()
@@ -3984,6 +4146,33 @@ class _CategoryAccumulator:
             self.object_receipt_hasher.update(line)
 
 
+def _required_worker_observed_f1m_phases(
+    contract: Day1BWorkerProtocolContract,
+    phases: tuple[Day1BWorkerPhaseReceipt, ...],
+) -> tuple[str, ...]:
+    """Return only complete phases whose worker preimage includes F1-M payloads.
+
+    Publication Day1B's weighted mode deliberately keeps both worker-streamed
+    F1-M multiplicities at zero.  Its controller registry still retains the
+    exact per-window size-class/range preimage used for logical charging, but
+    those controller-only rows are not worker payloads and therefore must not
+    be marked observed by the transport spool.  The generic protocol fixtures
+    retain their materialized F1-M mode and continue to require every positive
+    worker-streamed class to be observed.
+    """
+
+    required: list[str] = []
+    for phase in phases:
+        if (
+            phase.outcome != "complete"
+            or phase.phase not in contract.candidate.retained_phases
+        ):
+            continue
+        if contract.worker_streams_f1m_size_classes_in_phase(phase.phase):
+            required.append(phase.phase)
+    return tuple(required)
+
+
 class _ReceiptBuilder:
     def __init__(
         self,
@@ -4364,10 +4553,9 @@ class _ReceiptBuilder:
                 "worker phase audit differs from the controller-owned audit"
             )
         spool_sha256, spool_line_count, spool_byte_count = self.spool.seal(
-            required_observed_f1m_phases=tuple(
-                phase.phase
-                for phase in self.completed_candidate.phases
-                if phase.outcome == "complete"
+            required_observed_f1m_phases=_required_worker_observed_f1m_phases(
+                self.contract,
+                self.completed_candidate.phases,
             )
         )
         expected_all_count = self.contract.expected_serialized_equivalence_class_count
@@ -4823,4 +5011,5 @@ __all__ = (
     "describe_day1b_expected_f1m_registry",
     "describe_day1b_anonymous_scratch_capability",
     "issue_day1b_anonymous_scratch_capability",
+    "prepare_day1b_expected_f1m_registry",
 )

@@ -216,8 +216,19 @@ class Transition:
 class StrongTransition:
     state: StrongStrategyState
     facts: TransitionFacts
-    output_plan: OutputPlan
-    execution_bundle: StrongExecutionBundle
+    execution_bundle: StrongExecutionBundle | None
+
+    def __post_init__(self) -> None:
+        if bool(self.facts.query_count) != (self.execution_bundle is not None):
+            raise ValueError(
+                "strong query bundle must be present exactly for a query-bearing transition"
+            )
+
+    @property
+    def output_plan(self) -> OutputPlan | None:
+        """Expose the bundle-owned plan without creating a second truth source."""
+
+        return None if self.execution_bundle is None else self.execution_bundle.output_plan
 
 
 def _compile_strong_bundle(
@@ -1553,7 +1564,11 @@ def advance_strong_publication(
         raise TypeError("_predecessor must be a repository-minted capability")
     candidate = _validated_strong_candidate(state, window)
     if not window.updates:
-        bundle = _compile_strong_bundle(state.base, state.delta)
+        bundle = (
+            _compile_strong_bundle(state.base, state.delta)
+            if window.query_count
+            else None
+        )
         return StrongTransition(
             state=state,
             facts=TransitionFacts(
@@ -1566,7 +1581,6 @@ def advance_strong_publication(
                     else (state.base.component_id,)
                 ),
             ),
-            output_plan=bundle.output_plan,
             execution_bundle=bundle,
         )
 
@@ -1617,7 +1631,11 @@ def advance_strong_publication(
     )
     if not trusted_replay:
         _assert_strong_strategy_invariants(new_state)
-    bundle = _compile_strong_bundle(new_state.base, new_state.delta)
+    bundle = (
+        _compile_strong_bundle(new_state.base, new_state.delta)
+        if window.query_count
+        else None
+    )
     component_ids = [new_state.base.component_id]
     if new_state.delta.segments:
         component_ids.append(STRONG_COMPONENT_ID)
@@ -1642,7 +1660,6 @@ def advance_strong_publication(
             patched_chunk_ids=tuple(sorted(patched_chunks)),
             active_component_ids=tuple(component_ids),
         ),
-        output_plan=bundle.output_plan,
         execution_bundle=bundle,
     )
 

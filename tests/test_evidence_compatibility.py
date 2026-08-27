@@ -149,6 +149,7 @@ DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "tests/test_day2_openfhe_key_plan.py",
     "tests/test_openfhe_runtime_admission.py",
     "tests/test_strong_execution_bundle.py",
+    "tests/test_strong_strategy_state.py",
 )
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
@@ -2143,7 +2144,7 @@ def test_day1b_preparatory_behavior_inventory_is_exact_but_non_authorizing(
         DAY1B_PREPARATORY_BEHAVIOR_PATHS
     )
     assert inventory["behavior_set_schema_version"] == (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v30"
+        "dynamic-cssc-day1b-preparatory-behavior-set-v31"
     )
     assert inventory["role"] == "day1b"
     assert inventory["source_git_sha"] == source_git_sha

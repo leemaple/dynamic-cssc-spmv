@@ -480,6 +480,7 @@ _DAY1B_PREPARATORY_BEHAVIOR_PATHS = (
     "tests/test_day2_openfhe_key_plan.py",
     "tests/test_openfhe_runtime_admission.py",
     "tests/test_strong_execution_bundle.py",
+    "tests/test_strong_strategy_state.py",
 )
 
 _ROLE_BEHAVIOR_PATHS: dict[EvidenceRole, tuple[str, ...] | None] = {
@@ -495,7 +496,7 @@ _ROLE_BEHAVIOR_PATHS: dict[EvidenceRole, tuple[str, ...] | None] = {
 _ROLE_BEHAVIOR_SCHEMAS = {
     EvidenceRole.ACQUISITION: "dynamic-cssc-acquisition-behavior-set-v2",
     EvidenceRole.TRACE: "dynamic-cssc-trace-behavior-set-v2",
-    EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v30",
+    EvidenceRole.DAY1B: "dynamic-cssc-day1b-preparatory-behavior-set-v31",
     EvidenceRole.DAY2: "dynamic-cssc-day2-behavior-set-v6",
     EvidenceRole.ANALYZER: "dynamic-cssc-publication-analyzer-behavior-set-v2",
     EvidenceRole.STRONG_CORRECTNESS: "dynamic-cssc-strong-correctness-behavior-set-v1",

@@ -294,6 +294,7 @@ def test_repository_wrapper_owns_role_accounting_modulus_and_typed_sink() -> Non
         "query_vector_canonical_bytes",
         "query_vector_sha256",
         "query_window_sink",
+        "window_plan_sink",
     )
     for forbidden in (
         "accounting",

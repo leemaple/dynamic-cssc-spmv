@@ -238,7 +238,45 @@ artifact that declares full query-arrival replay, omits the basis, changes a
 multiplicity, leaves a query-range gap, overlaps ranges, or disagrees with the
 controller's schedule fails closed.
 
-The preparatory v30 source surface exposes the exact typed compilation used for
+### Pre-S1 controller-only F1-M equivalence-class correction
+
+Before the first Day 1 registration or Day 2 anchor was installed, a second
+conformance error was found in the enclosing worker total.  The input binding
+included controller-only F1-M registry rows in
+`expected_serialized_equivalence_class_count`, while the formal weighted mode
+correctly froze both worker-streamed F1-M multiplicities at zero.  A complete
+worker could therefore either omit F1-M frames and fail the total, or emit them
+and violate the formal zero-worker rule.
+
+The corrected identity counts only equivalence classes that the worker must
+physically stream.  Controller-only F1-M rows remain mandatory as the exact
+window/range/route and Day 2 charged-size-class proof, but contribute zero to
+the worker spool-line total and must never appear as worker frames.  Generic
+materialized protocol fixtures still count and observe every F1-M class.  A
+mixed materialized/controller-only preimage is rejected, and formal mode now
+rejects the first stray F1-M frame before it can mutate the observation ledger.
+
+The same-replay controller emits one bounded cardinality row for every retained
+window so the registry can prove exact coverage of the controller audit.  A
+zero-query row binds only its phase/window/range, first query ordinal, exact
+candidate-state version, and `query_count=0`; its OutputPlan, private-plan, and
+execution-binding fields are `null`, its returned/masked share counts are zero,
+and it carries no F1-M route or size-class object.  It therefore does not compile
+or claim a query plan.  Only a query-bearing window derives the typed plan and
+positive-multiplicity size classes described by this decision.
+
+This correction advances the worker input binding and receipt from v10 to v11,
+the production and private-fixture Day 1B unit from v4 to v5, the serialization
+ledger from v5 to v6, and the current preparatory behavior set from v30 to v31.
+It also introduces the internal same-replay window-plan stream at v1 and advances
+the now-nullable F1-M window-cardinality row from v2 to v3, its canonical set
+from v3 to v4, and the enclosing cardinality-derivation root from v4 to v5.
+At the correction point the Day 1 registration, Day 2 post-run, Day 2 profile,
+and evidence-compatibility anchor sets are empty.  The historical descriptive
+strong-reference receipt is not a Day 1B publication anchor.  No admissible
+Day 1B artifact is rewritten or reinterpreted.
+
+The preparatory v31 source surface exposes the exact typed compilation used for
 each query-bearing window through a synchronous, output-only query-execution
 sink, but the only public sealing seam now owns that sink and the replay call.
 The caller supplies one exact frozen candidate, window stream, domain, and
@@ -248,7 +286,7 @@ derives the candidate policy and role-retained phases, freezes the modulus at
 65,537, creates a private collector, and finishes it against the accounting
 returned by that same replay invocation.
 
-Every v30 query-execution binding commits the candidate ID, role, policy digest,
+Every v31 query-execution binding commits the candidate ID, role, policy digest,
 retained phases, and modulus together with the compact descriptor and ordinary
 or strong carrier identities. The collector independently reconstructs the
 existing compact query-window root and retains exactly one private typed
@@ -263,7 +301,7 @@ process-local capability and releases its carrier reference even on validation
 failure. Its receipt explicitly denies worker, dispatch, formal, publication,
 complete-cost, and production authority.
 
-The v30 candidate-cell core passes that same-replay capability as a mandatory
+The v31 candidate-cell core passes that same-replay capability as a mandatory
 adapter input and accepts a launch only after the capability reaches its exact
 consumed terminal state. The launch carries the collector-minted replay
 receipt; construction fails unless its candidate, policy, retained phases,
@@ -272,7 +310,7 @@ bound worker contract. A controller failure after capability issuance abandons
 the capability before propagating the error. This closes replay-to-worker
 continuity without granting production or dispatch authority.
 
-The same v30 surface retains the native request/result language at v4 and
+The same v31 surface retains the native request/result language at v4 and
 advances the enclosing runtime receipt to v7. One private deep launcher now
 admits either an ordinary or strong execution capability, owns scratch and
 READY/DONE verification, and dispatches through thin kind-specific adapters.
@@ -283,7 +321,7 @@ the runtime receipt. The native smoke still executes the explicitly
 non-anchored pre-admission paths. A production candidate-cell adapter and its
 scratch authority remain later gates.
 
-The v30 surface composes those two single-use capabilities in one additional
+The v31 surface composes those two single-use capabilities in one additional
 pre-admission boundary. It claims the representative retained by the same
 replay, prepares its exact ordinary or strong private lifecycle, and passes the
 opaque Day 2 plan capability directly into runtime v7. The returned joint
@@ -293,7 +331,7 @@ ordered digest of every retained serialized-payload receipt. Failure consumes
 or abandons both capabilities. This still grants no worker, dispatch, cost,
 performance, security, or publication authority.
 
-The v30 surface also preserves the formal Day 2 rotation-plan digest in the
+The v31 surface also preserves the formal Day 2 rotation-plan digest in the
 final read-only calibration authority and introduces a single-use key-plan
 capability. Its public issuer accepts only canonical plan bytes and obtains the
 final authority from the zero-argument repository seam before and after

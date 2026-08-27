@@ -475,7 +475,7 @@ measurement-method field in this placeholder remains `null`; the separate
 amendment is the sole reviewed source of administrative limits and
 measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v30` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v31` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface, including the amendment and
 `docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
@@ -589,6 +589,13 @@ the separate evidence path for real no-reuse enforcement. The accounting core
 does not mint a worker invocation, materialize per-query masks or ledger
 transitions, measure serialized OpenFHE sizes, or relax any dispatch gate.
 
+The current pre-S1 v31 controller additionally emits one bounded cardinality
+row for every retained window to prove exact coverage of the controller audit.
+A zero-query row binds its window range, first query ordinal, state version, and
+zero multiplicity only: all query-plan digests are `null`, returned and masked
+share counts are zero, and no F1-M route or size-class object exists. Thus the
+controller still compiles a typed query plan only for a query-bearing window.
+
 The v24 increment adds a second, streaming-only callback at that same replay
 boundary. For each query-bearing window it receives the existing compact
 descriptor together with the exact ordinary `CompiledQuery` or strong execution
@@ -620,6 +627,14 @@ multiplicities to remain zero in every retained phase before branching on its
 outcome. Thus a failed or controller-terminal null projection cannot preserve
 an otherwise self-consistent rehashed preimage that switches weighted F1-M back
 to materialized worker mode.
+
+The pre-S1 controller-only correction advances the current Day 1B unit to v5,
+serialization ledger to v6, worker input binding and receipt to v11, and
+preparatory Behavior Set to v31. It introduces the internal same-replay
+window-plan stream at v1 and advances the nullable F1-M window-cardinality row
+to v3, its canonical set to v4, and the cardinality-derivation root to v5. These
+version changes occur before any Day 1 registration, Day 2 profile/post-run, or
+Day 1B evidence anchor exists and authorize no execution.
 
 The v23 surface also freezes canonical big-endian binary framing for the three
 metadata categories used in primary communication accounting. A ColumnIndex
