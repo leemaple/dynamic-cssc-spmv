@@ -134,6 +134,44 @@ $$
 
 论文真正要回答的是：**如何先保证这些策略在语义上可比较，再在因果一致且成本完整的条件下寻找它们的 break-even 区域。**
 
+# 与已有工作的边界：本文的新意只剩什么
+
+这篇论文能否发表，很大程度上取决于是否把“已有原语”和“本文组合贡献”分清。最新一手来源审计给出的结论不是“没有人做过加密稀疏计算”，恰恰相反：相邻方向已经相当拥挤。因此，本文必须主动放弃宽泛的 `first` 叙事。
+
+## 静态加密稀疏线性代数已经很丰富
+
+- [CSSC](https://doi.org/10.1016/j.ins.2026.123180) 已经给出静态 `Value/ColumnIndex/RowMap`、行排序、压缩矩形、查询重排和聚合路径。本文继承的是它的静态 substrate，不把这些写成新贡献。
+- [Lodia](https://eprint.iacr.org/2025/1425) 已经研究 batched FHE SpMV 的 low-diagonal decomposition；[Diagonal Packing / 2DPP](https://arxiv.org/abs/2604.04683) 已经研究用行列重排减少 occupied cyclic diagonals。因而“FHE-aware 稀疏布局或重排”不是本文首次。
+- [CipherSkip](https://eprint.iacr.org/2026/297) 已经对任意形状 SpGEMM 加密 values 和 indices，并利用双方稀疏性；[SparseE](https://63dac.conference-program.com/presentation/?id=RESEARCH2265&sess=sess108) 的 DAC 2026 官方摘要已经公开 encrypted-index Scatter--Gather--Apply 与 permutation/expansion accelerator。因而“首次隐藏 nonzero positions”“首次 encrypted indices”或“首次利用双边稀疏性”都不可主张。SparseE 尚无本次可核验的公开全文、DOI 和软件，不能据摘要反推其完整 leakage 或 update 语义。
+- Ferguson et al. 的 [CPU ciphertext--ciphertext SpMSpM](https://doi.org/10.1145/3721146.3721948) 与 D'Agata et al. 的 [GPU/FIDESlib 扩展](https://doi.org/10.1145/3805621.3807642) 已经覆盖 CKKS 下的双边稀疏矩阵乘法。它们使用公开 sparse metadata、小型方阵和不同库/硬件，不能直接拿论文 wall-clock 与本项目 BFVRNS 动态 SpMV 数字比较，但足以排除宽泛的新颖性说法。
+
+这里可守的差异不是一种新的静态 packing，而是：**当矩阵支持集随时间变化时，怎样维护 CSSC 组件，并保证每次查询使用同版本的列元数据、重构计划和返回绑定。** CipherSkip 所称的 server-side dynamic alignment 面向链式乘法中的加密中间结果，并不是 insert/delete/modify 驱动的 publication-state maintenance。
+
+## 动态、版本和掩码也不是孤立的新原语
+
+[d-DSE](https://www.usenix.org/conference/usenixsecurity24/presentation/liu-dongli) 说明动态加密数据库中的 update-volume leakage 不能仅靠一句“有 padding”带过，padding 本身还可能显著增加存储与通信成本。[CKKS-Auth Tree](https://doi.org/10.3390/electronics15122517) 已经使用 versioned root commitments 与 timestamps 检测更新后的 stale/replayed verification objects。因此，epoch、version、freshness check、replay rejection 或 padding 都不能单独当作本文创新。
+
+[Rhombus](https://eprint.iacr.org/2024/1611) 已经在两方 MVM 中用随机减法把输出变成 additive shares，[Bonawitz et al.](https://doi.org/10.1145/3133956.3133982) 则提供了 canceling/zero-sum masks 的经典先例。本文不是发明零和掩码；候选贡献仅是让私有 `OutputPlan` 决定真实 overlap coordinates，并把每次 share 绑定到
+
+$$
+(q,v,d_{\Pi},k,b),
+$$
+
+也就是 query、version、plan digest、component 和 output block，再由持久 ledger 阻止同一 identity 被重复使用。
+
+## 因而最终只能采用窄 gap statement
+
+截至 2026-08-28 核验的一手材料中，没有找到同时覆盖下面四项的同任务方案：
+
+1. insert/delete/modify 驱动的 FHE sparse-layout 增量维护；
+2. 版本化、原子化的 publication state；
+3. 与该版本绑定的全局列查询元数据；
+4. RowMap-sensitive 多组件 SpMV 重构与 overlap-scoped 返回绑定。
+
+这个检索结果只支持“我们研究一个尚未被这些近邻同时覆盖的窄交叉问题”，**不构成全球首次证明**。最终稿可以写 `we design an update-aware maintenance layer around static CSSC`；在没有公开系统检索协议、引用链和专利检索前，不能升级为 `the first` 或 `the only`。
+
+实验上，唯一必须直接实现的外部 substrate counterfactual 是：在同一矩阵版本、参数、语料和成本边界下，每个 publication window 完整重建静态 CSSC。Lodia 只有在统一 OpenFHE 版本、BFVRNS 参数、矩阵形状、计费边界和 leakage contract 后，才可作为条件式静态 comparator；CipherSkip、SparseE、Ferguson、D'Agata、d-DSE、CKKS-Auth Tree 和 Rhombus 当前均是 citation-only，不能伪装成同任务动态 baseline。
+
 # 系统与威胁模型
 
 系统有三个角色：
@@ -923,6 +961,7 @@ $$
 - 不是新的 BFV/FHE primitive；
 - 不是第一个稀疏同态矩阵—向量乘法；
 - 不是新的静态 CSSC；
+- 不是首次 encrypted indices、隐藏 nonzero positions、双边稀疏 FHE 计算、版本承诺或随机输出 sharing；
 - 不声称 formal security、malicious security、collusion security 或全侧信道保护；
 - 不声称 $c=128$ 全局最优；
 - 不声称在所有矩阵、数据集或 $\rho$ 上优于重压缩；
