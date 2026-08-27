@@ -688,8 +688,7 @@ def test_independent_replay_path_fails_closed_until_composite_registration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    download_dir = tmp_path / "downloaded-shards"
-    shard_dir = _build_download_layout(download_dir)[0]
+    shard_dir, plan_path = _producer_only_shard(tmp_path)
     status = json.loads((shard_dir / "SHARD_STATUS.json").read_text(encoding="utf-8"))
 
     monkeypatch.setattr(
@@ -702,9 +701,9 @@ def test_independent_replay_path_fails_closed_until_composite_registration(
         Day1CandidateRegistrationError,
         match="no repository-approved Day-1 composite registration anchor",
     ):
-        replay_day1_shard.replay_shard(
-            shard_dir=shard_dir,
-            experiment_plan=_fixture_plan_path(download_dir),
+            replay_day1_shard.replay_shard(
+                shard_dir=shard_dir,
+                experiment_plan=plan_path,
             manifest=MANIFEST_PATH,
             seed=SEED,
             workload=status["workload"],
@@ -718,6 +717,15 @@ def _replay_existing_shard(
     shard_dir: Path,
     download_dir: Path,
 ) -> dict[str, object]:
+    receipt_path = shard_dir / replay_day1_shard.REPLAY_RECEIPT_FILENAME
+    receipt_path.unlink(missing_ok=True)
+    checksum_path = shard_dir / "SHA256SUMS"
+    checksum_lines = [
+        line
+        for line in checksum_path.read_text(encoding="utf-8").splitlines()
+        if not line.endswith(f"  {replay_day1_shard.REPLAY_RECEIPT_FILENAME}")
+    ]
+    checksum_path.write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
     status = json.loads((shard_dir / "SHARD_STATUS.json").read_text(encoding="utf-8"))
     return replay_day1_shard.replay_shard(
         shard_dir=shard_dir,
@@ -728,6 +736,130 @@ def _replay_existing_shard(
         freshness=Fraction(status["freshness_seconds_fraction"]),
         source_sha=SOURCE_SHA,
     )
+
+
+def _producer_only_shard(tmp_path: Path) -> tuple[Path, Path]:
+    download_dir = tmp_path / "producer-only"
+    plan_path = _fixture_plan_path(download_dir)
+    shard_dir = _create_download_layout(
+        download_dir,
+        plan_path=plan_path,
+        shard_limit=1,
+    )[0]
+    receipt_path = shard_dir / replay_day1_shard.REPLAY_RECEIPT_FILENAME
+    receipt_path.unlink()
+    checksum_path = shard_dir / "SHA256SUMS"
+    checksum_lines = [
+        line
+        for line in checksum_path.read_text(encoding="utf-8").splitlines()
+        if not line.endswith(f"  {replay_day1_shard.REPLAY_RECEIPT_FILENAME}")
+    ]
+    checksum_path.write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
+    return shard_dir, plan_path
+
+
+def _verify_producer_only_shard(shard_dir: Path, plan_path: Path) -> dict[str, object]:
+    plan = load_experiment_plan(plan_path)
+    return replay_day1_shard.verify_pre_replay_handoff(
+        shard_dir=shard_dir,
+        experiment_plan=plan_path,
+        manifest=MANIFEST_PATH,
+        seed=SEED,
+        workload=plan.workloads[0],
+        freshness=plan.freshness_seconds[0],
+    )
+
+
+def test_pre_replay_handoff_accepts_only_the_exact_checksum_bound_producer_tree(
+    tmp_path: Path,
+) -> None:
+    shard_dir, plan_path = _producer_only_shard(tmp_path)
+
+    status = _verify_producer_only_shard(shard_dir, plan_path)
+
+    assert status["seed"] == SEED
+    assert status["cells_completed"] == 9
+
+
+def test_pre_replay_handoff_rejects_extra_missing_and_nonregular_members(
+    tmp_path: Path,
+) -> None:
+    shard_dir, plan_path = _producer_only_shard(tmp_path)
+    mutations = ("extra-file", "missing-file", "symlink", "extra-directory")
+
+    for mutation in mutations:
+        candidate = tmp_path / f"mutated-{mutation}"
+        shutil.copytree(shard_dir, candidate)
+        if mutation == "extra-file":
+            (candidate / "unlisted.txt").write_text("not checksummed\n", encoding="utf-8")
+        elif mutation == "missing-file":
+            next(candidate.rglob("metrics.csv")).unlink()
+        elif mutation == "symlink":
+            (candidate / "status-link").symlink_to("SHARD_STATUS.json")
+        else:
+            (candidate / "empty-extra-directory").mkdir()
+
+        with pytest.raises(ValueError, match="exact pre-replay artifact tree"):
+            _verify_producer_only_shard(candidate, plan_path)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "match"),
+    [
+        ("duplicate", "duplicate checksum path"),
+        ("dot-alias", "unsafe checksum path"),
+        ("omitted", "exact root checksum paths"),
+    ],
+)
+def test_pre_replay_handoff_rejects_noncanonical_or_incomplete_checksum_keys(
+    tmp_path: Path,
+    mutation: str,
+    match: str,
+) -> None:
+    shard_dir, plan_path = _producer_only_shard(tmp_path)
+    checksum_path = shard_dir / "SHA256SUMS"
+    lines = checksum_path.read_text(encoding="utf-8").splitlines()
+    if mutation == "duplicate":
+        lines.append(lines[0])
+    elif mutation == "dot-alias":
+        digest, relative = lines[0].split("  ", 1)
+        lines[0] = f"{digest}  ./{relative}"
+    else:
+        lines.pop()
+    checksum_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=match):
+        _verify_producer_only_shard(shard_dir, plan_path)
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("seed", SEED + 1),
+        ("workload", "not-the-dispatched-workload"),
+        ("freshness_seconds_fraction", "10"),
+        ("experiment_plan_sha256", "0" * 64),
+        ("manifest_sha256", "0" * 64),
+        ("rho_ids", []),
+        ("candidate_ids", []),
+        ("fixed_candidate_count", 13),
+        ("preflight", {**PREFLIGHT, "status": "fail"}),
+    ],
+)
+def test_pre_replay_handoff_rejects_status_identity_mismatch(
+    tmp_path: Path,
+    field: str,
+    replacement: object,
+) -> None:
+    shard_dir, plan_path = _producer_only_shard(tmp_path)
+    status_path = shard_dir / "SHARD_STATUS.json"
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    status[field] = replacement
+    status_path.write_text(json.dumps(status, sort_keys=True), encoding="utf-8")
+    _write_root_checksums(shard_dir)
+
+    with pytest.raises(ValueError, match=field):
+        _verify_producer_only_shard(shard_dir, plan_path)
 
 
 def test_independent_replay_accepts_an_authorized_official_small_plan_shard(
@@ -744,6 +876,9 @@ def test_independent_replay_accepts_an_authorized_official_small_plan_shard(
 
     assert receipt["verified"] is True
     assert receipt["cells_replayed"] == 9
+    assert receipt["full_replay_cells"] == 5
+    assert receipt["exact_rescaled_cells"] == 4
+    assert sum(cell["rescale_eligibility_verified"] for cell in receipt["cells"]) == 4
     assert (shard_dir / "REPLAY_RECEIPT.json").is_file()
     rho_one = json.loads(
         next(shard_dir.rglob("rho-n1d1/metrics.json")).read_text(encoding="utf-8")
@@ -755,6 +890,18 @@ def test_independent_replay_accepts_an_authorized_official_small_plan_shard(
     assert rho_one["query_scaling_source_rho_fraction"] is None
     assert rho_three["causal_evaluation_mode"] == "exact-query-linearity-from-rho-1"
     assert rho_three["query_scaling_source_rho_fraction"] == "1"
+    receipt_rho_one = next(cell for cell in receipt["cells"] if cell["rho_fraction"] == "1")
+    receipt_rho_three = next(cell for cell in receipt["cells"] if cell["rho_fraction"] == "3")
+    assert receipt_rho_one["causal_evaluation_mode"] == "full-state-replay"
+    assert receipt_rho_one["rescale_eligibility_verified"] is False
+    assert receipt_rho_one["query_scaling_source_rho_fraction"] is None
+    assert receipt_rho_one["query_scaling_multiplier"] is None
+    assert receipt_rho_three["causal_evaluation_mode"] == (
+        "exact-query-linearity-from-rho-1"
+    )
+    assert receipt_rho_three["rescale_eligibility_verified"] is True
+    assert receipt_rho_three["query_scaling_source_rho_fraction"] == "1"
+    assert receipt_rho_three["query_scaling_multiplier"] == 3
 
 
 def test_independent_replay_reuses_rho_one_for_exact_query_linear_cells(

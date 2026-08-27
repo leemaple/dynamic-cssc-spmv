@@ -68,8 +68,9 @@ def test_production_and_independent_replay_have_separate_timeout_budgets() -> No
     assert pre_replay_name in replay
     assert workflow.count(pre_replay_name) == 2
     assert "retention-days: 1" in producer
-    checksum_guard = "(cd results/day1-shard && sha256sum --check --strict SHA256SUMS)"
-    assert replay.index(checksum_guard) < replay.index("python scripts/replay_day1_shard.py")
+    assert replay.count("python scripts/replay_day1_shard.py") == 2
+    assert replay.index("--verify-pre-replay-handoff-only") < replay.index("--source-sha")
+    assert "Reject any non-exact pre-replay tree" in replay
     assert "if: ${{ inputs.diagnostic_single_shard == false }}" in replay
     assert "needs: [plan, replay-shard]" in _job_block(workflow, "aggregate")
 
@@ -125,9 +126,9 @@ def test_publication_workflow_binds_every_stage_to_the_formal_plan() -> None:
     workflow = _workflow(PUBLICATION_WORKFLOW)
     plan_path = "config/experiment_plan_publication.json"
 
-    assert workflow.count(plan_path) == 4
+    assert workflow.count(plan_path) == 5
     assert f"plan = load_experiment_plan('{plan_path}')" in workflow
-    assert workflow.count(f"--experiment-plan {plan_path}") == 3
+    assert workflow.count(f"--experiment-plan {plan_path}") == 4
     assert "config/experiment_plan.json" not in workflow
     assert workflow.count("assert p['experiment_plan_version'] == '0.3.0'") == 2
     assert workflow.count("assert p['effective_slots'] == 4096") == 2
