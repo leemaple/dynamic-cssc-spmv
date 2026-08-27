@@ -18,7 +18,11 @@ from dynamic_cssc.publication_day1b_accounting import Day1BAccountingDomain
 from dynamic_cssc.publication_day1b_openfhe_execution import (
     DAY1B_REPRESENTATIVE_OPENFHE_RECEIPT_SCHEMA,
     Day1BRepresentativeOpenFHEError,
+    Day1BRepresentativeOpenFHEExecutionCapability,
+    claim_day1b_representative_openfhe_execution,
+    describe_day1b_representative_openfhe_execution,
     execute_day1b_representative_openfhe_query,
+    execute_day1b_representative_openfhe_query_for_production,
 )
 from dynamic_cssc.publication_day1b_replay_execution import (
     Day1BReplayExecutionError,
@@ -179,7 +183,7 @@ def test_real_runtime_composes_replay_plan_and_payload_receipts(
     key_plan_capability = _day2_key_plan_capability(execution_kind)
     scratch = tmp_path.resolve() / f"{execution_kind}-representative-runtime"
 
-    executed = execute_day1b_representative_openfhe_query(
+    execution_capability = execute_day1b_representative_openfhe_query_for_production(
         candidate_replay_capability=replay_capability,
         day2_key_plan_capability=key_plan_capability,
         ledger=SQLiteMaskBindingLedger(
@@ -192,6 +196,7 @@ def test_real_runtime_composes_replay_plan_and_payload_receipts(
         resident_memory_limit_bytes=4 * 1024**3,
         scratch_limit_bytes=2 * 1024**3,
     )
+    executed = describe_day1b_representative_openfhe_execution(execution_capability)
 
     document = executed.receipt.to_document()
     assert document["schema_version"] == DAY1B_REPRESENTATIVE_OPENFHE_RECEIPT_SCHEMA
@@ -220,9 +225,24 @@ def test_real_runtime_composes_replay_plan_and_payload_receipts(
     assert replay_capability._binding is None
     assert key_plan_capability._binding is None
     assert not scratch.exists()
+    assert claim_day1b_representative_openfhe_execution(execution_capability) is executed
+    with pytest.raises(Day1BRepresentativeOpenFHEError, match="consumed"):
+        describe_day1b_representative_openfhe_execution(execution_capability)
+    with pytest.raises(TypeError, match="runtime-minted authority"):
+        describe_day1b_representative_openfhe_execution(executed)  # type: ignore[arg-type]
 
     with pytest.raises(Day1BRepresentativeOpenFHEError, match="diverged"):
         replace(executed.receipt, query_id="retargeted-query")
+
+
+def test_representative_execution_authority_is_not_caller_constructible() -> None:
+    with pytest.raises(TypeError, match="runtime-minted"):
+        Day1BRepresentativeOpenFHEExecutionCapability()
+
+    forged = object.__new__(Day1BRepresentativeOpenFHEExecutionCapability)
+    object.__setattr__(forged, "_binding", None)
+    with pytest.raises(Day1BRepresentativeOpenFHEError, match="unissued"):
+        describe_day1b_representative_openfhe_execution(forged)
 
 
 def test_prelaunch_failure_consumes_both_private_capabilities(

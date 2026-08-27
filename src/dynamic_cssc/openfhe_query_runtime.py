@@ -75,8 +75,29 @@ from dynamic_cssc.strong_execution import (
 
 OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA = "dynamic-cssc-full-openfhe-runtime-receipt-v7"
 OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA = "dynamic-cssc-openfhe-runner-build-identity-v3"
+OPENFHE_WORKER_BUILD_RECEIPT_SCHEMA = "dynamic-cssc-openfhe-worker-build-receipt-v1"
+OPENFHE_WORKER_RUNTIME_IDENTITY_SCHEMA = (
+    "dynamic-cssc-openfhe-worker-runtime-identity-v1"
+)
 OPENFHE_SERIALIZED_PAYLOAD_SCHEMA = "dynamic-cssc-openfhe-serialized-payload-v2"
 OPENFHE_RUNTIME_CONTROL_PROTOCOL_SCHEMA = "dynamic-cssc-openfhe-runtime-control-v1"
+OPENFHE_WORKER_RUNTIME_MAPPING_POLICY = "linux-ready-done-executable-closure-v1"
+OPENFHE_DYNAMIC_LOADER_ENVIRONMENT_POLICY = "clear-v1"
+OPENFHE_CPU_AFFINITY_POLICY = "linux-controller-affinity-exact-match-v1"
+
+_LINUX_DISTRIBUTION_LIBRARY_ROOTS = tuple(
+    Path(value)
+    for value in (
+        "/lib",
+        "/lib32",
+        "/lib64",
+        "/libx32",
+        "/usr/lib",
+        "/usr/lib32",
+        "/usr/lib64",
+        "/usr/libx32",
+    )
+)
 
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SOURCE_PATHS = (
@@ -248,6 +269,262 @@ class OpenFHERunnerBuildIdentity:
             "schema_version": OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA,
             "source_sha256": dict(self.source_sha256),
         }
+
+
+def _openfhe_worker_build_receipt_body(
+    identity: OpenFHERunnerBuildIdentity,
+) -> dict[str, object]:
+    """Project one captured build onto repository-stable content identities."""
+
+    if type(identity) is not OpenFHERunnerBuildIdentity:
+        raise TypeError("worker build receipt requires one exact runner build identity")
+    provenance = identity.build_provenance
+    if type(provenance) is not OpenFHEBuildProvenance:
+        raise TypeError("worker build receipt requires exact OpenFHE build provenance")
+    if any(
+        type(library) is not OpenFHELinkedLibraryIdentity
+        for library in identity.linked_libraries
+    ):
+        raise TypeError("worker build receipt requires exact linked-library identities")
+    if (
+        identity.runner_binary_format != "elf-v1"
+        or identity.linkage_inspection_format
+        != "linux-ldd-direct-and-transitive-v2"
+        or any(library.binary_format != "elf-v1" for library in identity.linked_libraries)
+    ):
+        raise OpenFHEQueryRuntimeError(
+            "worker build receipt requires one Linux ELF linkage identity"
+        )
+    source_names = tuple(name for name, _digest in identity.source_sha256)
+    library_load_names = tuple(
+        library.load_name for library in identity.linked_libraries
+    )
+    system_load_names = identity.linked_system_library_load_names
+    if (
+        len(set(source_names)) != len(source_names)
+        or len(set(library_load_names)) != len(library_load_names)
+        or len(set(system_load_names)) != len(system_load_names)
+        or not set(system_load_names).issubset(library_load_names)
+    ):
+        raise OpenFHEQueryRuntimeError(
+            "worker build receipt source/library names are not one closed partition"
+        )
+    linked_libraries = sorted(
+        (
+            library
+            for library in identity.linked_libraries
+            if library.load_name not in system_load_names
+        ),
+        key=lambda library: (
+            library.load_name,
+            library.sha256,
+            library.binary_id,
+        ),
+    )
+    if not linked_libraries or not any(
+        library.load_name.lower().startswith("libopenfhe")
+        for library in linked_libraries
+    ):
+        raise OpenFHEQueryRuntimeError(
+            "worker build receipt lacks one content-bound OpenFHE library"
+        )
+    return {
+        "build_provenance": {
+            "cmake_byte_count": provenance.cmake_byte_count,
+            "cmake_identity_sha256": provenance.cmake_identity_sha256,
+            "cmake_sha256": provenance.cmake_sha256,
+            "cmake_version": provenance.cmake_version,
+            "openfhe_package_version": provenance.openfhe_package_version,
+            "openfhe_repository": provenance.openfhe_repository,
+            "openfhe_source_clean": provenance.openfhe_source_clean,
+            "openfhe_source_cmake_sha256": provenance.openfhe_source_cmake_sha256,
+            "openfhe_source_commit": provenance.openfhe_source_commit,
+            "openfhe_source_tree": provenance.openfhe_source_tree,
+            "openfhe_version": provenance.openfhe_version,
+        },
+        "compiler": {
+            "byte_count": identity.compiler_byte_count,
+            "flags": list(identity.compiler_flags),
+            "identity_sha256": identity.compiler_identity_sha256,
+            "sha256": identity.compiler_sha256,
+            "target": identity.compiler_target,
+            "version": identity.compiler_version,
+        },
+        "linkage_inspection_format": identity.linkage_inspection_format,
+        "linked_libraries": [
+            {
+                "binary_format": library.binary_format,
+                "binary_id": library.binary_id,
+                "byte_count": library.byte_count,
+                "load_name": library.load_name,
+                "needed_load_names": sorted(library.needed_load_names),
+                "sha256": library.sha256,
+                "soname": library.soname,
+            }
+            for library in linked_libraries
+        ],
+        "linked_system_library_load_names": sorted(
+            identity.linked_system_library_load_names
+        ),
+        "runner": {
+            "binary_format": identity.runner_binary_format,
+            "binary_id": identity.runner_binary_id,
+            "byte_count": identity.runner_byte_count,
+            "needed_load_names": sorted(identity.runner_needed_load_names),
+            "relative_path": identity.runner_relative_path,
+            "sha256": identity.runner_sha256,
+        },
+        "runner_identity_schema_version": OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA,
+        "schema_version": OPENFHE_WORKER_BUILD_RECEIPT_SCHEMA,
+        "source_sha256": dict(sorted(identity.source_sha256)),
+    }
+
+
+def openfhe_worker_build_receipt_sha256(
+    identity: OpenFHERunnerBuildIdentity,
+) -> str:
+    """Return the domain-separated stable worker-build root for one capture."""
+
+    return hashlib.sha256(
+        _canonical_bytes(_openfhe_worker_build_receipt_body(identity))
+    ).hexdigest()
+
+
+def project_openfhe_worker_build_receipt(
+    identity: OpenFHERunnerBuildIdentity,
+) -> dict[str, object]:
+    """Return a descriptive stable receipt; it grants no execution authority."""
+
+    body = _openfhe_worker_build_receipt_body(identity)
+    return {
+        **body,
+        "worker_build_receipt_sha256": hashlib.sha256(
+            _canonical_bytes(body)
+        ).hexdigest(),
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class OpenFHEWorkerRuntimeIdentityPolicy:
+    """Stable controller policy for one admissible OpenFHE worker runtime."""
+
+    worker_adapter_schema_version: str
+    worker_build_identity_sha256: str
+    operating_system_identity: str
+    cpu_affinity_policy_token: str
+    required_cpu_affinity: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.worker_adapter_schema_version) is not str
+            or not self.worker_adapter_schema_version
+            or any(
+                ord(character) < 0x21 or ord(character) > 0x7E
+                for character in self.worker_adapter_schema_version
+            )
+            or _LOWER_SHA256.fullmatch(self.worker_build_identity_sha256) is None
+            or type(self.operating_system_identity) is not str
+            or not self.operating_system_identity.startswith("Linux-")
+            or any(
+                ord(character) < 0x21 or ord(character) > 0x7E
+                for character in self.operating_system_identity
+            )
+            or self.cpu_affinity_policy_token != OPENFHE_CPU_AFFINITY_POLICY
+            or type(self.required_cpu_affinity) is not tuple
+            or not self.required_cpu_affinity
+            or any(
+                type(cpu) is not int or cpu < 0
+                for cpu in self.required_cpu_affinity
+            )
+            or tuple(sorted(set(self.required_cpu_affinity)))
+            != self.required_cpu_affinity
+        ):
+            raise OpenFHEQueryRuntimeError(
+                "OpenFHE worker runtime-identity policy is malformed"
+            )
+
+
+def project_expected_openfhe_worker_runtime_identity(
+    policy: OpenFHEWorkerRuntimeIdentityPolicy,
+) -> dict[str, object]:
+    """Project the controller's stable policy without using runtime evidence."""
+
+    if type(policy) is not OpenFHEWorkerRuntimeIdentityPolicy:
+        raise TypeError("expected worker runtime identity requires one exact policy")
+    return {
+        "cpu_affinity_policy": policy.cpu_affinity_policy_token,
+        "dynamic_loader_environment_policy": (
+            OPENFHE_DYNAMIC_LOADER_ENVIRONMENT_POLICY
+        ),
+        "openfhe_runtime_receipt_schema_version": (
+            OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA
+        ),
+        "operating_system_identity": policy.operating_system_identity,
+        "runtime_control_protocol_schema": OPENFHE_RUNTIME_CONTROL_PROTOCOL_SCHEMA,
+        "runtime_mapping_policy": OPENFHE_WORKER_RUNTIME_MAPPING_POLICY,
+        "schema_version": OPENFHE_WORKER_RUNTIME_IDENTITY_SCHEMA,
+        "worker_adapter_schema_version": policy.worker_adapter_schema_version,
+        "worker_build_identity_sha256": policy.worker_build_identity_sha256,
+    }
+
+
+def project_observed_openfhe_worker_runtime_identity(
+    policy: OpenFHEWorkerRuntimeIdentityPolicy,
+    receipt: OpenFHEQueryRuntimeReceipt,
+) -> dict[str, object]:
+    """Reconstruct a stable identity from observed receipt facts, fail closed."""
+
+    if type(policy) is not OpenFHEWorkerRuntimeIdentityPolicy:
+        raise TypeError("observed worker runtime identity requires one exact policy")
+    if type(receipt) is not OpenFHEQueryRuntimeReceipt:
+        raise TypeError("observed worker runtime identity requires one exact receipt")
+    if type(receipt.runtime_mapping_admission) is not OpenFHERuntimeMappingAdmission:
+        raise OpenFHEQueryRuntimeError(
+            "OpenFHE worker runtime mapping continuity is absent"
+        )
+    observed_worker_build_identity_sha256 = openfhe_worker_build_receipt_sha256(
+        receipt.runner
+    )
+    if observed_worker_build_identity_sha256 != policy.worker_build_identity_sha256:
+        raise OpenFHEQueryRuntimeError(
+            "observed OpenFHE worker build differs from the runtime policy"
+        )
+    if receipt.operating_system_identity != policy.operating_system_identity:
+        raise OpenFHEQueryRuntimeError(
+            "observed OpenFHE operating system differs from the runtime policy"
+        )
+    if receipt.cpu_affinity != policy.required_cpu_affinity:
+        raise OpenFHEQueryRuntimeError(
+            "observed OpenFHE CPU affinity differs from the runtime policy"
+        )
+    document = receipt.to_document()
+    if (
+        document.get("schema_version") != OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA
+        or document.get("runtime_control_protocol_schema")
+        != OPENFHE_RUNTIME_CONTROL_PROTOCOL_SCHEMA
+        or document.get("dynamic_loader_environment_clear") is not True
+        or document.get("runtime_state_continuity_verified") is not True
+    ):
+        raise OpenFHEQueryRuntimeError(
+            "observed OpenFHE runtime receipt violates its fixed protocol policy"
+        )
+    return {
+        "cpu_affinity_policy": policy.cpu_affinity_policy_token,
+        "dynamic_loader_environment_policy": (
+            OPENFHE_DYNAMIC_LOADER_ENVIRONMENT_POLICY
+        ),
+        "openfhe_runtime_receipt_schema_version": document["schema_version"],
+        "operating_system_identity": receipt.operating_system_identity,
+        "runtime_control_protocol_schema": document[
+            "runtime_control_protocol_schema"
+        ],
+        "runtime_mapping_policy": OPENFHE_WORKER_RUNTIME_MAPPING_POLICY,
+        "schema_version": OPENFHE_WORKER_RUNTIME_IDENTITY_SCHEMA,
+        "worker_adapter_schema_version": policy.worker_adapter_schema_version,
+        "worker_build_identity_sha256": (
+            observed_worker_build_identity_sha256
+        ),
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -716,14 +993,40 @@ def _resolved_linked_path(value: str, *, field: str) -> Path:
     return resolved
 
 
+def _is_linux_distribution_library_path(path: Path) -> bool:
+    """Return whether one resolved path is under a closed distribution lib root."""
+
+    return any(path.is_relative_to(root) for root in _LINUX_DISTRIBUTION_LIBRARY_ROOTS)
+
+
 def _linux_linked_library_paths(
     runner: Path,
+    *,
+    pinned_install_root: Path,
 ) -> tuple[str, tuple[tuple[str, Path], ...], tuple[str, ...]]:
+    try:
+        install_root = pinned_install_root.resolve(strict=True)
+    except OSError as error:
+        raise OpenFHEQueryRuntimeError(
+            "pinned OpenFHE install root cannot be resolved"
+        ) from error
+    if (
+        not install_root.is_dir()
+        or _is_linux_distribution_library_path(install_root)
+        or any(
+            root.is_relative_to(install_root)
+            for root in _LINUX_DISTRIBUTION_LIBRARY_ROOTS
+        )
+    ):
+        raise OpenFHEQueryRuntimeError(
+            "pinned OpenFHE install root overlaps the Linux distribution roots"
+        )
     executable = shutil.which("ldd", path="/usr/bin:/bin")
     if executable is None:
         raise OpenFHEQueryRuntimeError("ldd is unavailable")
     output = _linkage_tool_output((executable, str(runner)), field="runner ldd identity")
-    entries: list[tuple[str, Path]] = []
+    entries_by_load_name: dict[str, Path] = {}
+    system_load_names: set[str] = set()
     for raw_line in output.splitlines():
         line = raw_line.strip()
         if not line:
@@ -742,16 +1045,40 @@ def _linux_linked_library_paths(
             continue
         else:
             raise OpenFHEQueryRuntimeError("runner ldd identity contains an unknown row")
-        entries.append(
-            (
-                load_name,
-                _resolved_linked_path(target, field=f"linked library {load_name}"),
-            )
+        resolved = _resolved_linked_path(
+            target,
+            field=f"linked library {load_name}",
         )
-    result = tuple(sorted(set(entries), key=lambda item: (item[0], str(item[1]))))
+        if load_name in entries_by_load_name:
+            raise OpenFHEQueryRuntimeError(
+                "runner ldd identity repeats one linked-library load name"
+            )
+        under_install_root = resolved.is_relative_to(install_root)
+        under_distribution_root = _is_linux_distribution_library_path(resolved)
+        is_openfhe = load_name.lower().startswith("libopenfhe")
+        if under_install_root:
+            pass
+        elif under_distribution_root:
+            if is_openfhe:
+                raise OpenFHEQueryRuntimeError(
+                    "OpenFHE library resolved through a Linux distribution root"
+                )
+            system_load_names.add(load_name)
+        else:
+            raise OpenFHEQueryRuntimeError(
+                "linked library is outside the pinned OpenFHE and distribution roots"
+            )
+        entries_by_load_name[load_name] = resolved
+    result = tuple(sorted(entries_by_load_name.items()))
     if not result:
-        raise OpenFHEQueryRuntimeError("runner linked-library inventory is empty")
-    return "linux-ldd-direct-and-transitive-v1", result, ()
+        raise OpenFHEQueryRuntimeError(
+            "runner non-system linked-library inventory is empty"
+        )
+    return (
+        "linux-ldd-direct-and-transitive-v2",
+        result,
+        tuple(sorted(system_load_names)),
+    )
 
 
 def _darwin_rpaths(otool: str, runner: Path) -> tuple[Path, ...]:
@@ -845,10 +1172,15 @@ def _darwin_linked_library_paths(
 
 def _inspect_linked_library_paths(
     runner: Path,
+    *,
+    pinned_install_root: Path,
 ) -> tuple[str, tuple[tuple[str, Path], ...], tuple[str, ...]]:
     system = platform.system()
     if system == "Linux":
-        return _linux_linked_library_paths(runner)
+        return _linux_linked_library_paths(
+            runner,
+            pinned_install_root=pinned_install_root,
+        )
     if system == "Darwin":
         return _darwin_linked_library_paths(runner)
     raise OpenFHEQueryRuntimeError("runner linked-library inspection OS is unsupported")
@@ -856,8 +1188,13 @@ def _inspect_linked_library_paths(
 
 def _linked_library_identity(
     runner: Path,
+    *,
+    pinned_install_root: Path,
 ) -> tuple[str, tuple[OpenFHELinkedLibraryIdentity, ...], tuple[str, ...]]:
-    inspection_format, paths, system_load_names = _inspect_linked_library_paths(runner)
+    inspection_format, paths, system_load_names = _inspect_linked_library_paths(
+        runner,
+        pinned_install_root=pinned_install_root,
+    )
     identities: list[OpenFHELinkedLibraryIdentity] = []
     for load_name, path in paths:
         content, status = _stable_file_content(
@@ -1178,7 +1515,10 @@ def capture_openfhe_runner_build_identity(
         cache,
         cache_content,
     )
-    linkage_format, linked_libraries, linked_system_libraries = _linked_library_identity(runner)
+    linkage_format, linked_libraries, linked_system_libraries = _linked_library_identity(
+        runner,
+        pinned_install_root=Path(build_provenance.openfhe_directory).parent.parent,
+    )
     build_binding = {
         "build_provenance": build_provenance.to_document(),
         "compiler_byte_count": len(compiler_content),
@@ -2234,9 +2574,14 @@ def execute_day2_anchored_strong_openfhe_query(
 
 
 __all__ = (
+    "OPENFHE_CPU_AFFINITY_POLICY",
+    "OPENFHE_DYNAMIC_LOADER_ENVIRONMENT_POLICY",
     "OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA",
     "OPENFHE_RUNNER_BUILD_IDENTITY_SCHEMA",
     "OPENFHE_RUNTIME_CONTROL_PROTOCOL_SCHEMA",
+    "OPENFHE_WORKER_BUILD_RECEIPT_SCHEMA",
+    "OPENFHE_WORKER_RUNTIME_IDENTITY_SCHEMA",
+    "OPENFHE_WORKER_RUNTIME_MAPPING_POLICY",
     "ExecutedOpenFHEQuery",
     "OpenFHEBuildProvenance",
     "OpenFHEQueryRuntimeError",
@@ -2244,9 +2589,14 @@ __all__ = (
     "OpenFHELinkedLibraryIdentity",
     "OpenFHERunnerBuildIdentity",
     "OpenFHESerializedPayload",
+    "OpenFHEWorkerRuntimeIdentityPolicy",
     "capture_openfhe_runner_build_identity",
     "execute_authorized_openfhe_query",
     "execute_authorized_strong_openfhe_query",
     "execute_day2_anchored_openfhe_query",
     "execute_day2_anchored_strong_openfhe_query",
+    "openfhe_worker_build_receipt_sha256",
+    "project_expected_openfhe_worker_runtime_identity",
+    "project_observed_openfhe_worker_runtime_identity",
+    "project_openfhe_worker_build_receipt",
 )

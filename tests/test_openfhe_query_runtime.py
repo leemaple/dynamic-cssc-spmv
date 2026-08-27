@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -9,10 +10,12 @@ import pytest
 import dynamic_cssc.day2_calibration_authority as day2_authority
 import dynamic_cssc.day2_openfhe_key_plan as day2_key_plan
 import dynamic_cssc.openfhe_query_runtime as runtime
+import dynamic_cssc.openfhe_runtime_admission as runtime_admission
 from dynamic_cssc.cssc import publish_component
 from dynamic_cssc.day2_openfhe_key_plan import Day2OpenFHEKeyPlanError
 from dynamic_cssc.mask_ledger import SQLiteMaskBindingLedger
 from dynamic_cssc.ordinary_query_lifecycle import (
+    OrdinaryExecutionAuthorizationReceipt,
     OrdinaryQueryLifecycleError,
     authorize_ordinary_execution,
     bind_ordinary_execution,
@@ -170,7 +173,7 @@ def _runtime_identity(tmp_path: Path) -> runtime.OpenFHERunnerBuildIdentity:
         compiler_target="test-target",
         compiler_flags=("-O3",),
         build_provenance=_build_provenance(tmp_path.resolve()),
-        linkage_inspection_format="test-linked-library-inspector-v1",
+        linkage_inspection_format="linux-ldd-direct-and-transitive-v2",
         linked_libraries=(
             runtime.OpenFHELinkedLibraryIdentity(
                 load_name="libOPENFHEpke.so",
@@ -189,6 +192,589 @@ def _runtime_identity(tmp_path: Path) -> runtime.OpenFHERunnerBuildIdentity:
         linked_system_library_load_names=(),
         build_identity_sha256="4" * 64,
     )
+
+
+def test_worker_build_receipt_projection_excludes_ephemeral_filesystem_identity(
+    tmp_path: Path,
+) -> None:
+    identity = _runtime_identity(tmp_path)
+    library = identity.linked_libraries[0]
+    provenance = identity.build_provenance
+    relocated = replace(
+        identity,
+        runner_device=101,
+        runner_inode=202,
+        runner_mode=0o711,
+        compiler_path="/relocated/toolchain/cxx",
+        build_provenance=replace(
+            provenance,
+            cmake_path="/relocated/toolchain/cmake",
+            openfhe_directory="/relocated/openfhe/lib/OpenFHE",
+        ),
+        linked_libraries=(
+            replace(
+                library,
+                resolved_path="/relocated/lib/libOPENFHEpke.so",
+                device=303,
+                inode=404,
+                mode=0o711,
+            ),
+        ),
+        build_identity_sha256="f" * 64,
+    )
+
+    receipt = runtime.project_openfhe_worker_build_receipt(identity)
+    relocated_receipt = runtime.project_openfhe_worker_build_receipt(relocated)
+
+    assert receipt == relocated_receipt
+    assert set(receipt) == {
+        "build_provenance",
+        "compiler",
+        "linkage_inspection_format",
+        "linked_libraries",
+        "linked_system_library_load_names",
+        "runner",
+        "runner_identity_schema_version",
+        "schema_version",
+        "source_sha256",
+        "worker_build_receipt_sha256",
+    }
+    assert set(receipt["build_provenance"]) == {
+        "cmake_byte_count",
+        "cmake_identity_sha256",
+        "cmake_sha256",
+        "cmake_version",
+        "openfhe_package_version",
+        "openfhe_repository",
+        "openfhe_source_clean",
+        "openfhe_source_cmake_sha256",
+        "openfhe_source_commit",
+        "openfhe_source_tree",
+        "openfhe_version",
+    }
+    assert set(receipt["compiler"]) == {
+        "byte_count",
+        "flags",
+        "identity_sha256",
+        "sha256",
+        "target",
+        "version",
+    }
+    assert set(receipt["runner"]) == {
+        "binary_format",
+        "binary_id",
+        "byte_count",
+        "needed_load_names",
+        "relative_path",
+        "sha256",
+    }
+    assert set(receipt["linked_libraries"][0]) == {
+        "binary_format",
+        "binary_id",
+        "byte_count",
+        "load_name",
+        "needed_load_names",
+        "sha256",
+        "soname",
+    }
+    assert receipt["schema_version"] == runtime.OPENFHE_WORKER_BUILD_RECEIPT_SCHEMA
+    assert receipt["worker_build_receipt_sha256"] == (
+        runtime.openfhe_worker_build_receipt_sha256(identity)
+    )
+    assert runtime.openfhe_worker_build_receipt_sha256(identity) == (
+        runtime.openfhe_worker_build_receipt_sha256(relocated)
+    )
+    rendered = _canonical_line(receipt)
+    for forbidden in (
+        b"/compiler",
+        b"/relocated",
+        b"openfhe_directory",
+        b"resolved_path",
+        b"runner_device",
+        b"runner_inode",
+        b"runner_mode",
+        b"build_identity_sha256",
+        b"cmake_cache_sha256",
+        b"compile_commands_sha256",
+        b"build_ninja_sha256",
+        b"rules_ninja_sha256",
+        b"openfhe_config_sha256",
+        b"openfhe_cmake_cache_sha256",
+        b"openfhe_compile_commands_sha256",
+        b"openfhe_install_manifest_sha256",
+    ):
+        assert forbidden not in rendered
+
+
+def test_worker_build_receipt_projection_is_stable_across_real_path_bearing_preimages(
+    tmp_path: Path,
+) -> None:
+    first_root = tmp_path.resolve() / "checkout-a"
+    second_root = tmp_path.resolve() / "checkout-b"
+    first = _runtime_identity(first_root)
+    first_provenance = first.build_provenance
+
+    def path_bearing_digest(root: Path, filename: str) -> str:
+        content = f"command={root}/toolchain/cxx;output={root}/{filename}\n".encode()
+        return hashlib.sha256(content).hexdigest()
+
+    first_path_digests = {
+        field: path_bearing_digest(first_root, field)
+        for field in (
+            "cmake_cache_sha256",
+            "compile_commands_sha256",
+            "build_ninja_sha256",
+            "rules_ninja_sha256",
+            "openfhe_config_sha256",
+            "openfhe_cmake_cache_sha256",
+            "openfhe_compile_commands_sha256",
+            "openfhe_install_manifest_sha256",
+        )
+    }
+    second_path_digests = {
+        field: path_bearing_digest(second_root, field)
+        for field in first_path_digests
+    }
+    assert first_path_digests != second_path_digests
+    first = replace(
+        first,
+        build_provenance=replace(first_provenance, **first_path_digests),
+    )
+    relocated = replace(
+        first,
+        compiler_path=str(second_root / "toolchain/cxx"),
+        build_provenance=replace(
+            first.build_provenance,
+            cmake_path=str(second_root / "toolchain/cmake"),
+            openfhe_directory=str(second_root / "openfhe/lib/OpenFHE"),
+            **second_path_digests,
+        ),
+        linked_libraries=(
+            replace(
+                first.linked_libraries[0],
+                resolved_path=str(second_root / "openfhe/lib/libOPENFHEpke.so"),
+            ),
+        ),
+    )
+
+    assert first.build_provenance != relocated.build_provenance
+    assert runtime.project_openfhe_worker_build_receipt(first) == (
+        runtime.project_openfhe_worker_build_receipt(relocated)
+    )
+
+
+@pytest.mark.parametrize(
+    "changed",
+    (
+        "runner_sha256",
+        "compiler_flags",
+        "openfhe_source_commit",
+        "linked_library_sha256",
+    ),
+)
+def test_worker_build_receipt_projection_binds_each_stable_build_domain(
+    tmp_path: Path,
+    changed: str,
+) -> None:
+    identity = _runtime_identity(tmp_path)
+    if changed == "runner_sha256":
+        modified = replace(identity, runner_sha256="a" * 64)
+    elif changed == "compiler_flags":
+        modified = replace(identity, compiler_flags=("-O2",))
+    elif changed == "openfhe_source_commit":
+        modified = replace(
+            identity,
+            build_provenance=replace(
+                identity.build_provenance,
+                openfhe_source_commit="9" * 40,
+            ),
+        )
+    else:
+        modified = replace(
+            identity,
+            linked_libraries=(
+                replace(identity.linked_libraries[0], sha256="b" * 64),
+            ),
+        )
+
+    assert runtime.openfhe_worker_build_receipt_sha256(modified) != (
+        runtime.openfhe_worker_build_receipt_sha256(identity)
+    )
+
+
+def test_worker_build_receipt_projection_canonicalizes_dependency_order(
+    tmp_path: Path,
+) -> None:
+    identity = _runtime_identity(tmp_path)
+    first = identity.linked_libraries[0]
+    second = replace(
+        first,
+        load_name="libOPENFHEcore.so",
+        sha256="c" * 64,
+        binary_id="8" * 40,
+        soname="libOPENFHEcore.so",
+        needed_load_names=("libm.so.6", "libc.so.6"),
+    )
+    system_m = replace(
+        first,
+        load_name="libm.so.6",
+        resolved_path="/usr/lib/x86_64-linux-gnu/libm.so.6",
+        sha256="8" * 64,
+        binary_id="9" * 40,
+        soname="libm.so.6",
+        needed_load_names=("libc.so.6",),
+    )
+    system_c = replace(
+        first,
+        load_name="libc.so.6",
+        resolved_path="/usr/lib/x86_64-linux-gnu/libc.so.6",
+        sha256="a" * 64,
+        binary_id="b" * 40,
+        soname="libc.so.6",
+        needed_load_names=(),
+    )
+    forward = replace(
+        identity,
+        source_sha256=(("z-source", "d" * 64), ("a-source", "e" * 64)),
+        linked_libraries=(first, second, system_m, system_c),
+        linked_system_library_load_names=("libm.so.6", "libc.so.6"),
+    )
+    reversed_order = replace(
+        forward,
+        source_sha256=tuple(reversed(forward.source_sha256)),
+        linked_libraries=tuple(reversed(forward.linked_libraries)),
+        linked_system_library_load_names=tuple(
+            reversed(forward.linked_system_library_load_names)
+        ),
+    )
+
+    assert runtime.project_openfhe_worker_build_receipt(forward) == (
+        runtime.project_openfhe_worker_build_receipt(reversed_order)
+    )
+
+
+@pytest.mark.parametrize("duplicate", ("source", "library", "unknown-system"))
+def test_worker_build_receipt_projection_rejects_duplicate_or_overlapping_names(
+    tmp_path: Path,
+    duplicate: str,
+) -> None:
+    identity = _runtime_identity(tmp_path)
+    if duplicate == "source":
+        changed = replace(
+            identity,
+            source_sha256=(identity.source_sha256[0], identity.source_sha256[0]),
+        )
+    elif duplicate == "library":
+        changed = replace(
+            identity,
+            linked_libraries=(identity.linked_libraries[0],) * 2,
+        )
+    else:
+        changed = replace(
+            identity,
+            linked_system_library_load_names=("libabsent.so.1",),
+        )
+
+    with pytest.raises(runtime.OpenFHEQueryRuntimeError, match="closed partition"):
+        runtime.project_openfhe_worker_build_receipt(changed)
+
+
+def test_worker_build_receipt_system_bytes_are_dynamic_but_load_names_are_stable(
+    tmp_path: Path,
+) -> None:
+    identity = _runtime_identity(tmp_path)
+    openfhe = identity.linked_libraries[0]
+    system = replace(
+        openfhe,
+        load_name="libgomp.so.1",
+        resolved_path="/usr/lib/x86_64-linux-gnu/libgomp.so.1",
+        sha256="8" * 64,
+        binary_id="9" * 40,
+        soname="libgomp.so.1",
+        needed_load_names=("libc.so.6",),
+    )
+    with_system = replace(
+        identity,
+        linked_libraries=(openfhe, system),
+        linked_system_library_load_names=(system.load_name,),
+    )
+    changed_instance = replace(
+        with_system,
+        linked_libraries=(
+            openfhe,
+            replace(
+                system,
+                resolved_path="/lib64/libgomp.so.1",
+                sha256="a" * 64,
+                device=303,
+                inode=404,
+                binary_id="b" * 40,
+            ),
+        ),
+    )
+
+    assert with_system != changed_instance
+    assert runtime.project_openfhe_worker_build_receipt(with_system) == (
+        runtime.project_openfhe_worker_build_receipt(changed_instance)
+    )
+    added_system_name = replace(
+        with_system,
+        linked_libraries=(
+            *with_system.linked_libraries,
+            replace(
+                system,
+                load_name="libquadmath.so.0",
+                soname="libquadmath.so.0",
+                sha256="c" * 64,
+                binary_id="d" * 40,
+            ),
+        ),
+        linked_system_library_load_names=("libgomp.so.1", "libquadmath.so.0"),
+    )
+    assert runtime.openfhe_worker_build_receipt_sha256(added_system_name) != (
+        runtime.openfhe_worker_build_receipt_sha256(with_system)
+    )
+
+
+def _runtime_mapping_admission(
+    *,
+    pid: int = 101,
+    process_start_time_ticks: int = 202,
+    path: str = "/opt/worker/openfhe_query_runner",
+    device: int = 1,
+    inode: int = 2,
+) -> runtime_admission.OpenFHERuntimeMappingAdmission:
+    admitted = runtime_admission.AdmittedExecutableFile(
+        path=path,
+        device=device,
+        inode=inode,
+        mode=0o755,
+        byte_count=1,
+        sha256="1" * 64,
+        binary_format="elf-v1",
+        binary_id="2" * 40,
+    )
+    ready = runtime_admission.OpenFHEProcessMappingSnapshot(
+        stage="READY",
+        pid=pid,
+        process_start_time_ticks=process_start_time_ticks,
+        raw_maps_byte_count=10,
+        raw_maps_sha256="3" * 64,
+        proc_map_entry_count=1,
+        executable_map_entry_count=1,
+        admitted_executable_files=(admitted,),
+        kernel_executable_mappings=(),
+        admitted_executable_file_set_sha256="4" * 64,
+        executable_mapping_set_sha256="5" * 64,
+    )
+    done = replace(
+        ready,
+        stage="DONE",
+        raw_maps_sha256="6" * 64,
+    )
+    return runtime_admission.OpenFHERuntimeMappingAdmission(
+        ready=ready,
+        done=done,
+        admitted_executable_file_set_sha256=ready.admitted_executable_file_set_sha256,
+        executable_mapping_set_sha256=ready.executable_mapping_set_sha256,
+    )
+
+
+def _runtime_receipt(
+    tmp_path: Path,
+    *,
+    mapping: runtime_admission.OpenFHERuntimeMappingAdmission | None = None,
+) -> runtime.OpenFHEQueryRuntimeReceipt:
+    return runtime.OpenFHEQueryRuntimeReceipt(
+        runner=_runtime_identity(tmp_path),
+        execution_kind="ordinary",
+        authorization=OrdinaryExecutionAuthorizationReceipt(
+            query_id="query-1",
+            version_id="v00000001",
+            ledger_commitment_token="commitment-1",
+            query_preparation_sha256="7" * 64,
+            execution_binding_digest="8" * 64,
+            authorization_transition_sha256="9" * 64,
+        ),
+        day2_key_plan_authorization=None,
+        request_sha256="a" * 64,
+        request_byte_count=1,
+        result_sha256="b" * 64,
+        result_byte_count=1,
+        elapsed_ns=10,
+        timeout_seconds=60,
+        peak_resident_memory_bytes=20,
+        resident_memory_limit_bytes=100,
+        peak_scratch_bytes=30,
+        scratch_limit_bytes=100,
+        stdout_sha256="c" * 64,
+        stdout_byte_count=1,
+        stderr_sha256="d" * 64,
+        stderr_byte_count=0,
+        serialized_object_count=1,
+        serialized_object_bytes=40,
+        host_identity_sha256="e" * 64,
+        operating_system_identity="Linux-6.8.0-x86_64",
+        cpu_affinity=(0, 1),
+        runtime_mapping_admission=(
+            _runtime_mapping_admission() if mapping is None else mapping
+        ),
+    )
+
+
+def _runtime_identity_policy(
+    tmp_path: Path,
+) -> runtime.OpenFHEWorkerRuntimeIdentityPolicy:
+    expected_build_identity = (
+        "453131210d0ec4721ab7ece3e13c601d4c37ec8dbab481aae72663519d9c80bb"
+    )
+    assert runtime.openfhe_worker_build_receipt_sha256(
+        _runtime_identity(tmp_path)
+    ) == expected_build_identity
+    return runtime.OpenFHEWorkerRuntimeIdentityPolicy(
+        worker_adapter_schema_version=(
+            "dynamic-cssc-publication-day1b-worker-adapter-v1"
+        ),
+        worker_build_identity_sha256=expected_build_identity,
+        operating_system_identity="Linux-6.8.0-x86_64",
+        cpu_affinity_policy_token=runtime.OPENFHE_CPU_AFFINITY_POLICY,
+        required_cpu_affinity=(0, 1),
+    )
+
+
+def test_expected_and_observed_worker_runtime_identity_are_independently_equal(
+    tmp_path: Path,
+) -> None:
+    receipt = _runtime_receipt(tmp_path)
+    policy = _runtime_identity_policy(tmp_path)
+
+    expected = runtime.project_expected_openfhe_worker_runtime_identity(policy)
+    observed = runtime.project_observed_openfhe_worker_runtime_identity(
+        policy,
+        receipt,
+    )
+
+    assert observed == expected
+    assert expected["schema_version"] == (
+        runtime.OPENFHE_WORKER_RUNTIME_IDENTITY_SCHEMA
+    )
+    assert expected["runtime_mapping_policy"] == (
+        "linux-ready-done-executable-closure-v1"
+    )
+    assert expected["dynamic_loader_environment_policy"] == "clear-v1"
+    assert expected["cpu_affinity_policy"] == runtime.OPENFHE_CPU_AFFINITY_POLICY
+    assert "required_cpu_affinity" not in expected
+    assert [0, 1] not in expected.values()
+
+
+def test_worker_runtime_identity_policy_rejects_non_linux_identity() -> None:
+    with pytest.raises(runtime.OpenFHEQueryRuntimeError, match="policy is malformed"):
+        runtime.OpenFHEWorkerRuntimeIdentityPolicy(
+            worker_adapter_schema_version=(
+                "dynamic-cssc-publication-day1b-worker-adapter-v1"
+            ),
+            worker_build_identity_sha256="0" * 64,
+            operating_system_identity="Darwin-25.0.0-arm64",
+            cpu_affinity_policy_token=runtime.OPENFHE_CPU_AFFINITY_POLICY,
+            required_cpu_affinity=(0, 1),
+        )
+
+
+def test_worker_runtime_identity_policy_rejects_an_unfrozen_affinity_token() -> None:
+    with pytest.raises(runtime.OpenFHEQueryRuntimeError, match="policy is malformed"):
+        runtime.OpenFHEWorkerRuntimeIdentityPolicy(
+            worker_adapter_schema_version=(
+                "dynamic-cssc-publication-day1b-worker-adapter-v1"
+            ),
+            worker_build_identity_sha256="0" * 64,
+            operating_system_identity="Linux-6.8.0-x86_64",
+            cpu_affinity_policy_token="caller-selected-policy-v1",
+            required_cpu_affinity=(0, 1),
+        )
+
+
+def test_worker_runtime_identity_excludes_dynamic_process_and_measurement_facts(
+    tmp_path: Path,
+) -> None:
+    receipt = _runtime_receipt(tmp_path)
+    policy = _runtime_identity_policy(tmp_path)
+    changed_mapping = _runtime_mapping_admission(
+        pid=303,
+        process_start_time_ticks=404,
+        path="/relocated/openfhe_query_runner",
+        device=505,
+        inode=606,
+    )
+    changed = replace(
+        receipt,
+        runner=replace(
+            receipt.runner,
+            runner_device=707,
+            runner_inode=808,
+            compiler_path="/relocated/cxx",
+            build_identity_sha256="f" * 64,
+        ),
+        request_sha256="0" * 64,
+        result_sha256="1" * 64,
+        elapsed_ns=999,
+        peak_resident_memory_bytes=888,
+        peak_scratch_bytes=777,
+        host_identity_sha256="2" * 64,
+        runtime_mapping_admission=changed_mapping,
+    )
+
+    assert runtime.project_observed_openfhe_worker_runtime_identity(
+        policy,
+        changed,
+    ) == runtime.project_observed_openfhe_worker_runtime_identity(policy, receipt)
+    rendered = _canonical_line(
+        runtime.project_observed_openfhe_worker_runtime_identity(policy, changed)
+    )
+    for forbidden in (
+        b"host_identity",
+        b"elapsed",
+        b"resident",
+        b"scratch",
+        b"request",
+        b"result",
+        b"pid",
+        b"process_start",
+        b"raw_maps",
+        b"/relocated",
+    ):
+        assert forbidden not in rendered
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ("mapping", "mapping continuity"),
+        ("operating-system", "operating system"),
+        ("cpu-affinity", "CPU affinity"),
+        ("worker-build", "worker build"),
+    ),
+)
+def test_observed_worker_runtime_identity_rejects_policy_mismatch(
+    tmp_path: Path,
+    mutation: str,
+    message: str,
+) -> None:
+    receipt = _runtime_receipt(tmp_path)
+    policy = _runtime_identity_policy(tmp_path)
+    if mutation == "mapping":
+        changed = replace(receipt, runtime_mapping_admission=None)
+    elif mutation == "operating-system":
+        changed = replace(receipt, operating_system_identity="Linux-6.9.0-x86_64")
+    elif mutation == "cpu-affinity":
+        changed = replace(receipt, cpu_affinity=(0,))
+    else:
+        changed = replace(
+            receipt,
+            runner=replace(receipt.runner, runner_sha256="0" * 64),
+        )
+
+    with pytest.raises(runtime.OpenFHEQueryRuntimeError, match=message):
+        runtime.project_observed_openfhe_worker_runtime_identity(policy, changed)
 
 
 def _process_scratch(tmp_path: Path, name: str) -> tuple[Path, Path, Path, Path]:
@@ -250,14 +836,19 @@ def test_runner_build_identity_binds_binary_sources_compiler_flags_and_libraries
 ) -> None:
     repository, runner_relative_path = _runner_repository(tmp_path)
     library = repository / "lib" / "libOPENFHEpke.so"
+    system_library = repository / "lib" / "libc.so.6"
     _write(library, b"test-openfhe-shared-library-v1")
+    _write(system_library, b"test-system-shared-library-v1")
     monkeypatch.setattr(
         runtime,
         "_inspect_linked_library_paths",
-        lambda _runner: (
+        lambda _runner, **_kwargs: (
             "test-linked-library-inspector-v1",
-            (("libOPENFHEpke.so", library),),
-            ("test-system-library",),
+            (
+                ("libOPENFHEpke.so", library),
+                ("libc.so.6", system_library),
+            ),
+            ("libc.so.6",),
         ),
     )
     monkeypatch.setattr(
@@ -299,9 +890,10 @@ def test_runner_build_identity_binds_binary_sources_compiler_flags_and_libraries
     )
     assert set(dict(identity.source_sha256)) == set(runtime._SOURCE_PATHS)
     assert identity.linkage_inspection_format == "test-linked-library-inspector-v1"
-    assert identity.linked_system_library_load_names == ("test-system-library",)
+    assert identity.linked_system_library_load_names == ("libc.so.6",)
     assert tuple(item.load_name for item in identity.linked_libraries) == (
         "libOPENFHEpke.so",
+        "libc.so.6",
     )
     assert identity.linked_libraries[0].resolved_path == str(library)
     assert identity.linked_libraries[0].needed_load_names == ("test-needed",)
@@ -330,12 +922,20 @@ def test_linkage_parsers_resolve_physical_openfhe_and_retain_dyld_cache_names(
 ) -> None:
     root = tmp_path.resolve()
     runner = root / "bin" / "openfhe_query_runner"
-    linux_library = root / "linux" / "libOPENFHEpke.so.1"
+    linux_install_root = root / "openfhe-install"
+    linux_library = linux_install_root / "lib" / "libOPENFHEpke.so.1"
+    linux_system_library = root / "system" / "libc.so.6"
     darwin_library = root / "darwin" / "libOPENFHEpke.1.dylib"
     _write(runner, b"test-runner", executable=True)
     _write(linux_library, b"linux-openfhe")
+    _write(linux_system_library, b"linux-system")
     _write(darwin_library, b"darwin-openfhe")
     monkeypatch.setattr(runtime.shutil, "which", lambda *_args, **_kwargs: "/tool")
+    monkeypatch.setattr(
+        runtime,
+        "_is_linux_distribution_library_path",
+        lambda path: path == linux_system_library,
+    )
 
     monkeypatch.setattr(
         runtime,
@@ -343,12 +943,19 @@ def test_linkage_parsers_resolve_physical_openfhe_and_retain_dyld_cache_names(
         lambda _arguments, **_kwargs: (
             "linux-vdso.so.1 (0x0001)\n"
             f"libOPENFHEpke.so.1 => {linux_library} (0x0002)\n"
+            f"libc.so.6 => {linux_system_library} (0x0003)\n"
         ),
     )
-    linux_format, linux_entries, linux_system = runtime._linux_linked_library_paths(runner)
-    assert linux_format == "linux-ldd-direct-and-transitive-v1"
-    assert linux_entries == (("libOPENFHEpke.so.1", linux_library),)
-    assert linux_system == ()
+    linux_format, linux_entries, linux_system = runtime._linux_linked_library_paths(
+        runner,
+        pinned_install_root=linux_install_root,
+    )
+    assert linux_format == "linux-ldd-direct-and-transitive-v2"
+    assert linux_entries == (
+        ("libOPENFHEpke.so.1", linux_library),
+        ("libc.so.6", linux_system_library),
+    )
+    assert linux_system == ("libc.so.6",)
 
     def darwin_output(arguments: tuple[str, ...], **_kwargs: object) -> str:
         if "-L" in arguments:
@@ -366,6 +973,131 @@ def test_linkage_parsers_resolve_physical_openfhe_and_retain_dyld_cache_names(
     assert darwin_format == "darwin-otool-direct-v1"
     assert darwin_entries == (("@rpath/libOPENFHEpke.1.dylib", darwin_library),)
     assert darwin_system == ("/usr/lib/libSystem.B.dylib",)
+
+
+def test_linux_distribution_library_classification_is_path_bounded() -> None:
+    assert runtime._is_linux_distribution_library_path(
+        Path("/usr/lib/x86_64-linux-gnu/libc.so.6"),
+    )
+    assert runtime._is_linux_distribution_library_path(
+        Path("/lib64/ld-linux-x86-64.so.2"),
+    )
+    assert not runtime._is_linux_distribution_library_path(
+        Path("/opt/attacker/libc.so.6"),
+    )
+    assert not runtime._is_linux_distribution_library_path(
+        Path("/usr/local/lib/libunexpected.so.1"),
+    )
+
+
+def test_linux_linkage_rejects_install_root_ancestor_of_distribution_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_root = tmp_path.resolve()
+    distribution_root = install_root / "usr/lib"
+    distribution_root.mkdir(parents=True)
+    runner = install_root / "bin/openfhe_query_runner"
+    _write(runner, b"runner", executable=True)
+    monkeypatch.setattr(
+        runtime,
+        "_LINUX_DISTRIBUTION_LIBRARY_ROOTS",
+        (distribution_root,),
+    )
+
+    with pytest.raises(
+        runtime.OpenFHEQueryRuntimeError,
+        match="install root overlaps the Linux distribution roots",
+    ):
+        runtime._linux_linked_library_paths(
+            runner,
+            pinned_install_root=install_root,
+        )
+
+
+@pytest.mark.parametrize(
+    ("load_name", "location", "message"),
+    (
+        (
+            "libOPENFHEpke.so.1",
+            "system",
+            "OpenFHE library resolved through a Linux distribution root",
+        ),
+        (
+            "libunexpected.so.1",
+            "outside",
+            "outside the pinned OpenFHE and distribution roots",
+        ),
+    ),
+)
+def test_linux_linkage_classification_rejects_untrusted_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    load_name: str,
+    location: str,
+    message: str,
+) -> None:
+    root = tmp_path.resolve()
+    runner = root / "bin/openfhe_query_runner"
+    install_root = root / "openfhe-install"
+    install_root.mkdir()
+    target = root / location / load_name
+    _write(runner, b"runner", executable=True)
+    _write(target, b"library")
+    monkeypatch.setattr(runtime.shutil, "which", lambda *_args, **_kwargs: "/tool")
+    monkeypatch.setattr(
+        runtime,
+        "_linkage_tool_output",
+        lambda _arguments, **_kwargs: f"{load_name} => {target} (0x0001)\n",
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_is_linux_distribution_library_path",
+        lambda path: path.is_relative_to(root / "system"),
+    )
+
+    with pytest.raises(runtime.OpenFHEQueryRuntimeError, match=message):
+        runtime._linux_linked_library_paths(
+            runner,
+            pinned_install_root=install_root,
+        )
+
+
+def test_dynamic_mapping_admission_retains_system_and_non_system_files(
+    tmp_path: Path,
+) -> None:
+    runner = tmp_path.resolve() / "openfhe_query_runner"
+    _write(runner, b"runner", executable=True)
+    identity = _runtime_identity(tmp_path)
+    openfhe = replace(
+        identity.linked_libraries[0],
+        resolved_path=str(tmp_path.resolve() / "libOPENFHEpke.so"),
+    )
+    system = replace(
+        openfhe,
+        load_name="libc.so.6",
+        resolved_path=str(tmp_path.resolve() / "libc.so.6"),
+        sha256="8" * 64,
+        binary_id="9" * 40,
+        soname="libc.so.6",
+        needed_load_names=(),
+    )
+    with_system = replace(
+        identity,
+        runner_device=runner.stat().st_dev,
+        runner_inode=runner.stat().st_ino,
+        runner_mode=0o755,
+        linked_libraries=(openfhe, system),
+        linked_system_library_load_names=(system.load_name,),
+    )
+
+    admitted = runtime._admitted_executable_files(runner, with_system)
+
+    assert {entry.path for entry in admitted} == {
+        str(runner),
+        openfhe.resolved_path,
+        system.resolved_path,
+    }
 
 
 def test_binary_metadata_parses_elf_and_macho_identity(

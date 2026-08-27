@@ -14,6 +14,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
+import weakref
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +55,15 @@ DAY1B_REPRESENTATIVE_PAYLOAD_RECEIPT_STREAM_SCHEMA = (
 _EXPECTED_OUTPUT_SCHEMA = "dynamic-cssc-publication-day1b-query-expected-output-v1"
 _QUERY_ID_SCHEMA = "dynamic-cssc-publication-day1b-representative-query-id-v1"
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+
+_EXECUTION_CAPABILITY_LOCK = threading.Lock()
+_ISSUED_EXECUTION_CAPABILITIES: dict[
+    int,
+    tuple[
+        weakref.ReferenceType[Day1BRepresentativeOpenFHEExecutionCapability],
+        _RepresentativeOpenFHEExecutionBinding,
+    ],
+] = {}
 
 
 class Day1BRepresentativeOpenFHEError(ValueError):
@@ -280,6 +291,88 @@ class ExecutedDay1BRepresentativeOpenFHE:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class _RepresentativeOpenFHEExecutionBinding:
+    executed: ExecutedDay1BRepresentativeOpenFHE
+
+
+class Day1BRepresentativeOpenFHEExecutionCapability:
+    """Opaque single-use proof of the canonical native execution boundary.
+
+    The retained :class:`ExecutedDay1BRepresentativeOpenFHE` remains descriptive
+    and caller-constructible.  Only the canonical production wrapper below may
+    register one exact instance as process-local execution authority.  This
+    capability is not dispatch, publication, or claim authority.
+    """
+
+    __slots__ = ("_binding", "__weakref__")
+
+    def __new__(cls) -> Day1BRepresentativeOpenFHEExecutionCapability:
+        raise TypeError("Day1B representative OpenFHE execution is runtime-minted")
+
+    def __bool__(self) -> bool:
+        raise TypeError("Day1B representative OpenFHE execution is not a caller boolean")
+
+
+def _collected_execution_capability(identifier: int) -> None:
+    with _EXECUTION_CAPABILITY_LOCK:
+        _ISSUED_EXECUTION_CAPABILITIES.pop(identifier, None)
+
+
+def _active_execution_binding(
+    capability: Day1BRepresentativeOpenFHEExecutionCapability,
+    *,
+    consume: bool,
+) -> _RepresentativeOpenFHEExecutionBinding:
+    if type(capability) is not Day1BRepresentativeOpenFHEExecutionCapability:
+        raise TypeError(
+            "representative OpenFHE execution must be exact runtime-minted authority"
+        )
+    with _EXECUTION_CAPABILITY_LOCK:
+        active = (
+            _ISSUED_EXECUTION_CAPABILITIES.pop(id(capability), None)
+            if consume
+            else _ISSUED_EXECUTION_CAPABILITIES.get(id(capability))
+        )
+    presented = getattr(capability, "_binding", None)
+    if (
+        active is None
+        or active[0]() is not capability
+        or active[1] is not presented
+        or type(presented) is not _RepresentativeOpenFHEExecutionBinding
+    ):
+        raise Day1BRepresentativeOpenFHEError(
+            "representative OpenFHE execution capability is absent, unissued, or consumed"
+        )
+    if consume:
+        object.__setattr__(capability, "_binding", None)
+    return presented
+
+
+def describe_day1b_representative_openfhe_execution(
+    capability: Day1BRepresentativeOpenFHEExecutionCapability,
+) -> ExecutedDay1BRepresentativeOpenFHE:
+    """Return the exact descriptive execution without consuming its authority."""
+
+    return _active_execution_binding(capability, consume=False).executed
+
+
+def claim_day1b_representative_openfhe_execution(
+    capability: Day1BRepresentativeOpenFHEExecutionCapability,
+) -> ExecutedDay1BRepresentativeOpenFHE:
+    """Consume one canonical execution authority for the production issuer."""
+
+    return _active_execution_binding(capability, consume=True).executed
+
+
+def abandon_day1b_representative_openfhe_execution(
+    capability: Day1BRepresentativeOpenFHEExecutionCapability,
+) -> None:
+    """Consume one unused execution authority without granting admission."""
+
+    _active_execution_binding(capability, consume=True)
+
+
 def execute_day1b_representative_openfhe_query(
     *,
     candidate_replay_capability: Day1BCandidateReplayCapability,
@@ -400,11 +493,63 @@ def execute_day1b_representative_openfhe_query(
         raise
 
 
+def execute_day1b_representative_openfhe_query_for_production(
+    *,
+    candidate_replay_capability: Day1BCandidateReplayCapability,
+    day2_key_plan_capability: Day2OpenFHEKeyPlanCapability,
+    ledger: PreparedF1MCommitmentLedger,
+    repository_root: Path,
+    runner_relative_path: str,
+    scratch_root: Path,
+    timeout_seconds: int,
+    resident_memory_limit_bytes: int,
+    scratch_limit_bytes: int,
+) -> Day1BRepresentativeOpenFHEExecutionCapability:
+    """Execute canonically and mint one non-serializable production handoff.
+
+    This wrapper deliberately mints only process-local authority to present the
+    exact execution to the later worker-protocol issuer.  Every serialized
+    receipt retained by the execution remains pre-admission-only.
+    """
+
+    executed = execute_day1b_representative_openfhe_query(
+        candidate_replay_capability=candidate_replay_capability,
+        day2_key_plan_capability=day2_key_plan_capability,
+        ledger=ledger,
+        repository_root=repository_root,
+        runner_relative_path=runner_relative_path,
+        scratch_root=scratch_root,
+        timeout_seconds=timeout_seconds,
+        resident_memory_limit_bytes=resident_memory_limit_bytes,
+        scratch_limit_bytes=scratch_limit_bytes,
+    )
+    # Keep minting inside the exact execution wrapper: no callable seam accepts
+    # a caller-constructed descriptive ``Executed...`` object and upgrades it.
+    binding = _RepresentativeOpenFHEExecutionBinding(executed=executed)
+    capability = object.__new__(Day1BRepresentativeOpenFHEExecutionCapability)
+    object.__setattr__(capability, "_binding", binding)
+    identifier = id(capability)
+    reference = weakref.ref(
+        capability,
+        lambda _reference, identifier=identifier: _collected_execution_capability(
+            identifier
+        ),
+    )
+    with _EXECUTION_CAPABILITY_LOCK:
+        _ISSUED_EXECUTION_CAPABILITIES[identifier] = (reference, binding)
+    return capability
+
+
 __all__ = (
     "DAY1B_REPRESENTATIVE_OPENFHE_RECEIPT_SCHEMA",
     "DAY1B_REPRESENTATIVE_PAYLOAD_RECEIPT_STREAM_SCHEMA",
     "Day1BRepresentativeOpenFHEError",
+    "Day1BRepresentativeOpenFHEExecutionCapability",
     "Day1BRepresentativeOpenFHEReceipt",
     "ExecutedDay1BRepresentativeOpenFHE",
+    "abandon_day1b_representative_openfhe_execution",
+    "claim_day1b_representative_openfhe_execution",
+    "describe_day1b_representative_openfhe_execution",
     "execute_day1b_representative_openfhe_query",
+    "execute_day1b_representative_openfhe_query_for_production",
 )
