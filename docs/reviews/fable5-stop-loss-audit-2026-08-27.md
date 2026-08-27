@@ -135,3 +135,25 @@ Fable 5 纠错轮保留的唯一条件性 estimand 问题已经由代码与测�
 | 启动 Day1B | NO-GO | 语料、adapter、Day2、TRACE 等 HOLD 未关闭 |
 | 放宽 headline 成功规则 | NO-GO | 冻结规则不得事后更改 |
 | 立即停止整个项目 | NO | 目前存在可检验的性能缺陷假设与 methodology fallback |
+
+## 后续实证更新
+
+审计后的反馈环给出了三个确定结果：
+
+1. 回归测试在修复前稳定观察到 replay 对九个 rho 全部调用完整
+   `evaluate_causal_cell`，修复后只完整重放五个 rho，并从独立重放的 rho=1
+   精确派生 rho=3/10/30/100；validator identity 已提升为 v3。
+2. run `33040816357` 在 GitHub 的 355 分钟 job 上限处自然取消。producer 成功但
+   用时 273.90 分钟；旧 replay 又运行 81.08 分钟仍未完成，receipt、guard、
+   upload 与 aggregate 均未发生。因此 producer 与 replay 共享一个 timeout
+   budget 是已复现的结构性缺陷。
+3. v3 注册尝试 `33064274227` 的 56 个合同测试与 Ruff 全绿，但产档因生产器把
+   `GITHUB_REF` 写死为 `refs/heads/main` 而 HOLD。该约束与 ADR 0010 要求从
+   pre-anchor S1 建立恢复分支相冲突；修复必须继续要求同仓库 head ref、匹配的
+   `GITHUB_WORKFLOW_REF`、exact clean S1 SHA 和中央 Behavior Set workflow digest。
+
+对应处置是在新的 pre-anchor 血统中完成两项行为修复后重新注册：将 producer
+与 independent replay 拆成两个 checksum-bound jobs；并允许自洽、规范的同仓库
+`refs/heads/...` 恢复分支上下文。中间 pre-replay artifact 只保留一天、在 replay
+前严格核验 `SHA256SUMS`，且永远不被命名或聚合为 publication evidence。以上仍是
+PRE-S1 工程处置，不授予正式实验或论文经验 claim。
