@@ -953,7 +953,7 @@ $$
 - registration run `33037473603` 及其独立 payload/checksum/source/tree/run 复核；
 - methods-first manuscript、preregistration、claim ledger 和 analysis isolation 框架。
 
-需要注意，仓库中的 `claim-ledger-draft.md` 仍有少量文字把 strong candidate registration 写成 `HOLD`，已经落后于当前 S2 anchor；这应在下一个安全证据停点更新。但 registration 成功只说明固定候选目录可以被仓库承认，绝不等于 formal Day 1A、完整成本或经验结果已经产生。
+本分支已把 `claim-ledger-draft.md` 中落后于当前 S2 anchor 的 strong candidate registration 状态同步为精确 S1/S2 范围内的 `PASS`。该状态只说明固定候选目录可以被仓库承认，绝不等于 formal Day 1A、完整成本或经验结果已经产生；C3 与所有经验 claim 仍保持 `HOLD`。
 
 仍未形成最终论文结论的关键项是：
 
