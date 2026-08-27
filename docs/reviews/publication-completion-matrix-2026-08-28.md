@@ -12,6 +12,11 @@
   `2026-08-27T17:38:59Z` through completed replay receipt guard must be at most
   300.00 minutes, so the stop-loss instant is `2026-08-27T22:38:59Z`
   (`2026-08-28 06:38:59` Asia/Shanghai).
+- Historical implementation issues #8 and #11 were closed at
+  `2026-08-27T19:21Z` after mapping their requirements to exact-source CI,
+  tests, and descriptive registration. Their closure comments explicitly keep
+  formal Day 1A, calibration, Day 1B/TRACE, R4, performance, complete-cost, and
+  security claims on `HOLD`; issue state is not evidence authority.
 
 This matrix keeps the requested end state intact: reproducible formal
 experiments and evidence, followed by a submission-ready manuscript. A green
