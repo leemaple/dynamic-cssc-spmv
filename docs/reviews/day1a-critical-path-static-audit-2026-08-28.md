@@ -20,6 +20,23 @@ does not authorize a formal Day 1A dispatch.
 The disposable S2 must remain immutable. The diagnostic must not upload aggregate or
 formal shard evidence, and this ancestry can never become a formal Day 1A source.
 
+### Machine-enforcement status
+
+At the reviewed source, the workflow and its contract tests machine-enforce only a
+355-minute timeout on the producer job and a separate 355-minute timeout on the replay
+job. They do **not** encode the cross-job 300.00-minute critical-path gate. That gate is
+currently an external pre-dispatch operational decision recorded in this audit and
+enforced for run `33099397289` by exact-run monitoring and cancellation.
+
+This distinction is material: two individually non-timeout jobs do not prove the
+300-minute condition. Before a fresh formal S1 is frozen, the project must record a
+reviewed launch-gate disposition that binds the exact diagnostic run/head, producer
+`startedAt`, replay-guard `completedAt`, and the unrelaxed threshold. It must either
+machine-validate that closed observation or explicitly retain it as an independently
+verified operational prerequisite. The current diagnostic may not be promoted into
+publication evidence, and this finding is not permission to add a general evidence
+schema or weaken the threshold.
+
 ## Established observations
 
 The previous diagnostic run `33040816357` ended by job timeout, not a Python exception:
