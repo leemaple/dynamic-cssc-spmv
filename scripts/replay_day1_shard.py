@@ -35,6 +35,8 @@ if __package__:
         _candidate_span80,
         _causal_evaluation_provenance,
         _initial_state_sha256,
+        _query_scaled_windows,
+        _rescale_causal_cell_queries,
         evaluate_causal_cell,
         freshness_path_id,
         insert_queries_by_ratio,
@@ -52,6 +54,8 @@ else:
         _candidate_span80,
         _causal_evaluation_provenance,
         _initial_state_sha256,
+        _query_scaled_windows,
+        _rescale_causal_cell_queries,
         evaluate_causal_cell,
         freshness_path_id,
         insert_queries_by_ratio,
@@ -63,8 +67,8 @@ else:
     )
 
 REPLAY_RECEIPT_SCHEMA = "day1-shard-replay-receipt-v1"
-VALIDATOR_SCHEMA = "day1-separate-deterministic-replay-validator-v2"
-VALIDATOR_VERSION = "2"
+VALIDATOR_SCHEMA = "day1-separate-deterministic-replay-validator-v3"
+VALIDATOR_VERSION = "3"
 REPLAY_RECEIPT_FILENAME = "REPLAY_RECEIPT.json"
 DERIVED_ARTIFACT_FILENAMES = (
     "SUMMARY.md",
@@ -299,7 +303,9 @@ def _replay_cell(
     initial_state_sha256: str,
     causal_evaluation_mode: str,
     query_scaling_source_rho_fraction: str | None,
-) -> dict[str, object]:
+    query_scaling_source_windows: list[PublicationWindow] | None,
+    query_scaling_source_result: CausalCellResult | None,
+) -> tuple[dict[str, object], list[PublicationWindow], CausalCellResult]:
     integer_correctness = _mapping(
         manifest_payload.get("integer_correctness"), "manifest.integer_correctness"
     )
@@ -362,13 +368,36 @@ def _replay_cell(
         if actual_trace.read_bytes() != expected_trace.read_bytes():
             raise ValueError(f"event-window trace does not match deterministic replay: {cell_dir}")
 
-    result = evaluate_causal_cell(
-        windows=windows,
-        initial_state=initial_state,
-        base_config=_base_config(plan, manifest_payload),
-        split=plan.split,
-        costs=UnitCosts(),
-    )
+    costs = UnitCosts()
+    if query_scaling_source_rho_fraction is None:
+        result = evaluate_causal_cell(
+            windows=windows,
+            initial_state=initial_state,
+            base_config=_base_config(plan, manifest_payload),
+            split=plan.split,
+            costs=costs,
+        )
+    else:
+        if query_scaling_source_rho_fraction != "1":
+            raise ValueError("query scaling replay source must be exactly rho=1")
+        if query_scaling_source_windows is None or query_scaling_source_result is None:
+            raise ValueError("query scaling replay requires the independently replayed rho=1 cell")
+        if ratio.denominator != 1 or ratio <= 1:
+            raise ValueError("query scaling replay target must be an integer rho greater than one")
+        multiplier = ratio.numerator
+        if not _query_scaled_windows(
+            query_scaling_source_windows,
+            windows,
+            multiplier,
+        ):
+            raise ValueError(
+                "integer-rho replay scaling requires an exact rho=1 window trajectory"
+            )
+        result = _rescale_causal_cell_queries(
+            query_scaling_source_result,
+            multiplier,
+            costs,
+        )
     metrics_path = cell_dir / "metrics.json"
     payload = _load_json(metrics_path, "metrics.json")
     candidate_ids = tuple(sorted(result.fixed_results))
@@ -501,14 +530,18 @@ def _replay_cell(
             filename: rendered_digests[filename] for filename in DERIVED_ARTIFACT_FILENAMES
         }
 
-    return {
-        "relative_path": cell_dir.as_posix(),
-        "rho_id": rho_path_id(ratio),
-        "rho_fraction": str(ratio),
-        "event_window_trace_sha256": expected_trace_sha256,
-        "metrics_json_sha256": _sha256(metrics_path),
-        "derived_artifact_sha256": derived_digests,
-    }
+    return (
+        {
+            "relative_path": cell_dir.as_posix(),
+            "rho_id": rho_path_id(ratio),
+            "rho_fraction": str(ratio),
+            "event_window_trace_sha256": expected_trace_sha256,
+            "metrics_json_sha256": _sha256(metrics_path),
+            "derived_artifact_sha256": derived_digests,
+        },
+        windows,
+        result,
+    )
 
 
 def _canonical_receipt_bytes(receipt: Mapping[str, object]) -> bytes:
@@ -597,6 +630,8 @@ def replay_shard(
     freshness_id = freshness_path_id(freshness)
     cells: list[dict[str, object]] = []
     rho_one_available = False
+    unit_ratio_windows: list[PublicationWindow] | None = None
+    unit_ratio_result: CausalCellResult | None = None
     for ratio in plan.ratio_grid:
         causal_evaluation_mode, query_scaling_source_rho_fraction = (
             _causal_evaluation_provenance(
@@ -605,7 +640,7 @@ def replay_shard(
             )
         )
         relative_path = Path(workload) / freshness_id / rho_path_id(ratio)
-        cell = _replay_cell(
+        cell, replayed_windows, replayed_result = _replay_cell(
             cell_dir=shard_dir / relative_path,
             plan=plan,
             plan_sha256=plan_sha256,
@@ -619,11 +654,15 @@ def replay_shard(
             initial_state_sha256=initial_state_sha256,
             causal_evaluation_mode=causal_evaluation_mode,
             query_scaling_source_rho_fraction=query_scaling_source_rho_fraction,
+            query_scaling_source_windows=unit_ratio_windows,
+            query_scaling_source_result=unit_ratio_result,
         )
         cell["relative_path"] = relative_path.as_posix()
         cells.append(cell)
         if ratio == 1:
             rho_one_available = True
+            unit_ratio_windows = replayed_windows
+            unit_ratio_result = replayed_result
 
     receipt: dict[str, object] = {
         "schema": REPLAY_RECEIPT_SCHEMA,

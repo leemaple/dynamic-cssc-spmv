@@ -271,8 +271,8 @@ jobs:
           assert len(p['rho_ids']) == len(set(p['rho_ids'])) == 9
 
           assert r['schema'] == 'day1-shard-replay-receipt-v1'
-          assert r['validator_schema'] == 'day1-separate-deterministic-replay-validator-v2'
-          assert r['validator_version'] == '2'
+          assert r['validator_schema'] == 'day1-separate-deterministic-replay-validator-v3'
+          assert r['validator_version'] == '3'
           assert re.fullmatch(r'[0-9a-f]{64}', r['validator_source_sha256'])
           assert r['source_git_sha'] == os.environ['EXPECTED_SOURCE_GIT_SHA']
           assert re.fullmatch(r'[0-9a-f]{40}', r['source_git_sha'])
@@ -423,7 +423,7 @@ jobs:
           assert p['source_git_sha'] == os.environ['EXPECTED_SOURCE_GIT_SHA']
           assert p['replay_receipts_expected'] == p['replay_receipts_completed'] == 21
           assert p['replay_receipt_schema'] == 'day1-shard-replay-receipt-v1'
-          assert p['replay_validator_schema'] == 'day1-separate-deterministic-replay-validator-v2'
+          assert p['replay_validator_schema'] == 'day1-separate-deterministic-replay-validator-v3'
           assert len(p['replay_receipts']) == 21
           receipt_item_keys = {
               'relative_path',
