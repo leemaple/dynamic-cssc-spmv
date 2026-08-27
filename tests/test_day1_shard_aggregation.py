@@ -430,6 +430,7 @@ def _create_download_layout(
     download_dir: Path,
     *,
     plan_path: Path | None = None,
+    shard_limit: int | None = None,
 ) -> list[Path]:
     if plan_path is None:
         plan_path = _fixture_plan_path(download_dir)
@@ -451,9 +452,14 @@ def _create_download_layout(
     reference_candidate_ids = [candidate.candidate_id for candidate in catalog.selection_candidates]
     ablation_candidate_ids = [candidate.candidate_id for candidate in catalog.ablation_candidates]
     shards: list[Path] = []
-    for shard_index, (workload, freshness) in enumerate(
-        (workload, freshness) for workload in plan.workloads for freshness in plan.freshness_seconds
-    ):
+    shard_specs = [
+        (workload, freshness)
+        for workload in plan.workloads
+        for freshness in plan.freshness_seconds
+    ]
+    if shard_limit is not None:
+        shard_specs = shard_specs[:shard_limit]
+    for shard_index, (workload, freshness) in enumerate(shard_specs):
         shard_dir = download_dir / f"artifact-{shard_index:02d}"
         shard_dir.mkdir(parents=True)
         workload_seed = SEED + plan.workloads.index(workload) + 1
@@ -728,7 +734,11 @@ def test_independent_replay_accepts_an_authorized_official_small_plan_shard(
     tmp_path: Path,
 ) -> None:
     download_dir = tmp_path / "downloaded-shards"
-    shard_dir = _build_download_layout(download_dir)[0]
+    shard_dir = _create_download_layout(
+        download_dir,
+        plan_path=_fixture_plan_path(download_dir),
+        shard_limit=1,
+    )[0]
 
     receipt = _replay_existing_shard(shard_dir, download_dir)
 
@@ -747,6 +757,37 @@ def test_independent_replay_accepts_an_authorized_official_small_plan_shard(
     assert rho_three["query_scaling_source_rho_fraction"] == "1"
 
 
+def test_independent_replay_reuses_rho_one_for_exact_query_linear_cells(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    download_dir = tmp_path / "downloaded-shards"
+    shard_dir = _create_download_layout(
+        download_dir,
+        plan_path=_fixture_plan_path(download_dir),
+        shard_limit=1,
+    )[0]
+    original = replay_day1_shard.evaluate_causal_cell
+    full_evaluations = 0
+
+    def count_full_evaluation(*args: object, **kwargs: object) -> object:
+        nonlocal full_evaluations
+        full_evaluations += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        replay_day1_shard,
+        "evaluate_causal_cell",
+        count_full_evaluation,
+    )
+
+    receipt = _replay_existing_shard(shard_dir, download_dir)
+
+    assert receipt["verified"] is True
+    assert receipt["cells_replayed"] == 9
+    assert full_evaluations == 5
+
+
 @pytest.mark.parametrize(
     ("field", "forged"),
     [
@@ -760,7 +801,11 @@ def test_independent_replay_rejects_forged_query_scaling_provenance(
     forged: object,
 ) -> None:
     download_dir = tmp_path / "downloaded-shards"
-    shard_dir = _build_download_layout(download_dir)[0]
+    shard_dir = _create_download_layout(
+        download_dir,
+        plan_path=_fixture_plan_path(download_dir),
+        shard_limit=1,
+    )[0]
     cell_dir = next(path.parent for path in shard_dir.rglob("rho-n3d1/metrics.json"))
     metrics_path = cell_dir / "metrics.json"
     payload = json.loads(metrics_path.read_text(encoding="utf-8"))

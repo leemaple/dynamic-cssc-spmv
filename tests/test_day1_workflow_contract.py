@@ -232,9 +232,9 @@ def test_shard_guard_requires_a_complete_digest_bound_replay_receipt() -> None:
 
     assert "assert r['schema'] == 'day1-shard-replay-receipt-v1'" in workflow
     assert (
-        "assert r['validator_schema'] == 'day1-separate-deterministic-replay-validator-v2'"
+        "assert r['validator_schema'] == 'day1-separate-deterministic-replay-validator-v3'"
     ) in workflow
-    assert "assert r['validator_version'] == '2'" in workflow
+    assert "assert r['validator_version'] == '3'" in workflow
     assert "assert r['source_git_sha'] == os.environ['EXPECTED_SOURCE_GIT_SHA']" in workflow
     assert "assert r['experiment_plan_sha256'] == p['experiment_plan_sha256']" in workflow
     assert "assert r['manifest_sha256'] == p['manifest_sha256']" in workflow
@@ -267,7 +267,7 @@ def test_aggregate_guard_binds_all_receipts_to_source_and_verifies_final_checksu
     assert receipt_count_guard in workflow
     assert "assert p['replay_receipt_schema'] == 'day1-shard-replay-receipt-v1'" in workflow
     validator_schema_guard = (
-        "assert p['replay_validator_schema'] == 'day1-separate-deterministic-replay-validator-v2'"
+        "assert p['replay_validator_schema'] == 'day1-separate-deterministic-replay-validator-v3'"
     )
     assert validator_schema_guard in workflow
     assert "assert len(p['replay_receipts']) == 21" in workflow
