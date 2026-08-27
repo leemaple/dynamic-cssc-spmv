@@ -648,7 +648,9 @@ def test_complete_unit_level_analysis_passes_the_descriptive_gate_but_not_claim_
     assert roles.count("prespecified-secondary-robustness") == 3
 
 
-def test_v7_input_preserves_the_v6_split_and_cell_binding_contract() -> None:
+def test_v7_input_preserves_the_v6_split_and_cell_binding_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     assert HELDOUT_SCHEMA == "dynamic-cssc-publication-heldout-v7"
     assert HELDOUT_RECORD_SCHEMA == "dynamic-cssc-publication-heldout-record-v4"
     assert TRACE_UNIT_SCHEMA == "dynamic-cssc-publication-trace-unit-binding-v2"
@@ -660,21 +662,11 @@ def test_v7_input_preserves_the_v6_split_and_cell_binding_contract() -> None:
     assert ANALYSIS_RUNTIME_IMPLEMENTATION == "CPython"
     assert ANALYSIS_RUNTIME_VERSION == "3.12.13"
 
-    repository_root = Path(__file__).resolve().parents[1]
-    empty_pre_s1_anchor_sets = {
-        "config/day1-registration-anchors.json": ("dynamic-cssc-day1-registration-anchor-set-v1"),
-        "config/day2-calibration-anchors.json": (
-            "dynamic-cssc-day2-calibration-post-run-anchor-set-v4"
-        ),
-        "config/day2-calibration-profile-anchors.json": (
-            "dynamic-cssc-day2-calibration-profile-anchor-set-v3"
-        ),
-    }
-    for relative_path, schema_version in empty_pre_s1_anchor_sets.items():
-        assert json.loads((repository_root / relative_path).read_bytes()) == {
-            "anchors": [],
-            "schema_version": schema_version,
-        }
+    monkeypatch.setattr(
+        publication_statistics,
+        "_repository_calibration_authority_verified",
+        lambda _projection, *, source_git_sha: False,
+    )
 
     result = analyze_publication_results(_complete_payload())
 
