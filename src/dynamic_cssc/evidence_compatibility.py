@@ -366,13 +366,17 @@ _DAY1_REGISTRATION_BEHAVIOR_PATHS = (
     "src/dynamic_cssc/workloads.py",
     "tests/test_day1a_publication_workflow_contract.py",
     "tests/test_day1_causal_runner.py",
+    "tests/test_day1_runner.py",
     "tests/test_day1_registration_evidence.py",
     "tests/test_day1_registry.py",
     "tests/test_day1_shard_aggregation.py",
     "tests/test_day1_workflow_contract.py",
     "tests/test_query_accounting.py",
     "tests/test_report.py",
+    "tests/test_simulator.py",
     "tests/test_strong_day1_simulator.py",
+    "tests/test_strategy_state.py",
+    "tests/test_strong_strategy_state.py",
 )
 
 # This is deliberately a PRE-S1 exact reviewed v9 schema-source inventory bound
@@ -500,7 +504,7 @@ _ROLE_BEHAVIOR_SCHEMAS = {
     EvidenceRole.DAY2: "dynamic-cssc-day2-behavior-set-v6",
     EvidenceRole.ANALYZER: "dynamic-cssc-publication-analyzer-behavior-set-v2",
     EvidenceRole.STRONG_CORRECTNESS: "dynamic-cssc-strong-correctness-behavior-set-v1",
-    EvidenceRole.DAY1_REGISTRATION: "dynamic-cssc-day1-registration-behavior-set-v3",
+    EvidenceRole.DAY1_REGISTRATION: "dynamic-cssc-day1-registration-behavior-set-v4",
 }
 
 _LOWER_GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")

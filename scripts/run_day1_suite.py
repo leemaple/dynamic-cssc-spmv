@@ -4,7 +4,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import sys
+import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, replace
 from fractions import Fraction
@@ -65,6 +68,60 @@ _FROZEN_PLAN_LAYOUTS = {
     "0.2.0": (512, 512, 2048, 128),
     "0.3.0": (4096, 8193, 4096, 4096),
 }
+_NON_ADMISSIBLE_TIMING_ENV = "DAY1A_NON_ADMISSIBLE_TIMING"
+_NON_ADMISSIBLE_TIMING_PREFIX = "DAY1A_NON_ADMISSIBLE_TIMING "
+_NON_ADMISSIBLE_TIMING_IDENTITY_KEYS = frozenset(
+    {
+        "freshness_seconds_fraction",
+        "pipeline_phase",
+        "rho_fraction",
+        "workload",
+    }
+)
+
+
+def _non_admissible_timing_start() -> float | None:
+    if os.environ.get(_NON_ADMISSIBLE_TIMING_ENV) != "1":
+        return None
+    return time.perf_counter()
+
+
+def _emit_non_admissible_timing(
+    stage: str,
+    started_at: float | None,
+    **identity: str,
+) -> None:
+    if started_at is None:
+        return
+    elapsed_seconds = time.perf_counter() - started_at
+    if elapsed_seconds < 0:
+        raise AssertionError("the diagnostic monotonic clock moved backwards")
+    document = {
+        "elapsed_seconds": round(elapsed_seconds, 6),
+        "stage": stage,
+        **identity,
+    }
+    print(
+        _NON_ADMISSIBLE_TIMING_PREFIX
+        + json.dumps(document, sort_keys=True, separators=(",", ":")),
+        file=sys.stderr,
+        flush=True,
+    )
+
+
+def _validated_non_admissible_timing_identity(
+    identity: Mapping[str, str] | None,
+) -> dict[str, str]:
+    if identity is None:
+        return {}
+    if (
+        type(identity) is not dict
+        or set(identity) != _NON_ADMISSIBLE_TIMING_IDENTITY_KEYS
+        or any(type(value) is not str or not value for value in identity.values())
+    ):
+        raise ValueError("diagnostic timing identity is malformed")
+    return dict(sorted(identity.items()))
+
 
 PLAN_KEYS = frozenset(
     {
@@ -238,11 +295,15 @@ def _evaluate_causal_cell(
     catalog: Day1CandidateCatalog,
     simulate_targets_fn: Callable[..., dict[str, SimulationResult]],
     simulate_strong_fn: Callable[..., SimulationResult],
+    diagnostic_timing_identity: Mapping[str, str] | None = None,
 ) -> CausalCellResult:
     """Exercise the private simulator seam under an already-admitted catalog."""
 
     if type(catalog) is not Day1CandidateCatalog:
         raise TypeError("catalog must be an exact Day1CandidateCatalog")
+    timing_identity = _validated_non_admissible_timing_identity(
+        diagnostic_timing_identity
+    )
     warmup_end, tuning_end = split_boundaries(len(windows), split)
     strong_candidates = tuple(
         candidate
@@ -263,12 +324,18 @@ def _evaluate_causal_cell(
         if candidate.candidate_id != STRONG_REFERENCE_CANDIDATE_ID
     )
 
+    ordinary_started = _non_admissible_timing_start()
     ordinary_all_tuning_results, ordinary_fixed_results = simulate_targets_fn(
         windows,
         initial_state,
         _candidate_targets(base_config, held_out_ordinary),
         warmup_end=warmup_end,
         tuning_end=tuning_end,
+    )
+    _emit_non_admissible_timing(
+        "causal-ordinary-state-transitions",
+        ordinary_started,
+        **timing_identity,
     )
     ordinary_tuning_results = {
         candidate.candidate_id: ordinary_all_tuning_results[candidate.candidate_id]
@@ -278,12 +345,18 @@ def _evaluate_causal_cell(
         tuning_ordinary,
         ordinary_tuning_results,
     )
+    strong_started = _non_admissible_timing_start()
     strong_tuning_result, strong_fixed_result = simulate_strong_fn(
         windows,
         initial_state,
         _candidate_config(base_config, strong_candidate),
         warmup_end=warmup_end,
         tuning_end=tuning_end,
+    )
+    _emit_non_admissible_timing(
+        "causal-strong-state-transitions",
+        strong_started,
+        **timing_identity,
     )
     strong_tuning = _normalize_candidate_results(
         (strong_candidate,),
@@ -309,7 +382,8 @@ def _evaluate_causal_cell(
         {strong_candidate.candidate_id: strong_fixed_result},
     )
     fixed_results = {**ordinary_fixed_results, **strong_fixed}
-    return _assemble_causal_cell(
+    assembly_started = _non_admissible_timing_start()
+    result = _assemble_causal_cell(
         warmup_end=warmup_end,
         tuning_end=tuning_end,
         tuning_results=tuning_results,
@@ -317,6 +391,12 @@ def _evaluate_causal_cell(
         selection_candidates=selection_candidates,
         costs=costs,
     )
+    _emit_non_admissible_timing(
+        "causal-result-assembly",
+        assembly_started,
+        **timing_identity,
+    )
+    return result
 
 
 def evaluate_causal_cell(
@@ -326,6 +406,7 @@ def evaluate_causal_cell(
     base_config: SimulationConfig,
     split: ExperimentSplit,
     costs: UnitCosts,
+    _diagnostic_timing_identity: Mapping[str, str] | None = None,
 ) -> CausalCellResult:
     """Tune references, freeze one, then separately replay all held-out roles."""
 
@@ -339,6 +420,7 @@ def evaluate_causal_cell(
         catalog=catalog,
         simulate_targets_fn=simulate_targets_causal,
         simulate_strong_fn=simulate_strong_reference_causal,
+        diagnostic_timing_identity=_diagnostic_timing_identity,
     )
 
 
@@ -1007,6 +1089,7 @@ def _selected_shard(
 def run_suite(args: argparse.Namespace) -> int:
     # This is intentionally the only suite-level preflight call, and nothing from the
     # experiment plan or workload pipeline is touched until it succeeds.
+    suite_started = _non_admissible_timing_start()
     seed = parse_canonical_seed(args.seed)
     manifest = load_manifest(args.manifest)
     preflight_report = run_day1_preflight(manifest)
@@ -1081,8 +1164,9 @@ def run_suite(args: argparse.Namespace) -> int:
     unit_ratio_result: CausalCellResult | None = None
     unit_ratio_span80: dict[str, dict[int, float]] | None = None
 
-    for ratio in ratio_grid:
-        base_events = generate_event_stream(
+    base_stream_started = _non_admissible_timing_start()
+    base_events = tuple(
+        generate_event_stream(
             workload,
             initial,
             rows=rows,
@@ -1092,6 +1176,17 @@ def run_suite(args: argparse.Namespace) -> int:
             query_every=0,
             matrix_entry_abs_bound=matrix_entry_abs_bound,
         )
+    )
+    _emit_non_admissible_timing(
+        "producer-base-stream",
+        base_stream_started,
+        freshness_seconds_fraction=str(selected_freshness_seconds),
+        workload=workload,
+    )
+
+    for ratio in ratio_grid:
+        cell_started = _non_admissible_timing_start()
+        windows_started = _non_admissible_timing_start()
         events = insert_queries_by_ratio(base_events, ratio)
         freshness_seconds = selected_freshness_seconds
         windows = list(
@@ -1103,11 +1198,19 @@ def run_suite(args: argparse.Namespace) -> int:
                 query_requires_latest=query_requires_latest,
             )
         )
+        _emit_non_admissible_timing(
+            "producer-window-construction",
+            windows_started,
+            freshness_seconds_fraction=str(selected_freshness_seconds),
+            rho_fraction=str(ratio),
+            workload=workload,
+        )
         rho_one_available = unit_ratio_windows is not None and unit_ratio_result is not None
         evaluation_mode, query_scaling_source_rho = _causal_evaluation_provenance(
             ratio,
             rho_one_available=rho_one_available,
         )
+        evaluation_started = _non_admissible_timing_start()
         if query_scaling_source_rho is not None:
             if unit_ratio_windows is None or unit_ratio_result is None:
                 raise AssertionError("rho=1 scaling provenance requires its exact replay")
@@ -1118,16 +1221,31 @@ def run_suite(args: argparse.Namespace) -> int:
                 )
             result = _rescale_causal_cell_queries(unit_ratio_result, multiplier, costs)
         else:
+            diagnostic_timing_identity = {
+                "freshness_seconds_fraction": str(selected_freshness_seconds),
+                "pipeline_phase": "producer",
+                "rho_fraction": str(ratio),
+                "workload": workload,
+            }
             result = evaluate_causal_cell(
                 windows=windows,
                 initial_state=initial,
                 base_config=base_config,
                 split=split,
                 costs=costs,
+                _diagnostic_timing_identity=diagnostic_timing_identity,
             )
             if ratio == 1:
                 unit_ratio_windows = windows
                 unit_ratio_result = result
+        _emit_non_admissible_timing(
+            "producer-causal-evaluation",
+            evaluation_started,
+            evaluation_mode=evaluation_mode,
+            freshness_seconds_fraction=str(selected_freshness_seconds),
+            rho_fraction=str(ratio),
+            workload=workload,
+        )
         cell_fixed_candidate_ids = tuple(sorted(result.fixed_results))
         cell_reference_candidate_ids = tuple(sorted(result.tuning_results))
         cell_ablation_candidate_ids = tuple(
@@ -1164,6 +1282,7 @@ def run_suite(args: argparse.Namespace) -> int:
         held_out = windows[result.tuning_end :]
         rho_id = rho_path_id(ratio)
         output_dir = args.output_dir / workload / freshness_path_id(freshness_seconds) / rho_id
+        artifact_started = _non_admissible_timing_start()
         trace_sha256 = write_event_window_trace(
             output_dir / "event-window-trace.jsonl",
             windows=windows,
@@ -1257,6 +1376,21 @@ def run_suite(args: argparse.Namespace) -> int:
                 "cell_checksums_sha256": _sha256_file(output_dir / "SHA256SUMS"),
             }
         )
+        _emit_non_admissible_timing(
+            "producer-artifact-render",
+            artifact_started,
+            freshness_seconds_fraction=str(selected_freshness_seconds),
+            rho_fraction=str(ratio),
+            workload=workload,
+        )
+        _emit_non_admissible_timing(
+            "producer-cell-total",
+            cell_started,
+            evaluation_mode=evaluation_mode,
+            freshness_seconds_fraction=str(selected_freshness_seconds),
+            rho_fraction=str(ratio),
+            workload=workload,
+        )
 
     shard_status: dict[str, object] = {
         "schema": CAUSAL_SCHEMA,
@@ -1301,6 +1435,12 @@ def run_suite(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     write_checksums(args.output_dir)
+    _emit_non_admissible_timing(
+        "producer-shard-total",
+        suite_started,
+        freshness_seconds_fraction=str(selected_freshness_seconds),
+        workload=workload,
+    )
     return 0
 
 

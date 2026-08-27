@@ -428,7 +428,9 @@ def test_tuning_selector_uses_only_finite_cost_then_canonical_id_for_ties() -> N
 
 def test_cell_enforces_reference_and_ablation_roles_across_one_causal_replay(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
+    monkeypatch.setenv("DAY1A_NON_ADMISSIBLE_TIMING", "1")
     catalog = _registered_catalog()
     windows = [PublicationWindow(index, index, index + 1, (), 0, "fixture") for index in range(10)]
     call_trace: list[tuple[str, int, int]] = []
@@ -540,6 +542,12 @@ def test_cell_enforces_reference_and_ablation_roles_across_one_causal_replay(
         catalog=catalog,
         simulate_targets_fn=fake_simulate_targets,
         simulate_strong_fn=fake_simulate_strong,
+        diagnostic_timing_identity={
+            "freshness_seconds_fraction": "1",
+            "pipeline_phase": "producer",
+            "rho_fraction": "1/10",
+            "workload": "fixture",
+        },
     )
 
     assert call_trace == [
@@ -563,6 +571,34 @@ def test_cell_enforces_reference_and_ablation_roles_across_one_causal_replay(
     assert result.tuned_policy.update_encryptions == 7
     assert result.offline_oracle.strategy == "BestFixed-Offline-Oracle"
     assert result.offline_oracle.update_encryptions == 1
+    timing_documents = [
+        json.loads(line.split(" ", 1)[1])
+        for line in capsys.readouterr().err.splitlines()
+        if line.startswith("DAY1A_NON_ADMISSIBLE_TIMING ")
+    ]
+    assert [document["stage"] for document in timing_documents] == [
+        "causal-ordinary-state-transitions",
+        "causal-strong-state-transitions",
+        "causal-result-assembly",
+    ]
+    assert all(
+        {
+            key: document[key]
+            for key in (
+                "freshness_seconds_fraction",
+                "pipeline_phase",
+                "rho_fraction",
+                "workload",
+            )
+        }
+        == {
+            "freshness_seconds_fraction": "1",
+            "pipeline_phase": "producer",
+            "rho_fraction": "1/10",
+            "workload": "fixture",
+        }
+        for document in timing_documents
+    )
 
     records = _candidate_records(result)
     assert len(records) == 16
@@ -595,6 +631,7 @@ def test_public_cell_interface_owns_repository_authority_and_fails_closed(
         "base_config",
         "split",
         "costs",
+        "_diagnostic_timing_identity",
     )
     monkeypatch.setattr(
         run_day1_suite,
@@ -986,7 +1023,7 @@ def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
 
     assert run_suite(args) == 0
     assert calls == ["manifest", "preflight", "plan", "initial"]
-    assert generated == len(query_scaled_ratios)
+    assert generated == 1
     assert windowized == len(query_scaled_ratios)
     assert span80_calls == 1
     assert initial_parameters == [((2, 2, 1), {"seed": 7, "matrix_entry_abs_bound": 7})]
@@ -999,7 +1036,7 @@ def test_suite_preflights_once_before_plan_and_materializes_each_cell_once(
             "query_every": 0,
             "matrix_entry_abs_bound": 7,
         }
-    ] * len(query_scaled_ratios)
+    ]
     assert freshness_values == [1.0] * len(query_scaled_ratios)
     assert len(cell_configs) == 1
     assert cell_configs[0].effective_slots == 2048

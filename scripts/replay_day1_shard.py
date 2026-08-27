@@ -36,7 +36,9 @@ if __package__:
         ExperimentPlan,
         _candidate_span80,
         _causal_evaluation_provenance,
+        _emit_non_admissible_timing,
         _initial_state_sha256,
+        _non_admissible_timing_start,
         _query_scaled_windows,
         _rescale_causal_cell_queries,
         evaluate_causal_cell,
@@ -55,7 +57,9 @@ else:
         ExperimentPlan,
         _candidate_span80,
         _causal_evaluation_provenance,
+        _emit_non_admissible_timing,
         _initial_state_sha256,
+        _non_admissible_timing_start,
         _query_scaled_windows,
         _rescale_causal_cell_queries,
         evaluate_causal_cell,
@@ -609,6 +613,7 @@ def _replay_cell(
     ratio: Fraction,
     initial_state: dict[tuple[int, int], int],
     initial_state_sha256: str,
+    base_events: tuple[Event, ...],
     causal_evaluation_mode: str,
     query_scaling_source_rho_fraction: str | None,
     query_scaling_source_windows: list[PublicationWindow] | None,
@@ -629,16 +634,13 @@ def _replay_cell(
         raise ValueError("manifest query_requires_latest must be an exact bool")
 
     workload_seed = seed + plan.workloads.index(workload) + 1
-    base_events = generate_event_stream(
-        workload,
-        initial_state,
-        rows=plan.rows,
-        cols=plan.cols,
-        update_count=plan.events,
-        seed=workload_seed,
-        query_every=0,
-        matrix_entry_abs_bound=matrix_entry_abs_bound,
-    )
+    timing_identity = {
+        "freshness_seconds_fraction": str(freshness),
+        "pipeline_phase": "replay",
+        "rho_fraction": str(ratio),
+        "workload": workload,
+    }
+    windows_started = _non_admissible_timing_start()
     events = insert_queries_by_ratio(base_events, ratio)
     windows = list(
         publication_windows(
@@ -649,6 +651,12 @@ def _replay_cell(
             query_requires_latest=query_requires_latest,
         )
     )
+    _emit_non_admissible_timing(
+        "replay-window-construction",
+        windows_started,
+        **timing_identity,
+    )
+    trace_validation_started = _non_admissible_timing_start()
     with tempfile.TemporaryDirectory(prefix="day1-trace-replay-") as temporary:
         expected_trace = Path(temporary) / "event-window-trace.jsonl"
         expected_trace_sha256 = write_event_window_trace(
@@ -675,6 +683,11 @@ def _replay_cell(
         actual_trace = cell_dir / "event-window-trace.jsonl"
         if actual_trace.read_bytes() != expected_trace.read_bytes():
             raise ValueError(f"event-window trace does not match deterministic replay: {cell_dir}")
+    _emit_non_admissible_timing(
+        "replay-trace-validation",
+        trace_validation_started,
+        **timing_identity,
+    )
 
     costs = UnitCosts()
     if query_scaling_source_rho_fraction is None:
@@ -684,6 +697,7 @@ def _replay_cell(
             base_config=_base_config(plan, manifest_payload),
             split=plan.split,
             costs=costs,
+            _diagnostic_timing_identity=timing_identity,
         )
     else:
         if query_scaling_source_rho_fraction != "1":
@@ -701,11 +715,18 @@ def _replay_cell(
             raise ValueError(
                 "integer-rho replay scaling requires an exact rho=1 window trajectory"
             )
+        rescale_started = _non_admissible_timing_start()
         result = _rescale_causal_cell_queries(
             query_scaling_source_result,
             multiplier,
             costs,
         )
+        _emit_non_admissible_timing(
+            "replay-exact-query-rescale",
+            rescale_started,
+            **timing_identity,
+        )
+    artifact_validation_started = _non_admissible_timing_start()
     metrics_path = cell_dir / "metrics.json"
     payload = _load_json(metrics_path, "metrics.json")
     candidate_ids = tuple(sorted(result.fixed_results))
@@ -838,6 +859,12 @@ def _replay_cell(
             filename: rendered_digests[filename] for filename in DERIVED_ARTIFACT_FILENAMES
         }
 
+    _emit_non_admissible_timing(
+        "replay-artifact-validation",
+        artifact_validation_started,
+        **timing_identity,
+    )
+
     return (
         {
             "relative_path": cell_dir.as_posix(),
@@ -876,6 +903,7 @@ def replay_shard(
 ) -> dict[str, object]:
     """Replay one complete shard from frozen sources and atomically issue its receipt."""
 
+    replay_started = _non_admissible_timing_start()
     receipt_path = shard_dir / REPLAY_RECEIPT_FILENAME
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise ValueError("seed must be a strict integer")
@@ -947,12 +975,33 @@ def replay_shard(
         matrix_entry_abs_bound=base_config.matrix_value_bound,
     )
     initial_state_sha256 = _initial_state_sha256(initial_state)
+    workload_seed = seed + plan.workloads.index(workload) + 1
+    base_stream_started = _non_admissible_timing_start()
+    base_events = tuple(
+        generate_event_stream(
+            workload,
+            initial_state,
+            rows=plan.rows,
+            cols=plan.cols,
+            update_count=plan.events,
+            seed=workload_seed,
+            query_every=0,
+            matrix_entry_abs_bound=base_config.matrix_value_bound,
+        )
+    )
+    _emit_non_admissible_timing(
+        "replay-base-stream",
+        base_stream_started,
+        freshness_seconds_fraction=str(freshness),
+        workload=workload,
+    )
     freshness_id = freshness_path_id(freshness)
     cells: list[dict[str, object]] = []
     rho_one_available = False
     unit_ratio_windows: list[PublicationWindow] | None = None
     unit_ratio_result: CausalCellResult | None = None
     for ratio in plan.ratio_grid:
+        cell_started = _non_admissible_timing_start()
         causal_evaluation_mode, query_scaling_source_rho_fraction = (
             _causal_evaluation_provenance(
                 ratio,
@@ -972,6 +1021,7 @@ def replay_shard(
             ratio=ratio,
             initial_state=initial_state,
             initial_state_sha256=initial_state_sha256,
+            base_events=base_events,
             causal_evaluation_mode=causal_evaluation_mode,
             query_scaling_source_rho_fraction=query_scaling_source_rho_fraction,
             query_scaling_source_windows=unit_ratio_windows,
@@ -983,6 +1033,14 @@ def replay_shard(
             rho_one_available = True
             unit_ratio_windows = replayed_windows
             unit_ratio_result = replayed_result
+        _emit_non_admissible_timing(
+            "replay-cell-total",
+            cell_started,
+            evaluation_mode=causal_evaluation_mode,
+            freshness_seconds_fraction=str(freshness),
+            rho_fraction=str(ratio),
+            workload=workload,
+        )
 
     receipt: dict[str, object] = {
         "schema": REPLAY_RECEIPT_SCHEMA,
@@ -1016,6 +1074,12 @@ def replay_shard(
     finally:
         temporary_path.unlink(missing_ok=True)
     write_checksums(shard_dir)
+    _emit_non_admissible_timing(
+        "replay-shard-total",
+        replay_started,
+        freshness_seconds_fraction=str(freshness),
+        workload=workload,
+    )
     return receipt
 
 

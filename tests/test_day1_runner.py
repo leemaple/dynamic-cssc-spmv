@@ -27,6 +27,95 @@ from scripts import run_day1_suite
 from scripts.run_day1_suite import CausalCellResult, insert_queries_by_ratio
 
 
+def test_non_admissible_timing_is_opt_in_and_log_only(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.delenv("DAY1A_NON_ADMISSIBLE_TIMING", raising=False)
+    assert run_day1_suite._non_admissible_timing_start() is None
+    run_day1_suite._emit_non_admissible_timing(
+        "producer-cell-total",
+        None,
+        rho_fraction="1",
+    )
+    assert capsys.readouterr().err == ""
+
+    ticks = iter((10.0, 12.25))
+    monkeypatch.setenv("DAY1A_NON_ADMISSIBLE_TIMING", "1")
+    monkeypatch.setattr(run_day1_suite.time, "perf_counter", lambda: next(ticks))
+    started_at = run_day1_suite._non_admissible_timing_start()
+    run_day1_suite._emit_non_admissible_timing(
+        "producer-cell-total",
+        started_at,
+        rho_fraction="1",
+    )
+
+    line = capsys.readouterr().err.rstrip("\n")
+    assert line.startswith("DAY1A_NON_ADMISSIBLE_TIMING ")
+    assert json.loads(line.split(" ", 1)[1]) == {
+        "elapsed_seconds": 2.25,
+        "rho_fraction": "1",
+        "stage": "producer-cell-total",
+    }
+
+
+@pytest.mark.parametrize(
+    "ratio",
+    ("0.01", "0.03", "0.1", "0.3", "1", "3", "10", "30", "100"),
+)
+def test_reused_deterministic_base_stream_is_event_exact_to_per_rho_regeneration(
+    ratio: str,
+) -> None:
+    initial = {(0, 0): 1, (1, 1): 2}
+    generation = {
+        "rows": 2,
+        "cols": 5,
+        "update_count": 12,
+        "seed": 19,
+        "query_every": 0,
+        "matrix_entry_abs_bound": 7,
+    }
+    shared = run_day1_suite.generate_event_stream(
+        "mixed-insert-delete-modify",
+        initial,
+        **generation,
+    )
+    regenerated = run_day1_suite.generate_event_stream(
+        "mixed-insert-delete-modify",
+        initial,
+        **generation,
+    )
+
+    expected_events = run_day1_suite.insert_queries_by_ratio(
+        regenerated,
+        Fraction(ratio),
+    )
+    reused_events = run_day1_suite.insert_queries_by_ratio(
+        tuple(shared),
+        Fraction(ratio),
+    )
+    assert reused_events == expected_events
+    expected_windows = list(
+        publication_windows(
+            expected_events,
+            initial,
+            max_seconds=1.0,
+            microbatch_max_updates=3,
+            query_requires_latest=True,
+        )
+    )
+    reused_windows = list(
+        publication_windows(
+            reused_events,
+            initial,
+            max_seconds=1.0,
+            microbatch_max_updates=3,
+            query_requires_latest=True,
+        )
+    )
+    assert reused_windows == expected_windows
+
+
 def _registered_catalog() -> Day1CandidateCatalog:
     return Day1CandidateCatalog(
         candidates=_canonical_registered_candidates(),
@@ -528,8 +617,8 @@ def test_runner_executes_each_ratio_from_experiment_plan(
 
     assert run_day1_suite.main() == 0
     assert call_order[:2] == ["preflight", "generate-initial"]
-    assert query_every_values == [0, 0]
-    assert value_bounds == [7, 7, 7]
+    assert query_every_values == [0]
+    assert value_bounds == [7, 7]
     assert [metadata["queries_per_update_target"] for _, metadata in records] == [
         0.5,
         2.0,

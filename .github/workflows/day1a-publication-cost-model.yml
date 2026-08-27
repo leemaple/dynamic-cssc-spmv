@@ -188,6 +188,7 @@ jobs:
           fail-on-cache-miss: true
       - name: Run one workload-freshness shard with all nine rho cells
         env:
+          DAY1A_NON_ADMISSIBLE_TIMING: ${{ inputs.diagnostic_single_shard && '1' || '0' }}
           DAY1_SEED: ${{ needs.plan.outputs.normalized_seed }}
           DAY1_WORKLOAD: ${{ matrix.workload }}
           DAY1_FRESHNESS_SECONDS: ${{ matrix.freshness_seconds }}
@@ -251,6 +252,7 @@ jobs:
           --freshness-seconds "$DAY1_FRESHNESS_SECONDS"
       - name: Independently replay all serialized shard evidence and issue a receipt
         env:
+          DAY1A_NON_ADMISSIBLE_TIMING: ${{ inputs.diagnostic_single_shard && '1' || '0' }}
           DAY1_SEED: ${{ needs.plan.outputs.normalized_seed }}
           DAY1_WORKLOAD: ${{ matrix.workload }}
           DAY1_FRESHNESS_SECONDS: ${{ matrix.freshness_seconds }}

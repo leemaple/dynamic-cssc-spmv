@@ -286,7 +286,7 @@ def test_packed_coo_target_excludes_overflow_absorbed_by_a_reused_segment_lane()
     assert result.overflow_by_row == {}
 
 
-def test_simulate_targets_checks_same_window_logical_equality(
+def test_simulate_targets_checks_same_window_logical_equality_after_in_place_divergence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     targets = [
@@ -300,15 +300,9 @@ def test_simulate_targets_checks_same_window_logical_equality(
         nonlocal call_count
         transition = real_advance(*args, **kwargs)  # type: ignore[arg-type]
         call_count += 1
-        if call_count != 2:
-            return transition
-        return replace(
-            transition,
-            state=replace(
-                transition.state,
-                logical={**transition.state.logical, (0, 1): 2},
-            ),
-        )
+        if call_count == 2:
+            transition.state.logical[(0, 1)] = 2
+        return transition
 
     monkeypatch.setattr(
         simulator_module,
@@ -323,6 +317,38 @@ def test_simulate_targets_checks_same_window_logical_equality(
             targets,
             measure_from=0,
         )
+
+
+def test_updated_targets_own_distinct_but_equal_logical_mappings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, dict[tuple[int, int], int]] = {}
+    real_advance = simulator_module.advance_publication
+
+    def record_logical_owner(*args: object, **kwargs: object) -> object:
+        transition = real_advance(*args, **kwargs)  # type: ignore[arg-type]
+        observed[transition.state.strategy] = transition.state.logical
+        return transition
+
+    monkeypatch.setattr(
+        simulator_module,
+        "advance_publication",
+        record_logical_owner,
+    )
+    targets = [
+        SimulationTarget(strategy, strategy, _config()) for strategy in STRATEGIES
+    ]
+
+    simulate_targets(
+        [_window(NetUpdate(0, 0, 1, 2), index=0)],
+        {(0, 0): 1},
+        targets,
+        measure_from=0,
+    )
+
+    assert set(observed) == set(STRATEGIES)
+    assert len({id(logical) for logical in observed.values()}) == len(STRATEGIES)
+    assert all(logical == {(0, 0): 2} for logical in observed.values())
 
 
 def test_query_accounting_fails_closed_on_a_canonically_different_output_plan(
@@ -548,8 +574,8 @@ def test_causal_single_replay_is_exactly_equivalent_to_two_suffix_replays() -> N
     ]
     config = _config(effective_slots=128)
     targets = [
-        SimulationTarget("padding", "PaddingReuse-CSSC", config),
-        SimulationTarget("mini", "Mini-CSSC-Delta", config),
+        SimulationTarget(strategy, strategy, config)
+        for strategy in STRATEGIES
     ]
 
     tuning, held_out = simulate_targets_causal(

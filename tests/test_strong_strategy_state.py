@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import dynamic_cssc.strategy_state as strategy_state_module
 from dynamic_cssc.events import NetUpdate, PublicationWindow
 from dynamic_cssc.strategy_state import (
     StrongStrategyConfig,
@@ -62,6 +63,48 @@ def test_strong_snapshot_is_independent_and_query_only_compiles_without_advancin
     assert transition.output_plan == transition.execution_bundle.output_plan
     with pytest.raises(ValueError, match="present exactly for a query-bearing transition"):
         replace(transition, facts=replace(transition.facts, query_count=0))
+
+
+def test_strong_updated_state_adopts_validator_owned_logical_mapping_and_query_only_reuses_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = initialize_strong_strategy(
+        {(0, 0): 2, (1, 1): -3},
+        rows=2,
+        cols=6,
+        effective_slots=4,
+        partition_rows=2,
+        matrix_value_bound=7,
+        max_row_nnz=6,
+        segment_width=2,
+    )
+    original_logical = dict(state.logical)
+    candidates: list[dict[tuple[int, int], int]] = []
+    real_validate = strategy_state_module._validated_strong_candidate
+
+    def record_candidate(*args: object, **kwargs: object) -> dict[tuple[int, int], int]:
+        candidate = real_validate(*args, **kwargs)  # type: ignore[arg-type]
+        candidates.append(candidate)
+        return candidate
+
+    monkeypatch.setattr(
+        strategy_state_module,
+        "_validated_strong_candidate",
+        record_candidate,
+    )
+
+    query_only = advance_strong_publication(state, _window(index=0, queries=3))
+    updated = advance_strong_publication(
+        state,
+        _window(NetUpdate(0, 0, 2, 4), index=1, queries=0),
+    )
+
+    assert query_only.state is state
+    assert candidates[0] is state.logical
+    assert updated.state.logical is candidates[1]
+    assert updated.state.logical is not state.logical
+    updated.state.logical[(1, 2)] = 5
+    assert state.logical == original_logical
 
 
 def test_strong_transition_has_one_bundle_owned_output_plan_truth_source() -> None:

@@ -5,6 +5,7 @@ from dataclasses import replace
 
 import pytest
 
+import dynamic_cssc.strategy_state as strategy_state_module
 from dynamic_cssc.events import NetUpdate, PublicationWindow
 from dynamic_cssc.output_plan import analyze_output_plan
 from dynamic_cssc.strategy_state import (
@@ -700,6 +701,70 @@ def test_every_strategy_transition_decodes_the_same_mixed_window(strategy: str) 
     assert decode_state(state) == {(0, 0): 1, (0, 1): 2, (1, 0): 3, (2, 0): 4}
     assert transition.facts.updates == 3
     assert_strategy_invariants(transition.state)
+
+
+@pytest.mark.parametrize("strategy", STRATEGIES)
+def test_updated_strategy_adopts_the_validator_owned_logical_mapping_without_recopied_state(
+    strategy: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = initialize_strategy(
+        strategy,
+        {(0, 0): 1, (1, 0): 2},
+        rows=2,
+        cols=4,
+        effective_slots=4,
+        partition_rows=2,
+        max_row_nnz=4,
+        reserved_slack_beta=0.5,
+        periodic_repack_windows=1,
+        packed_coo_segment_capacity=2,
+    )
+    original_logical = dict(state.logical)
+    candidates: list[dict[tuple[int, int], int]] = []
+    real_validate = strategy_state_module._validated_candidate
+
+    def record_candidate(*args: object, **kwargs: object) -> dict[tuple[int, int], int]:
+        candidate = real_validate(*args, **kwargs)  # type: ignore[arg-type]
+        candidates.append(candidate)
+        return candidate
+
+    monkeypatch.setattr(strategy_state_module, "_validated_candidate", record_candidate)
+
+    transition = advance_publication(state, _window(NetUpdate(0, 0, 1, 3)))
+
+    assert transition.state.logical is candidates[0]
+    assert transition.state.logical is not state.logical
+    transition.state.logical[(1, 1)] = 4
+    assert state.logical == original_logical
+
+
+def test_query_only_transition_reuses_the_existing_logical_mapping_without_copying(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = initialize_strategy(
+        "PaddingReuse-CSSC",
+        {(0, 0): 1, (1, 0): 2},
+        rows=2,
+        cols=4,
+        effective_slots=4,
+        partition_rows=2,
+    )
+    candidates: list[dict[tuple[int, int], int]] = []
+    real_validate = strategy_state_module._validated_candidate
+
+    def record_candidate(*args: object, **kwargs: object) -> dict[tuple[int, int], int]:
+        candidate = real_validate(*args, **kwargs)  # type: ignore[arg-type]
+        candidates.append(candidate)
+        return candidate
+
+    monkeypatch.setattr(strategy_state_module, "_validated_candidate", record_candidate)
+
+    transition = advance_publication(state, _window(queries=3))
+
+    assert transition.state is state
+    assert len(candidates) == 1
+    assert candidates[0] is state.logical
 
 
 def test_invariant_rejects_logical_metadata_that_disagrees_with_components() -> None:

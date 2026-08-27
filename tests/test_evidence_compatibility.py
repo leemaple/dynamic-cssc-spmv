@@ -555,6 +555,9 @@ def test_repository_history_uniquely_locates_first_anchor_commit_without_caller_
     repository, experiment_sha, evidence_sha, analysis_sha, inventory, record = (
         day1_registration_repository
     )
+    assert inventory["behavior_set_schema_version"] == (
+        "dynamic-cssc-day1-registration-behavior-set-v4"
+    )
 
     attestation = verify_repository_anchor_history(
         EvidenceRole.DAY1_REGISTRATION,
@@ -2340,9 +2343,13 @@ def test_role_sets_freeze_entrypoint_workflow_build_lock_runtime_and_transitive_
         "src/dynamic_cssc/strong_reference_receipt.py",
         "tests/test_day1a_publication_workflow_contract.py",
         "tests/test_day1_causal_runner.py",
+        "tests/test_day1_runner.py",
         "tests/test_day1_registration_evidence.py",
         "tests/test_day1_shard_aggregation.py",
         "tests/test_day1_workflow_contract.py",
+        "tests/test_simulator.py",
+        "tests/test_strategy_state.py",
+        "tests/test_strong_strategy_state.py",
     } <= day1_registration_paths
     assert STRONG_REFERENCE_EVIDENCE_ANCHOR_PATH not in strong_correctness_paths
     assert DAY1_REGISTRATION_ANCHOR_PATH not in day1_registration_paths

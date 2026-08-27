@@ -1288,6 +1288,8 @@ def _validated_candidate(
 ) -> dict[Coordinate, int]:
     if not isinstance(window, PublicationWindow):
         raise ValueError("window must be a PublicationWindow")
+    if not window.updates:
+        return state.logical
     seen: set[Coordinate] = set()
     row_deltas: Counter[int] = Counter()
     candidate = dict(state.logical)
@@ -1332,6 +1334,17 @@ def _validated_candidate(
         ):
             raise ValueError("logical state violates the row nonzero bound")
     return candidate
+
+
+def _require_validator_owned_transition(
+    transition: Transition,
+    candidate: dict[Coordinate, int],
+) -> Transition:
+    if transition.state.logical is not candidate:
+        raise AssertionError(
+            "physical transition dropped the validator-owned logical mapping"
+        )
+    return transition
 
 
 def advance_publication(
@@ -1411,7 +1424,7 @@ def advance_publication(
             state,
             version_ordinal=version_ordinal,
             version_id=version_id,
-            logical=dict(candidate),
+            logical=candidate,
             base=base,
             free_lanes=free_lanes,
             repack_count=state.repack_count + bool(dirty_blocks),
@@ -1434,46 +1447,61 @@ def advance_publication(
             rebuilt_output_block_ids=rebuilt_output_block_ids,
             active_component_ids=(base.component_id,),
         )
-        return Transition(new_state, facts, _checked_output_plan((base,)))
+        return _require_validator_owned_transition(
+            Transition(new_state, facts, _checked_output_plan((base,))),
+            candidate,
+        )
     if state.strategy in {"Mini-CSSC-Delta", "PeriodicRepack"}:
         if (
             state.strategy == "PeriodicRepack"
             and state.windows_since_repack + 1
             >= state.config.periodic_repack_windows
         ):
-            return _fold_periodic(
+            return _require_validator_owned_transition(
+                _fold_periodic(
+                    state,
+                    window,
+                    candidate,
+                    version_ordinal=version_ordinal,
+                    version_id=version_id,
+                    check_invariants=not trusted_replay,
+                ),
+                candidate,
+            )
+        return _require_validator_owned_transition(
+            _advance_cssc_delta(
                 state,
                 window,
                 candidate,
                 version_ordinal=version_ordinal,
                 version_id=version_id,
                 check_invariants=not trusted_replay,
-            )
-        return _advance_cssc_delta(
-            state,
-            window,
+            ),
             candidate,
-            version_ordinal=version_ordinal,
-            version_id=version_id,
-            check_invariants=not trusted_replay,
         )
     if state.strategy == "Strict-LocalRepack":
-        return _advance_local_repack(
-            state,
-            window,
+        return _require_validator_owned_transition(
+            _advance_local_repack(
+                state,
+                window,
+                candidate,
+                version_ordinal=version_ordinal,
+                version_id=version_id,
+                check_invariants=not trusted_replay,
+            ),
             candidate,
-            version_ordinal=version_ordinal,
-            version_id=version_id,
-            check_invariants=not trusted_replay,
         )
     if state.strategy == "Packed-COO-Client-Lane-Delta":
-        return _advance_packed_coo(
-            state,
-            window,
+        return _require_validator_owned_transition(
+            _advance_packed_coo(
+                state,
+                window,
+                candidate,
+                version_ordinal=version_ordinal,
+                version_id=version_id,
+                check_invariants=not trusted_replay,
+            ),
             candidate,
-            version_ordinal=version_ordinal,
-            version_id=version_id,
-            check_invariants=not trusted_replay,
         )
     raise NotImplementedError(
         f"publication transition is not implemented for {state.strategy}"
@@ -1499,6 +1527,8 @@ def _validated_strong_candidate(
         raise ValueError("window.query_count must be a nonnegative strict integer")
     if not isinstance(window.reason, str) or not window.reason:
         raise ValueError("window.reason must be a non-empty string")
+    if not window.updates:
+        return state.logical
 
     seen: set[Coordinate] = set()
     row_deltas: Counter[int] = Counter()
@@ -1624,7 +1654,7 @@ def advance_strong_publication(
         config=state.config,
         version_ordinal=version_ordinal,
         version_id=version_id,
-        logical=dict(candidate),
+        logical=candidate,
         base=base,
         delta=delta_transition.state,
         free_lanes=free_lanes,
@@ -1639,7 +1669,7 @@ def advance_strong_publication(
     component_ids = [new_state.base.component_id]
     if new_state.delta.segments:
         component_ids.append(STRONG_COMPONENT_ID)
-    return StrongTransition(
+    transition = StrongTransition(
         state=new_state,
         facts=TransitionFacts(
             updates=len(window.updates),
@@ -1662,6 +1692,11 @@ def advance_strong_publication(
         ),
         execution_bundle=bundle,
     )
+    if transition.state.logical is not candidate:
+        raise AssertionError(
+            "strong physical transition dropped the validator-owned logical mapping"
+        )
+    return transition
 
 
 def _checked_output_plan(components: tuple[PublishedComponent, ...]) -> OutputPlan:
@@ -1796,7 +1831,7 @@ def _advance_cssc_delta(
         state,
         version_ordinal=version_ordinal,
         version_id=version_id,
-        logical=dict(candidate),
+        logical=candidate,
         base=base,
         delta=delta,
         delta_logical=dict(delta_logical),
@@ -1853,7 +1888,7 @@ def _advance_local_repack(
         state,
         version_ordinal=version_ordinal,
         version_id=version_id,
-        logical=dict(candidate),
+        logical=candidate,
         base=base,
         free_lanes=_free_lanes(base),
         repack_count=state.repack_count + bool(dirty_blocks),
@@ -1896,7 +1931,7 @@ def _fold_periodic(
         state,
         version_ordinal=version_ordinal,
         version_id=version_id,
-        logical=dict(candidate),
+        logical=candidate,
         base=base,
         delta=None,
         delta_logical={},
@@ -2071,7 +2106,7 @@ def _advance_packed_coo(
         state,
         version_ordinal=version_ordinal,
         version_id=version_id,
-        logical=dict(candidate),
+        logical=candidate,
         base=base,
         delta_logical=delta_logical,
         coo_segments=segments,

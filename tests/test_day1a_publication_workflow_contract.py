@@ -163,6 +163,10 @@ def test_publication_workflow_freezes_the_complete_21_by_9_grid() -> None:
 
 def test_publication_workflow_has_one_non_admissible_hosted_smoke() -> None:
     workflow = _workflow(PUBLICATION_WORKFLOW)
+    timing_flag = (
+        "DAY1A_NON_ADMISSIBLE_TIMING: "
+        "${{ inputs.diagnostic_single_shard && '1' || '0' }}"
+    )
 
     assert "diagnostic_single_shard:" in workflow
     assert "Run one non-admissible hosted performance smoke without uploading evidence" in workflow
@@ -171,6 +175,10 @@ def test_publication_workflow_has_one_non_admissible_hosted_smoke() -> None:
     assert "'[NON-ADMISSIBLE SMOKE] '" in workflow
     assert workflow.count("if: ${{ inputs.diagnostic_single_shard == false }}") == 2
     assert "github.event.inputs.diagnostic_single_shard" not in workflow
+    assert workflow.count(timing_flag) == 2
+    assert timing_flag in _job_block(workflow, "produce-shard")
+    assert timing_flag in _job_block(workflow, "replay-shard")
+    assert "DAY1A_NON_ADMISSIBLE_TIMING" not in _workflow(HISTORICAL_WORKFLOW)
 
 
 @pytest.mark.parametrize(

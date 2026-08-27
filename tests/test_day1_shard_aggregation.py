@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections import Counter
 from dataclasses import asdict, fields, replace
 from fractions import Fraction
 from functools import cache
@@ -28,7 +29,7 @@ from dynamic_cssc.day1a_export import (
     ROTATION_INVENTORY_FILENAME,
     export_day1a_evidence,
 )
-from dynamic_cssc.events import EventKind, PublicationWindow, publication_windows
+from dynamic_cssc.events import Event, EventKind, PublicationWindow, publication_windows
 from dynamic_cssc.metrics import StrategyMetrics, UnitCosts
 from dynamic_cssc.report import (
     CAUSAL_ARTIFACT_FILENAMES,
@@ -907,25 +908,40 @@ def test_independent_replay_accepts_an_authorized_official_small_plan_shard(
 def test_independent_replay_reuses_rho_one_for_exact_query_linear_cells(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
+    monkeypatch.setenv("DAY1A_NON_ADMISSIBLE_TIMING", "1")
     download_dir = tmp_path / "downloaded-shards"
     shard_dir = _create_download_layout(
         download_dir,
         plan_path=_fixture_plan_path(download_dir),
         shard_limit=1,
     )[0]
+    capsys.readouterr()
     original = replay_day1_shard.evaluate_causal_cell
+    original_generate = replay_day1_shard.generate_event_stream
     full_evaluations = 0
+    generated_streams = 0
 
     def count_full_evaluation(*args: object, **kwargs: object) -> object:
         nonlocal full_evaluations
         full_evaluations += 1
         return original(*args, **kwargs)
 
+    def count_stream_generation(*args: object, **kwargs: object) -> list[Event]:
+        nonlocal generated_streams
+        generated_streams += 1
+        return original_generate(*args, **kwargs)
+
     monkeypatch.setattr(
         replay_day1_shard,
         "evaluate_causal_cell",
         count_full_evaluation,
+    )
+    monkeypatch.setattr(
+        replay_day1_shard,
+        "generate_event_stream",
+        count_stream_generation,
     )
 
     receipt = _replay_existing_shard(shard_dir, download_dir)
@@ -933,6 +949,24 @@ def test_independent_replay_reuses_rho_one_for_exact_query_linear_cells(
     assert receipt["verified"] is True
     assert receipt["cells_replayed"] == 9
     assert full_evaluations == 5
+    assert generated_streams == 1
+    timing_stages = Counter(
+        json.loads(line.split(" ", 1)[1])["stage"]
+        for line in capsys.readouterr().err.splitlines()
+        if line.startswith("DAY1A_NON_ADMISSIBLE_TIMING ")
+    )
+    assert timing_stages == {
+        "causal-ordinary-state-transitions": 5,
+        "causal-result-assembly": 5,
+        "causal-strong-state-transitions": 5,
+        "replay-artifact-validation": 9,
+        "replay-base-stream": 1,
+        "replay-cell-total": 9,
+        "replay-exact-query-rescale": 4,
+        "replay-shard-total": 1,
+        "replay-trace-validation": 9,
+        "replay-window-construction": 9,
+    }
 
 
 @pytest.mark.parametrize(
