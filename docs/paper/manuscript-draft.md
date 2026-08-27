@@ -95,11 +95,18 @@ CSSC is the direct substrate of this work and must be credited for row sorting,
 left-aligned sparse rectangles, `Value`, global `ColumnIndex`, `RowMap`, chunked
 query reorganization, and static aggregation [@gao2026cssc]. Our implementation
 is an independent pseudocode-derived reconstruction; we did not use or verify
-an author implementation. Lodia's low-diagonal construction [@yu2025lodia], diagonal-packing
-reordering [@mutluergil2026diagonal], FHE-DNN sparse encodings
-[@ferguson2025unstructured], and Rhombus's two-party MVM protocol
-[@he2024rhombus] prevent any claim that this is the first double-ciphertext,
-sparsity-aware, or privacy-preserving homomorphic MVM system.
+an author implementation. Static encrypted sparse linear algebra already spans
+Lodia's low-diagonal SpMV [@yu2025lodia], CipherSkip's encrypted-value-and-index
+arbitrary-shape SpGEMM [@xiong2026cipherskip], diagonal-packing reordering
+[@mutluergil2026diagonal], ciphertext--ciphertext SpMSpM on CPU and GPU
+[@ferguson2025unstructured; @dagata2026gpu], and the encrypted-index
+Scatter--Gather--Apply design reported by the public SparseE program abstract
+[@wei2026sparsee]. Rhombus separately shows plaintext-matrix/encrypted-vector
+two-party MVM with additive output shares [@he2024rhombus]. These works rule out
+broad claims of first encrypted indices, first sparsity-aware FHE multiplication,
+first ciphertext--ciphertext sparse multiplication, or first masked MVM output.
+Our claimed gap is the narrower mutable CSSC publication and reconstruction
+contract; it is not a new static packing or cryptographic primitive.
 
 The CSSC aggregation pseudocode has a non-power-of-two ambiguity. We use a
 corrected `totalSum`-compatible stored-power/prefix graph that preserves the
@@ -115,9 +122,12 @@ The closest methods are not interchangeable experimental baselines:
 |---|---|---:|---|
 | CSSC [@gao2026cssc] | Sparse-coordinate compression with `ColumnIndex`/`RowMap` | No | Direct static substrate; its published layout and reorganization are not our contribution. |
 | Lodia [@yu2025lodia] | Low-diagonal decomposition for batched FHE SpMV | No | Establishes earlier sparsity-aware encrypted SpMV; different decomposition and leakage/cost interface. |
+| CipherSkip [@xiong2026cipherskip] | Encrypted values and indices for arbitrary-shape SpGEMM and chained products | No matrix-state publication protocol | Its server-side alignment concerns encrypted intermediate products, not insert/delete/update of a published sparse layout. |
+| SparseE [@wei2026sparsee] | Encrypted-index Scatter--Gather--Apply with a permutation/expansion accelerator | Not established by the public abstract | Establishes an encrypted-index hardware co-design boundary; no public full text, DOI, or comparable software artifact was verified. |
 | Diagonal Packing [@mutluergil2026diagonal] | Row/column reordering to reduce occupied cyclic diagonals | No | HE-aware static compiler optimization; no mutable CSSC publication or reconstruction. |
-| Ferguson et al. [@ferguson2025unstructured] | Sparse FHE encodings for DNN matrix multiplication | No | Demonstrates prior FHE sparsity exploitation under a PPML workload. |
-| Rhombus [@he2024rhombus] | Coefficient-encoded MVM for semi-honest two-party inference | No | A different PPML protocol and packing objective; not a dynamic sparse-layout baseline. |
+| Ferguson et al. [@ferguson2025unstructured] | CKKS ciphertext--ciphertext SpMSpM with public sparse metadata | No | Demonstrates prior FHE sparsity exploitation under a PPML workload; different operation, scheme, and small square matrices. |
+| D'Agata et al. [@dagata2026gpu] | GPU/FIDESlib CKKS ciphertext--ciphertext SpMSpM with public sparse metadata | No | Extends the same static design space to GPU execution; not a dynamic SpMV baseline. |
+| Rhombus [@he2024rhombus] | Plaintext-matrix/encrypted-vector MVM with additive output shares | No | A different two-party PPML protocol; the random-share primitive is prior art, while versioned overlap binding is our narrower integration claim. |
 | Damie et al. [@damie2025secure] | Secret-shared sparse matrix multiplication in MPC | Not this protocol | Shows secure sparse arithmetic outside FHE; incomparable without a common threat and cost model. |
 | This work | Version-bound CSSC base plus designated maintenance components (admission pending) | Yes | Studies publication, query recompilation, private reconstruction, and causal costs; claims no static-format or primitive novelty. |
 
@@ -138,12 +148,22 @@ complete cost accounting.
 Dynamic SSE, encrypted databases, ShieldDB, and oblivious transaction systems
 already study updates, client state, epochs, padding, and leakage. They do not
 instantiate the same ciphertext--ciphertext CSSC query, but they prevent broad
-claims that batching or versioned updates are new. Canceling one-time masks also
-predate this work. We therefore state the exact leakage and recipient roles and
-avoid the terms `simulation-secure` or `prevents leakage` without a separate
-proof [@cash2014dynamic; @vo2021shielddb; @crooks2018obladi;
-@bonawitz2017secureagg]. Authorized homomorphic database updates also predate
-this work and delimit any claim about encrypted mutability
+claims that batching or versioned updates are new. d-DSE directly shows that
+update-volume leakage remains a separate problem and that padding can impose
+large storage and communication costs [@liu2024ddse]. CKKS-Auth Tree uses
+versioned root commitments and timestamps to detect stale or replayed
+verification objects after encrypted-metadata updates
+[@chen2026ckksauthtree]. Neither work implements mutable SpMV, but together they
+rule out novelty claims for volume hiding, versioned commitments, freshness
+checks, or replay rejection in isolation. Fixed segments, dummy work, and
+visible schedules are therefore described through an explicit leakage surface,
+not as a generic update-leakage solution.
+
+Canceling one-time masks also predate this work. We therefore state the exact
+leakage and recipient roles and avoid the terms `simulation-secure` or `prevents
+leakage` without a separate proof [@cash2014dynamic; @vo2021shielddb;
+@crooks2018obladi; @bonawitz2017secureagg]. Authorized homomorphic database
+updates also predate this work and delimit any claim about encrypted mutability
 [@parbat2023authorized].
 
 ## 3. System and Threat Model
