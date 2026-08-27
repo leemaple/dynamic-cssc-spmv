@@ -6,16 +6,18 @@ import hashlib
 import json
 import os
 import re
+import stat
 import tempfile
 from collections.abc import Mapping
-from dataclasses import fields
+from dataclasses import asdict, fields
 from fractions import Fraction
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from dynamic_cssc.day1_registry import repository_day1_candidate_catalog
 from dynamic_cssc.events import Event, EventKind, PublicationWindow, publication_windows
 from dynamic_cssc.manifest import load_manifest
 from dynamic_cssc.metrics import StrategyMetrics, UnitCosts
+from dynamic_cssc.preflight import run_day1_preflight
 from dynamic_cssc.report import (
     CAUSAL_ARTIFACT_FILENAMES,
     CAUSAL_MEASUREMENT_KIND,
@@ -66,9 +68,9 @@ else:
         write_event_window_trace,
     )
 
-REPLAY_RECEIPT_SCHEMA = "day1-shard-replay-receipt-v1"
-VALIDATOR_SCHEMA = "day1-separate-deterministic-replay-validator-v3"
-VALIDATOR_VERSION = "3"
+REPLAY_RECEIPT_SCHEMA = "day1-shard-replay-receipt-v2"
+VALIDATOR_SCHEMA = "day1-separate-deterministic-replay-validator-v4"
+VALIDATOR_VERSION = "4"
 REPLAY_RECEIPT_FILENAME = "REPLAY_RECEIPT.json"
 DERIVED_ARTIFACT_FILENAMES = (
     "SUMMARY.md",
@@ -79,6 +81,58 @@ DERIVED_ARTIFACT_FILENAMES = (
 )
 _SOURCE_SHA_RE = re.compile(r"[0-9a-f]{40}")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}")
+_PRE_REPLAY_CELL_FILES = frozenset(
+    {
+        *CAUSAL_ARTIFACT_FILENAMES,
+        "event-window-trace.jsonl",
+    }
+)
+_SHARD_STATUS_KEYS = frozenset(
+    {
+        "schema",
+        "state_model",
+        "measurement_kind",
+        "gate_eligible",
+        "complete_cost_claim_allowed",
+        "security_claim_allowed",
+        "formal_performance_claim",
+        "complete_reference_set",
+        "suite_complete",
+        "deferred_reference_baselines",
+        "seed",
+        "experiment_plan_sha256",
+        "manifest_sha256",
+        "experiment_plan_version",
+        "workload",
+        "freshness_seconds",
+        "freshness_seconds_fraction",
+        "rho_ids",
+        "cells_expected",
+        "cells_completed",
+        "candidate_ids",
+        "reference_candidate_ids",
+        "ablation_candidate_ids",
+        "fixed_candidate_count",
+        "reference_candidate_count",
+        "ablation_candidate_count",
+        "effective_slots",
+        "partition_rows",
+        "layout_measurement_kind",
+        "planned_bandwidth_profiles_mbps",
+        "deferred_unpriced_plan_dimensions",
+        "preflight",
+        "cells",
+    }
+)
+_SHARD_CELL_KEYS = frozenset(
+    {
+        "relative_path",
+        "rho_id",
+        "rho_fraction",
+        "event_window_trace_sha256",
+        "cell_checksums_sha256",
+    }
+)
 _RECEIPT_KEYS = frozenset(
     {
         "schema",
@@ -95,6 +149,8 @@ _RECEIPT_KEYS = frozenset(
         "rho_ids",
         "cells_expected",
         "cells_replayed",
+        "full_replay_cells",
+        "exact_rescaled_cells",
         "verified",
         "cells",
     }
@@ -104,6 +160,10 @@ _RECEIPT_CELL_KEYS = frozenset(
         "relative_path",
         "rho_id",
         "rho_fraction",
+        "causal_evaluation_mode",
+        "rescale_eligibility_verified",
+        "query_scaling_source_rho_fraction",
+        "query_scaling_multiplier",
         "event_window_trace_sha256",
         "metrics_json_sha256",
         "derived_artifact_sha256",
@@ -147,6 +207,254 @@ def _load_json(path: Path, field: str) -> dict[str, object]:
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError(f"{field} is not readable JSON: {path}") from error
     return _mapping(value, field)
+
+
+def _parse_checksum_manifest(path: Path) -> dict[str, str]:
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ValueError(f"checksum manifest is unreadable: {path}") from error
+    if not raw or not raw.endswith("\n") or "\r" in raw:
+        raise ValueError(f"checksum manifest must be newline-terminated UTF-8: {path}")
+    checksums: dict[str, str] = {}
+    for line in raw.splitlines():
+        parts = line.split("  ", 1)
+        if len(parts) != 2 or _SHA256_RE.fullmatch(parts[0]) is None:
+            raise ValueError(f"malformed checksum entry in {path}")
+        digest, relative = parts
+        pure = PurePosixPath(relative)
+        if (
+            not relative
+            or pure.is_absolute()
+            or pure.as_posix() != relative
+            or relative.startswith("./")
+            or "\\" in relative
+            or any(part in {"", ".", ".."} for part in pure.parts)
+            or any(ord(character) < 0x20 or ord(character) == 0x7F for character in relative)
+        ):
+            raise ValueError(f"unsafe checksum path in {path}: {relative}")
+        if relative in checksums:
+            raise ValueError(f"duplicate checksum path in {path}: {relative}")
+        checksums[relative] = digest
+    return checksums
+
+
+def _validate_checksum_targets(directory: Path, checksums: Mapping[str, str]) -> None:
+    for relative, expected_digest in checksums.items():
+        target = directory / relative
+        try:
+            mode = target.lstat().st_mode
+        except OSError as error:
+            raise ValueError(f"checksum target is missing: {target}") from error
+        if not stat.S_ISREG(mode):
+            raise ValueError(f"checksum target must be one regular file: {target}")
+        if _sha256(target) != expected_digest:
+            raise ValueError(f"checksum mismatch for {target}")
+
+
+def _expected_pre_replay_tree(
+    *,
+    plan: ExperimentPlan,
+    workload: str,
+    freshness: Fraction,
+) -> tuple[set[str], set[str], set[str]]:
+    expected_files = {"SHARD_STATUS.json", "SHA256SUMS"}
+    expected_directories: set[str] = set()
+    cell_directories: set[str] = set()
+    freshness_id = freshness_path_id(freshness)
+    for ratio in plan.ratio_grid:
+        cell_path = Path(workload) / freshness_id / rho_path_id(ratio)
+        cell_relative = cell_path.as_posix()
+        cell_directories.add(cell_relative)
+        expected_directories.add(cell_relative)
+        expected_directories.update(
+            parent.as_posix() for parent in cell_path.parents if parent.parts
+        )
+        expected_files.update(
+            (cell_path / filename).as_posix()
+            for filename in (*sorted(_PRE_REPLAY_CELL_FILES), "SHA256SUMS")
+        )
+    return expected_files, expected_directories, cell_directories
+
+
+def _validate_exact_pre_replay_tree(
+    shard_dir: Path,
+    *,
+    plan: ExperimentPlan,
+    workload: str,
+    freshness: Fraction,
+) -> tuple[set[str], set[str]]:
+    try:
+        root_mode = shard_dir.lstat().st_mode
+    except OSError as error:
+        raise ValueError(f"pre-replay shard directory is unavailable: {shard_dir}") from error
+    if not stat.S_ISDIR(root_mode):
+        raise ValueError(f"pre-replay shard root must be one real directory: {shard_dir}")
+    expected_files, expected_directories, cell_directories = _expected_pre_replay_tree(
+        plan=plan,
+        workload=workload,
+        freshness=freshness,
+    )
+    actual_files: set[str] = set()
+    actual_directories: set[str] = set()
+    invalid_types: list[str] = []
+    for path in shard_dir.rglob("*"):
+        relative = path.relative_to(shard_dir).as_posix()
+        try:
+            mode = path.lstat().st_mode
+        except OSError as error:
+            raise ValueError(f"pre-replay artifact member is unavailable: {path}") from error
+        if stat.S_ISREG(mode):
+            actual_files.add(relative)
+        elif stat.S_ISDIR(mode):
+            actual_directories.add(relative)
+        else:
+            invalid_types.append(relative)
+    if (
+        invalid_types
+        or actual_files != expected_files
+        or actual_directories != expected_directories
+    ):
+        raise ValueError(
+            "exact pre-replay artifact tree mismatch; "
+            f"invalid={sorted(invalid_types)}, "
+            f"missing_files={sorted(expected_files - actual_files)}, "
+            f"extra_files={sorted(actual_files - expected_files)}, "
+            f"missing_directories={sorted(expected_directories - actual_directories)}, "
+            f"extra_directories={sorted(actual_directories - expected_directories)}"
+        )
+    root_checksum_paths = expected_files - {
+        "SHA256SUMS",
+        *(f"{cell}/SHA256SUMS" for cell in cell_directories),
+    }
+    return root_checksum_paths, cell_directories
+
+
+def verify_pre_replay_handoff(
+    *,
+    shard_dir: Path,
+    experiment_plan: Path,
+    manifest: Path,
+    seed: int,
+    workload: str,
+    freshness: Fraction,
+) -> dict[str, object]:
+    """Reject any non-exact producer tree before an independent replay starts."""
+
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise ValueError("seed must be a strict integer")
+    plan = load_experiment_plan(experiment_plan)
+    if workload not in plan.workloads:
+        raise ValueError("workload is not in the experiment plan")
+    if freshness not in plan.freshness_seconds:
+        raise ValueError("freshness is not in the experiment plan")
+    if len(plan.ratio_grid) != 9:
+        raise ValueError("a pre-replay Day-1 shard must contain exactly nine rho cells")
+    manifest_payload = load_manifest(manifest)
+    candidate_catalog = repository_day1_candidate_catalog()
+    candidate_ids = sorted(candidate.candidate_id for candidate in candidate_catalog.candidates)
+    reference_candidate_ids = sorted(
+        candidate.candidate_id for candidate in candidate_catalog.selection_candidates
+    )
+    ablation_candidate_ids = sorted(
+        candidate.candidate_id for candidate in candidate_catalog.ablation_candidates
+    )
+    plan_sha256 = _sha256(experiment_plan)
+    manifest_sha256 = _sha256(manifest)
+    status = _load_json(shard_dir / "SHARD_STATUS.json", "SHARD_STATUS")
+    _exact_keys(status, _SHARD_STATUS_KEYS, "SHARD_STATUS")
+    for field, expected in (
+        ("seed", seed),
+        ("workload", workload),
+        ("freshness_seconds", float(freshness)),
+        ("freshness_seconds_fraction", str(freshness)),
+        ("experiment_plan_sha256", plan_sha256),
+        ("manifest_sha256", manifest_sha256),
+        ("experiment_plan_version", plan.plan_version),
+        ("schema", CAUSAL_SCHEMA),
+        ("state_model", CAUSAL_STATE_MODEL),
+        ("measurement_kind", CAUSAL_MEASUREMENT_KIND),
+        ("gate_eligible", False),
+        ("complete_cost_claim_allowed", False),
+        ("security_claim_allowed", False),
+        ("formal_performance_claim", False),
+        ("complete_reference_set", True),
+        ("suite_complete", False),
+        ("deferred_reference_baselines", []),
+        ("rho_ids", [rho_path_id(ratio) for ratio in plan.ratio_grid]),
+        ("cells_expected", 9),
+        ("cells_completed", 9),
+        ("effective_slots", plan.effective_slots),
+        ("partition_rows", plan.partition_rows),
+        ("layout_measurement_kind", plan.layout_measurement_kind),
+        (
+            "planned_bandwidth_profiles_mbps",
+            [float(value) for value in plan.bandwidth_profiles_mbps],
+        ),
+        ("deferred_unpriced_plan_dimensions", ["bandwidth_profiles_mbps"]),
+        ("candidate_ids", candidate_ids),
+        ("reference_candidate_ids", reference_candidate_ids),
+        ("ablation_candidate_ids", ablation_candidate_ids),
+        ("fixed_candidate_count", len(candidate_ids)),
+        ("reference_candidate_count", len(reference_candidate_ids)),
+        ("ablation_candidate_count", len(ablation_candidate_ids)),
+        ("preflight", asdict(run_day1_preflight(manifest_payload))),
+    ):
+        _exact_value(status.get(field), expected, f"SHARD_STATUS.{field}")
+
+    root_checksum_paths, _cell_directories = _validate_exact_pre_replay_tree(
+        shard_dir,
+        plan=plan,
+        workload=workload,
+        freshness=freshness,
+    )
+    root_checksums = _parse_checksum_manifest(shard_dir / "SHA256SUMS")
+    if root_checksums.keys() != root_checksum_paths:
+        raise ValueError(
+            "pre-replay shard must contain the exact root checksum paths; "
+            f"missing={sorted(root_checksum_paths - root_checksums.keys())}, "
+            f"extra={sorted(root_checksums.keys() - root_checksum_paths)}"
+        )
+    _validate_checksum_targets(shard_dir, root_checksums)
+
+    cell_payloads = _list(status.get("cells"), "SHARD_STATUS.cells")
+    if len(cell_payloads) != 9:
+        raise ValueError("SHARD_STATUS.cells must contain exactly nine entries")
+    seen_cells: set[str] = set()
+    freshness_id = freshness_path_id(freshness)
+    for value, ratio in zip(cell_payloads, plan.ratio_grid, strict=True):
+        cell = _mapping(value, "SHARD_STATUS cell")
+        _exact_keys(cell, _SHARD_CELL_KEYS, "SHARD_STATUS cell")
+        relative = (Path(workload) / freshness_id / rho_path_id(ratio)).as_posix()
+        for field, expected in (
+            ("relative_path", relative),
+            ("rho_id", rho_path_id(ratio)),
+            ("rho_fraction", str(ratio)),
+        ):
+            _exact_value(cell.get(field), expected, f"SHARD_STATUS cell.{field}")
+        if relative in seen_cells:
+            raise ValueError("SHARD_STATUS cells contain a duplicate Cartesian identity")
+        seen_cells.add(relative)
+        cell_dir = shard_dir / relative
+        cell_checksums = _parse_checksum_manifest(cell_dir / "SHA256SUMS")
+        if cell_checksums.keys() != _PRE_REPLAY_CELL_FILES:
+            raise ValueError(
+                "pre-replay cell must contain the exact checksum paths; "
+                f"missing={sorted(_PRE_REPLAY_CELL_FILES - cell_checksums.keys())}, "
+                f"extra={sorted(cell_checksums.keys() - _PRE_REPLAY_CELL_FILES)}"
+            )
+        _validate_checksum_targets(cell_dir, cell_checksums)
+        _exact_value(
+            cell.get("cell_checksums_sha256"),
+            _sha256(cell_dir / "SHA256SUMS"),
+            "SHARD_STATUS cell.cell_checksums_sha256",
+        )
+        _exact_value(
+            cell.get("event_window_trace_sha256"),
+            _sha256(cell_dir / "event-window-trace.jsonl"),
+            "SHARD_STATUS cell.event_window_trace_sha256",
+        )
+    return status
 
 
 def _strict_fraction(value: object, field: str) -> Fraction:
@@ -535,6 +843,12 @@ def _replay_cell(
             "relative_path": cell_dir.as_posix(),
             "rho_id": rho_path_id(ratio),
             "rho_fraction": str(ratio),
+            "causal_evaluation_mode": causal_evaluation_mode,
+            "rescale_eligibility_verified": query_scaling_source_rho_fraction is not None,
+            "query_scaling_source_rho_fraction": query_scaling_source_rho_fraction,
+            "query_scaling_multiplier": (
+                ratio.numerator if query_scaling_source_rho_fraction is not None else None
+            ),
             "event_window_trace_sha256": expected_trace_sha256,
             "metrics_json_sha256": _sha256(metrics_path),
             "derived_artifact_sha256": derived_digests,
@@ -563,11 +877,18 @@ def replay_shard(
     """Replay one complete shard from frozen sources and atomically issue its receipt."""
 
     receipt_path = shard_dir / REPLAY_RECEIPT_FILENAME
-    receipt_path.unlink(missing_ok=True)
     if isinstance(seed, bool) or not isinstance(seed, int):
         raise ValueError("seed must be a strict integer")
     if _SOURCE_SHA_RE.fullmatch(source_sha) is None:
         raise ValueError("source_sha must be an exact lowercase 40-hex commit SHA")
+    status = verify_pre_replay_handoff(
+        shard_dir=shard_dir,
+        experiment_plan=experiment_plan,
+        manifest=manifest,
+        seed=seed,
+        workload=workload,
+        freshness=freshness,
+    )
     plan = load_experiment_plan(experiment_plan)
     if workload not in plan.workloads:
         raise ValueError("workload is not in the experiment plan")
@@ -588,7 +909,6 @@ def replay_shard(
     )
     plan_sha256 = _sha256(experiment_plan)
     manifest_sha256 = _sha256(manifest)
-    status = _load_json(shard_dir / "SHARD_STATUS.json", "SHARD_STATUS")
     for field, expected in (
         ("seed", seed),
         ("workload", workload),
@@ -679,6 +999,13 @@ def replay_shard(
         "rho_ids": expected_rho_ids,
         "cells_expected": 9,
         "cells_replayed": len(cells),
+        "full_replay_cells": sum(
+            cell["causal_evaluation_mode"] == "full-state-replay" for cell in cells
+        ),
+        "exact_rescaled_cells": sum(
+            cell["causal_evaluation_mode"] == "exact-query-linearity-from-rho-1"
+            for cell in cells
+        ),
         "verified": True,
         "cells": cells,
     }
@@ -725,6 +1052,8 @@ def validate_replay_receipt(
         ("rho_ids", [rho_path_id(ratio) for ratio in plan.ratio_grid]),
         ("cells_expected", 9),
         ("cells_replayed", 9),
+        ("full_replay_cells", 5),
+        ("exact_rescaled_cells", 4),
         ("verified", True),
     ):
         _exact_value(receipt.get(field), expected, f"replay receipt.{field}")
@@ -738,18 +1067,41 @@ def validate_replay_receipt(
     cells = _list(receipt.get("cells"), "replay receipt.cells")
     if len(cells) != 9:
         raise ValueError("replay receipt must bind exactly nine cells")
+    rho_one_available = False
     for value, ratio in zip(cells, plan.ratio_grid, strict=True):
         cell = _mapping(value, "replay receipt cell")
         _exact_keys(cell, _RECEIPT_CELL_KEYS, "replay receipt cell")
         rho_id = rho_path_id(ratio)
         relative_path = (Path(workload) / freshness_path_id(freshness) / rho_id).as_posix()
+        evaluation_mode, scaling_source = _causal_evaluation_provenance(
+            ratio,
+            rho_one_available=rho_one_available,
+        )
+        scaling_multiplier = ratio.numerator if scaling_source is not None else None
         for field, expected in (
             ("relative_path", relative_path),
             ("rho_id", rho_id),
             ("rho_fraction", str(ratio)),
+            ("causal_evaluation_mode", evaluation_mode),
+            ("rescale_eligibility_verified", scaling_source is not None),
+            ("query_scaling_source_rho_fraction", scaling_source),
+            ("query_scaling_multiplier", scaling_multiplier),
         ):
             _exact_value(cell.get(field), expected, f"replay receipt cell.{field}")
+        if ratio == 1:
+            rho_one_available = True
         cell_dir = shard_dir / relative_path
+        metrics = _load_json(cell_dir / "metrics.json", "replay receipt metrics.json")
+        metadata = _mapping(metrics.get("metadata"), "replay receipt metrics.json.metadata")
+        for field, expected in (
+            ("causal_evaluation_mode", evaluation_mode),
+            ("query_scaling_source_rho_fraction", scaling_source),
+        ):
+            _exact_value(
+                metadata.get(field),
+                expected,
+                f"replay receipt metrics metadata.{field}",
+            )
         for field, filename in (
             ("event_window_trace_sha256", "event-window-trace.jsonl"),
             ("metrics_json_sha256", "metrics.json"),
@@ -786,19 +1138,36 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", required=True, type=parse_canonical_seed)
     parser.add_argument("--workload", required=True)
     parser.add_argument("--freshness-seconds", required=True)
-    parser.add_argument("--source-sha", required=True)
+    parser.add_argument("--source-sha")
+    parser.add_argument("--verify-pre-replay-handoff-only", action="store_true")
     return parser
 
 
 def main() -> int:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    freshness = _strict_fraction(args.freshness_seconds, "--freshness-seconds")
+    if args.verify_pre_replay_handoff_only:
+        if args.source_sha is not None:
+            parser.error("--source-sha is forbidden with --verify-pre-replay-handoff-only")
+        verify_pre_replay_handoff(
+            shard_dir=args.shard_dir,
+            experiment_plan=args.experiment_plan,
+            manifest=args.manifest,
+            seed=args.seed,
+            workload=args.workload,
+            freshness=freshness,
+        )
+        return 0
+    if args.source_sha is None:
+        parser.error("--source-sha is required for independent replay")
     replay_shard(
         shard_dir=args.shard_dir,
         experiment_plan=args.experiment_plan,
         manifest=args.manifest,
         seed=args.seed,
         workload=args.workload,
-        freshness=_strict_fraction(args.freshness_seconds, "--freshness-seconds"),
+        freshness=freshness,
         source_sha=args.source_sha,
     )
     return 0

@@ -235,8 +235,20 @@ jobs:
         with:
           name: r2-day1a-publication-pre-replay-${{ github.sha }}-${{ needs.plan.outputs.normalized_seed }}-${{ matrix.workload }}-${{ matrix.freshness_id }}
           path: results/day1-shard
-      - name: Reject a damaged pre-replay transfer before independent reconstruction
-        run: (cd results/day1-shard && sha256sum --check --strict SHA256SUMS)
+      - name: Reject any non-exact pre-replay tree before independent reconstruction
+        env:
+          DAY1_SEED: ${{ needs.plan.outputs.normalized_seed }}
+          DAY1_WORKLOAD: ${{ matrix.workload }}
+          DAY1_FRESHNESS_SECONDS: ${{ matrix.freshness_seconds }}
+        run: >-
+          .venv/bin/python scripts/replay_day1_shard.py
+          --verify-pre-replay-handoff-only
+          --shard-dir results/day1-shard
+          --experiment-plan config/experiment_plan_publication.json
+          --manifest config/params_manifest.json
+          --seed "$DAY1_SEED"
+          --workload "$DAY1_WORKLOAD"
+          --freshness-seconds "$DAY1_FRESHNESS_SECONDS"
       - name: Independently replay all serialized shard evidence and issue a receipt
         env:
           DAY1_SEED: ${{ needs.plan.outputs.normalized_seed }}
@@ -309,9 +321,9 @@ jobs:
           assert p['cells_expected'] == p['cells_completed'] == 9
           assert len(p['rho_ids']) == len(set(p['rho_ids'])) == 9
 
-          assert r['schema'] == 'day1-shard-replay-receipt-v1'
-          assert r['validator_schema'] == 'day1-separate-deterministic-replay-validator-v3'
-          assert r['validator_version'] == '3'
+          assert r['schema'] == 'day1-shard-replay-receipt-v2'
+          assert r['validator_schema'] == 'day1-separate-deterministic-replay-validator-v4'
+          assert r['validator_version'] == '4'
           assert re.fullmatch(r'[0-9a-f]{64}', r['validator_source_sha256'])
           assert r['source_git_sha'] == os.environ['EXPECTED_SOURCE_GIT_SHA']
           assert re.fullmatch(r'[0-9a-f]{40}', r['source_git_sha'])
@@ -326,14 +338,21 @@ jobs:
           assert r['freshness_id'] == os.environ['EXPECTED_FRESHNESS_ID']
           assert r['rho_ids'] == p['rho_ids']
           assert r['cells_expected'] == r['cells_replayed'] == 9
+          assert r['full_replay_cells'] == 5
+          assert r['exact_rescaled_cells'] == 4
           assert len(r['cells']) == len({c['rho_id'] for c in r['cells']}) == 9
           assert [c['rho_id'] for c in r['cells']] == r['rho_ids']
+          assert sum(c['rescale_eligibility_verified'] for c in r['cells']) == 4
           assert r['verified'] is True
 
           cell_keys = {
               'relative_path',
               'rho_id',
               'rho_fraction',
+              'causal_evaluation_mode',
+              'rescale_eligibility_verified',
+              'query_scaling_source_rho_fraction',
+              'query_scaling_multiplier',
               'event_window_trace_sha256',
               'metrics_json_sha256',
               'derived_artifact_sha256',
@@ -461,8 +480,8 @@ jobs:
           assert p['cells_expected'] == p['cells_completed'] == 189
           assert p['source_git_sha'] == os.environ['EXPECTED_SOURCE_GIT_SHA']
           assert p['replay_receipts_expected'] == p['replay_receipts_completed'] == 21
-          assert p['replay_receipt_schema'] == 'day1-shard-replay-receipt-v1'
-          assert p['replay_validator_schema'] == 'day1-separate-deterministic-replay-validator-v3'
+          assert p['replay_receipt_schema'] == 'day1-shard-replay-receipt-v2'
+          assert p['replay_validator_schema'] == 'day1-separate-deterministic-replay-validator-v4'
           assert len(p['replay_receipts']) == 21
           receipt_item_keys = {
               'relative_path',
