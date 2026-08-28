@@ -1,0 +1,1076 @@
+{
+  "authority": {
+    "before_runner_implementation_commit": [
+      "publication-preregistration-route-a",
+      "route-a-publication-plan",
+      "route-a-complete-combination-novelty-review",
+      "claim-ledger-draft"
+    ],
+    "formal_execution_authorized": false,
+    "novelty_review_required_before_implementation": true,
+    "novelty_review_reopens_when_sparsee_full_text_becomes_public": true,
+    "sparsee_full_text_after_partial_dispatch": "allow-already-dispatched-exact-runs-to-finish-dispatch-no-additional-runs-pause-aggregate-interpretation-claims-and-submission-until-review",
+    "old_day1a_300_minute_gate_status": "terminal-no-go-not-relaxed",
+    "qualification_artifact_authority": "non-admissible",
+    "source_freeze_after_implementation_before_acquisition_or_execution": [
+      "exact-source-diff-review",
+      "exact-head-linux-ci",
+      "descriptive-registration",
+      "terminal-data-only-anchor"
+    ]
+  },
+  "cryptographic_roles": {
+    "client_a": [
+      "mutable-matrix-publisher",
+      "versioned-cssc-metadata-owner",
+      "versioned-column-index-distributor-to-client-b",
+      "component-rowmap-owner",
+      "complete-output-plan-reader",
+      "client-b-public-key-reader",
+      "f1m-reservation-sampling-ledger-owner",
+      "f1m-operand-encryptor"
+    ],
+    "client_b": [
+      "query-plaintext-owner",
+      "versioned-column-index-reader",
+      "prepared-query-reorganizer-and-encryptor",
+      "secret-public-and-evaluation-key-generator",
+      "secret-key-sole-owner",
+      "public-key-distributor-to-client-a-and-cloud",
+      "evaluation-key-distributor-to-cloud",
+      "complete-output-plan-reader",
+      "final-result-reconstructor"
+    ],
+    "client_b_receives_individual_f1m_mask_plaintexts": false,
+    "cloud": [
+      "registered-public-program-reader",
+      "client-b-public-and-evaluation-key-reader",
+      "encrypted-operand-executor"
+    ],
+    "column-index-rowmap-and-output-plan_private_from": [
+      "cloud"
+    ],
+    "evidence_validator": {
+      "authority": "non-authorizing-fail-closed-software-role",
+      "private_boundary": "repository-owned-admission-process-not-the-cloud",
+      "reads": [
+        "every-enumerated-retained-canonical-object-including-private-rowmap-outputplan-and-disposable-test-secret-key-bytes"
+      ],
+      "outputs": "typed-validity-digests-and-redacted-receipts-only-no-private-bytes",
+      "disclosure": "must-not-disclose-private-object-or-disposable-secret-key-bytes-to-cloud-or-formal-artifacts"
+    }
+  },
+  "evidence": {
+    "expected_acquisition_artifact_count": 1,
+    "analysis_output_bundle_count": 1,
+    "expected_aggregate_artifact_count": 1,
+    "expected_openfhe_shard_artifacts": 6,
+    "expected_ordered_event_shard_artifacts": 4,
+    "expected_synthetic_shard_artifacts": 6,
+    "formal_non_evidence_handoff_artifact_count": 17,
+    "formal_non_evidence_handoff_retention_days": 1,
+    "formal_non_evidence_handoff_rule": "for-each-admitted-attempt-exactly-one-provider-artifact-for-the-acquisition-transform-containing-receipt-and-derived-canonical-objects-but-no-raw-source-bytes-plus-exactly-one-per-shard-containing-the-complete-producer-payload-openfhe-handoffs-also-contain-the-content-addressed-build-and-all-three-retained-test-packages-never-a-formal-artifact;any-provider-object-from-a-failed-attempt-is-permanently-NON-ADMISSIBLE-diagnostic-material-with-its-attempt-ordinal-and-never-occupies-an-expected-formal-identity",
+    "formal_shard_artifact_count": 16,
+    "qualification_non_evidence_artifact_count": 6,
+    "qualification_non_evidence_artifact_retention_days": 1,
+    "shard_sequence": [
+      "producer",
+      "non-evidence-handoff",
+      "independent-replay",
+      "guard",
+      "formal-artifact"
+    ],
+    "acquisition_sequence": [
+      "download-and-transform-producer",
+      "non-evidence-handoff-without-raw-source-bytes",
+      "independent-second-download-exact-raw-object-rehash-and-transform-guard",
+      "formal-acquisition-artifact-without-raw-source-bytes"
+    ],
+    "terminal_admission_expected_preaggregate_artifacts": 17,
+    "terminal_admission_rule": "independently-rehash-and-admit-exactly-one-final-successful-attempt-formal-acquisition-transform-artifact-plus-six-final-successful-attempt-synthetic-plus-four-final-successful-attempt-ordered-event-plus-six-final-successful-attempt-openfhe-shard-artifacts-before-aggregate;failed-attempt-provider-objects-remain-permanently-NON-ADMISSIBLE-and-are-outside-this-admitted-set;missing-extra-duplicate-admissible-or-wrong-kind-rejects"
+  },
+  "formal_budget": {
+    "aggregate_admission_analysis_runner_hours": "0.5",
+    "acceptance_not_provider_spend_guarantee": "provider-cancellation-lag-is-charged-reported-and-fails-the-gate-but-cannot-authorize-another-job",
+    "campaign_dispatch_order": "after-qualification-GO-strictly-serial-acquisition-transform-then-openfhe-cases-in-plan-strategy-order-with-S-before-M-then-synthetic-shards-in-S-before-M-and-ascending-seed-order-then-ordered-event-shards-in-partition-then-T1-before-T2-order-then-terminal-admission-aggregate-analysis-no-parallel-formal-route-a-jobs",
+    "critical_path_minutes_per_shard_absolute_ceiling": "60.00",
+    "dispatch_reservations_minutes_per_unit": {
+      "acquisition_transform": "20.00",
+      "openfhe_case": "25.00",
+      "ordered_event_shard": "40.00",
+      "synthetic_shard": "50.00"
+    },
+    "dispatch_rule": "before-a-new-unit-compute-api-billed-seconds-and-refuse-start-unless-its-full-frozen-reservation-and-the-terminal-segment-reserve-remain;before-a-dependent-child-job-refuse-start-unless-that-units-shared-reservation-and-deadline-remain-positive",
+    "exact_stage_timestamps": "workflow-run-id-job-id-job-name-startedAt-completedAt-conclusion-for-every-charged-job",
+    "unit_critical_path_clock": "producer-job-startedAt-through-that-units-guard-job-completedAt-including-dependent-job-queue-gaps-and-artifact-handoff",
+    "unit_attempt_identity": {
+      "canonical_encoding": "ascii-json-ensure-ascii-true-sort-keys-compact-allow-nan-false-plus-lf-no-json-floats",
+      "fields": [
+        "schema_version",
+        "unit_identity_sha256",
+        "unit_attempt_ordinal",
+        "provider_run_id",
+        "provider_run_attempt"
+      ],
+      "ordinal_rule": "nominal-zero-sole-provider-replacement-one-no-other-value",
+      "schema_version": "dynamic-cssc-route-a-unit-attempt-identity-v1",
+      "sha256_scope": "exact-canonical-document-bytes"
+    },
+    "unit_runner_seconds_clock": "sum-of-provider-API-startedAt-to-completedAt-durations-for-every-job-in-the-unit-count-each-job-once",
+    "cancellation_ledger_fields": "threshold_utc-controller_observed_utc-cancel_request_utc-provider_api_ack_utc-run_completedAt-final_conclusion-detection_lag_seconds-request_to_ack_seconds-ack_to_completion_seconds",
+    "on_threshold": "request-cancellation-of-the-exact-active-route-a-run-at-the-threshold-dispatch-nothing-further-retain-and-report-controller-detection-lag-separately-from-provider-request-ack-and-completion-lag-select-route-c",
+    "openfhe_runner_hours": "2.5",
+    "ordered_event_runner_hours": "3.0",
+    "provider_retry_runner_hours": "1.0",
+    "provider_retry_eligible_units": "the-one-acquisition-transform-unit-and-the-sixteen-fixed-formal-shards-only",
+    "provider_retry_ineligible_work": "qualification-registration-CI-terminal-admission-aggregate-analysis-and-any-work-not-one-of-the-seventeen-enumerated-eligible-units",
+    "provider_retry_rule": "at-most-one-whole-unit-replacement-across-the-entire-campaign-and-only-for-one-of-the-seventeen-enumerated-eligible-units;nominal-unit_attempt_ordinal=0-and-the-sole-replacement-unit_attempt_ordinal=1;retain-both-attempts-and-every-provider-object-but-mark-every-failed-attempt-object-permanently-NON-ADMISSIBLE;the-replacement-uses-new-evaluation-lane-and-query-identities-derived-from-attempt-ordinal-and-the-aggregate-accepts-only-the-final-successful-attempt;after-a-provider-classified-failure-the-unspent-part-of-that-units-original-segment-reservation-plus-(3600-minus-all-provider-failure-and-replacement-seconds-already-charged-beyond-original-unit-reservations)-must-cover-the-full-replacement-unit-reservation-before-dispatch-otherwise-route-c;terminal-work-is-never-retried",
+    "provider_retry_source_identity_rule": "the-acquisition-attempt-receipt-and-unit-identity-record-unit_attempt_ordinal;if-attempt-zero-recorded-a-complete-HTTP-response-body-observation-with-compressed_byte_count-and-compressed_sha256-then-attempt-one-must-observe-byte-for-byte-the-same-body-before-any-transform-or-admission;if-attempt-zero-never-completed-a-raw-object-observation-attempt-one-may-establish-the-first-object-digest;any-drift-selects-route-c",
+    "segment_admission": "synthetic-6-times-50-minutes-equals-5-hours;acquisition-transform-20-minutes-plus-ordered-event-4-times-40-minutes-equals-3-hours;openfhe-6-times-25-minutes-equals-2.5-hours;terminal-jobs-share-one-30-minute-ledger;the-one-hour-retry-ledger-is-not-borrowed-for-an-ordinary-overrun",
+    "synthetic_runner_hours": "5.0",
+    "total_runner_hours": "12.00"
+  },
+  "encrypted_update_contract": {
+    "additive_correction_ciphertexts": false,
+    "authoritative_plaintext_preimage": "client-a-reconstructs-the-complete-owning-object-from-the-authoritative-logical-matrix-and-current-canonical-layout-not-from-cloud-returned-or-partially-decrypted-bytes",
+    "base_patch_mode": "client-a-reconstructs-and-reencrypts-the-exact-enclosing-cssc-value-ciphertext-chunk",
+    "canonical_plaintext_object_encoding": {
+      "base_chunk": "ordered-8192-element-Z_65537-vector-logical-value-lanes-in-canonical-CSSC-physical-order-unused-and-tombstone-lanes-zero-and-lanes-4096-through-8191-zero",
+      "coefficient_encoding": "signed-integer-a-is-encoded-as-a-mod-65537-in-0-through-65536",
+      "metadata": "column-index-tombstone-rowmap-and-outputplan-objects-are-separate-canonical-documents-never-implicit-in-the-ciphertext-preimage",
+      "segment": "ordered-8192-element-Z_65537-vector-segment-lanes-zero-through-127-in-canonical-row-owned-segment-order-and-all-lanes-128-through-8191-zero"
+    },
+    "canonical_lane_order": "component-kind-priority-then-component-ordinal-then-object-ordinal-then-lane-ordinal-all-zero-based",
+    "changed_column_index_invalidates_prepared_query_for_prior_publication": true,
+    "changed_column_index_or_tombstone_metadata": "republish-every-changed-object",
+    "cloud_side_ciphertext_slot_write": false,
+    "delete_mode": "replace-owning-encrypted-chunk-or-segment-with-zero-lane-and-mark-reusable-tombstone",
+    "insert_into_padding_or_tombstone_mode": "replace-owning-encrypted-chunk-and-republish-global-column-metadata",
+    "padding_reuse_insert_priority": "lowest-reusable-tombstone-lane-then-lowest-natural-padding-lane-under-canonical-lane-order-otherwise-rebuild-the-entire-affected-fixed-horizontal-row-partition",
+    "modify_mode": "replace-owning-encrypted-chunk-or-segment",
+    "segment_patch_mode": "client-a-reconstructs-and-reencrypts-the-exact-enclosing-128-lane-encrypted-segment",
+    "strong_insert_priority": "lowest-eligible-base-tombstone-then-base-natural-padding-then-lowest-reusable-auxiliary-tombstone-then-lowest-unused-lane-in-an-existing-row-owned-segment-under-canonical-lane-order-otherwise-allocate-one-new-row-owned-segment-and-use-lane-zero"
+  },
+  "f1m": {
+    "applies_only_when_contributor_group_size_at_least": 2,
+    "assignment_order": "canonical-ordered-component-identity",
+    "dummy_operand_class": "encrypted-zero-separate-from-random-mask",
+    "ledger_owner": "client-a",
+    "mask_plaintext_reader": "client-a-only",
+    "modulus": 65537,
+    "prepared_batch_binding_fields": [
+      "private_plan_digest",
+      "execution_binding_digest",
+      "plaintext_modulus",
+      "ordered_operand_commitments",
+      "unique_commitment_token"
+    ],
+    "reservation_key_fields": [
+      "query_id",
+      "version_id",
+      "output_plan_digest",
+      "component_id",
+      "output_block_id"
+    ],
+    "provider_replacement_identity_rule": "unit_attempt_ordinal-is-not-a-sixth-reservation-key-field;it-enters-the-evaluation-lane-digest-and-therefore-query_id-so-attempt-zero-and-one-cannot-share-the-same-five-field-key",
+    "sampling": "independent-uniform-m_1-through-m_g_minus_1-from-Z_t; m_g=(-sum(m_1..m_g_minus_1)) mod t",
+    "sampling_rng": "fresh-operating-system-cryptographic-randomness-no-fixed-seed"
+  },
+  "functional_proof_obligations": {
+    "proof_document_path_frozen_at_S1": "docs/proofs/route-a-functional-propositions.md",
+    "source_conformance_record_path_frozen_at_S1": "docs/reviews/route-a-s1-source-conformance.md",
+    "P1_binding_soundness": "a-definition-level-case-analysis-over-the-closed-admission-predicate-must-prove-that-each-enumerated-typed-value-and-retained-canonical-byte-equality-is-a-necessary-conjunct-and-that-no-result-capability-or-formal-artifact-can-be-minted-before-all-conjuncts-pass;an-exact-S1-source-conformance-review-must-map-each-conjunct-to-the-implementation",
+    "P2_reconstruction": "a-written-proof-must-establish-complete-component-decomposition-each-embedding-OutputPlan-totality-and-that-overlap-summation-disjoint-concatenation-and-implicit-zero-insertion-yield-the-direct-logical-product-for-any-admitted-component-count",
+    "P3_f1m_and_ledger": "a-written-mod-t-cancellation-proof-plus-a-state-machine-invariant-must-cover-atomic-reserve-before-sample-commitment-and-single-consumption-within-one-uncompromised-ledger;unit_attempt_ordinal-must-make-evaluation-lane-query-and-reservation-identities-distinct-across-the-sole-provider-replacement",
+    "P4_fixed_segment": "a-written-proof-must-cover-the-public-reduction-leader-placement-and-private-merge-for-any-number-of-canonical-128-lane-row-owned-segments;127-128-129-and-tombstone-padding-cases-are-implementation-boundary-tests-not-the-proof",
+    "claim_release_rule": "RA-C1-through-RA-C4-remain-HOLD-until-the-written-proofs-exact-S1-source-conformance-review-registered-tests-independent-replay-and-guards-all-pass"
+  },
+  "lineage": {
+    "stage1_preimplementation_commit": "exact-preregistration-machine-plan-primary-source-novelty-review-and-claim-ledger-only-this-freezes-the-scientific-contract-before-runner-code",
+    "stage2_S1_clean_freeze": [
+      "all-route-a-behavior-source",
+      "all-route-a-workflows",
+      "all-route-a-json-schemas",
+      "role-specific-closed-Behavior-Sets",
+      "registration-producer-and-validator",
+      "compatibility-verifier",
+      "qualification-and-formal-guards",
+      "route-a-live-dispatch-controller-program-and-provider-interface-adapters",
+      "S1-frozen-serialized-byte-formula-module",
+      "functional-proof-and-exact-source-conformance-records",
+      "analyzer-and-accepted-output-schema",
+      "the-exact-stage1-preregistration-plan-novelty-review-and-ledger-blobs"
+    ],
+    "registration": "generated-only-from-exact-clean-S1-and-independently-reinspected-before-installation",
+    "stage2_S2_terminal_registration_freeze": "exact-S1-plus-only-the-reviewed-registration-data-anchor-no-behavior-doc-workflow-schema-mode-or-blob-change",
+    "S1_to_S2_compatibility": "repository-owned-ADR-0010-Git-object-receipt-with-replace-refs-disabled-exact-closed-Behavior-Set-entry-mode-type-and-blob-equality-and-no-extra-behavior-paths",
+    "workflow_control_snapshot": "provider-workflows-are-dispatched-from-the-exact-terminal-S2-head-so-the-registration-anchor-and-S1-to-S2-compatibility-receipt-are-available-to-the-control-plane",
+    "experiment_source_snapshot": "source-acquisition-qualification-computation-and-every-formal-producer-replay-and-guard-behavior-import-or-binary-executes-only-from-a-fresh-detached-exact-S1-checkout;S2-is-never-relabeled-as-the-experiment-source",
+    "execution_identity_binding": "every-run-and-artifact-records-provider-workflow-head=S2-experiment_source_sha=S1-and-the-exact-ADR-0010-compatibility-receipt;the-control-plane-refuses-any-behavior-import-or-executable-outside-the-attested-S1-tree",
+    "analysis_snapshot": "accepted-analysis-runs-from-an-exact-compatible-detached-S3;every-analyzer-behavior-path-mode-type-and-Git-blob-must-equal-the-S1-frozen-analysis-Behavior-Set-through-an-ADR-0010-compatibility-receipt;the-run-and-output-name-S1-S2-S3-separately",
+    "post_S2_mutation": "only-monotonic-data-only-anchor-additions-on-compatible-descendants-never-used-to-change-the-execution-source"
+  },
+  "matrix": {
+    "coefficient_abs_bound": 7,
+    "columns": 8193,
+    "effective_slots": 4096,
+    "freshness_seconds": "1",
+    "microbatch_max_set_transitions": 64,
+    "physical_batch_size": 8192,
+    "plaintext_modulus": 65537,
+    "query_requires_latest": true,
+    "t2_atomic_soft_cap_max_set_transitions": 65,
+    "microbatch_pre_group_rule": {
+      "g=0": "do-not-close-for-microbatch-rule",
+      "g=1": "close-before-group-iff-s+1>64",
+      "g=2": "close-before-group-iff-s+2>65",
+      "other_g": "route-c",
+      "split_atomic_group": false
+    }
+  },
+  "openfhe": {
+    "batch_size": 8192,
+    "bfv_multiplication_technique": "HPSPOVERQLEVELED",
+    "build": {
+      "build_benchmarks": false,
+      "build_examples": false,
+      "build_jobs": 2,
+      "build_unittests": false,
+      "cmake_build_type": "Release",
+      "cmake_cxx_extensions": false,
+      "cmake_cxx_standard": 17,
+      "generator": "Ninja",
+      "with_nativeopt": false,
+      "with_openmp": true
+    },
+    "build_execution": {
+      "formal_location": "inside-each-openfhe-case-producer-job-in-launcher-owned-scratch",
+      "formal_replay_build": "none-use-and-rehash-the-exact-retained-producer-build-package",
+      "formal_resource_accounting": "charged-to-the-case-25-minute-specific-critical-path-gate-the-60-minute-universal-ceiling-and-the-2.5-openfhe-runner-hour-segment",
+      "qualification_location": "inside-the-single-non-admissible-qualification-critical-path",
+      "retained_package": "content-addressed-runner-binary-dependent-libraries-build-manifest-and-complete-commands"
+    },
+    "commit": "1306d14f8c26bb6150d3e6ad54f28dfe1007689e",
+    "effective_slots": 4096,
+    "key_switch_technique": "HYBRID",
+    "mixed_circuit_parameter_status": "route-a-frozen-pending-decrypt-correctness-gate",
+    "multiplicative_depth": 2,
+    "plaintext_modulus": 65537,
+    "recorded_processes_per_case": 3,
+    "replay": {
+      "cloud_evaluation": "reexecute-with-exact-retained-ciphertext-and-evaluation-key-bytes",
+      "fresh_keypair_generation": false,
+      "producer_repetitions_fresh_key_relative_to_each_other": true,
+      "required_equalities": [
+        "exact-package-sha256",
+        "exact-operation-inventory",
+        "valid-ciphertext-output",
+        "exact-decrypted-typed-oracle",
+        "exact-decrypted-direct-oracle"
+      ],
+      "retained_test_package": [
+        "disposable-test-secret-key",
+        "public-key",
+        "evaluation-keys",
+        "canonical-request",
+        "encrypted-operands",
+        "expected-plaintext-oracle-binding"
+      ]
+    },
+    "repository": "https://github.com/openfheorg/openfhe-development.git",
+    "ring_dimension": 8192,
+    "scheme": "BFVRNS",
+    "security_level": "HEStd_128_classic",
+    "snapshot": {
+      "accepted_event_prefix_by_scale": {
+        "M": 2048,
+        "S": 512
+      },
+      "formal_seed": 20260822,
+      "query_selector": "query-after-terminal-accepted-event-group",
+      "rho": "1",
+      "scales": [
+        "S",
+        "M"
+      ],
+      "strategies": [
+        "periodic-repack/windows=1",
+        "padding-reuse",
+        "packed-coo-cloud-segmented-delta/segment-width=128"
+      ]
+    },
+    "snapshot_mechanism_coverage": {
+      "padding-reuse-M": "must-exercise-an-actual-padding-or-tombstone-replacement",
+      "strong-M": "must-contain-a-nonempty-auxiliary-segment-and-an-actual-overlap-group-with-f1m",
+      "strong-S": "must-contain-a-nonempty-auxiliary-segment",
+      "unsatisfied_rule": "route-c-no-snapshot-substitution"
+    },
+    "total_native_evaluations_derivation": "6-cases-times-(1-discarded-warmup-plus-3-fresh-key-producer-evaluations-plus-3-exact-replay-evaluations)-equals-42",
+    "total_native_evaluations_in_formal_matrix": 42,
+    "version": "1.5.1",
+    "warmup_processes_per_case": 1
+  },
+  "ordered_event": {
+    "raw_object_identity": {
+      "bytes": "exact-downloaded-HTTP-response-body-bytes-before-gzip-decompression",
+      "byte_count_equality": "raw-object-byte-count-equals-acquisition-receipt.compressed_byte_count",
+      "sha256_equality": "raw_object_sha256=lowercase-SHA256-of-the-exact-downloaded-response-body-bytes=acquisition-receipt.compressed_sha256",
+      "redistribution": "raw-object-bytes-appear-in-neither-provider-handoff-nor-formal-artifact;the-independent-guard-performs-a-second-download-and-requires-byte-count-and-SHA256-equality-before-recomputing-the-transform"
+    },
+    "acquisition_receipt_document": {
+      "canonical_encoding": "ascii-json-ensure-ascii-true-sort-keys-compact-allow-nan-false-plus-lf-no-json-floats",
+      "fields": [
+        "schema_version",
+        "unit_attempt_ordinal",
+        "requested_url",
+        "final_url",
+        "http_status",
+        "retrieved_utc",
+        "compressed_byte_count",
+        "compressed_sha256",
+        "response_headers"
+      ],
+      "response_header_fields": [
+        "content-length",
+        "content-type",
+        "etag",
+        "last-modified"
+      ],
+      "missing_header_encoding": "json-null",
+      "retrieved_utc_format": "UTC-RFC3339-seconds-with-literal-Z",
+      "schema_version": "dynamic-cssc-route-a-snap-acquisition-receipt-v2",
+      "sha256_scope": "exact-canonical-document-bytes"
+    },
+    "accepted_suffix_records_per_partition": 4096,
+    "accepted_trace_document": {
+      "canonical_encoding": "ascii-json-ensure-ascii-true-sort-keys-compact-allow-nan-false-plus-lf-no-json-floats",
+      "fields": [
+        "schema_version",
+        "raw_object_sha256",
+        "mapping_sha256",
+        "partition",
+        "accepted_record_count",
+        "ordered_records"
+      ],
+      "ordered_record_fields": [
+        "accepted_ordinal",
+        "within_file_ordinal",
+        "source_id",
+        "target_id",
+        "historical_timestamp",
+        "row_ordinal",
+        "column_ordinal"
+      ],
+      "schema_version": "dynamic-cssc-route-a-snap-accepted-trace-v1",
+      "selection": "after-the-first-1000000-eligible-records-scan-the-remaining-globally-sorted-eligible-records-in-(timestamp,within_file_ordinal)-order-and-for-each-partition-accept-the-first-4096-whose-source-belongs-to-that-partitions-frozen-row-map-and-whose-target-belongs-to-its-frozen-observed-column-map-reserved-columns-never-match-source-records",
+      "sha256_scope": "exact-canonical-document-bytes"
+    },
+    "canonical_identity_format": "stack-overflow:user:{positive-decimal-id:020d}",
+    "column_count": 8193,
+    "mapping_prefix_eligible_records": 1000000,
+    "minimum_observed_columns": 7374,
+    "partition_count": 2,
+    "initial_state": {
+      "T1_occurrence_map": "empty",
+      "T2_fifo": "empty",
+      "T2_occurrence_map": "empty",
+      "logical_matrix": "all-zero-1024-by-8193",
+      "mapping_prefix_affects_values": false
+    },
+    "partition_domain_prefix_ascii_hex": "726f7574652d612d736e61702d6132712d763100",
+    "parser": {
+      "blank_line": "empty-after-removing-one-terminal-0x0d",
+      "comment_line": "first-byte-is-0x23-after-removing-one-terminal-0x0d",
+      "id_domain": "1-through-18446744073709551615",
+      "line_grammar_ascii_regex": "\\A[1-9][0-9]*[ \\t]+[1-9][0-9]*[ \\t]+(0|[1-9][0-9]*)\\Z",
+      "line_split": "split-decompressed-bytes-on-0x0a-discard-only-the-final-empty-sentinel-if-the-stream-ends-in-0x0a-remove-one-terminal-0x0d-per-record",
+      "numeric_plus_sign_allowed": false,
+      "timestamp_domain": "0-through-9223372036854775807",
+      "utf8": "strict"
+    },
+    "transform": {
+      "eligible_record": "valid-three-token-non-self-loop-data-record",
+      "global_order": "ascending-(timestamp,within_file_ordinal)",
+      "partition_assignment": "uint256_be(SHA256(partition-domain-prefix||ascii-canonical-source-id))-mod-2",
+      "partition_domain_separator": "the-hex-prefix-already-ends-in-one-0x00-no-additional-separator",
+      "mapping_prefix": "first-1000000-records-in-global-order-before-any-partition-row-or-column-selection",
+      "row_selection": "within-each-partition-count-prefix-records-by-canonical-source-id-sort-by-descending-count-then-binary-ascii-canonical-id-and-take-1024",
+      "column_selection": "conditional-on-selected-rows-count-prefix-records-by-canonical-target-id-sort-by-descending-count-then-binary-ascii-canonical-id-take-up-to-8193-then-append-reserved-identities-in-ascending-reserved-ordinal-only-if-observed-count-is-at-least-7374",
+      "suffix_selection": "scan-post-prefix-global-order-once-and-append-a-record-to-its-source-partition-only-if-both-source-row-and-observed-target-column-are-in-that-partitions-frozen-mapping-stop-only-after-both-partitions-have-4096-or-end-of-stream",
+      "failure": "route-c-if-any-partition-lacks-1024-rows-7374-observed-columns-or-4096-accepted-suffix-records"
+    },
+    "query_rhos": [
+      "1/10",
+      "1"
+    ],
+    "reserved_column_count_max": 819,
+    "reserved_column_namespace": "route-a:reserved-column:{ordinal:08d}",
+    "row_count": 1024,
+    "semantics": {
+      "T1": {
+        "coefficient_cap": 7,
+        "kind": "cumulative",
+        "transition": "increment-occurrence-count-then-visible-value=min(7,count)-emit-one-SET-only-if-visible-value-changes-otherwise-record-capped-no-change"
+      },
+      "T2": {
+        "coefficient_cap": 7,
+        "expiry_before_admission": true,
+        "fifo_occurrence_window": 1024,
+        "kind": "event-window",
+        "transition": "if-fifo-full-expire-the-unique-oldest-occurrence-decrement-and-emit-SET-only-if-visible-value-changes-then-admit-current-occurrence-increment-and-emit-SET-only-if-visible-value-changes-then-append-current-ordinal;expiry-and-admission-are-one-atomic-group"
+      }
+    },
+    "source_object": {
+      "role": "a2q",
+      "url": "https://snap.stanford.edu/data/sx-stackoverflow-a2q.txt.gz"
+    },
+    "mapping_document": {
+      "canonical_encoding": "ascii-json-ensure-ascii-true-sort-keys-compact-allow-nan-false-plus-lf-no-json-floats",
+      "fields": [
+        "schema_version",
+        "raw_object_sha256",
+        "partition",
+        "mapping_prefix_eligible_record_count",
+        "mapping_prefix_identity_sha256",
+        "ordered_1024_row_identities",
+        "ordered_8193_column_identities",
+        "reserved_column_count",
+        "ordered_reserved_column_identities"
+      ],
+      "sha256_scope": "exact-canonical-document-bytes",
+      "schema_version": "dynamic-cssc-route-a-snap-mapping-v1"
+    },
+    "mapping_prefix_identity": {
+      "domain_prefix_ascii_hex": "726f7574652d612d736e61702d7072656669782d763100",
+      "record_encoding": "uint64_be(source_id)||uint64_be(target_id)||uint64_be(timestamp)||uint64_be(within_file_ordinal)",
+      "sha256_scope": "domain-prefix-followed-by-the-ordered-first-1000000-eligible-record-encodings"
+    },
+    "semantic_event_document": {
+      "canonical_encoding": "ascii-json-ensure-ascii-true-sort-keys-compact-allow-nan-false-plus-lf-no-json-floats",
+      "fields": [
+        "schema_version",
+        "accepted_trace_sha256",
+        "mapping_sha256",
+        "partition",
+        "semantics",
+        "ordered_event_groups"
+      ],
+      "event_group_fields": [
+        "accepted_ordinal",
+        "logical_time_numerator",
+        "logical_time_denominator",
+        "within_file_ordinal",
+        "historical_timestamp",
+        "row_ordinal",
+        "column_ordinal",
+        "expired_occurrence_accepted_ordinal_or_null",
+        "ordered_set_transitions",
+        "no_change_reason_or_null"
+      ],
+      "set_transition_fields": [
+        "transition_ordinal_within_group",
+        "row_ordinal",
+        "column_ordinal",
+        "before",
+        "after",
+        "cause"
+      ],
+      "schema_version": "dynamic-cssc-route-a-snap-semantic-event-trace-v1",
+      "sha256_scope": "exact-canonical-document-bytes"
+    },
+    "scheduler_order_at_each_group": "close-any-pending-one-second-deadline-at-or-before-i/128-then-execute-the-complete-semantic-group-then-one-payload-free-logical-tick-then-the-exact-rationally-scheduled-query-batch",
+    "synthetic_logical_clock_records_per_second": 128
+  },
+  "plaintext_context_cells": [
+    {
+      "rho": "1",
+      "scale": "M",
+      "seed": 20260822,
+      "source": "synthetic"
+    },
+    {
+      "partition": 0,
+      "rho": "1",
+      "semantics": "T1",
+      "source": "snap-a2q"
+    }
+  ],
+  "qualification": {
+    "critical_path_minutes": "45.00",
+    "critical_path_clock": "qualification-simulator-producer-job-startedAt-through-qualification-combined-guard-job-completedAt-including-all-inter-job-queue-handoff-and-setup-time",
+    "dag_execution": "strictly-serial-never-parallel",
+    "external_live_controller": {
+      "role_id": "route-a-live-dispatch-controller-v1",
+      "production_program_path_frozen_at_S1": "scripts/control_route_a_publication.py",
+      "module_interface_path_frozen_at_S1": "src/dynamic_cssc/route_a_controller.py",
+      "provider": "GitHub-Actions-API-not-browser-UI",
+      "required_run_fields": [
+        "databaseId",
+        "event",
+        "headSha",
+        "headBranch",
+        "attempt",
+        "status",
+        "conclusion",
+        "createdAt",
+        "updatedAt"
+      ],
+      "required_job_fields": [
+        "databaseId",
+        "name",
+        "startedAt",
+        "completedAt",
+        "status",
+        "conclusion"
+      ],
+      "required_q6_artifact_fields": [
+        "id",
+        "name",
+        "digest",
+        "sizeInBytes",
+        "expired",
+        "workflow_run.head_sha"
+      ],
+      "decision": "after-q6-terminal-success-freshly-read-and-cross-check-the-exact-run-head-branch-attempt-all-q1-through-q6-job-identities-timestamps-and-conclusions-q6-artifact-provider-digest-and-q1-startedAt-through-q6.completedAt-at-most-55-minutes",
+      "output": "one-in-process-nonserialized-single-use-ephemeral-capability-or-route-c-no-persisted-replayable-token",
+      "test_adapter": "in-memory-provider-snapshot-adapter-covering-success-timeout-missing-extra-retargeted-and-stale-observation-cases"
+    },
+    "formal_artifact_count": 0,
+    "non_evidence_artifacts": [
+      "q1-simulator-pre-replay-handoff",
+      "q2-simulator-guarded-receipt",
+      "q3-native-pre-replay-build-plus-three-retained-packages",
+      "q4-native-guarded-case-bundle",
+      "q5-combined-guard-bundle",
+      "q6-postrun-resource-admission-record"
+    ],
+    "non_evidence_artifact_contents": {
+      "q1-simulator-pre-replay-handoff": "complete-simulator-producer-tree-manifest-and-checksums",
+      "q2-simulator-guarded-receipt": "simulator-replay-receipt-guard-receipt-stage-ledger-and-checksums",
+      "q3-native-pre-replay-build-plus-three-retained-packages": "content-addressed-openfhe-build-complete-build-manifest-one-discarded-warmup-receipt-and-three-separately-framed-retained-test-packages-with-checksums",
+      "q4-native-guarded-case-bundle": "three-replay-receipts-native-guard-receipt-structural-comparability-vector-stage-ledger-and-checksums",
+      "q5-combined-guard-bundle": "exact-q2-and-q4-provider-digests-combined-functional-guard-in-job-stage-timings-authority-false-and-checksums-no-self-referential-API-completedAt-or-final-resource-screen",
+      "q6-postrun-resource-admission-record": "read-only-provider-API-final-identities-startedAt-completedAt-and-conclusions-for-q1-through-q5-plus-q6-run-and-job-identity-q6-startedAt-record_observed_utc-frozen-q6-deadline-exact-C_q-6C_q-screen-45-minute-computational-decision-cancellation-ledger-if-applicable-authority-false-no-replayable-capability-and-checksums;it-cannot-contain-or-assert-q6-own-final-completedAt-conclusion-or-55-minute-total-path-decision"
+    },
+    "non_evidence_retention_days": 1,
+    "ordered_jobs": [
+      "qualification-simulator-producer",
+      "qualification-simulator-independent-replay-and-guard",
+      "qualification-native-case-shaped-producer",
+      "qualification-native-independent-replay-and-guard",
+      "qualification-combined-guard",
+      "qualification-postrun-resource-admission"
+    ],
+    "rho_values": [
+      "1/100",
+      "1/10",
+      "1",
+      "10"
+    ],
+    "scale": "M",
+    "seed": 20260821,
+    "native_planning_probe": {
+      "authority": "non-admissible-planning-input-not-paper-data",
+      "charged_to_qualification_45_minute_critical_path": true,
+      "case_shape": "one-discarded-warmup-plus-three-fresh-key-recorded-producer-packages-plus-independent-exact-package-replay-of-all-three-plus-guard-plus-same-schema-non-authorizing-case-bundle",
+      "fresh_key_recorded_processes": 3,
+      "native_case_runner_seconds_symbol": "C_q=sum-of-GitHub-job-API-startedAt-to-completedAt-durations-for-the-three-native-qualification-jobs",
+      "native_jobs_in_C_q": [
+        "qualification-native-case-shaped-producer",
+        "qualification-native-independent-replay-and-guard",
+        "qualification-combined-guard-entire-job"
+      ],
+      "C_q_includes": [
+        "checkout-and-runtime-setup",
+        "dependency-install-and-pinned-openfhe-build",
+        "terminal-snapshot-construction-or-import",
+        "one-discarded-warmup",
+        "three-fresh-key-producer-evaluations",
+        "build-and-three-package-manifest-assembly",
+        "three-package-serialization-upload-download-and-rehash",
+        "three-exact-package-replay-evaluations",
+        "payload-and-oracle-validation",
+        "native-guard",
+        "same-schema-non-authorizing-case-bundle-assembly-upload-and-rehash"
+      ],
+      "formal_openfhe_planning_screen": "6*C_q<=9000-seconds",
+      "planning_screen_authority": "necessary-non-authorizing-screen-not-a-runtime-upper-bound-and-not-a-replacement-for-formal-25-minute-per-case-and-2.5-hour-cumulative-acceptance-gates",
+      "structural_comparability_vector": [
+        "exact-strategy-and-scale-identity",
+        "ordered-operation-type-counts-and-order",
+        "rotation-key-index-inventory",
+        "key-and-ciphertext-object-multiplicities",
+        "component-page-segment-and-overlap-topology",
+        "exact-canonical-input-byte-counts",
+        "type-derived-maximum-serialized-package-byte-formula",
+        "build-and-job-stage-topology"
+      ],
+      "comparability_rule": "before-GO-emit-the-vector-for-the-probe-and-all-six-deterministic-formal-case-plans-using-type-derived-maximum-byte-formulas-for-future-random-ciphertexts;any-operation-or-mechanism-class-absent-from-both-the-probe-and-PRE-S1-real-runner-smokes-selects-route-c;componentwise-count-or-byte-relations-are-disclosed-only-and-never-interpreted-as-time-dominance",
+      "query_selector": "query-after-terminal-accepted-event-group",
+      "required_mechanism_coverage": [
+        "nonempty-auxiliary-segment",
+        "actual-overlap-contributor-group",
+        "f1m-random-mask-path"
+      ],
+      "replay_processes": 3,
+      "rho": "1",
+      "scale": "M",
+      "strategy": "packed-coo-cloud-segmented-delta/segment-width=128"
+    },
+    "postrun_admission_timing": "q6-runs-only-after-q5-terminal-success-has-provider-job-timeout-minutes=5-and-a-wall-clock-deadline-of-q5-completedAt-plus-10-minutes-including-queue-and-handoff-and-is-outside-C_q-and-the-45-minute-computational-critical-path;q6-records-only-q1-through-q5-final-API-state-and-q6-own-identity-startedAt-observation-time-and-deadline-never-q6-own-final-completedAt-or-conclusion;after-q6-is-terminal-an-external-live-controller-reads-q6-own-provider-completedAt-and-conclusion-and-requires-q1-startedAt-through-q6.completedAt-at-most-55-minutes;any-q6-non-success-timeout-provider-failure-missed-wall-clock-deadline-or-external-verification-failure-cancels-only-the-exact-run-selects-route-c-and-cannot-be-rerun;formal-dispatch-remains-forbidden-until-that-controller-also-re-reads-the-q6-record-and-provider-API-state-and-returns-a-nonserialized-ephemeral-capability",
+    "threshold_action": "at-45-minutes-if-the-combined-guard-has-not-completed-success-request-cancellation-of-only-the-exact-qualification-run-record-controller-detection-lag-and-provider-ack/completion-lag-separately-and-select-route-c",
+    "status": "permanently-non-admissible",
+    "workload": "mixed-insert-delete-modify"
+  },
+  "query_schedule": {
+    "batching": "m-queries-after-one-accepted-group-form-one-ordered-query-batch-on-one-query-bearing-publication-window",
+    "batch_version": "all-m-queries-bind-the-same-latest-immutable-publication-version",
+    "first_query_closes_pending_update_window": true,
+    "formula": "floor((a+1)*p/q)-floor(a*p/q)",
+    "integer_arithmetic_only": true,
+    "placement": "after-complete-accepted-event-group",
+    "query_id": {
+      "canonical_encoding": "ascii-json-ensure-ascii-true-sort-keys-compact-allow-nan-false-plus-lf-no-json-floats",
+      "document_fields": [
+        "schema_version",
+        "evaluation_lane_identity_sha256",
+        "global_query_ordinal"
+      ],
+      "id": "lowercase-sha256-hex-of-exact-document-bytes",
+      "ordinals": "distinct-consecutive-zero-based-within-one-evaluation-lane-in-publication-window-order-never-reset-within-the-lane",
+      "schema_version": "dynamic-cssc-route-a-query-id-v1"
+    },
+    "evaluation_lane_identity": {
+      "canonical_encoding": "ascii-json-ensure-ascii-true-sort-keys-compact-allow-nan-false-plus-lf-no-json-floats",
+      "fields": [
+        "schema_version",
+        "shard_identity_sha256",
+        "strategy_candidate_id",
+        "rho",
+        "unit_attempt_ordinal",
+        "execution_process_role",
+        "process_ordinal_or_null"
+      ],
+      "attempt_scope": "nominal-unit-attempt-is-zero-and-the-sole-provider-replacement-is-one;attempt-ordinal-is-part-of-the-lane-digest-so-the-replacement-never-reuses-a-query-id-or-five-field-F1M-reservation-identity;replay-reuses-only-the-producer-lane-from-the-same-attempt",
+      "process_scope": "producer-role=simulator-with-json-null-ordinal;producer-role=openfhe-warmup-with-ordinal-zero;producer-role=openfhe-recorded-with-ordinal-zero-through-two;independent-replay-is-not-a-new-evaluation-lane-and-for-synthetic-SNAP-and-openfhe-reuses-the-exact-original-producer-lane-and-query-ids-from-the-same-unit-attempt-in-read-only-verification-mode",
+      "replay_ledger_rule": "every-simulator-SNAP-and-openfhe-replay-rehashes-and-verifies-the-producer-prepared-query-reservation-mask-result-and-exactly-once-consumed-token-records-but-never-reserves-samples-consumes-or-mutates-the-ledger;missing-unconsumed-duplicate-or-mismatched-records-reject",
+      "schema_version": "dynamic-cssc-route-a-evaluation-lane-identity-v2",
+      "sha256_scope": "exact-canonical-document-bytes"
+    },
+    "atomic_batch": "for-directly-executed-rhos-only-each-of-m-query-ids-has-its-own-prepared-query-encryption-f1m-reservation-operands-result-decryption-reconstruction-and-consumption-token;the-batch-receipt-atomically-binds-the-ordered-m-query-id-array-and-rejects-partial-consumption;rho10-is-the-separately-defined-object-free-accounting-projection",
+    "shard_identity": {
+      "canonical_encoding": "ascii-json-ensure-ascii-true-sort-keys-compact-allow-nan-false-plus-lf-no-json-floats",
+      "fields": [
+        "schema_version",
+        "machine_plan_sha256",
+        "source_kind",
+        "source_identity",
+        "scale_or_partition",
+        "formal_seed_or_mapping_sha256",
+        "semantics",
+        "workload",
+        "freshness_seconds"
+      ],
+      "inapplicable_field_encoding": "json-null",
+      "schema_version": "dynamic-cssc-route-a-shard-identity-v1",
+      "sha256_scope": "exact-canonical-document-bytes"
+    },
+    "reuse": {
+      "allowed": [
+        "public-immutable-metadata",
+        "separately-reported-one-time-evaluation-key-inventory",
+        "identical-known-answer-plaintext-vector-values"
+      ],
+      "forbidden_across_query_ids": [
+        "prepared-query-binding",
+        "query-ciphertext",
+        "random-mask",
+        "f1m-encrypted-operand",
+        "result-ciphertext",
+        "decryption",
+        "reconstruction",
+        "consumed-commitment-token"
+      ]
+    },
+    "window_trace_document": {
+      "canonical_encoding": "ascii-json-ensure-ascii-true-sort-keys-compact-allow-nan-false-plus-lf-no-json-floats",
+      "fields": [
+        "schema_version",
+        "source_event_trace_sha256",
+        "shard_identity_sha256",
+        "rho_numerator",
+        "rho_denominator",
+        "freshness_numerator",
+        "freshness_denominator",
+        "ordered_windows"
+      ],
+      "ordered_window_fields": [
+        "window_ordinal",
+        "version_before",
+        "version_after",
+        "close_reason",
+        "first_event_group_ordinal_or_null",
+        "last_event_group_ordinal_or_null",
+        "ordered_set_transition_references",
+        "first_global_query_ordinal_or_null",
+        "query_count"
+      ],
+      "strategy_independence": "one-window-trace-per-shard-and-rho-is-shared-as-canonical-input-but-each-strategy-and-recorded-process-derives-distinct-query-ids-and-cryptographic-objects",
+      "schema_version": "dynamic-cssc-route-a-window-trace-v1",
+      "sha256_scope": "exact-canonical-document-bytes"
+    }
+  },
+  "query_vector": {
+    "attempt_initial": 0,
+    "attempt_input": "canonical_domain_bytes||uint64_be(coordinate)||uint64_be(attempt)",
+    "byte_rule": "b=SHAKE256(attempt_input).digest(1)[0]; if b==255 retry with attempt+1; otherwise value=(-1,0,1)[b%3]",
+    "canonical_domain_encoding": "ascii-json-ensure-ascii-true-sort-keys-compact-allow-nan-false-plus-lf-no-json-floats",
+    "coefficient_set": [
+      -1,
+      0,
+      1
+    ],
+    "domain_fields": {
+      "real": [
+        "schema_version",
+        "seed",
+        "length",
+        "kind",
+        "object_sha256",
+        "mapping_sha256",
+        "partition",
+        "semantics"
+      ],
+      "synthetic": [
+        "schema_version",
+        "seed",
+        "length",
+        "kind",
+        "scale",
+        "formal_seed"
+      ]
+    },
+    "domain_fixed_values": {
+      "real.kind": "snap-a2q",
+      "synthetic.kind": "synthetic"
+    },
+    "domain_schema_version": "dynamic-cssc-route-a-query-vector-domain-v1",
+    "generator": "SHAKE256-coordinate-rejection-v1",
+    "length": 8193,
+    "real_object_sha256_rule": "object_sha256-equals-the-mapping-document.raw_object_sha256-equals-the-acquisition-receipt.compressed_sha256-over-the-exact-downloaded-response-body-bytes",
+    "sampled_coordinates": "1-through-8191-inclusive; coordinates-0-and-8192-are-not-sampled",
+    "schema_version": "dynamic-cssc-route-a-query-vector-v1",
+    "seed": 2026082302,
+    "vector_document": {
+      "canonical_encoding": "ascii-json-ensure-ascii-true-sort-keys-compact-allow-nan-false-plus-lf-no-json-floats",
+      "fields": [
+        "schema_version",
+        "domain_sha256",
+        "values"
+      ],
+      "sha256_scope": "exact-canonical-vector-document-bytes"
+    },
+    "x_0": 1,
+    "x_8192": -1
+  },
+  "serialized_byte_accounting": {
+    "ordered_categories": [
+      [
+        "update-column-index-synchronization",
+        "update"
+      ],
+      [
+        "update-publication-ciphertexts",
+        "update"
+      ],
+      [
+        "update-version-plan-metadata",
+        "update"
+      ],
+      [
+        "query-query-ciphertexts",
+        "query"
+      ],
+      [
+        "query-result-ciphertexts",
+        "query"
+      ],
+      [
+        "query-f1m-random-mask-ciphertexts",
+        "query"
+      ],
+      [
+        "query-f1m-encrypted-zero-dummy-ciphertexts",
+        "query"
+      ],
+      [
+        "query-version-plan-metadata",
+        "query"
+      ],
+      [
+        "one-time-evaluation-key-material",
+        "one-time"
+      ]
+    ],
+    "evaluation_key_rule": "report-one-separate-one-time-inventory-never-fold-it-into-one-strategys-recurring-total",
+    "metadata_rule": "for-synthetic-and-SNAP-cells-report-the-exact-byte-count-of-each-canonical-metadata-document-actually-emitted-by-the-simulator-or-transform",
+    "native_openfhe_rule": "for-the-six-OpenFHE-cases-report-the-actual-retained-serialized-byte-count-by-exact-category-from-each-recorded-native-package-labeled-native-measured",
+    "projection_label": "serialized-byte-upper-bound-projection-not-native-measured",
+    "synthetic_and_SNAP_cryptographic_rule": "for-each-exact-cryptographic-object-category-multiply-the-exact-object-multiplicity-by-the-S1-frozen-type-derived-maximum-serialized-byte-formula-for-that-category;sum-only-within-the-same-declared-accounting-view;never-select-or-refit-a-formula-after-formal-output",
+    "type_formula_freeze": "the-closed-category-list-formula-input-types-integer-arithmetic-and-formula-blob-path-mode-type-and-Git-blob-enter-the-S1-Behavior-Set-and-qualification-structural-comparability-vector",
+    "rho10_rule": "multiply-the-rho1-query-side-cryptographic-upper-bound-projection-categories-listed-in-rho10_projection-by-ten;recompute-query-version-plan-metadata-as-target-multiplicity-times-the-S1-frozen-per-object-maximum-canonical-metadata-byte-formula;metadata-or-publication-fields-outside-the-whitelist-remain-exactly-equal;no-new-native-object-is-implied"
+  },
+  "runner": {
+    "build_jobs": 2,
+    "image": "ubuntu-24.04",
+    "omp_num_threads": 2,
+    "python": "3.12.13"
+  },
+  "rho10_projection": {
+    "authority": "aggregate-exact-accounting-projection-only-no-P1-P2-P3-or-native-execution-claim",
+    "all_other_fields": "exact-object-equal-to-source-before-the-external-integrity-envelope-except-the-exhaustive-target-only-leaf-overrides-listed-here",
+    "allowed_result_field_paths": [
+      "evaluation.mode",
+      "evaluation.source_rho",
+      "evaluation.target_rho",
+      "identity.rho",
+      "counts.queries",
+      "window_query_counts",
+      "primitive_counts.query_ciphertexts",
+      "primitive_counts.result_ciphertexts",
+      "primitive_counts.cc_multiplications",
+      "primitive_counts.relinearizations",
+      "primitive_counts.rotations",
+      "primitive_counts.additions",
+      "primitive_counts.plaintext_masks",
+      "primitive_counts.blinding_mask_ciphertexts",
+      "primitive_counts.blinding_dummy_ciphertexts",
+      "primitive_counts.blinding_encryptions",
+      "primitive_counts.blinding_additions",
+      "primitive_counts.decryptions",
+      "primitive_counts.client_merges",
+      "primitive_counts.mask_random_elements",
+      "primitive_counts.mask_mapped_elements",
+      "primitive_counts.client_reorder_elements",
+      "rotation_inventory.measured_counts_by_exact_index",
+      "serialized_object_multiplicities.query-query-ciphertexts",
+      "serialized_object_multiplicities.query-result-ciphertexts",
+      "serialized_object_multiplicities.query-f1m-random-mask-ciphertexts",
+      "serialized_object_multiplicities.query-f1m-encrypted-zero-dummy-ciphertexts",
+      "serialized_object_multiplicities.query-version-plan-metadata",
+      "serialized_bytes.query-query-ciphertexts",
+      "serialized_bytes.query-result-ciphertexts",
+      "serialized_bytes.query-f1m-random-mask-ciphertexts",
+      "serialized_bytes.query-f1m-encrypted-zero-dummy-ciphertexts",
+      "serialized_bytes.query-version-plan-metadata",
+      "measurements.producer_state_transition_seconds",
+      "measurements.producer_result_assembly_seconds",
+      "measurements.replay_seconds",
+      "measurements.peak_rss_kib",
+      "measurements.scratch_allocated_bytes",
+      "measurements.native_latency_seconds",
+      "correctness.execution_performed",
+      "correctness.oracle_equality",
+      "correctness.binding_acceptance",
+      "correctness.claim_authority",
+      "correctness.source_rho",
+      "bindings.source_rho1_document_sha256",
+      "bindings.machine_plan_sha256",
+      "bindings.transform_id",
+      "bindings.query_id_root",
+      "bindings.prepared_query_root",
+      "bindings.ledger_root"
+    ],
+    "fixed_target_fields": {
+      "evaluation.mode": "exact-query-linear-projection",
+      "evaluation.source_rho": "1",
+      "evaluation.target_rho": "10",
+      "identity.rho": "10",
+      "correctness.execution_performed": false,
+      "correctness.oracle_equality": null,
+      "correctness.binding_acceptance": null,
+      "correctness.claim_authority": false,
+      "correctness.source_rho": "1",
+      "bindings.source_rho1_document_sha256": "lowercase-SHA256-of-the-exact-source-rho1-strategy-cell-document-bytes",
+      "bindings.machine_plan_sha256": "runtime-exact-stage1-machine-plan-sha256",
+      "bindings.transform_id": "rho1-to-rho10-exact-query-linearity-v1",
+      "bindings.query_id_root": null,
+      "bindings.prepared_query_root": null,
+      "bindings.ledger_root": null
+    },
+    "integrity_envelope": {
+      "canonical_encoding": "ascii-json-ensure-ascii-true-sort-keys-compact-allow-nan-false-plus-lf-no-json-floats",
+      "fields": [
+        "schema_version",
+        "source_rho1_document_sha256",
+        "transformed_rho10_document_sha256",
+        "machine_plan_sha256",
+        "transform_id"
+      ],
+      "schema_version": "dynamic-cssc-route-a-rho10-integrity-envelope-v1",
+      "transform_id": "rho1-to-rho10-exact-query-linearity-v1"
+    },
+    "multiply_exact_integer_by_10_field_paths": [
+      "counts.queries",
+      "primitive_counts.query_ciphertexts",
+      "primitive_counts.result_ciphertexts",
+      "primitive_counts.cc_multiplications",
+      "primitive_counts.relinearizations",
+      "primitive_counts.rotations",
+      "primitive_counts.additions",
+      "primitive_counts.plaintext_masks",
+      "primitive_counts.blinding_mask_ciphertexts",
+      "primitive_counts.blinding_dummy_ciphertexts",
+      "primitive_counts.blinding_encryptions",
+      "primitive_counts.blinding_additions",
+      "primitive_counts.decryptions",
+      "primitive_counts.client_merges",
+      "primitive_counts.mask_random_elements",
+      "primitive_counts.mask_mapped_elements",
+      "primitive_counts.client_reorder_elements",
+      "serialized_object_multiplicities.query-query-ciphertexts",
+      "serialized_object_multiplicities.query-result-ciphertexts",
+      "serialized_object_multiplicities.query-f1m-random-mask-ciphertexts",
+      "serialized_object_multiplicities.query-f1m-encrypted-zero-dummy-ciphertexts",
+      "serialized_object_multiplicities.query-version-plan-metadata",
+      "serialized_bytes.query-query-ciphertexts",
+      "serialized_bytes.query-result-ciphertexts",
+      "serialized_bytes.query-f1m-random-mask-ciphertexts",
+      "serialized_bytes.query-f1m-encrypted-zero-dummy-ciphertexts"
+    ],
+    "multiply_exact_integer_vector_by_10_field_paths": [
+      "window_query_counts"
+    ],
+    "multiply_ordered_pair_counts_by_10_field_paths": [
+      "rotation_inventory.measured_counts_by_exact_index"
+    ],
+    "multiplier": 10,
+    "null_unavailable_measurement_field_paths": [
+      "measurements.producer_state_transition_seconds",
+      "measurements.producer_result_assembly_seconds",
+      "measurements.replay_seconds",
+      "measurements.peak_rss_kib",
+      "measurements.scratch_allocated_bytes",
+      "measurements.native_latency_seconds"
+    ],
+    "projected_query_objects": "no-query-id-prepared-query-ciphertext-mask-result-decryption-reconstruction-or-ledger-object-is-instantiated-for-rho10;the-target-correctness-object-explicitly-records-no-execution-and-no-oracle-or-binding-acceptance-and-the-target-bindings-carry-only-source_rho1_document_sha256-machine_plan_sha256-transform_id-plus-null-query-prepared-and-ledger-roots;copied-source-evidence-never-becomes-target-correctness",
+    "recompute_target_upper_bound_field_paths": {
+      "serialized_bytes.query-version-plan-metadata": "target-serialized_object_multiplicities.query-version-plan-metadata-times-the-S1-frozen-per-object-maximum-canonical-metadata-byte-formula"
+    },
+    "result_schema_contract": {
+      "binding_fields": [
+        "source_rho1_document_sha256",
+        "machine_plan_sha256",
+        "transform_id",
+        "query_id_root",
+        "prepared_query_root",
+        "ledger_root"
+      ],
+      "closed_at_stage2_s1": true,
+      "correctness_fields": [
+        "execution_performed",
+        "oracle_equality",
+        "binding_acceptance",
+        "claim_authority",
+        "source_rho"
+      ],
+      "direct_rho1_binding_rule": "source_rho1_document_sha256-and-transform_id-are-null-machine_plan_sha256-is-exact-and-query_id_root-prepared_query_root-ledger_root-are-required-lowercase-SHA256-values",
+      "direct_rho1_correctness_rule": "execution_performed=true-oracle_equality=true-binding_acceptance=true-claim_authority=false-source_rho=null;the-cell-document-is-never-self-authorizing",
+      "implementation_schema_path": "schemas/route-a-strategy-cell-v2.schema.json",
+      "no_extra_keys": true,
+      "required_top_level_keys": [
+        "schema_version",
+        "identity",
+        "evaluation",
+        "counts",
+        "window_query_counts",
+        "primitive_counts",
+        "rotation_inventory",
+        "serialized_object_multiplicities",
+        "serialized_bytes",
+        "measurements",
+        "correctness",
+        "bindings"
+      ],
+      "transform_precondition": "both-source-and-target-validate-against-the-exact-S1-schema-blob-digest-and-the-plan-whitelist-exhausts-every-differing-leaf-path"
+    },
+    "result_schema_version": "dynamic-cssc-route-a-strategy-cell-v2",
+    "source_rho": "1",
+    "target_rho": "10"
+  },
+  "schema_version": "dynamic-cssc-route-a-publication-plan-v3",
+  "strategies": [
+    {
+      "candidate_id": "periodic-repack/windows=1",
+      "base_patch_mode": "not-applicable-full-republish",
+      "overflow_rebuild_scope": "complete-logical-matrix",
+      "periodic_repack_windows": 1,
+      "segment_patch_mode": "not-applicable",
+      "strategy": "PeriodicRepack"
+    },
+    {
+      "base_patch_mode": "replace-exact-enclosing-cssc-value-ciphertext-chunk-and-changed-metadata",
+      "candidate_id": "padding-reuse",
+      "overflow_rebuild_scope": "all-cssc-chunks-in-the-affected-fixed-horizontal-row-partition",
+      "reserved_slack_beta": "0",
+      "segment_patch_mode": "not-applicable",
+      "strategy": "PaddingReuse-CSSC"
+    },
+    {
+      "base_reserved_slack_beta": "0",
+      "base_patch_mode": "replace-exact-enclosing-cssc-value-ciphertext-chunk-and-changed-metadata",
+      "candidate_id": "packed-coo-cloud-segmented-delta/segment-width=128",
+      "compaction": "none",
+      "fold": "never",
+      "overflow_rebuild_scope": "allocate-and-encrypt-one-new-fixed-128-lane-row-owned-segment",
+      "segment_patch_mode": "replace-exact-enclosing-128-lane-encrypted-segment-and-changed-metadata",
+      "segment_width": 128,
+      "strategy": "Packed-COO-Cloud-Segmented-Delta"
+    }
+  ],
+  "synthetic": {
+    "event_generator": {
+      "delete_region": "selector>=0.80 when row has-an-existing-coordinate",
+      "empty_row_noninsert_branch": "fallback-insert-a-new-column; if-no-column-is-available-emit-no-accepted-event-and-skip-the-iteration",
+      "event_seed_rule": "formal_seed+1",
+      "existing_coordinate_order": "ascending-column-ordinal-before-any-rng-choice",
+      "full_row_insert_branch": "if-no-new-column-and-row-has-an-existing-coordinate-modify-one-existing-coordinate; if-neither-exists-emit-no-accepted-event-and-skip-the-iteration",
+      "initial_matrix_rule": "for-each-row-in-ascending-order-call-rng.sample(range(8193),8)-then-in-returned-sample-order-call-rng.randint(1,7)-once-per-coordinate",
+      "initial_matrix_seed_rule": "formal_seed",
+      "insert_region": "selector<0.45",
+      "modify_region": "0.45<=selector<0.80 when row has an existing coordinate",
+      "modified_value_candidates": "ordered-current-plus-(-1,1,2)-filtered-to-nonzero-and-absolute-value-at-most-7-then-one-rng.choice-or-current-if-empty",
+      "new_column_rule": "up-to-min(2*8193,2048)=2048-rng.randrange(8193)-draws-return-first-coordinate-absent-from-the-row-otherwise-build-ascending-available-columns-and-rng.choice-or-null",
+      "prng": "CPython-3.12.13-random.Random",
+      "query_every": 0,
+      "source_path": "src/dynamic_cssc/workloads.py",
+      "timestamp_rule": "accepted-set-ordinal/100-seconds-as-an-exact-rational-in-the-route-a-wrapper",
+      "wrapper_source_path": "src/dynamic_cssc/route_a_workloads.py"
+    },
+    "full_execution_rhos": [
+      "1/100",
+      "1/10",
+      "1"
+    ],
+    "initial_nonzeros_per_row": 8,
+    "rescaled_rho": "10",
+    "scales": {
+      "M": {
+        "accepted_updates": 2048,
+        "partition_rows": 1024,
+        "rows": 1024
+      },
+      "S": {
+        "accepted_updates": 512,
+        "partition_rows": 256,
+        "rows": 256
+      }
+    },
+    "seeds": [
+      20260822,
+      20260823,
+      20260824
+    ],
+    "workload": "mixed-insert-delete-modify"
+  }
+}
