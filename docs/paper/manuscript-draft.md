@@ -3,6 +3,7 @@
 > **Manuscript status:** methods-first working draft. Bracketed result fields are
 > deliberately unset. No performance, complete-reference, security, or
 > end-to-end claim may be filled without the gate named beside it.
+> Evidence status last synchronized: 2026-08-28.
 
 ## Abstract
 
@@ -22,13 +23,19 @@ the Cloud execute a public page-wide schedule while the client privately merges
 segment leaders. A typed bundle binds the CSSC base, delta, operands, routes,
 and operation graph and fails closed on version or plan substitution.
 
-Our evaluation advances persistent strategy snapshots through a chronological
-warm-up/tuning/held-out split, excludes an offline oracle from selection, and
-separates predicted counts, measured OpenFHE unit costs, and end-to-end evidence.
-A commit-bound OpenFHE 1.5.1 witness at
+Our evaluation protocol advances persistent strategy snapshots through a
+chronological warm-up/tuning/held-out split, excludes an offline oracle from
+selection, and keeps predicted counts, admitted OpenFHE unit-cost measurements,
+and end-to-end evidence separate.
+A historical commit-bound OpenFHE 1.5.1 witness at
 `fcb00e0d7f111f3ab5003c111b124df83ae11813` validates one base-plus-delta query
-fixture; it is not evidence for later source changes. Candidate admission,
-complete accounting, real-stream comparison, and calibrated performance remain gated.
+fixture; it is not evidence for later source changes. A later private Day 1B
+production issuer passed exact-head Linux CI and a dedicated ordinary/strong
+real-runner PRE-S1 run, but that run explicitly minted no publication authority or
+artifact. A bounded Day 1A performance re-diagnostic is authorized as exactly one
+NON-ADMISSIBLE run that can never be cited as formal evidence, and the project has
+zero formal empirical results. Complete accounting, real-stream comparison, and
+calibrated performance therefore remain gated.
 The final manuscript will report **[R2B/R3/R4 result sentence withheld until the
 corresponding commit-bound artifacts pass]**.
 
@@ -264,14 +271,14 @@ cross-segment-width claim.
 
 ## 5. Implementation and Evidence
 
-At merged-main commit `fcb00e0d`, the Python implementation supplied typed persistent states, a common query
+At historical baseline commit `fcb00e0d`, the Python implementation supplied typed persistent states, a common query
 compiler, exact operation graphs, private operand/route bindings, a plaintext
 oracle, SQLite no-reuse commitments, canonical artifacts, and a separate deterministic replay
 validator. The encrypted path uses BFV-family batching, whose original scheme
 lineage is Fan--Vercauteren [@fan2012somewhat], through OpenFHE 1.5.1 pinned by
 source commit [@openfhe151].
 
-At merged main `fcb00e0d`, R0 passed 750 tests and the Phase 2 whole-query witness
+At that historical baseline, R0 passed 750 tests and the Phase 2 whole-query witness
 passed in run `32581653504`. The witness exercises a 4096-by-8193 fixture,
 global-column anti-aliasing, the 127-of-128 segment boundary, the unused second
 BFV batching row, explicit no-relinearize/relinearize transitions, random and
@@ -282,6 +289,19 @@ Its GitHub Actions artifact-wrapper SHA-256 digest is
 This evidence is deliberately narrow. It does not establish complete candidate
 costs, candidate registration, mixed-circuit parameter safety, security,
 performance, or an end-to-end deployment.
+
+The current engineering line retains those boundaries while adding fail-closed
+experiment lineage, replay, and worker contracts. The reviewed private Day 1B issuer
+implementation is commit-bound at
+`8a37c930edd1f404f7828dd574a4a2d0c29864e9`. Exact-head Linux CI run
+`33135852470` reported 2,178 passing tests and two expected skips because the
+ordinary CI job does not build the real OpenFHE query runner. Dedicated PRE-S1 run
+`33138110298` built OpenFHE `1.5.1@1306d14f8c26`, executed both ordinary and
+strong real-runner smokes, passed the 632-test closed contract and Ruff, and exposed
+zero artifacts. Its terminal boundary still states that the repository production
+adapter, dispatch, and publication artifact are absent and that no publication
+execution is permitted. These are implementation and admission-safety observations,
+not paper results.
 
 Generative-AI systems assisted literature discovery, code and test generation,
 adversarial review, and drafting during development. Their outputs are neither
@@ -373,16 +393,30 @@ objects before any empirical claim is released.
 
 ### 7.1 Correctness gates
 
-**Latest audited fact:** R0 and the narrow Phase 2 fixture pass at `fcb00e0d`.
+**Historical audited fact:** R0 and the narrow Phase 2 fixture pass at `fcb00e0d`.
 For any later evidence role, drift in that role's frozen Behavior Set requires a
 new run; evidence-only and analysis-only snapshots require the separate S1/S2/S3
 compatibility receipt defined by ADR 0010.
 
-**Latest registration boundary:** the fixed 14/13/1 Day 1 candidate roster is
-repository-admitted only for S1 `b658e2178b210c2cc0012fc61957a3b3a92953bb`
-and data-only S2 `bb83d4e42209e24df0c71df3eea5df7cbff7e1d5` via registration run
-`33070626218`. This is not a Day 1A performance result or a complete-reference
-completion proof.
+**Day 1A operational boundary:** diagnostic run `33099397289` failed the frozen
+300-minute producer-to-replay-guard gate. The producer consumed 285 minutes; at the
+deadline the replay calculation was still running and its guard had not begun. The
+run was cancelled at the exact stop-loss and produced no formal shard or aggregate
+evidence. One bounded source change at
+`efdd9af894842a219080f93c8d36fb09ee93b161` hoists a single base event stream,
+removes a redundant logical-state copy while retaining the deep divergence guard,
+and emits non-authorizing stage timings. Its exact-head CI and descriptive
+registration passed. Disposable S2
+`2db4bc87c54d3b5d448f17e4e8d62eae668f16d1` authorizes exactly one same-input
+NON-ADMISSIBLE diagnostic, run `33130154591`; its unchanged 300-minute deadline is
+`2026-08-28T05:35:25Z`. This lineage can never be cited as a formal Day 1A result.
+
+**Day 1B operational boundary:** the private issuer at `8a37c930` has a local
+dual-axis PASS and two advisory external-review PASS verdicts with no unresolved
+P0/P1, plus the Linux CI and PRE-S1 observations summarized in Section 5. The
+repository adapter still requires exact Day 2 plan authority and TRACE authority.
+No Day 1B worker dispatch, held-out access, publication artifact, or empirical claim
+is authorized.
 
 **Withheld:** formal Day 1A completion, mixed-circuit, and R4 results.
 
