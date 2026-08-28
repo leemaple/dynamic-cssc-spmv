@@ -411,7 +411,7 @@ its one-second deadline; no boundary may split an accepted-event group.
 
 The canonical machine plan is
 `config/route-a-publication-plan.json`, whose exact retained-file SHA-256 is
-`7c59f10aa2ece721270d19303260531ed57777be8473ab3f63cd328925189fbf`.
+`fc89b08e2151aaac03653d97293aeaadab1f3b015d18419817c2bee4d313cd79`.
 The file is reviewed together with this document. The runner must reject any
 plan whose retained bytes do not match that digest; changing the file requires
 a new preregistration review and digest.
@@ -555,6 +555,44 @@ complete current group, together with `query_count=m`. The scheduler must not
 split those updates into an update-only window followed by a separate query-only
 window. A query-only window is possible only when the complete group emitted no
 SET and no prior SET is pending. When `m=0`, the tick creates no closure.
+
+The exact `close_reason` vocabulary is
+`{one-second-deadline, pre-group-microbatch, query, finite-trace-end}`.
+Publication version zero is the initial closed version, and `window_ordinal`
+starts at zero and advances for every emitted window. Every window containing at
+least one SET has `version_after=version_before+1`. A query-only window instead
+has `version_after=version_before`; it does not republish, run a strategy
+transition, or create update-side cryptographic work, and all queries in it bind
+that exact already-closed version. Its ordered SET-reference list is empty, and
+both event-group range endpoints equal the current query-triggering group; no
+synthetic group is created.
+
+Every event-group range is inclusive. For an update-bearing window, the first
+endpoint is the accepted group containing its earliest referenced SET. When a
+`query` or `finite-trace-end` action closes the window after a group, the last
+endpoint is that closing group; when `one-second-deadline` or
+`pre-group-microbatch` closes it before a group, the last endpoint is the
+immediately preceding accepted group. Every intervening or trailing no-change
+group lies inside that range, but only actual SET transitions appear in the
+ordered reference list; leading no-change groups before the earliest referenced
+SET are outside it. References are ordered by accepted-group ordinal and then
+transition ordinal within the group. The query-only exception remains the
+single current query-triggering group described above.
+
+After the final complete accepted-event group, if one or more SET transitions
+remain pending, the scheduler closes exactly one `finite-trace-end` update-only
+window after that group's SET, tick, and scheduled-query sequence. Its close
+reason is `finite-trace-end`; the control action occurs at that final group's
+same exact rational time, without advancing the clock or creating another event group. It
+contains all and only pending SET transitions in canonical order, has
+`query_count=0`, a null first query ordinal, and
+`version_after=version_before+1`; its first event-group ordinal is the pending
+window's start group and its last is the final accepted group even if
+intervening or final groups emitted no SET. It never compiles a query plan. If no
+SET remains pending, no finite-trace-end window is emitted; an empty terminal
+window is forbidden. Every accepted SET transition occurs in exactly one closed
+Publication Window, with no missing, duplicate, fabricated, or reordered
+reference. The same rule applies to synthetic and SNAP semantic traces.
 
 Because attempt ordinal enters the lane digest, a provider replacement derives
 new query IDs and therefore new five-field F1-M reservation identities rather

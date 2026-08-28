@@ -13,8 +13,8 @@
 - Route A 审计稿：
   [`publication-preregistration-route-a.md`](../paper/publication-preregistration-route-a.md)
 - Route A 最终候选 SHA-256：
-  `690f8405dba39a491977fe6c444e93c5c7665af56bd7b695ce615b5f05d3ca4a`
-- Route A 最终候选行数：`1373`
+  `a537ec9812809ab5422ba8204188139b00d62a5c27180fabb23952162e758b5d`
+- Route A 最终候选行数：`1411`
 - 起点边界报告 SHA-256：
   `0984b0c7f537c40cff852b3662f5f866c37f4eed227b286e4db89f428fed8925`
 - 起点 `references.bib` SHA-256：
@@ -36,6 +36,13 @@ tick 不独立触发 microbatch 关闭，以及有查询时由同一个窗口同
 与 `query_count`；它不改变贡献句、C1--C4、威胁模型、证据矩阵、数据源或成本声明。
 因此只需对澄清后的精确候选重新绑定并复核，无需重开文献搜索；若复核发现上述
 任一 novelty-bearing 元素漂移，本 PASS 仍立即失效。
+
+第二次实现前阅读进一步固定有限迹末尾 pending SET 的一次终端发布、query-only
+窗口不递增版本也不产生更新侧维护或加密工作的规则，并统一 inclusive event-group
+range 端点与 SET-reference 顺序。这些都是窗口与版本的记账闭合，不改变贡献句、
+C1--C4、角色与威胁模型、数据源、证据矩阵或成本声明；
+因此本次仍只重新绑定精确候选字节并复核 novelty-bearing 段落，不重开一手来源
+检索。
 
 ## 2. 本次判定的“完整组合”
 

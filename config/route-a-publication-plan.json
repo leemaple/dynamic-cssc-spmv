@@ -645,7 +645,17 @@
       "ordinals": "distinct-consecutive-zero-based-within-one-evaluation-lane-in-publication-window-order-never-reset-within-the-lane",
       "schema_version": "dynamic-cssc-route-a-query-id-v1"
     },
-    "query_window_closure": "when-m-is-positive-the-first-query-closes-exactly-one-current-window-that-same-window-contains-all-pending-SET-transitions-including-the-complete-current-group-and-query_count=m-no-separate-query-only-window-is-created-unless-the-complete-group-emitted-zero-SET-transitions-and-no-prior-SET-transition-is-pending",
+    "query_window_closure": "when-m-is-positive-the-first-query-closes-exactly-one-current-window-that-same-window-contains-all-pending-SET-transitions-including-the-complete-current-group-and-query_count=m-no-separate-query-only-window-is-created-unless-the-complete-group-emitted-zero-SET-transitions-and-no-prior-SET-transition-is-pending-a-query-only-window-has-empty-ordered_set_transition_references-and-first_event_group_ordinal_or_null=last_event_group_ordinal_or_null=the-current-query-triggering-group-ordinal",
+    "close_reason_values": [
+      "one-second-deadline",
+      "pre-group-microbatch",
+      "query",
+      "finite-trace-end"
+    ],
+    "terminal_window_closure": "after-the-final-complete-accepted-event-group-finishes-its-SET-tick-scheduled-query-sequence-if-and-only-if-one-or-more-SET-transitions-remain-pending-close-exactly-one-finite-trace-end-update-only-window-at-the-same-exact-rational-time-as-that-final-group-with-no-new-event-group-all-and-only-pending-SET-transitions-in-canonical-order-query_count=0-first_global_query_ordinal_or_null=null-version_after=version_before+1-first_event_group_ordinal_or_null=the-pending-window-start-group-and-last_event_group_ordinal_or_null=the-final-accepted-group-even-if-intervening-or-final-groups-emitted-no-SET-no-pending-SET-means-no-terminal-window-and-empty-terminal-windows-are-forbidden-the-terminal-window-never-compiles-a-query-plan",
+    "version_transition_rule": "initial-version-is-zero-every-window-containing-one-or-more-SET-transitions-has-version_after=version_before+1-every-query-only-window-has-version_after=version_before-creates-no-republication-strategy-transition-or-update-side-cryptographic-work-and-its-queries-bind-that-exact-already-closed-version-window_ordinal-starts-at-zero-and-increments-for-every-emitted-window",
+    "event_group_range_rule": "every-event-group-range-is-inclusive-for-an-update-bearing-window-first_event_group_ordinal_or_null-is-the-accepted-group-of-the-earliest-referenced-SET-when-closure-occurs-after-a-group-by-query-or-finite-trace-end-last_event_group_ordinal_or_null-is-that-closing-group-when-closure-occurs-before-a-group-by-one-second-deadline-or-pre-group-microbatch-last_event_group_ordinal_or_null-is-the-immediately-preceding-accepted-group-all-accepted-groups-between-those-endpoints-including-no-change-groups-are-covered-but-only-actual-SET-transitions-appear-in-ordered_set_transition_references-leading-no-change-groups-before-the-earliest-referenced-SET-are-outside-that-update-bearing-range-SET-references-are-ordered-by-accepted_group_ordinal-then-transition_ordinal_within_group-the-query-only-exception-remains-first=last=the-current-query-triggering-group",
+    "set_partition_rule": "every-accepted-SET-transition-occurs-in-exactly-one-closed-Publication-Window-with-no-missing-duplicate-fabricated-or-reordered-reference",
     "evaluation_lane_identity": {
       "canonical_encoding": "ascii-json-ensure-ascii-true-sort-keys-compact-allow-nan-false-plus-lf-no-json-floats",
       "fields": [
