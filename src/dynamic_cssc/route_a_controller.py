@@ -10,18 +10,24 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import re
+import stat
 import threading
 import weakref
 import zipfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Protocol
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 __all__ = (
     "RouteAArtifactSnapshot",
     "RouteAControllerError",
+    "GitHubActionsQualificationProvider",
     "RouteAJobSnapshot",
     "RouteAProviderObservation",
     "RouteAQualificationCapability",
@@ -57,6 +63,10 @@ _MAX_Q6_RECORD_BYTES = 1024 * 1024
 _MAX_PLAN_BYTES = 256 * 1024
 _Q6_RECORD_NAME = "route-a-qualification-postrun.json"
 _CHECKSUMS_NAME = "checksums.sha256"
+_REPOSITORY_SLUG = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
+_MAX_PROVIDER_RUN_BYTES = 2 * 1024 * 1024
+_MAX_PROVIDER_LIST_BYTES = 4 * 1024 * 1024
+_MAX_FROZEN_PLAN_BYTES = 2 * 1024 * 1024
 
 
 class RouteAControllerError(RuntimeError):
@@ -126,6 +136,47 @@ class _QualificationRequestIdentity:
 
 class _QualificationProvider(Protocol):
     def read_qualification(self, run_id: int) -> RouteAProviderObservation: ...
+
+
+class _HttpReader(Protocol):
+    def get(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        maximum_bytes: int,
+    ) -> bytes: ...
+
+
+class _UrllibHttpReader:
+    """Small bounded HTTPS adapter kept behind the controller's provider seam."""
+
+    def get(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        maximum_bytes: int,
+    ) -> bytes:
+        request = Request(url, headers=headers, method="GET")
+        try:
+            with urlopen(request, timeout=30) as response:  # noqa: S310 - HTTPS is gated below
+                if response.status != 200:
+                    raise OSError(f"GitHub API returned HTTP {response.status}")
+                declared = response.headers.get("Content-Length")
+                if declared is not None:
+                    try:
+                        declared_size = int(declared)
+                    except ValueError as error:
+                        raise OSError("GitHub API returned an invalid Content-Length") from error
+                    if declared_size < 0 or declared_size > maximum_bytes:
+                        raise OSError("GitHub API response exceeds its closed byte bound")
+                content = response.read(maximum_bytes + 1)
+        except (HTTPError, URLError) as error:
+            raise OSError(f"GitHub API request failed: {error}") from error
+        if len(content) > maximum_bytes:
+            raise OSError("GitHub API response exceeds its closed byte bound")
+        return content
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +256,211 @@ def _timestamp(value: object, field: str) -> datetime:
     return parsed
 
 
+def _provider_json(content: bytes, field: str) -> dict[str, object]:
+    def reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        document: dict[str, object] = {}
+        for key, value in pairs:
+            if key in document:
+                raise RouteAControllerError(f"{field} contains a duplicate JSON key")
+            document[key] = value
+        return document
+
+    try:
+        decoded = json.loads(content.decode("utf-8"), object_pairs_hook=reject_duplicates)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RouteAControllerError(f"{field} is not readable JSON") from error
+    if type(decoded) is not dict:
+        raise RouteAControllerError(f"{field} must be one JSON object")
+    return decoded
+
+
+def _provider_integer(value: object, field: str) -> int:
+    if type(value) is not int or value <= 0:
+        raise RouteAControllerError(f"{field} must be a positive strict integer")
+    return value
+
+
+def _provider_string(value: object, field: str) -> str:
+    if type(value) is not str or not value:
+        raise RouteAControllerError(f"{field} must be a nonempty string")
+    return value
+
+
+def _read_frozen_plan(repository_root: Path) -> bytes:
+    path = repository_root / "config/route-a-publication-plan.json"
+    try:
+        before = path.stat(follow_symlinks=False)
+        if not stat.S_ISREG(before.st_mode) or before.st_size > _MAX_FROZEN_PLAN_BYTES:
+            raise RouteAControllerError("frozen Route A machine plan is not a bounded regular file")
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as source:
+            content = source.read(_MAX_FROZEN_PLAN_BYTES + 1)
+            after = os.fstat(source.fileno())
+    except OSError as error:
+        raise RouteAControllerError("frozen Route A machine plan cannot be read safely") from error
+    if len(content) > _MAX_FROZEN_PLAN_BYTES or (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+    ) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+        raise RouteAControllerError("frozen Route A machine plan changed while being read")
+    return content
+
+
+class GitHubActionsQualificationProvider:
+    """Normalize one live GitHub Actions run into the closed controller type."""
+
+    __slots__ = (
+        "_api_url",
+        "_headers",
+        "_http_reader",
+        "_repository_root",
+        "_repository_slug",
+    )
+
+    def __init__(
+        self,
+        *,
+        repository_root: Path,
+        repository_slug: str,
+        token: str,
+        api_url: str = "https://api.github.com",
+        http_reader: _HttpReader | None = None,
+    ) -> None:
+        if not isinstance(repository_root, Path):
+            raise TypeError("repository_root must be a pathlib.Path")
+        try:
+            resolved_root = repository_root.resolve(strict=True)
+        except OSError as error:
+            raise RouteAControllerError("controller repository root does not exist") from error
+        if type(repository_slug) is not str or _REPOSITORY_SLUG.fullmatch(repository_slug) is None:
+            raise RouteAControllerError("controller repository identity is invalid")
+        if (
+            type(token) is not str
+            or not token
+            or token.strip() != token
+            or any(ord(character) < 33 or ord(character) > 126 for character in token)
+        ):
+            raise RouteAControllerError("GitHub controller token is invalid")
+        if type(api_url) is not str or not api_url.startswith("https://") or api_url.endswith("/"):
+            raise RouteAControllerError("GitHub API URL must be one exact HTTPS origin")
+        if http_reader is not None and not hasattr(http_reader, "get"):
+            raise TypeError("http_reader must implement the closed GET seam")
+        self._repository_root = resolved_root
+        self._repository_slug = repository_slug
+        self._api_url = api_url
+        self._headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "dynamic-cssc-route-a-live-controller-v1",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        self._http_reader = http_reader if http_reader is not None else _UrllibHttpReader()
+
+    def _get(self, path_or_url: str, maximum_bytes: int) -> bytes:
+        url = path_or_url if path_or_url.startswith("https://") else f"{self._api_url}{path_or_url}"
+        if not url.startswith("https://"):
+            raise RouteAControllerError("GitHub provider attempted a non-HTTPS request")
+        try:
+            return self._http_reader.get(
+                url,
+                headers=dict(self._headers),
+                maximum_bytes=maximum_bytes,
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as error:
+            raise RouteAControllerError("GitHub provider request failed") from error
+
+    def read_qualification(self, run_id: int) -> RouteAProviderObservation:
+        if type(run_id) is not int or run_id <= 0:
+            raise RouteAControllerError("qualification run ID must be a positive strict integer")
+        base = f"/repos/{self._repository_slug}/actions/runs/{run_id}"
+        run_document = _provider_json(
+            self._get(base, _MAX_PROVIDER_RUN_BYTES), "GitHub qualification run"
+        )
+        jobs_document = _provider_json(
+            self._get(f"{base}/jobs?per_page=100", _MAX_PROVIDER_LIST_BYTES),
+            "GitHub qualification jobs",
+        )
+        artifacts_document = _provider_json(
+            self._get(f"{base}/artifacts?per_page=100", _MAX_PROVIDER_LIST_BYTES),
+            "GitHub qualification artifacts",
+        )
+
+        raw_jobs = jobs_document.get("jobs")
+        if (
+            type(raw_jobs) is not list
+            or jobs_document.get("total_count") != len(raw_jobs)
+            or len(raw_jobs) > 100
+            or any(type(job) is not dict for job in raw_jobs)
+        ):
+            raise RouteAControllerError("GitHub qualification job list is incomplete")
+        jobs = tuple(
+            RouteAJobSnapshot(
+                database_id=_provider_integer(job.get("id"), "job.id"),
+                name=_provider_string(job.get("name"), "job.name"),
+                started_at=_timestamp(job.get("started_at"), "job.started_at"),
+                completed_at=_timestamp(job.get("completed_at"), "job.completed_at"),
+                status=_provider_string(job.get("status"), "job.status"),
+                conclusion=_provider_string(job.get("conclusion"), "job.conclusion"),
+            )
+            for job in raw_jobs
+        )
+
+        raw_artifacts = artifacts_document.get("artifacts")
+        if (
+            type(raw_artifacts) is not list
+            or artifacts_document.get("total_count") != len(raw_artifacts)
+            or len(raw_artifacts) > 100
+            or any(type(artifact) is not dict for artifact in raw_artifacts)
+        ):
+            raise RouteAControllerError("GitHub qualification artifact list is incomplete")
+        q6_candidates = [
+            artifact for artifact in raw_artifacts if artifact.get("name") == _Q6_ARTIFACT_NAME
+        ]
+        if len(q6_candidates) != 1:
+            raise RouteAControllerError("GitHub qualification q6 artifact is not unique")
+        q6 = q6_candidates[0]
+        workflow_run = q6.get("workflow_run")
+        if type(workflow_run) is not dict:
+            raise RouteAControllerError("GitHub qualification q6 artifact lacks run identity")
+        expired = q6.get("expired")
+        if type(expired) is not bool:
+            raise RouteAControllerError("GitHub qualification artifact expiry is not Boolean")
+        download_url = _provider_string(
+            q6.get("archive_download_url"), "artifact.archive_download_url"
+        )
+        archive_bytes = self._get(download_url, _MAX_Q6_ARCHIVE_BYTES)
+
+        return RouteAProviderObservation(
+            observed_at=_utc_now(),
+            plan_bytes=_read_frozen_plan(self._repository_root),
+            run=RouteARunSnapshot(
+                database_id=_provider_integer(run_document.get("id"), "run.id"),
+                event=_provider_string(run_document.get("event"), "run.event"),
+                head_sha=_provider_string(run_document.get("head_sha"), "run.head_sha"),
+                head_branch=_provider_string(run_document.get("head_branch"), "run.head_branch"),
+                attempt=_provider_integer(run_document.get("run_attempt"), "run.run_attempt"),
+                status=_provider_string(run_document.get("status"), "run.status"),
+                conclusion=_provider_string(run_document.get("conclusion"), "run.conclusion"),
+                created_at=_timestamp(run_document.get("created_at"), "run.created_at"),
+                updated_at=_timestamp(run_document.get("updated_at"), "run.updated_at"),
+            ),
+            jobs=jobs,
+            q6_artifact=RouteAArtifactSnapshot(
+                database_id=_provider_integer(q6.get("id"), "artifact.id"),
+                name=_provider_string(q6.get("name"), "artifact.name"),
+                digest=_provider_string(q6.get("digest"), "artifact.digest"),
+                size_in_bytes=_provider_integer(q6.get("size_in_bytes"), "artifact.size_in_bytes"),
+                expired=expired,
+                workflow_run_head_sha=_provider_string(
+                    workflow_run.get("head_sha"), "artifact.workflow_run.head_sha"
+                ),
+            ),
+            q6_archive_bytes=archive_bytes,
+        )
+
+
 def _seconds(value: timedelta, field: str) -> int:
     seconds = value.total_seconds()
     if seconds < 0 or not seconds.is_integer():
@@ -230,15 +486,9 @@ def _freeze_request(
         or _LOWER_GIT_SHA.fullmatch(identity.expected_s2_git_sha) is None
     ):
         raise RouteAControllerError("expected S2 Git SHA is invalid")
-    if (
-        type(identity.expected_head_branch) is not str
-        or identity.expected_head_branch != "main"
-    ):
+    if type(identity.expected_head_branch) is not str or identity.expected_head_branch != "main":
         raise RouteAControllerError("qualification must be controlled from terminal S2 on main")
-    if (
-        type(identity.expected_run_attempt) is not int
-        or identity.expected_run_attempt != 1
-    ):
+    if type(identity.expected_run_attempt) is not int or identity.expected_run_attempt != 1:
         raise RouteAControllerError("qualification is one-shot and requires run attempt one")
     return identity
 
@@ -270,9 +520,7 @@ def _validate_run(
         or created_at > updated_at
         or updated_at > observed_at
     ):
-        raise RouteAControllerError(
-            "qualification run identity is not the exact terminal success"
-        )
+        raise RouteAControllerError("qualification run identity is not the exact terminal success")
 
 
 def _validate_jobs(jobs: tuple[RouteAJobSnapshot, ...]) -> tuple[RouteAJobSnapshot, ...]:
@@ -311,8 +559,7 @@ def _validate_jobs(jobs: tuple[RouteAJobSnapshot, ...]) -> tuple[RouteAJobSnapsh
     if q6.completed_at - q1.started_at > _TOTAL_PATH_LIMIT:
         raise RouteAControllerError("qualification exceeded the 55-minute total path gate")
     native_seconds = sum(
-        _seconds(job.completed_at - job.started_at, "native job duration")
-        for job in (q3, q4, q5)
+        _seconds(job.completed_at - job.started_at, "native job duration") for job in (q3, q4, q5)
     )
     if 6 * native_seconds > _NATIVE_SCREEN_SECONDS:
         raise RouteAControllerError("qualification failed the native 6*C_q planning screen")
@@ -411,8 +658,7 @@ def _validate_q6_record(
     q1, _, q3, q4, q5, q6 = jobs
     computational_seconds = _seconds(q5.completed_at - q1.started_at, "critical path")
     native_seconds = sum(
-        _seconds(job.completed_at - job.started_at, "native job duration")
-        for job in (q3, q4, q5)
+        _seconds(job.completed_at - job.started_at, "native job duration") for job in (q3, q4, q5)
     )
     record_observed_at = _timestamp(record.get("record_observed_utc"), "record observation")
     frozen_q6_deadline = _timestamp(record.get("frozen_q6_deadline_utc"), "q6 deadline")
@@ -503,8 +749,8 @@ def _decode_q6_archive(archive_bytes: bytes) -> dict[str, object]:
             checksums_bytes = archive.read(_CHECKSUMS_NAME)
     except (OSError, RuntimeError, zipfile.BadZipFile) as error:
         raise RouteAControllerError("q6 artifact is not a readable ZIP archive") from error
-    expected_checksums = (
-        f"{hashlib.sha256(record_bytes).hexdigest()}  {_Q6_RECORD_NAME}\n".encode("ascii")
+    expected_checksums = f"{hashlib.sha256(record_bytes).hexdigest()}  {_Q6_RECORD_NAME}\n".encode(
+        "ascii"
     )
     if checksums_bytes != expected_checksums:
         raise RouteAControllerError("q6 artifact checksum does not bind its record")
@@ -622,9 +868,7 @@ def _consume_qualification_capability(
     with lock, _ISSUED_CAPABILITIES_LOCK:
         issued = _ISSUED_CAPABILITIES.pop(id(capability), None)
         if issued is None or issued.capability_ref() is not capability:
-            raise RouteAControllerError(
-                "Route A qualification capability is absent or consumed"
-            )
+            raise RouteAControllerError("Route A qualification capability is absent or consumed")
         presented_token = getattr(capability, "_binding_token", None)
         object.__setattr__(capability, "_binding_token", None)
     if (
