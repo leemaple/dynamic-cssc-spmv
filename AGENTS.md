@@ -18,10 +18,12 @@ experiment dispatch, result interpretation, and submission-draft review.
    the available reviewer plus local verification and retry the missing reviewer
    at the next gate; availability alone must not stall safe work.
 
-When a high-consequence question remains unresolved after local evidence review
-and the available ChatGPT Pro/ZCode reviews do not converge, apply the
+For ChatGPT Pro channel selection and reviewer handling, and whenever a
+high-consequence question remains unresolved after local evidence review and the
+available ChatGPT Pro/ZCode reviews do not converge, apply the
 [`external-expert-escalation`](.agents/skills/external-expert-escalation/SKILL.md)
-project skill. Fable 5 is an escalation reviewer, not a routine extra vote.
+project skill. It prefers the signed-in Ego Lite session for ChatGPT Pro; Fable 5
+is an escalation reviewer, not a routine extra vote.
 
 External model output is advisory review, never source authority, experimental
 evidence, or permission to weaken a fail-closed gate. Reviewers are read-only by

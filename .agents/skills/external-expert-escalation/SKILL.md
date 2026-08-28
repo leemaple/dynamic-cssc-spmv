@@ -1,12 +1,33 @@
 ---
 name: external-expert-escalation
-description: Escalate a high-consequence paper, protocol, correctness, or performance question to Fable 5 when repository evidence plus available ChatGPT Pro and ZCode review still do not converge, or when diagnosis has stalled between competing falsifiable hypotheses. Do not use for routine gates or as a substitute for tests and experiments.
+description: Coordinate material paper and protocol review through ChatGPT Pro and ZCode, including the preferred ChatGPT Pro browser channel, and escalate to Fable 5 only when repository evidence plus those reviews still do not converge. Do not use external review as a substitute for tests and experiments.
 ---
 
-# External Expert Escalation
+# External Expert Review and Escalation
 
-Use Fable 5 as an adversarial challenge reviewer for a bounded unresolved
-question. Its output is a hypothesis source, not authority.
+External reviewers challenge a bounded question. Their output is a hypothesis
+source, not authority.
+
+## Reviewer channels
+
+For a browser-based ChatGPT Pro exchange, use the already signed-in Ego Lite
+session through the project-available `ego-browser` capability first. Reuse the
+existing paper Project and its relevant historical conversation when their
+identity and scope match the current gate. Verify the visible Project/thread and
+the exact review packet before sending; the login state or conversation history
+does not establish repository facts.
+
+Use another already authorized browser channel only when Ego Lite is unavailable
+or its session is broken, and record that fallback in the review note. Submit a
+bounded packet once and allow Pro's long reasoning response to finish; resend only
+after a clear transport or session failure.
+
+Use ZCode at its strongest currently configured reasoning mode when available.
+Quota loss is an availability fact, not a reason to weaken a gate. Record the
+reviewer, model/mode when visible, channel, exact packet identity, and final
+verdict alongside the local evidence.
+
+Use Fable 5 only as the escalation reviewer described below.
 
 ## Trigger
 
