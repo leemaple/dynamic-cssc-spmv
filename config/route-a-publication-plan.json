@@ -629,6 +629,11 @@
     "formula": "floor((a+1)*p/q)-floor(a*p/q)",
     "integer_arithmetic_only": true,
     "placement": "after-complete-accepted-event-group",
+    "payload_free_tick": {
+      "event_order": "after-the-complete-accepted-event-group-and-before-the-ordered-query-batch",
+      "logical_time": "the-same-exact-rational-time-as-the-complete-accepted-event-group-with-no-time-advance",
+      "microbatch_effect": "none-the-tick-never-closes-a-window-by-itself-and-never-changes-the-pre-group-g-rule"
+    },
     "query_id": {
       "canonical_encoding": "ascii-json-ensure-ascii-true-sort-keys-compact-allow-nan-false-plus-lf-no-json-floats",
       "document_fields": [
@@ -640,6 +645,7 @@
       "ordinals": "distinct-consecutive-zero-based-within-one-evaluation-lane-in-publication-window-order-never-reset-within-the-lane",
       "schema_version": "dynamic-cssc-route-a-query-id-v1"
     },
+    "query_window_closure": "when-m-is-positive-the-first-query-closes-exactly-one-current-window-that-same-window-contains-all-pending-SET-transitions-including-the-complete-current-group-and-query_count=m-no-separate-query-only-window-is-created-unless-the-complete-group-emitted-zero-SET-transitions-and-no-prior-SET-transition-is-pending",
     "evaluation_lane_identity": {
       "canonical_encoding": "ascii-json-ensure-ascii-true-sort-keys-compact-allow-nan-false-plus-lf-no-json-floats",
       "fields": [

@@ -411,7 +411,7 @@ its one-second deadline; no boundary may split an accepted-event group.
 
 The canonical machine plan is
 `config/route-a-publication-plan.json`, whose exact retained-file SHA-256 is
-`b7264c3f67326fdfd31c9acb2ddfa15182e01ddc5c63938237661e24a474dfcf`.
+`7c59f10aa2ece721270d19303260531ed57777be8473ab3f63cd328925189fbf`.
 The file is reviewed together with this document. The runner must reject any
 plan whose retained bytes do not match that digest; changing the file requires
 a new preregistration review and digest.
@@ -544,6 +544,17 @@ contains exactly `schema_version`, `evaluation_lane_identity_sha256`, and
 `global_query_ordinal`; its lowercase SHA-256 hex is the ID. All identity
 documents use canonical ASCII JSON with sorted keys, compact separators,
 `ensure_ascii=true`, `allow_nan=false`, no floats, and one LF.
+
+The payload-free logical tick is an ordering event at the **same exact rational
+time** as its complete accepted-event group; it never advances to the next
+clock quantum and never closes a Publication Window by itself. Microbatch
+closure remains exclusively the registered pre-group `g` rule. When `m>0`, the
+first query closes exactly one current window, and that same query-bearing
+window contains every pending SET transition, including all SETs from the
+complete current group, together with `query_count=m`. The scheduler must not
+split those updates into an update-only window followed by a separate query-only
+window. A query-only window is possible only when the complete group emitted no
+SET and no prior SET is pending. When `m=0`, the tick creates no closure.
 
 Because attempt ordinal enters the lane digest, a provider replacement derives
 new query IDs and therefore new five-field F1-M reservation identities rather
@@ -921,7 +932,10 @@ diagnostic anchor. The sequence is:
 
 1. Stage 1, before runner implementation: jointly review and commit the exact
    preregistration, canonical machine plan, primary-source novelty review, and
-   claim ledger; if prior work covers the combination, select C.
+   claim ledger; if a pre-implementation review exposes an execution ambiguity,
+   commit only a narrowly reviewed clarification and rebind the same four-file
+   packet before any runner implementation commit; if prior work covers the
+   combination, select C.
 2. Implement only the bounded runner, schemas, workflows, Behavior Sets,
    compatibility verifier, guards, tests, and analyzer against that commit.
 3. Stage 2, before source acquisition or execution: review the exact
@@ -1351,7 +1365,8 @@ Before any Route A run, record:
   artifacts, one aggregate, and one analysis output bundle, including terminal
   admission of the exact 17-artifact pre-aggregate set;
 - [ ] independent local and advisory review with no unresolved P0/P1;
-- [ ] the four-document preregistration commit before runner implementation;
+- [ ] the exact four-document preregistration packet, including any narrowly
+  reviewed clarification amendment, committed before runner implementation;
 - [ ] the separately reviewed source/CI/registration/data-anchor freeze after
   implementation and before source acquisition or execution; and
 - [ ] a current SparseE/full-text and first/only wording check immediately before

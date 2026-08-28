@@ -13,8 +13,8 @@
 - Route A 审计稿：
   [`publication-preregistration-route-a.md`](../paper/publication-preregistration-route-a.md)
 - Route A 最终候选 SHA-256：
-  `5e6d42b8f5159181ec82f4b6663acabf21fd457d6a444dac8b714fc5c30de2c3`
-- Route A 最终候选行数：`1358`
+  `690f8405dba39a491977fe6c444e93c5c7665af56bd7b695ce615b5f05d3ca4a`
+- Route A 最终候选行数：`1373`
 - 起点边界报告 SHA-256：
   `0984b0c7f537c40cff852b3662f5f866c37f4eed227b286e4db89f428fed8925`
 - 起点 `references.bib` SHA-256：
@@ -29,6 +29,13 @@
 状态、字节权威、查询向量、冻结顺序和证明义务；逐字复核 §1.1 与 §2.1--§2.5 后，
 冻结贡献句以及 C1--C4 组合向量均未改变。因此重新绑定上述候选字节，不重开宽泛
 文献检索；任何贡献句或 C1--C4 漂移仍会使本 PASS 失效。
+
+基准 Stage-1 提交后的首次实现前阅读发现，payload-free tick 与 query-bearing
+Publication Window 的切分可被解释成两种行为。本次窄澄清只固定同一逻辑时间、
+tick 不独立触发 microbatch 关闭，以及有查询时由同一个窗口同时承载 pending SET
+与 `query_count`；它不改变贡献句、C1--C4、威胁模型、证据矩阵、数据源或成本声明。
+因此只需对澄清后的精确候选重新绑定并复核，无需重开文献搜索；若复核发现上述
+任一 novelty-bearing 元素漂移，本 PASS 仍立即失效。
 
 ## 2. 本次判定的“完整组合”
 
