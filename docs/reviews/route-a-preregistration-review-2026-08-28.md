@@ -263,3 +263,75 @@ unresolved P0/P1 disagreement. This commit authorizes bounded runner
 implementation only; source acquisition, qualification, formal execution, and
 empirical or publication-claim release remain forbidden until Stage 2 and the
 registered downstream gates close.
+
+### 5.3 Strategy-input reduction clarification
+
+The first exact Stage-2 implementation review exposed one scientific and cost-
+accounting ambiguity before any implementation commit: whether multiple SETs
+to one coordinate inside a single closed Publication Window are charged and
+applied sequentially, or are reduced to one common first-before-to-final-after
+net update before the three strategies run. The implementation used the latter
+reading, but Stage 1 had not frozen it. The same review also found three
+separate code blockers: zero-query net-zero windows compiled query plans, the
+exported adapter did not validate the complete window/reference contract, and
+the one-use qualification capability had no claim-time expiry or abandonment
+path. ZCode additionally found that qualification seed `20260821` was rejected
+by both registered synthetic-seed validators.
+
+Only the strategy-input ambiguity required a Stage-1 document amendment. The
+exact amended four-file packet is:
+
+- machine plan SHA-256:
+  `c391119d36ea882919cf787167baa9c80f346d2860fce9e3b8f98421a034fbfb`;
+  1103 lines;
+- preregistration SHA-256:
+  `caea6c5a15baf3b1ee8f988a82b1271ce82eadb7ba8cd87d51dc0970fab6baa0`;
+  1438 lines;
+- novelty-review SHA-256:
+  `62028624787d4f900bb4b833c30f6e2a28c850a0b7c74588ebeca4534afc048e`;
+  293 lines; and
+- unchanged claim-ledger SHA-256:
+  `44bc11b2401bdb94c3b7a4d9c063178ec50527f4f4b8136d1706b1e2f15a47ec`;
+  129 lines.
+
+The amendment freezes a single strategy-independent reduction inside one
+closed Publication Window: every canonical SET reference remains retained;
+same-coordinate continuity is mandatory; the first `before` and final `after`
+form one coordinate-sorted `NetUpdate`; endpoint-equal coordinates are omitted
+only from the physical update list; and `accepted_set_transition_count` and
+`net_update_count` remain separate. SET-reference presence, not a nonempty net-
+update list, defines an update-bearing window and advances exactly one version.
+For a SET-bearing net-zero window, periodic repack fully republishes, while
+padding reuse and the strong segmented strategy replace no value/base/segment
+ciphertext but do publish and charge the exact version/plan metadata. No path
+may charge omitted ciphertext work or omit required binding metadata, and
+`query_count=0` compiles no query plan. Existing resource gates and evidence
+authority remain unchanged.
+
+The authoritative Git `--numstat` diff from `e892ce26` is plan `+11/-0`,
+preregistration `+28/-1`, novelty review `+11/-2`, and no claim-ledger change.
+Exact retained-
+file hashes and line counts, JSON parsing, and `git diff --check` passed locally.
+The independent exact-packet rechecks returned:
+
+- ChatGPT Pro through the existing Ego Lite paper Project: **PASS; P0=0,
+  P1=0, P2=0**. It found no contradiction, cost drift, or authority drift and
+  confirmed that C1--C4 and the bounded novelty PASS inherit without a new
+  search.
+- ZCode GLM-5.3 Max in the existing `dynamic-cssc-spmv` paper task: **PASS;
+  document P0=0, P1=0, P2=1**. Its sole document P2 is satisfied by recording
+  all four independently computed hashes above in this review and the commit
+  message. It likewise confirmed that the prior net-reduction P1 is closed and
+  that the document packet may precede the code fixes.
+
+The first review prompts misstated the preregistration and novelty `numstat`
+addition counts while supplying the correct exact files, hashes, and line
+counts. After the local Git correction to `+28/-1` and `+11/-2`, respectively,
+both reviewers explicitly confirmed that their verdicts, novelty inheritance,
+and commit decisions were unaffected.
+
+No substantive P0/P1 disagreement remains, so Fable 5 is not triggered. This
+amendment authorizes only the bounded code correction and review cycle. Source
+acquisition, qualification, formal execution, evidence installation, claim
+release, and any replayable authority remain forbidden until the registered
+Stage-2 and downstream gates close.

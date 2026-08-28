@@ -656,6 +656,17 @@
     "version_transition_rule": "initial-version-is-zero-every-window-containing-one-or-more-SET-transitions-has-version_after=version_before+1-every-query-only-window-has-version_after=version_before-creates-no-republication-strategy-transition-or-update-side-cryptographic-work-and-its-queries-bind-that-exact-already-closed-version-window_ordinal-starts-at-zero-and-increments-for-every-emitted-window",
     "event_group_range_rule": "every-event-group-range-is-inclusive-for-an-update-bearing-window-first_event_group_ordinal_or_null-is-the-accepted-group-of-the-earliest-referenced-SET-when-closure-occurs-after-a-group-by-query-or-finite-trace-end-last_event_group_ordinal_or_null-is-that-closing-group-when-closure-occurs-before-a-group-by-one-second-deadline-or-pre-group-microbatch-last_event_group_ordinal_or_null-is-the-immediately-preceding-accepted-group-all-accepted-groups-between-those-endpoints-including-no-change-groups-are-covered-but-only-actual-SET-transitions-appear-in-ordered_set_transition_references-leading-no-change-groups-before-the-earliest-referenced-SET-are-outside-that-update-bearing-range-SET-references-are-ordered-by-accepted_group_ordinal-then-transition_ordinal_within_group-the-query-only-exception-remains-first=last=the-current-query-triggering-group",
     "set_partition_rule": "every-accepted-SET-transition-occurs-in-exactly-one-closed-Publication-Window-with-no-missing-duplicate-fabricated-or-reordered-reference",
+    "strategy_input_reduction": {
+      "accounting": "report-accepted_set_transition_count-and-net_update_count-separately-and-charge-only-the-exact-strategy-specific-physical-and-metadata-actions-below-never-silently-charge-an-omitted-ciphertext-action-and-never-omit-required-version-or-plan-metadata",
+      "net_update_derivation": "scan-all-and-only-ordered-SET-references-in-canonical-order-require-same-coordinate-before-after-continuity-retain-each-coordinates-first-before-and-final-after-sort-touched-coordinates-by-(row,column)-emit-exactly-one-NetUpdate-per-coordinate-whose-first-before-differs-from-final-after-and-omit-net-noop-coordinates",
+      "scope": "strategy-independent-within-one-closed-Publication-Window-only-never-cross-a-window-boundary-and-never-delete-reorder-or-rewrite-the-retained-SET-reference-evidence",
+      "set_bearing_net_zero_physical_rule": {
+        "packed-coo-cloud-segmented-delta/segment-width=128": "replace-no-base-chunk-or-segment-and-create-no-update-side-ciphertext-or-ColumnIndex-work-but-publish-and-charge-the-exact-new-version-and-plan-metadata-for-every-active-component",
+        "padding-reuse": "replace-no-value-chunk-and-create-no-update-side-ciphertext-or-ColumnIndex-work-but-publish-and-charge-the-exact-new-version-and-plan-metadata",
+        "periodic-repack/windows=1": "perform-the-complete-base-republication-and-charge-all-registered-update-side-ciphertext-ColumnIndex-version-plan-serialization-and-communication-actions"
+      },
+      "update_bearing_identity": "presence-of-one-or-more-retained-SET-references-not-nonempty-net-update-list;every-SET-bearing-window-increments-exactly-one-version-even-when-net_update_count=0;query_count=0-compiles-no-query-plan"
+    },
     "evaluation_lane_identity": {
       "canonical_encoding": "ascii-json-ensure-ascii-true-sort-keys-compact-allow-nan-false-plus-lf-no-json-floats",
       "fields": [

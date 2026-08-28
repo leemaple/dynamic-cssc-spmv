@@ -13,8 +13,8 @@
 - Route A 审计稿：
   [`publication-preregistration-route-a.md`](../paper/publication-preregistration-route-a.md)
 - Route A 最终候选 SHA-256：
-  `a537ec9812809ab5422ba8204188139b00d62a5c27180fabb23952162e758b5d`
-- Route A 最终候选行数：`1411`
+  `caea6c5a15baf3b1ee8f988a82b1271ce82eadb7ba8cd87d51dc0970fab6baa0`
+- Route A 最终候选行数：`1438`
 - 起点边界报告 SHA-256：
   `0984b0c7f537c40cff852b3662f5f866c37f4eed227b286e4db89f428fed8925`
 - 起点 `references.bib` SHA-256：
@@ -43,6 +43,15 @@ range 端点与 SET-reference 顺序。这些都是窗口与版本的记账闭�
 C1--C4、角色与威胁模型、数据源、证据矩阵或成本声明；
 因此本次仍只重新绑定精确候选字节并复核 novelty-bearing 段落，不重开一手来源
 检索。
+
+第三次实现前阅读发现，窗口内同一坐标的多次 SET 可被解释为逐次物理应用，或先
+归约为一个首值到末值的净更新；两种解释会改变成本记账。本次窄修订明确采用项目
+既有 Publication Window 的共同净更新语义，分开保留 accepted-SET 与 net-update
+计数，并固定 SET-bearing 净零窗口的三策略物理与版本元数据规则。这会关闭成本协议
+歧义，但不改变贡献句、C1--C4、角色与威胁模型、数据源、证据矩阵、比较候选或永久
+非声明；45/55/60 分钟和 12 小时门槛也未放宽。因此本次仍只重新绑定精确候选字节
+并复核 novelty-bearing 段落，无需重开一手来源检索；任何上述元素漂移仍立即使本
+PASS 失效。
 
 ## 2. 本次判定的“完整组合”
 

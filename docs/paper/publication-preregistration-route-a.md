@@ -411,7 +411,7 @@ its one-second deadline; no boundary may split an accepted-event group.
 
 The canonical machine plan is
 `config/route-a-publication-plan.json`, whose exact retained-file SHA-256 is
-`fc89b08e2151aaac03653d97293aeaadab1f3b015d18419817c2bee4d313cd79`.
+`c391119d36ea882919cf787167baa9c80f346d2860fce9e3b8f98421a034fbfb`.
 The file is reviewed together with this document. The runner must reject any
 plan whose retained bytes do not match that digest; changing the file requires
 a new preregistration review and digest.
@@ -593,6 +593,33 @@ SET remains pending, no finite-trace-end window is emitted; an empty terminal
 window is forbidden. Every accepted SET transition occurs in exactly one closed
 Publication Window, with no missing, duplicate, fabricated, or reordered
 reference. The same rule applies to synthetic and SNAP semantic traces.
+
+Before any strategy-specific transition, one common adapter resolves all and
+only those retained SET references in canonical order. For every touched
+coordinate it requires exact `before`/`after` continuity, retains the first
+`before` and final `after`, sorts coordinates by `(row,column)`, and emits one
+`NetUpdate` only when those endpoint values differ. A coordinate whose first
+and final values are equal is omitted from the physical net-update list, but
+none of its SET references is removed from the evidence trace. This reduction
+is confined to one closed Publication Window and never crosses a visibility
+boundary. Every cell reports `accepted_set_transition_count` and
+`net_update_count` separately.
+
+The presence of at least one retained SET reference—not a nonempty net-update
+list—defines an update-bearing window and therefore advances exactly one
+publication version. For a SET-bearing net-zero window,
+`periodic-repack/windows=1` performs its complete registered base
+republication and charges all corresponding ciphertext, `ColumnIndex`,
+version/plan metadata, serialization, and communication actions.
+`padding-reuse` replaces no value chunk, and the segmented strong path replaces
+no base chunk or segment; both nevertheless publish and charge the exact new-
+version and plan metadata for every active component. Neither may charge
+ciphertext or `ColumnIndex` work that it did not perform, and neither may omit
+the required version-binding metadata. If `query_count=0`, all three paths
+compile no query plan; a query-bearing path compiles only after the version
+transition. The retired diagnostic projection and every 45/55/60-minute or
+12-hour gate remain unchanged and gain no new empirical authority from this
+clarification.
 
 Because attempt ordinal enters the lane digest, a provider replacement derives
 new query IDs and therefore new five-field F1-M reservation identities rather
