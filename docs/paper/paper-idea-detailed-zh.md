@@ -2,7 +2,7 @@
 title: "Dynamic CSSC SpMV：论文核心 Idea 与完整技术路线"
 subtitle: "面向可变稀疏矩阵同态矩阵—向量乘法的版本绑定维护、私有重构与可审计评估"
 author: "项目技术说明（methods-first；实验结论尚未解封）"
-date: "2026-08-27"
+date: "2026-08-28"
 lang: zh-CN
 numbersections: true
 ---
@@ -11,7 +11,7 @@ numbersections: true
 
 本文解释这篇论文“到底想解决什么、核心 idea 是什么、为什么需要这些机制、公式如何连接到实现，以及最后怎样用实验回答问题”。它不是结果论文的替代稿，也不把尚未完成的实验写成结论。
 
-截至 2026-08-27，项目已经完成大部分协议、实现、验证器、工作流和论文方法框架。当前 Day 1A registration 的实验源 S1 为 `b658e2178b210c2cc0012fc61957a3b3a92953bb`，唯一 data-only Terminal Registration Freeze S2 为 `bb83d4e42209e24df0c71df3eea5df7cbff7e1d5`；S2 的 exact-head CI 已通过。唯一的 NON-ADMISSIBLE 单分片性能诊断 run `33075408647` 已启动但尚未完成，因而仍没有可写入论文的 Day 1A 经验结果。正式 Day 1A、Day 2、真实语料 Day 1B、mixed-circuit 和 R4 结果尚未全部产生或接纳。因此，本文中的“设计”“机制”“计划验证”与“已经得到的经验结果”会严格分开。
+截至 2026-08-28，项目已经完成大部分协议、实现、验证器、工作流和论文方法框架。旧的 Day 1A 单分片诊断 `33099397289` 已按冻结的 300 分钟门槛判为 NO-GO；唯一获准的有界性能修复及其 disposable S2 已通过 exact-head CI 和描述性注册，目前仅有一次同输入 NON-ADMISSIBLE 复诊 `33130154591` 正在运行。Day 1B 的 private production issuer 也已完成本地双轴审查、ZCode Max 审查和 exact-head Linux CI，但 repository adapter、Day 2 authority、TRACE 与正式执行仍保持 HOLD。因而当前仍没有可写入论文的正式经验结果。正式 Day 1A、Day 2、真实语料 Day 1B、mixed-circuit 和 R4 结果尚未产生或接纳；本文中的“设计”“机制”“计划验证”与“已经得到的经验结果”会严格分开。
 
 # 一句话概括论文 idea
 
@@ -986,26 +986,34 @@ $$
 
 # 当前进度与剩余工作
 
-截至本文生成时，已经完成或建立的主要内容包括：
+以下状态以 2026 年 8 月 28 日上午的精确仓库与 GitHub 记录为准。这里必须区分“方法已经实现”“工程门禁已经通过”和“论文经验结果已经产生”三件事；前两者不能替代第三者。
 
-- 大部分 typed state、query compiler、`OutputPlan`、F1-M ledger、strong bundle、plaintext oracle、replay validator 与 workflow；
-- S1/S2 registration lineage；
-- S2 exact CI run `33073232432`：2118 passed，2 skipped；
-- registration run `33070626218` 及其唯一 artifact、内部校验和、source/tree、专用 workflow provenance 和 51 个 Behavior Set Git blob 的独立复核；
-- 跨 job pre-replay exact closed-tree/no-symlink/status-identity blocker 已由代码、测试和 ChatGPT Pro 窄审关闭；
-- methods-first manuscript、preregistration、claim ledger 和 analysis isolation 框架。
+已经完成或建立的主要内容包括：
 
-本分支已把 `claim-ledger-draft.md` 中落后于当前 S2 anchor 的 strong candidate registration 状态同步为精确 S1/S2 范围内的 `PASS`。该状态只说明固定候选目录可以被仓库承认，绝不等于 formal Day 1A、完整成本或经验结果已经产生；C3 与所有经验 claim 仍保持 `HOLD`。
+- 大部分 typed state、query compiler、`OutputPlan`、F1-M ledger、strong bundle、plaintext oracle、replay validator 和 fail-closed workflow；
+- methods-first manuscript、预注册、claim ledger、S1/S2 source separation 和 detached analysis isolation；
+- Day 1A 一次严格的性能否决：run `33099397289` 的 producer 用时 285 分钟，300 分钟时 replay 仍在运行且 guard 尚未开始，因此按预先冻结的门槛取消；没有把它包装成成功证据；
+- 唯一获准的 Day 1A 有界修复 `efdd9af894842a219080f93c8d36fb09ee93b161`：每 shard 只构造一个 base event stream，去掉重复逻辑状态副本但保留跨目标深比较，增加逐阶段、逐 $\rho$、仅写 stderr 的非授权 timing；
+- 该修复的 exact-head CI `33125107658`、描述性 registration `33126982746` 和 disposable S2 CI `33128190265` 均成功；这些记录只授权一次同输入 NON-ADMISSIBLE 复诊；
+- Day 1B pre-admission commit `9d7b7b744ea59b611bb706ad56d098846619d1e9` 已闭合稳定 worker/runtime identity、opaque single-use native execution capability 和 Linux root classification；专用 Ubuntu/OpenFHE gate `33128272572` 真实构建 pinned OpenFHE 1.5.1 runner，并执行 ordinary/strong smoke；
+- Day 1B private production issuer commit `8a37c930edd1f404f7828dd574a4a2d0c29864e9` 已实现实际 payload 重哈希、verified-object 逐项绑定、native physical projection、最终 frame/spool exhaustion、capability cleanup 和 fixture/terminal `false/false` 隔离；worker、unit、frame 和 runtime 的公开 schema 均未扩张；
+- 该 issuer 的本地 Spec/Standards 双轴审查、ZCode GLM-5.3 Max 审查和 ChatGPT Pro exact-commit 审查均为 PASS、无 P0/P1；exact-head Linux CI `33135852470` 为 2178 passed、2 个预期的未构建 real-runner skips。专用 PRE-S1/OpenFHE run `33138110298` 又在同一 exact head 构建 pinned OpenFHE `1.5.1@1306d14f8c26`，实际执行 ordinary 与 strong 两条 real-runner smoke，闭合合同为 632 passed、Ruff 全绿且 artifact 数为 0；日志仍明确禁止 publication execution，因此它只闭合预准入工程门禁。
 
-仍未形成最终论文结论的关键项是：
+截至本次更新，正在运行的唯一 Day 1A 复诊是 run `33130154591`。它严格绑定 disposable S2 `2db4bc87c54d3b5d448f17e4e8d62eae668f16d1`、seed `20260821`、`mixed-insert-delete-modify` / `1s` 单 shard；producer 起点为 `2026-08-28T00:35:25Z`，producer 到 replay receipt guard 的不放宽期限为 `05:35:25Z`，即北京时间 13:35:25。只有 guard 在该时刻之前成功结束才是 operational GO；两个分别小于 355 分钟的 job 不能替代这条 300 分钟条件。
 
-1. 当前 NON-ADMISSIBLE 单分片 Day 1A 诊断 run `33075408647` 必须先通过；
-2. 正式 21-shard Day 1A 与 aggregate 必须产生并被接纳；
-3. Day 2 calibration、profile/post-run anchors 必须闭合；
-4. 三个真实数据源的 acquisition、transform、30 unit manifests 和 TRACE anchor 必须闭合；
-5. Day 1B production adapter 与 resource HOLD 必须关闭；
-6. Day 1B、mixed-circuit、R4 与 S3 analysis 必须完成；
-7. 最终结果、图表、局限性、声明、数据可用性和 DOI 才能写入 submission-ready manuscript。
+目前仍然是**零正式经验结果**。尚不存在 formal Day 1A aggregate、Day 2 完整 calibration archive、三个真实数据源的 admitted bundle、30 个 Day 1B paired units、mixed-circuit/R4 结果或最终分析图表。因此现在的稿件是接近完整的 methods/preregistration paper skeleton，而不是可以投稿的结果论文。
+
+剩余关键路径是：
+
+1. 让 run `33130154591` 自然到达 guard 或精确止损；若再次 NO-GO，不再继续第二轮性能基建，而是冻结 method/boundary 或 negative-result 论文路线；
+2. 若 operational GO，建立一次全新的 formal S1/registration/S2 lineage，再运行并独立接纳 21/21 Day 1A shards 与 aggregate；
+3. 由 formal Day 1A 绑定 Day 2 rotation plan，完成全部 calibration/profile/post-run anchors；
+4. 取得三个冻结真实数据源，执行 acquisition/transform，形成 30 个 manifests 和 TRACE anchor；
+5. 在 Day 2 exact plan preimage 与 TRACE authority 都存在后实现现有 repository adapter；不得新增第二套外部 adapter 或把路径、环境变量、描述性 receipt 当作 authority；
+6. 运行 formal Day 1B、mixed-circuit、R4 和 detached S3 analysis，按预注册规则生成结果表与图；
+7. 最后补齐 abstract/results/discussion/limitations、作者与资助声明、数据和代码归档标识，再生成 submission-ready PDF/Word。
+
+时间只能条件化估计。若本次 Day 1A 复诊通过、数据取得顺利、后续不再触发 source-changing 修复，较可信的投稿工作区间仍是 2026 年 11 月下旬至 12 月；这不是承诺。如果本次复诊再次失败，当前 full-system headline 应立即停止，转为 method/boundary 或 negative performance result，范围重写通常可比继续搭完整 Day 1B 基建更早形成一篇诚实的稿件，但必须先重新冻结 claim 范围。
 
 # 最终理解
 
