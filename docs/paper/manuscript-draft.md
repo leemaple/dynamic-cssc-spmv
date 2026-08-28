@@ -3,6 +3,7 @@
 > **Manuscript status:** methods-first working draft. Bracketed result fields are
 > deliberately unset. No performance, complete-reference, security, or
 > end-to-end claim may be filled without the gate named beside it.
+> Evidence status last synchronized: 2026-08-28.
 
 ## Abstract
 
@@ -22,13 +23,19 @@ the Cloud execute a public page-wide schedule while the client privately merges
 segment leaders. A typed bundle binds the CSSC base, delta, operands, routes,
 and operation graph and fails closed on version or plan substitution.
 
-Our evaluation advances persistent strategy snapshots through a chronological
-warm-up/tuning/held-out split, excludes an offline oracle from selection, and
-separates predicted counts, measured OpenFHE unit costs, and end-to-end evidence.
-A commit-bound OpenFHE 1.5.1 witness at
+Our evaluation protocol advances persistent strategy snapshots through a
+chronological warm-up/tuning/held-out split, excludes an offline oracle from
+selection, and keeps predicted counts, admitted OpenFHE unit-cost measurements,
+and end-to-end evidence separate.
+A historical commit-bound OpenFHE 1.5.1 witness at
 `fcb00e0d7f111f3ab5003c111b124df83ae11813` validates one base-plus-delta query
-fixture; it is not evidence for later source changes. Candidate admission,
-complete accounting, real-stream comparison, and calibrated performance remain gated.
+fixture; it is not evidence for later source changes. A later private Day 1B
+production issuer passed exact-head Linux CI and a dedicated ordinary/strong
+real-runner PRE-S1 run, but that run explicitly minted no publication authority or
+artifact. A bounded Day 1A performance re-diagnostic is authorized as exactly one
+NON-ADMISSIBLE run that can never be cited as formal evidence, and the project has
+zero formal empirical results. Complete accounting, real-stream comparison, and
+calibrated performance therefore remain gated.
 The final manuscript will report **[R2B/R3/R4 result sentence withheld until the
 corresponding commit-bound artifacts pass]**.
 
@@ -95,11 +102,19 @@ CSSC is the direct substrate of this work and must be credited for row sorting,
 left-aligned sparse rectangles, `Value`, global `ColumnIndex`, `RowMap`, chunked
 query reorganization, and static aggregation [@gao2026cssc]. Our implementation
 is an independent pseudocode-derived reconstruction; we did not use or verify
-an author implementation. Lodia's low-diagonal construction [@yu2025lodia], diagonal-packing
-reordering [@mutluergil2026diagonal], FHE-DNN sparse encodings
-[@ferguson2025unstructured], and Rhombus's two-party MVM protocol
-[@he2024rhombus] prevent any claim that this is the first double-ciphertext,
-sparsity-aware, or privacy-preserving homomorphic MVM system.
+an author implementation. Static encrypted sparse linear algebra already spans
+Lodia's low-diagonal SpMV [@yu2025lodia], CipherSkip's encrypted-value-and-index
+arbitrary-shape SpGEMM [@xiong2026cipherskip], diagonal-packing reordering
+[@mutluergil2026diagonal], ciphertext--ciphertext SpMSpM on CPU and GPU
+[@ferguson2025unstructured; @dagata2026gpu], and the encrypted-index
+Scatter--Gather--Apply design reported by the public SparseE program abstract
+[@wei2026sparsee]. Rhombus separately shows plaintext-matrix/encrypted-vector
+two-party MVM with additive output shares [@he2024rhombus]. These works rule out
+broad claims of first encrypted indices, first sparsity-aware FHE multiplication,
+first ciphertext--ciphertext sparse multiplication, or first use of random
+sharing to split an MVM output.
+Our claimed gap is the narrower mutable CSSC publication and reconstruction
+contract; it is not a new static packing or cryptographic primitive.
 
 The CSSC aggregation pseudocode has a non-power-of-two ambiguity. We use a
 corrected `totalSum`-compatible stored-power/prefix graph that preserves the
@@ -115,9 +130,12 @@ The closest methods are not interchangeable experimental baselines:
 |---|---|---:|---|
 | CSSC [@gao2026cssc] | Sparse-coordinate compression with `ColumnIndex`/`RowMap` | No | Direct static substrate; its published layout and reorganization are not our contribution. |
 | Lodia [@yu2025lodia] | Low-diagonal decomposition for batched FHE SpMV | No | Establishes earlier sparsity-aware encrypted SpMV; different decomposition and leakage/cost interface. |
+| CipherSkip [@xiong2026cipherskip] | Encrypted values and indices for arbitrary-shape SpGEMM and chained products | No matrix-state publication protocol | Its server-side alignment concerns encrypted intermediate products, not insert/delete/update of a published sparse layout. |
+| SparseE [@wei2026sparsee] | Encrypted-index Scatter--Gather--Apply with a permutation/expansion accelerator | Not established by the public abstract | Establishes an encrypted-index hardware co-design boundary; no public full text, DOI, or comparable software artifact was verified. |
 | Diagonal Packing [@mutluergil2026diagonal] | Row/column reordering to reduce occupied cyclic diagonals | No | HE-aware static compiler optimization; no mutable CSSC publication or reconstruction. |
-| Ferguson et al. [@ferguson2025unstructured] | Sparse FHE encodings for DNN matrix multiplication | No | Demonstrates prior FHE sparsity exploitation under a PPML workload. |
-| Rhombus [@he2024rhombus] | Coefficient-encoded MVM for semi-honest two-party inference | No | A different PPML protocol and packing objective; not a dynamic sparse-layout baseline. |
+| Ferguson et al. [@ferguson2025unstructured] | CKKS ciphertext--ciphertext SpMSpM with public sparse metadata | No | Demonstrates prior FHE sparsity exploitation under a PPML workload; different operation, scheme, and small square matrices. |
+| D'Agata et al. [@dagata2026gpu] | GPU/FIDESlib CKKS ciphertext--ciphertext SpMSpM with public sparse metadata | No | Extends the same static design space to GPU execution; not a dynamic SpMV baseline. |
+| Rhombus [@he2024rhombus] | Plaintext-matrix/encrypted-vector MVM with additive output shares | No | A different two-party PPML protocol; the random-share primitive is prior art, while versioned overlap binding is our narrower integration claim. |
 | Damie et al. [@damie2025secure] | Secret-shared sparse matrix multiplication in MPC | Not this protocol | Shows secure sparse arithmetic outside FHE; incomparable without a common threat and cost model. |
 | This work | Version-bound CSSC base plus designated maintenance components (admission pending) | Yes | Studies publication, query recompilation, private reconstruction, and causal costs; claims no static-format or primitive novelty. |
 
@@ -138,12 +156,22 @@ complete cost accounting.
 Dynamic SSE, encrypted databases, ShieldDB, and oblivious transaction systems
 already study updates, client state, epochs, padding, and leakage. They do not
 instantiate the same ciphertext--ciphertext CSSC query, but they prevent broad
-claims that batching or versioned updates are new. Canceling one-time masks also
-predate this work. We therefore state the exact leakage and recipient roles and
-avoid the terms `simulation-secure` or `prevents leakage` without a separate
-proof [@cash2014dynamic; @vo2021shielddb; @crooks2018obladi;
-@bonawitz2017secureagg]. Authorized homomorphic database updates also predate
-this work and delimit any claim about encrypted mutability
+claims that batching or versioned updates are new. d-DSE directly shows that
+update-volume leakage remains a separate problem and that padding can impose
+large storage and communication costs [@liu2024ddse]. CKKS-Auth Tree uses
+versioned root commitments and timestamps to detect stale or replayed
+verification objects after encrypted-metadata updates
+[@chen2026ckksauthtree]. Neither work implements mutable SpMV, but together they
+rule out novelty claims for volume hiding, versioned commitments, freshness
+checks, or replay rejection in isolation. Fixed segments, dummy work, and
+visible schedules are therefore described through an explicit leakage surface,
+not as a generic update-leakage solution.
+
+Canceling one-time masks also predate this work. We therefore state the exact
+leakage and recipient roles and avoid the terms `simulation-secure` or `prevents
+leakage` without a separate proof [@cash2014dynamic; @vo2021shielddb;
+@crooks2018obladi; @bonawitz2017secureagg]. Authorized homomorphic database
+updates also predate this work and delimit any claim about encrypted mutability
 [@parbat2023authorized].
 
 ## 3. System and Threat Model
@@ -243,14 +271,14 @@ cross-segment-width claim.
 
 ## 5. Implementation and Evidence
 
-At merged-main commit `fcb00e0d`, the Python implementation supplied typed persistent states, a common query
+At historical baseline commit `fcb00e0d`, the Python implementation supplied typed persistent states, a common query
 compiler, exact operation graphs, private operand/route bindings, a plaintext
 oracle, SQLite no-reuse commitments, canonical artifacts, and a separate deterministic replay
 validator. The encrypted path uses BFV-family batching, whose original scheme
 lineage is Fan--Vercauteren [@fan2012somewhat], through OpenFHE 1.5.1 pinned by
 source commit [@openfhe151].
 
-At merged main `fcb00e0d`, R0 passed 750 tests and the Phase 2 whole-query witness
+At that historical baseline, R0 passed 750 tests and the Phase 2 whole-query witness
 passed in run `32581653504`. The witness exercises a 4096-by-8193 fixture,
 global-column anti-aliasing, the 127-of-128 segment boundary, the unused second
 BFV batching row, explicit no-relinearize/relinearize transitions, random and
@@ -261,6 +289,19 @@ Its GitHub Actions artifact-wrapper SHA-256 digest is
 This evidence is deliberately narrow. It does not establish complete candidate
 costs, candidate registration, mixed-circuit parameter safety, security,
 performance, or an end-to-end deployment.
+
+The current engineering line retains those boundaries while adding fail-closed
+experiment lineage, replay, and worker contracts. The reviewed private Day 1B issuer
+implementation is commit-bound at
+`8a37c930edd1f404f7828dd574a4a2d0c29864e9`. Exact-head Linux CI run
+`33135852470` reported 2,178 passing tests and two expected skips because the
+ordinary CI job does not build the real OpenFHE query runner. Dedicated PRE-S1 run
+`33138110298` built OpenFHE `1.5.1@1306d14f8c26`, executed both ordinary and
+strong real-runner smokes, passed the 632-test closed contract and Ruff, and exposed
+zero artifacts. Its terminal boundary still states that the repository production
+adapter, dispatch, and publication artifact are absent and that no publication
+execution is permitted. These are implementation and admission-safety observations,
+not paper results.
 
 Generative-AI systems assisted literature discovery, code and test generation,
 adversarial review, and drafting during development. Their outputs are neither
@@ -352,12 +393,32 @@ objects before any empirical claim is released.
 
 ### 7.1 Correctness gates
 
-**Latest audited fact:** R0 and the narrow Phase 2 fixture pass at `fcb00e0d`.
+**Historical audited fact:** R0 and the narrow Phase 2 fixture pass at `fcb00e0d`.
 For any later evidence role, drift in that role's frozen Behavior Set requires a
 new run; evidence-only and analysis-only snapshots require the separate S1/S2/S3
 compatibility receipt defined by ADR 0010.
 
-**Withheld:** strong registration, mixed-circuit, and R4 results.
+**Day 1A operational boundary:** diagnostic run `33099397289` failed the frozen
+300-minute producer-to-replay-guard gate. The producer consumed 285 minutes; at the
+deadline the replay calculation was still running and its guard had not begun. The
+run was cancelled at the exact stop-loss and produced no formal shard or aggregate
+evidence. One bounded source change at
+`efdd9af894842a219080f93c8d36fb09ee93b161` hoists a single base event stream,
+removes a redundant logical-state copy while retaining the deep divergence guard,
+and emits non-authorizing stage timings. Its exact-head CI and descriptive
+registration passed. Disposable S2
+`2db4bc87c54d3b5d448f17e4e8d62eae668f16d1` authorizes exactly one same-input
+NON-ADMISSIBLE diagnostic, run `33130154591`; its unchanged 300-minute deadline is
+`2026-08-28T05:35:25Z`. This lineage can never be cited as a formal Day 1A result.
+
+**Day 1B operational boundary:** the private issuer at `8a37c930` has a local
+dual-axis PASS and two advisory external-review PASS verdicts with no unresolved
+P0/P1, plus the Linux CI and PRE-S1 observations summarized in Section 5. The
+repository adapter still requires exact Day 2 plan authority and TRACE authority.
+No Day 1B worker dispatch, held-out access, publication artifact, or empirical claim
+is authorized.
+
+**Withheld:** formal Day 1A completion, mixed-circuit, and R4 results.
 
 ### 7.2 Causal count results
 

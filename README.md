@@ -121,12 +121,25 @@ claim. The current publication materials are:
   calibration, real-stream execution, R4, and the submission package;
 - [`docs/paper/claim-ledger-draft.md`](docs/paper/claim-ledger-draft.md):
   sentence-level design, correctness, and empirical claim gates;
+- [`docs/paper/paper-idea-detailed-zh.md`](docs/paper/paper-idea-detailed-zh.md):
+  detailed Chinese explanation of the paper idea, equations, narrowed novelty
+  boundary, evidence model, and remaining execution path;
 - [`docs/paper/references.bib`](docs/paper/references.bib): primary-source citation
   database for the venue-formatted manuscript;
 - [`docs/research/dynamic-cssc-novelty-related-work-boundary.md`](docs/research/dynamic-cssc-novelty-related-work-boundary.md):
   claim-by-claim novelty boundary against primary prior art;
+- [`docs/research/related-work-primary-source-gap-audit-2026-08-28.md`](docs/research/related-work-primary-source-gap-audit-2026-08-28.md):
+  latest primary-source gap audit, comparator classification, and mandatory
+  Related Work additions;
 - [`docs/research/publication-venues-datasets-preregistration.md`](docs/research/publication-venues-datasets-preregistration.md):
-  official-source venue, licensing, dataset, and sampling rationale; and
+  official-source venue, licensing, dataset, and sampling rationale;
+- [`docs/reviews/day1a-critical-path-static-audit-2026-08-28.md`](docs/reviews/day1a-critical-path-static-audit-2026-08-28.md):
+  non-authorizing Day 1A performance diagnosis and frozen 300-minute stop-loss;
+- [`docs/reviews/day1b-production-admission-contract-review-2026-08-28.md`](docs/reviews/day1b-production-admission-contract-review-2026-08-28.md):
+  minimum production-admission bridge and explicitly prohibited scope growth;
+- [`docs/reviews/publication-completion-matrix-2026-08-28.md`](docs/reviews/publication-completion-matrix-2026-08-28.md):
+  requirement-by-requirement evidence status, critical path, and conditional
+  submission schedule;
 - [`docs/reviews/zcode-max-publication-audit-2026-08-23.md`](docs/reviews/zcode-max-publication-audit-2026-08-23.md):
   independent ZCode GLM-5.3 Max submission audit and adjudicated blockers.
 

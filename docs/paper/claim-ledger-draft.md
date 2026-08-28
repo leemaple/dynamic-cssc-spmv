@@ -18,6 +18,17 @@ inner sidecar, ZIP CRC, 121-entry `SHA256SUMS`, clean provenance, and 750-case
 JUnit all verify. This R0 evidence does not authorize later registration or
 performance claims.
 
+Current Terminal Registration Freeze lineage: experiment source S1
+`b658e2178b210c2cc0012fc61957a3b3a92953bb`; registration run `33070626218`;
+installed registration-anchor SHA-256
+`7c46266560e51ea2f756b28267225a21a8e96fce0a69707e00805794e9f309a9`;
+Behavior Set SHA-256
+`d64dcfcd48e183736d4a6565cca8d698dbeef700d4cec0af4594b7258016d2b7`; and
+data-only S2 `bb83d4e42209e24df0c71df3eea5df7cbff7e1d5`. Exact-head S2 CI run
+`33073232432` passed 2118 tests with 2 skipped. This lineage authorizes only
+the exact repository-admission statements below. It does not authorize a
+complete-reference Day 1A result, a performance result, or a security claim.
+
 ## Design and attribution claims
 
 | ID | Permitted wording | Minimum evidence | Current state |
@@ -26,17 +37,17 @@ performance claims.
 | D2 | Each accepted Publication Window binds logical state, components, query metadata, OutputPlan, and prepared queries to one version. | Current state/property tests plus a commit-bound R0 rerun for experiment snapshot S1 and an ADR 0010 S1/S2/S3 compatibility receipt | E1 until rerun; E2 only for the exact audited S1 Behavior Set and admitted artifact |
 | D3 | The OutputPlan distinguishes overlapping coordinates, disjoint blocks, and implicit zeros. | Canonical plan tests, plaintext oracle, Phase 2 fixture | E4 for the frozen fixture |
 | D4 | Overlap-only F1-M uses reserve-before-sample bindings in the stated SQLite ledger model; strong disjoint returns use encrypted-zero dummies. | R0 property contract covers reserve/reject/crash/concurrency; the Phase 2 fixture covers encrypted random/dummy execution while explicitly reporting `persistent_ledger_exercised=false` | Ledger mechanism E1/E2; fixture correctness E4; persistent end-to-end/R4 and all security claims HOLD |
-| D5 | The cloud-segmented strong path uses fixed c=128 pages and private client leader merging. | Phase 2 whole-query artifact plus repository admission | Fixture E4 PASS; candidate registration HOLD |
+| D5 | The cloud-segmented strong path uses fixed c=128 pages and private client leader merging. | Phase 2 whole-query artifact plus repository admission | Fixture E4 PASS; candidate registration PASS for exact S1/S2 lineage; performance and security claims HOLD |
 | A1 | CSSC supplies static layout, ColumnIndex reorganization, RowMap recovery, and aggregation. | Gao et al. primary source and local source audit | E0; cite and do not claim |
 | A2 | The non-power-of-two schedule is our corrected CSSC/HElib-compatible interpretation, not verified author code. | CSSC Algorithm 4 audit and cited HElib totalSum source | E0/E1; use explicit caveat |
-| A3 | We make no first encrypted sparse SpMV or first dynamic encrypted database claim. | Related-work boundary review | Frozen non-claim |
+| A3 | We make no first encrypted sparse SpMV/SpMM, encrypted-index or hidden-position, double-ciphertext sparse computation, dynamic encrypted-data, versioned-commitment/freshness/replay, or random output-share/mask claim. | Primary-source gap audit covering CSSC, Lodia, 2DPP, CipherSkip, SparseE, Ferguson/D'Agata, Rhombus, d-DSE, CKKS-Auth Tree, encrypted databases, and secure aggregation | Frozen non-claim; the permitted novelty boundary is only the update-aware CSSC integration stated in D1--D4 |
 
 ## Correctness and completeness claims
 
 | ID | Future wording | Required artifact | Current state |
 |---|---|---|---|
 | C1 | The exact Phase 2 base-plus-strong-delta fixture decrypts to the typed and direct plaintext result. | Run `32581653504`, artifact SHA `c5f44b0c9475a66d49b48332e335cb58811cf4eec579ebff631123c4e4711afe` | PASS at `fcb00e0d`; one fixture only |
-| C2 | The strong c=128 candidate is an admitted Day 1 reference. | Zero-argument repository composite registration gate binding correctness, accounting, report schema, tests, and frozen policy | HOLD |
+| C2 | The strong c=128 candidate is an admitted Day 1 reference. | Zero-argument repository composite registration gate binding correctness, accounting, report schema, tests, and frozen policy | PASS for exact S1/S2 registration scope via run `33070626218`; formal Day 1A complete-reference evidence remains HOLD |
 | C3 | The fixed-reference set is complete. | 14 fixed records, 13 references, one ablation, exact rotation/accounting completion proof and replay receipts | HOLD |
 | C4 | The admitted mixed circuit decrypts correctly with adequate parameter margin. | Pinned worst-profile OpenFHE gate with raw decryption/noise evidence | HOLD |
 | C5 | End-to-end execution matches the logical oracle at the qualifying adjacent rho grid points. | R4 artifact on exact experiment snapshot S1, admitted at S2 and analyzed at S3 through an ADR 0010 compatibility receipt | HOLD |
@@ -55,6 +66,10 @@ performance claims.
 ## Permanent non-claims
 
 - no new homomorphic-encryption primitive;
+- no first/only claim for encrypted indices, hidden nonzero positions,
+  ciphertext--ciphertext sparse multiplication, dynamic encrypted data,
+  versioned commitments, freshness/replay rejection, or canceling/random output
+  shares in isolation;
 - no formal, malicious, adaptive, collusion, side-channel, or traffic-analysis
   security theorem;
 - no author-code reproduction;
