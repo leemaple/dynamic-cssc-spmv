@@ -18,6 +18,7 @@ from dynamic_cssc.route_a_lineage import (
     inspect_route_a_registration_archive,
     produce_route_a_registration_archive,
     verify_route_a_s1_s2_compatibility,
+    verify_route_a_s1_s2_s3_analysis_compatibility,
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +49,21 @@ def _commit(repository: Path, message: str) -> str:
         "-c",
         "user.email=route-a@example.invalid",
         "commit",
+        "-m",
+        message,
+    )
+    return _git(repository, "rev-parse", "HEAD")
+
+
+def _empty_commit(repository: Path, message: str) -> str:
+    _git(
+        repository,
+        "-c",
+        "user.name=Route A Test",
+        "-c",
+        "user.email=route-a@example.invalid",
+        "commit",
+        "--allow-empty",
         "-m",
         message,
     )
@@ -94,6 +110,20 @@ def _repository(tmp_path: Path) -> tuple[Path, str]:
         + "\n",
     )
     return repository, _commit(repository, "S1")
+
+
+def _install_s2(repository: Path, s1: str) -> str:
+    registration = produce_route_a_registration_archive(repository, s1)
+    inspection = inspect_route_a_registration_archive(repository, s1, registration.archive_bytes)
+    (repository / ROUTE_A_REGISTRATION_ANCHOR_PATH).write_bytes(
+        build_route_a_registration_anchor(
+            inspection,
+            provider_run_id=123,
+            provider_artifact_id=456,
+            provider_artifact_digest="sha256:" + "a" * 64,
+        )
+    )
+    return _commit(repository, "S2")
 
 
 def test_capture_inventory_reads_exact_git_objects_and_is_repeatable(tmp_path: Path) -> None:
@@ -251,6 +281,191 @@ def test_s1_s2_compatibility_rejects_non_parent_or_empty_anchor(tmp_path: Path) 
 
     with pytest.raises(RouteALineageError):
         verify_route_a_s1_s2_compatibility(repository, s1=s1, s2=s2)
+
+
+def test_s1_s2_s3_analysis_compatibility_binds_all_three_snapshots(
+    tmp_path: Path,
+) -> None:
+    repository, s1 = _repository(tmp_path)
+    s2 = _install_s2(repository, s1)
+    s3 = _empty_commit(repository, "S3 analysis snapshot")
+
+    receipt = verify_route_a_s1_s2_s3_analysis_compatibility(
+        repository,
+        s1=s1,
+        s2=s2,
+        s3=s3,
+    )
+
+    assert receipt.document["analysis_compatibility_verified"] is True
+    assert receipt.document["experiment_source_git_sha"] == s1
+    assert receipt.document["evidence_freeze_git_sha"] == s2
+    assert receipt.document["analysis_source_git_sha"] == s3
+    assert receipt.document["analyzer_behavior_set_exact"] is True
+    assert receipt.document["analysis_execution_authorized"] is False
+    assert receipt.document["runtime_execution_isolation_verified"] is False
+    assert receipt.document["formal_authority_granted"] is False
+    assert receipt.document["registration_compatibility_receipt_sha256"] == (
+        verify_route_a_s1_s2_compatibility(repository, s1=s1, s2=s2).sha256
+    )
+    assert receipt.sha256 == hashlib.sha256(receipt.document_bytes).hexdigest()
+
+
+@pytest.mark.parametrize("mutation", ["bytes", "mode"])
+def test_s1_s2_s3_analysis_compatibility_rejects_analyzer_drift(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    repository, s1 = _repository(tmp_path)
+    s2 = _install_s2(repository, s1)
+    if mutation == "bytes":
+        _write(repository / "analyzer.py", "VALUE = 999\n")
+    else:
+        (repository / "analyzer.py").chmod(0o755)
+    s3 = _commit(repository, "drifted S3")
+
+    with pytest.raises(RouteALineageError, match="analyzer Behavior Set changed"):
+        verify_route_a_s1_s2_s3_analysis_compatibility(
+            repository,
+            s1=s1,
+            s2=s2,
+            s3=s3,
+        )
+
+
+def test_s1_s2_s3_analysis_compatibility_rejects_non_descendant_s3(
+    tmp_path: Path,
+) -> None:
+    repository, s1 = _repository(tmp_path)
+    s2 = _install_s2(repository, s1)
+    _git(repository, "checkout", "-q", s1)
+    s3 = _empty_commit(repository, "unrelated S3")
+
+    with pytest.raises(RouteALineageError, match="descend from exact S2"):
+        verify_route_a_s1_s2_s3_analysis_compatibility(
+            repository,
+            s1=s1,
+            s2=s2,
+            s3=s3,
+        )
+
+
+def test_s1_s2_s3_analysis_compatibility_rejects_removed_s2_anchor(
+    tmp_path: Path,
+) -> None:
+    repository, s1 = _repository(tmp_path)
+    s2 = _install_s2(repository, s1)
+    (repository / ROUTE_A_REGISTRATION_ANCHOR_PATH).unlink()
+    s3 = _commit(repository, "removed S2 anchor")
+
+    with pytest.raises(RouteALineageError, match="data-only history"):
+        verify_route_a_s1_s2_s3_analysis_compatibility(
+            repository,
+            s1=s1,
+            s2=s2,
+            s3=s3,
+        )
+
+
+def test_s1_s2_s3_analysis_compatibility_rejects_intermediate_drift_then_restore(
+    tmp_path: Path,
+) -> None:
+    repository, s1 = _repository(tmp_path)
+    s2 = _install_s2(repository, s1)
+    _write(repository / "behavior.py", "VALUE = 999\n")
+    _commit(repository, "intermediate behavior drift")
+    _write(repository / "behavior.py", "VALUE = 1\n")
+    s3 = _commit(repository, "restored endpoint bytes")
+
+    with pytest.raises(RouteALineageError, match="data-only history"):
+        verify_route_a_s1_s2_s3_analysis_compatibility(
+            repository,
+            s1=s1,
+            s2=s2,
+            s3=s3,
+        )
+
+
+def test_s1_s2_s3_analysis_compatibility_rejects_drift_restored_on_merged_parent(
+    tmp_path: Path,
+) -> None:
+    repository, s1 = _repository(tmp_path)
+    s2 = _install_s2(repository, s1)
+    s2_branch = _git(repository, "branch", "--show-current")
+    _git(repository, "checkout", "-q", "-b", "outside-history", s1)
+    _write(repository / "behavior.py", "VALUE = 999\n")
+    _commit(repository, "outside behavior drift")
+    _write(repository / "behavior.py", "VALUE = 1\n")
+    _commit(repository, "outside endpoint restore")
+    _git(repository, "checkout", "-q", s2_branch)
+    _git(
+        repository,
+        "-c",
+        "user.name=Route A Test",
+        "-c",
+        "user.email=route-a@example.invalid",
+        "merge",
+        "--no-ff",
+        "outside-history",
+        "-m",
+        "merge restored outside history",
+    )
+    s3 = _git(repository, "rev-parse", "HEAD")
+
+    with pytest.raises(RouteALineageError, match="data-only history"):
+        verify_route_a_s1_s2_s3_analysis_compatibility(
+            repository,
+            s1=s1,
+            s2=s2,
+            s3=s3,
+        )
+
+
+def test_s1_s2_s3_analysis_compatibility_allows_monotonic_data_anchor_addition(
+    tmp_path: Path,
+) -> None:
+    repository, s1 = _repository(tmp_path)
+    s2 = _install_s2(repository, s1)
+    _write(
+        repository / "config/evidence-compatibility-anchors.json",
+        json.dumps(
+            {
+                "anchors": [
+                    {
+                        "artifact_sha256": "b" * 64,
+                        "behavior_set_schema_version": (
+                            "dynamic-cssc-acquisition-behavior-set-v2"
+                        ),
+                        "behavior_set_sha256": "c" * 64,
+                        "experiment_source_git_sha": s1,
+                        "role": "acquisition",
+                        "schema_version": (
+                            "dynamic-cssc-evidence-compatibility-anchor-v1"
+                        ),
+                    }
+                ],
+                "schema_version": (
+                    "dynamic-cssc-evidence-compatibility-anchor-set-v1"
+                ),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+    )
+    s3 = _commit(repository, "append monotonic data anchor")
+
+    receipt = verify_route_a_s1_s2_s3_analysis_compatibility(
+        repository,
+        s1=s1,
+        s2=s2,
+        s3=s3,
+    )
+
+    assert receipt.document["analysis_compatibility_verified"] is True
+    assert receipt.document["s2_to_s3_changed_paths"] == [
+        "config/evidence-compatibility-anchors.json"
+    ]
 
 
 @pytest.mark.parametrize("role", ["", "FORMAL", "unknown", True])

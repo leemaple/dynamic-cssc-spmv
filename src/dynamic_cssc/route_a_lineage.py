@@ -32,6 +32,7 @@ __all__ = (
     "inspect_route_a_registration_archive",
     "produce_route_a_registration_archive",
     "verify_route_a_s1_s2_compatibility",
+    "verify_route_a_s1_s2_s3_analysis_compatibility",
 )
 
 
@@ -54,6 +55,9 @@ _REGISTRATION_EVIDENCE_SCHEMA = "dynamic-cssc-route-a-registration-evidence-v1"
 _REGISTRATION_ANCHOR_SET_SCHEMA = "dynamic-cssc-route-a-registration-anchor-set-v1"
 _REGISTRATION_ANCHOR_SCHEMA = "dynamic-cssc-route-a-registration-anchor-v1"
 _COMPATIBILITY_RECEIPT_SCHEMA = "dynamic-cssc-route-a-adr0010-compatibility-receipt-v1"
+_ANALYSIS_COMPATIBILITY_RECEIPT_SCHEMA = (
+    "dynamic-cssc-route-a-adr0010-analysis-compatibility-receipt-v1"
+)
 _EMPTY_ANCHOR_BYTES = (
     b'{"anchors":[],"schema_version":"dynamic-cssc-route-a-registration-anchor-set-v1"}\n'
 )
@@ -537,17 +541,10 @@ def verify_route_a_s1_s2_compatibility(
         for role in ROUTE_A_BEHAVIOR_ROLES
     }
     for role in ROUTE_A_BEHAVIOR_ROLES:
-        source = s1_inventories[role].document
-        target = s2_inventories[role].document
-        for field in (
-            "behavior_set_registry_blob_sha256",
-            "behavior_set_schema_version",
-            "entries",
-            "role",
-            "schema_version",
+        if _behavior_set_document(s1_inventories[role]) != _behavior_set_document(
+            s2_inventories[role]
         ):
-            if source[field] != target[field]:
-                raise RouteALineageError(f"Route A {role} Behavior Set changed across S1/S2")
+            raise RouteALineageError(f"Route A {role} Behavior Set changed across S1/S2")
 
     anchor_blob = _read_git_blob(repository, s2, ROUTE_A_REGISTRATION_ANCHOR_PATH)
     anchor_set = _decode_canonical_json(
@@ -605,6 +602,91 @@ def verify_route_a_s1_s2_compatibility(
         "registration_anchor_blob_sha256": _sha256(anchor_blob.content),
         "registration_archive_sha256": anchor["archive_sha256"],
         "schema_version": _COMPATIBILITY_RECEIPT_SCHEMA,
+    }
+    content = _canonical_json_bytes(receipt_document)
+    return RouteACompatibilityReceipt(document_bytes=content, sha256=_sha256(content))
+
+
+def _behavior_set_document(inventory: RouteABehaviorInventory) -> dict[str, object]:
+    document = inventory.document
+    return {
+        field: document[field]
+        for field in (
+            "behavior_set_registry_blob_sha256",
+            "behavior_set_schema_version",
+            "entries",
+            "role",
+            "schema_version",
+        )
+    }
+
+
+def verify_route_a_s1_s2_s3_analysis_compatibility(
+    repository: Path,
+    *,
+    s1: str,
+    s2: str,
+    s3: str,
+) -> RouteACompatibilityReceipt:
+    """Bind exact S1/S2/S3 identities and prove the analyzer Behavior Set equal."""
+
+    from dynamic_cssc.evidence_compatibility import (
+        EvidenceCompatibilityError,
+        verify_repository_data_anchor_history,
+    )
+
+    registration_receipt = verify_route_a_s1_s2_compatibility(
+        repository,
+        s1=s1,
+        s2=s2,
+    )
+    s1 = _resolve_commit(repository, s1, "S1")
+    s2 = _resolve_commit(repository, s2, "S2")
+    s3 = _resolve_commit(repository, s3, "S3")
+    merge_bases = _git(repository, "merge-base", "--all", s2, s3).decode("ascii").split()
+    if merge_bases != [s2]:
+        raise RouteALineageError("Route A analysis S3 must descend from exact S2")
+    inventories = {
+        label: capture_route_a_behavior_inventory(repository, source, "analyzer")
+        for label, source in (("s1", s1), ("s2", s2), ("s3", s3))
+    }
+    behavior_documents = {
+        label: _behavior_set_document(inventory)
+        for label, inventory in inventories.items()
+    }
+    if behavior_documents["s1"] != behavior_documents["s2"] or behavior_documents[
+        "s1"
+    ] != behavior_documents["s3"]:
+        raise RouteALineageError("Route A analyzer Behavior Set changed across S1/S2/S3")
+    try:
+        verify_repository_data_anchor_history(
+            repository,
+            start_git_sha=s2,
+            end_git_sha=s3,
+        )
+    except EvidenceCompatibilityError as error:
+        raise RouteALineageError(
+            f"Route A S2-to-S3 data-only history is invalid: {error}"
+        ) from error
+
+    behavior_set_bytes = _canonical_json_bytes(behavior_documents["s1"])
+    receipt_document = {
+        "analysis_compatibility_verified": True,
+        "analysis_execution_authorized": False,
+        "analysis_source_git_sha": s3,
+        "analyzer_behavior_inventory_sha256": {
+            label: inventory.sha256 for label, inventory in inventories.items()
+        },
+        "analyzer_behavior_set_exact": True,
+        "analyzer_behavior_set_sha256": _sha256(behavior_set_bytes),
+        "evidence_freeze_git_sha": s2,
+        "experiment_source_git_sha": s1,
+        "formal_authority_granted": False,
+        "git_replace_refs_disabled": True,
+        "registration_compatibility_receipt_sha256": registration_receipt.sha256,
+        "runtime_execution_isolation_verified": False,
+        "s2_to_s3_changed_paths": _changed_paths(repository, s2, s3),
+        "schema_version": _ANALYSIS_COMPATIBILITY_RECEIPT_SCHEMA,
     }
     content = _canonical_json_bytes(receipt_document)
     return RouteACompatibilityReceipt(document_bytes=content, sha256=_sha256(content))
