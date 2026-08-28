@@ -115,7 +115,8 @@ def test_day1b_workflow_declares_pre_s1_preparatory_hold_without_artifact_steps(
     assert "typed D1BKEY01 key receipt remains pre-admission only" in workflow
     assert "Linux READY/DONE executable-map receipt remains pre-admission only" in workflow
     assert "Linux launcher-owned pathless scratch creation remains pre-admission only" in workflow
-    assert "production Day1B candidate worker and admission receipt remain absent" in workflow
+    assert "private production invocation issuer is installed" in workflow
+    assert "repository production adapter, dispatch, and artifact remain absent" in workflow
     assert "No publication execution or artifact production is permitted" in workflow
     assert "upload" not in workflow.lower()
 
@@ -128,7 +129,7 @@ def test_preregistration_and_roadmap_keep_preparatory_inventory_non_authorizing(
     combined = preregistration + roadmap
 
     for required in (
-        "dynamic-cssc-day1b-preparatory-behavior-set-v31",
+        "dynamic-cssc-day1b-preparatory-behavior-set-v32",
         "publication-day1b-preparatory.yml",
         "Source inventory is not dispatch authority",
         "controlled-scratch high-water",
@@ -140,4 +141,4 @@ def test_preregistration_and_roadmap_keep_preparatory_inventory_non_authorizing(
         "sole numeric exception",
     ):
         assert required in combined
-    assert "> **Status date:** 2026-08-24 (Asia/Shanghai)" in roadmap
+    assert "> **Status date:** 2026-08-28 (Asia/Shanghai)" in roadmap

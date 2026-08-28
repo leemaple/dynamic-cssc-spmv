@@ -25,6 +25,19 @@ from fractions import Fraction
 from pathlib import Path
 from typing import BinaryIO
 
+from dynamic_cssc.openfhe_query_runner import (
+    OpenFHESerializedObjectReceipt,
+    VerifiedOpenFHEQueryResult,
+)
+from dynamic_cssc.openfhe_query_runtime import (
+    OpenFHEQueryRuntimeError,
+    OpenFHEQueryRuntimeReceipt,
+    OpenFHESerializedPayload,
+    OpenFHEWorkerRuntimeIdentityPolicy,
+    openfhe_worker_runtime_identity_sha256,
+    project_expected_openfhe_worker_runtime_identity,
+    project_observed_openfhe_worker_runtime_identity,
+)
 from dynamic_cssc.publication_day1b_aggregate_bounds import (
     DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM,
 )
@@ -39,8 +52,15 @@ from dynamic_cssc.publication_day1b_f1m_aggregation import (
 )
 from dynamic_cssc.publication_day1b_key_framing import (
     DAY1B_COMBINED_EVALUATION_KEY_CATEGORY,
+    DAY1B_COMBINED_EVALUATION_KEY_FRAMING_SCHEMA,
     Day1BCombinedEvaluationKeyFrameStreamValidator,
     Day1BCombinedEvaluationKeyFramingError,
+)
+from dynamic_cssc.publication_day1b_openfhe_execution import (
+    Day1BRepresentativeOpenFHEExecutionCapability,
+    ExecutedDay1BRepresentativeOpenFHE,
+    abandon_day1b_representative_openfhe_execution,
+    claim_day1b_representative_openfhe_execution,
 )
 from dynamic_cssc.publication_day1b_scratch import (
     DAY1B_ANONYMOUS_SCRATCH_MEMBER_NAMES,
@@ -50,6 +70,7 @@ from dynamic_cssc.publication_day1b_scratch import (
 )
 
 DAY1B_WORKER_FRAME_SCHEMA = "dynamic-cssc-publication-day1b-worker-frame-v2"
+DAY1B_WORKER_ADAPTER_SCHEMA = "dynamic-cssc-publication-day1b-worker-adapter-v1"
 DAY1B_WORKER_INPUT_BINDING_SCHEMA = "dynamic-cssc-publication-day1b-worker-input-binding-v11"
 DAY1B_WORKER_RECEIPT_SCHEMA = "dynamic-cssc-publication-day1b-worker-candidate-cell-receipt-v11"
 DAY1B_WORKER_WINDOW_AUDIT_SCHEMA = "dynamic-cssc-publication-day1b-worker-window-audit-v1"
@@ -80,6 +101,13 @@ DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES = (
     "query-f1m-encrypted-zero-dummy-ciphertexts",
 )
 
+_DAY1B_NATIVE_PAYLOAD_CATEGORIES = (
+    "update-publication-ciphertexts",
+    "query-query-ciphertexts",
+    "query-result-ciphertexts",
+    DAY1B_COMBINED_EVALUATION_KEY_CATEGORY,
+)
+
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _PHASE_NAMES = ("warmup", "tuning-prefix", "held-out")
 _AUDIT_PHASE_NAMES = ("warmup", "tuning", "heldout")
@@ -104,6 +132,7 @@ _OUTCOME_BY_FAILURE_CODE = {
     "wall-clock-limit-exceeded": "timeout",
 }
 _EVIDENCE_TOKEN = object()
+_PRODUCTION_ADMISSION_TOKEN = object()
 _EXPECTED_REGISTRY_INGEST_BATCH_SIZE = 256
 _ISSUED_EVIDENCE: dict[int, tuple[weakref.ReferenceType[object], object]] = {}
 _ISSUED_INVOCATIONS: dict[int, tuple[weakref.ReferenceType[object], object]] = {}
@@ -1849,10 +1878,22 @@ class Day1BWorkerCellReceipt:
             and self.anonymous_scratch_creation_isolation_verified
             and self.weighted_query_range_coverage_verified
             and worker_observed_f1m_size_class_count == 0
+            and not binding.worker_streams_f1m_size_classes
+            and self.candidate.receipt_origin == "worker-complete-transcript"
+            and self.candidate.terminal_outcome is None
+            and self.candidate.terminal_failure_code is None
+            and self.candidate.candidate_retry_count == 0
+            and self.candidate.worker_declared_state_reset_count == 0
+            and len(self.candidate.phases) == len(_PHASE_NAMES)
+            and all(
+                phase.outcome == "complete" and phase.failure_code is None
+                for phase in self.candidate.phases
+            )
         ):
             raise Day1BWorkerProtocolError(
-                "weighted production admission requires exact replay/runtime/isolation/range "
-                "verification and zero worker-observed F1-M size classes"
+                "weighted production admission requires one complete nonterminal transcript, "
+                "exact replay/runtime/isolation/range verification, and zero worker-observed "
+                "F1-M size classes"
             )
 
     @property
@@ -3770,6 +3811,122 @@ class _ObjectReceiptSpool:
                 ) from database_error
 
 
+def _controller_observation_sha256(
+    observation: _ControllerCandidateObservation,
+) -> str:
+    if type(observation) is not _ControllerCandidateObservation:
+        raise TypeError("controller observation must be one exact typed observation")
+    return hashlib.sha256(
+        _canonical_json_bytes(
+            {
+                "candidate_id": observation.candidate_id,
+                "elapsed_ns": observation.elapsed_ns,
+                "peak_resident_memory_bytes": (
+                    observation.peak_resident_memory_bytes
+                ),
+                "peak_scratch_bytes": observation.peak_scratch_bytes,
+                "schema_version": (
+                    "dynamic-cssc-day1b-production-controller-observation-v1"
+                ),
+                "terminal_failure_code": observation.terminal_failure_code,
+            }
+        )
+    ).hexdigest()
+
+
+def _expected_registry_descriptor_sha256(
+    descriptor: Day1BExpectedF1MRegistryDescriptor,
+) -> str:
+    if type(descriptor) is not Day1BExpectedF1MRegistryDescriptor:
+        raise TypeError("expected F1-M descriptor must be one exact typed descriptor")
+    return hashlib.sha256(
+        _canonical_json_bytes(descriptor.to_document())
+    ).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class _ProductionInvocationAdmission:
+    """Private non-serializable expectations carried through final decoding."""
+
+    contract_input_binding_sha256: str
+    expected_registry_descriptor_sha256: str
+    controller_observation_sha256: str
+    runtime_identity_sha256: str
+    runtime_receipt_sha256: str
+    representative_openfhe_receipt_sha256: str
+    native_non_f1m_spool_lines: tuple[bytes, ...]
+    native_non_f1m_projection_sha256: str
+    native_non_f1m_projection_line_count: int
+    native_non_f1m_projection_byte_count: int
+    _token: object
+
+    def __post_init__(self) -> None:
+        self._validate()
+
+    def _validate(self) -> None:
+        for field in (
+            "contract_input_binding_sha256",
+            "expected_registry_descriptor_sha256",
+            "controller_observation_sha256",
+            "runtime_identity_sha256",
+            "runtime_receipt_sha256",
+            "representative_openfhe_receipt_sha256",
+            "native_non_f1m_projection_sha256",
+        ):
+            _sha256(getattr(self, field, None), f"production admission {field}")
+        lines = getattr(self, "native_non_f1m_spool_lines", None)
+        if (
+            type(lines) is not tuple
+            or not lines
+            or any(type(line) is not bytes or not line for line in lines)
+        ):
+            raise Day1BWorkerProtocolError(
+                "production admission native payload projection is not exact"
+            )
+        line_count = _strict_positive(
+            getattr(self, "native_non_f1m_projection_line_count", None),
+            "production admission native projection line count",
+        )
+        byte_count = _strict_positive(
+            getattr(self, "native_non_f1m_projection_byte_count", None),
+            "production admission native projection byte count",
+        )
+        hasher = hashlib.sha256()
+        for line in lines:
+            hasher.update(line)
+        if (
+            line_count != len(lines)
+            or byte_count != sum(len(line) for line in lines)
+            or hasher.hexdigest() != self.native_non_f1m_projection_sha256
+        ):
+            raise Day1BWorkerProtocolError(
+                "production admission native payload projection changed"
+            )
+        if getattr(self, "_token", None) is not _PRODUCTION_ADMISSION_TOKEN:
+            raise Day1BWorkerProtocolError(
+                "production invocation admission is not repository-issued"
+            )
+
+    def require_decoder_binding(
+        self,
+        *,
+        contract: Day1BWorkerProtocolContract,
+        observation: _ControllerCandidateObservation,
+        expected_registry_descriptor: Day1BExpectedF1MRegistryDescriptor,
+    ) -> None:
+        self._validate()
+        if (
+            self.contract_input_binding_sha256 != contract.input_binding_sha256
+            or self.controller_observation_sha256
+            != _controller_observation_sha256(observation)
+            or self.expected_registry_descriptor_sha256
+            != _expected_registry_descriptor_sha256(expected_registry_descriptor)
+        ):
+            raise Day1BWorkerProtocolError(
+                "production admission was retargeted after capability issuance"
+            )
+
+
 @dataclass(frozen=True, slots=True)
 class _InvocationBinding:
     contract_input_binding_sha256: str
@@ -3778,6 +3935,7 @@ class _InvocationBinding:
     controller_phase_audits: tuple[Day1BWorkerPhaseAudit, ...]
     observation: _ControllerCandidateObservation
     expected_registry_descriptor: Day1BExpectedF1MRegistryDescriptor
+    production_admission: _ProductionInvocationAdmission | None
     spool: _ObjectReceiptSpool
 
 
@@ -3840,6 +3998,496 @@ def _require_test_invocation_issuer() -> None:
         raise Day1BWorkerProtocolError("private Day1B invocation fixture issuer is pytest-only")
 
 
+def _validate_representative_payload_inventory(
+    contract: Day1BWorkerProtocolContract,
+    payloads: tuple[OpenFHESerializedPayload, ...],
+    *,
+    verified_objects: tuple[OpenFHESerializedObjectReceipt, ...] | None = None,
+) -> tuple[OpenFHESerializedPayload, ...]:
+    """Close the native representative payloads against anchored Day 2 sizes."""
+
+    if (
+        type(payloads) is not tuple
+        or not payloads
+        or any(type(payload) is not OpenFHESerializedPayload for payload in payloads)
+    ):
+        raise Day1BWorkerProtocolError(
+            "representative OpenFHE payload inventory is not exact"
+        )
+    if verified_objects is not None and (
+        type(verified_objects) is not tuple
+        or len(verified_objects) != len(payloads)
+        or any(
+            type(receipt) is not OpenFHESerializedObjectReceipt
+            for receipt in verified_objects
+        )
+    ):
+        raise Day1BWorkerProtocolError(
+            "representative verified serialized-object inventory is not exact"
+        )
+
+    snapshots: list[OpenFHESerializedPayload] = []
+    receipt_snapshots: list[OpenFHESerializedObjectReceipt] = []
+    for index, payload in enumerate(payloads):
+        try:
+            snapshot = OpenFHESerializedPayload(
+                category=payload.category,
+                subject_id=payload.subject_id,
+                binary_framing_schema=payload.binary_framing_schema,
+                sha256=payload.sha256,
+                payload=payload.payload,
+            )
+        except (OpenFHEQueryRuntimeError, TypeError, ValueError) as error:
+            raise Day1BWorkerProtocolError(
+                "representative OpenFHE payload bytes changed after execution"
+            ) from error
+        snapshots.append(snapshot)
+        if verified_objects is not None:
+            receipt = verified_objects[index]
+            receipt_snapshot = OpenFHESerializedObjectReceipt(
+                category=receipt.category,
+                subject_id=receipt.subject_id,
+                relative_path=receipt.relative_path,
+                byte_count=receipt.byte_count,
+                sha256=receipt.sha256,
+            )
+            if (
+                receipt_snapshot.relative_path != f"object-{index:06d}.bin"
+                or receipt_snapshot.category != snapshot.category
+                or receipt_snapshot.subject_id != snapshot.subject_id
+                or receipt_snapshot.byte_count != len(snapshot.payload)
+                or receipt_snapshot.sha256 != snapshot.sha256
+            ):
+                raise Day1BWorkerProtocolError(
+                    "representative payload differs from its verified runtime object"
+                )
+            receipt_snapshots.append(receipt_snapshot)
+    frozen_payloads = tuple(snapshots)
+    frozen_receipts = tuple(receipt_snapshots)
+    if tuple(payloads) != frozen_payloads or (
+        verified_objects is not None and verified_objects != frozen_receipts
+    ):
+        raise Day1BWorkerProtocolError(
+            "representative payload inventory changed while admission was derived"
+        )
+
+    limits = contract.resource_limits
+    total_bytes = sum(len(payload.payload) for payload in frozen_payloads)
+    if (
+        len(frozen_payloads) > limits.serialized_object_receipt_count_maximum
+        or total_bytes > limits.serialized_payload_bytes_per_cell_maximum
+    ):
+        raise Day1BWorkerProtocolError(
+            "representative OpenFHE payload inventory exceeds the worker resource policy"
+        )
+    ciphertext_sizes = {
+        "query-query-ciphertexts": contract.ciphertext_bytes,
+        "update-publication-ciphertexts": contract.ciphertext_bytes,
+        "query-result-ciphertexts": contract.ciphertext_bytes,
+        "query-f1m-random-mask-ciphertexts": (
+            contract.f1m_random_zero_sum_ciphertext_bytes
+        ),
+        "query-f1m-encrypted-zero-dummy-ciphertexts": (
+            contract.f1m_encrypted_zero_dummy_ciphertext_bytes
+        ),
+    }
+    key_payload_count = 0
+    for payload in frozen_payloads:
+        byte_count = len(payload.payload)
+        if byte_count > limits.serialized_object_bytes_maximum:
+            raise Day1BWorkerProtocolError(
+                "representative OpenFHE payload exceeds the per-object cap"
+            )
+        if payload.category == DAY1B_COMBINED_EVALUATION_KEY_CATEGORY:
+            key_payload_count += 1
+            rotation_bytes = contract.serialized_rotation_key_inventory_bytes
+            eval_mult_bytes = contract.serialized_eval_mult_key_bytes
+            if (
+                rotation_bytes is None
+                or eval_mult_bytes is None
+                or contract.combined_evaluation_key_size_class_sha256 is None
+                or payload.binary_framing_schema
+                != DAY1B_COMBINED_EVALUATION_KEY_FRAMING_SCHEMA
+            ):
+                raise Day1BWorkerProtocolError(
+                    "representative OpenFHE key payload lacks its anchored size class"
+                )
+            validator = Day1BCombinedEvaluationKeyFrameStreamValidator(
+                expected_rotation_key_inventory_bytes=rotation_bytes,
+                expected_eval_mult_key_bytes=eval_mult_bytes,
+            )
+            try:
+                validator.accept(payload.payload)
+                validator.finish()
+            except Day1BCombinedEvaluationKeyFramingError as error:
+                raise Day1BWorkerProtocolError(
+                    "representative OpenFHE key payload differs from Day 2 authority"
+                ) from error
+            continue
+        expected_bytes = ciphertext_sizes.get(payload.category)
+        if expected_bytes is None or payload.binary_framing_schema is not None:
+            raise Day1BWorkerProtocolError(
+                "representative OpenFHE payload category is outside the frozen taxonomy"
+            )
+        if byte_count != expected_bytes:
+            raise Day1BWorkerProtocolError(
+                "representative OpenFHE ciphertext size differs from Day 2 authority"
+            )
+    if key_payload_count != 1:
+        raise Day1BWorkerProtocolError(
+            "representative OpenFHE payload inventory requires exactly one key frame"
+        )
+    return frozen_payloads
+
+
+def _native_non_f1m_spool_projection(
+    contract: Day1BWorkerProtocolContract,
+    payloads: tuple[OpenFHESerializedPayload, ...],
+) -> tuple[tuple[bytes, ...], str, int, int]:
+    """Project canonical native representatives into exact future spool lines.
+
+    The runtime may retain several subjects in one ciphertext category.  The
+    worker protocol prices one representative equivalence class whenever that
+    category has positive controller multiplicity, so the first payload in the
+    runtime's already-verified canonical order is the sole physical sample.
+    F1-M remains controller-only and fixed-width metadata has its own framing
+    verifier; neither is relabelled as a native OpenFHE payload here.
+    """
+
+    if type(contract) is not Day1BWorkerProtocolContract:
+        raise TypeError("contract must be an exact Day1BWorkerProtocolContract")
+    if (
+        type(payloads) is not tuple
+        or not payloads
+        or any(type(payload) is not OpenFHESerializedPayload for payload in payloads)
+    ):
+        raise Day1BWorkerProtocolError(
+            "native payload projection requires one exact verified inventory"
+        )
+    representative_by_category: dict[str, OpenFHESerializedPayload] = {}
+    for payload in payloads:
+        if (
+            payload.category in _DAY1B_NATIVE_PAYLOAD_CATEGORIES
+            and payload.category not in representative_by_category
+        ):
+            representative_by_category[payload.category] = payload
+
+    lines: list[bytes] = []
+    spool_line_ordinal = 0
+    first_retained_phase = contract.candidate.retained_phases[0]
+    for phase in contract.controller_expected_counts.phases:
+        for category_index, (category, transaction) in enumerate(
+            contract.serialized_categories
+        ):
+            multiplicity = phase.worker_streamed_protocol_object_counts[
+                category_index
+            ]
+            if category in DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES:
+                continue
+            if multiplicity == 0:
+                continue
+            if category in _DAY1B_NATIVE_PAYLOAD_CATEGORIES:
+                payload = representative_by_category.get(category)
+                if payload is None:
+                    raise Day1BWorkerProtocolError(
+                        "positive native worker category lacks a canonical representative"
+                    )
+                if category == DAY1B_COMBINED_EVALUATION_KEY_CATEGORY and (
+                    phase.phase != first_retained_phase or multiplicity != 1
+                ):
+                    raise Day1BWorkerProtocolError(
+                        "native key projection is not one-time in the first retained phase"
+                    )
+                receipt = _Day1BWorkerSerializedObjectReceipt(
+                    serialization_equivalence_class_ordinal=0,
+                    serialized_byte_count=len(payload.payload),
+                    serialized_sha256=payload.sha256,
+                    multiplicity=multiplicity,
+                    charged_byte_count=len(payload.payload) * multiplicity,
+                    f1m_size_class=None,
+                )
+                line = _canonical_json_bytes(
+                    {
+                        "schema_version": (
+                            "dynamic-cssc-publication-day1b-object-receipt-v1"
+                        ),
+                        "candidate_id": contract.candidate.candidate_id,
+                        "category": category,
+                        "worker_input_binding_sha256": contract.input_binding_sha256,
+                        "object": receipt.to_document(),
+                        "phase": phase.phase,
+                        "spool_line_ordinal": spool_line_ordinal,
+                        "transaction": transaction,
+                    }
+                )
+                if len(line) > DAY1B_AGGREGATE_RECEIPT_CANONICAL_BYTES_MAXIMUM:
+                    raise Day1BWorkerProtocolError(
+                        "native projected object receipt exceeds the frozen bound"
+                    )
+                lines.append(line)
+            spool_line_ordinal += 1
+    if spool_line_ordinal != contract.expected_serialized_equivalence_class_count:
+        raise Day1BWorkerProtocolError(
+            "native projection differs from the controller physical class count"
+        )
+    if not lines:
+        raise Day1BWorkerProtocolError(
+            "production invocation has no native physical projection"
+        )
+    frozen_lines = tuple(lines)
+    hasher = hashlib.sha256()
+    for line in frozen_lines:
+        hasher.update(line)
+    return (
+        frozen_lines,
+        hasher.hexdigest(),
+        len(frozen_lines),
+        sum(len(line) for line in frozen_lines),
+    )
+
+
+def _production_admission_from_execution(
+    *,
+    contract: Day1BWorkerProtocolContract,
+    executed: ExecutedDay1BRepresentativeOpenFHE,
+    runtime_identity_policy: OpenFHEWorkerRuntimeIdentityPolicy,
+    expected_registry_descriptor: Day1BExpectedF1MRegistryDescriptor,
+) -> tuple[_ProductionInvocationAdmission, _ControllerCandidateObservation]:
+    if type(executed) is not ExecutedDay1BRepresentativeOpenFHE:
+        raise TypeError(
+            "production invocation requires one exact claimed representative execution"
+        )
+    if type(runtime_identity_policy) is not OpenFHEWorkerRuntimeIdentityPolicy:
+        raise TypeError("runtime identity policy must be one exact typed policy")
+    if type(expected_registry_descriptor) is not Day1BExpectedF1MRegistryDescriptor:
+        raise TypeError(
+            "expected F1-M descriptor must be one exact typed descriptor"
+        )
+    verified_result = executed.openfhe_execution.verified_result
+    if type(verified_result) is not VerifiedOpenFHEQueryResult:
+        raise TypeError(
+            "representative execution lacks one exact verified native result"
+        )
+    receipt = executed.receipt
+    try:
+        ExecutedDay1BRepresentativeOpenFHE(
+            receipt=receipt,
+            openfhe_execution=executed.openfhe_execution,
+        )
+    except (TypeError, ValueError) as error:
+        raise Day1BWorkerProtocolError(
+            "representative execution lost its composed runtime/payload continuity"
+        ) from error
+    replay = receipt.replay_execution_receipt
+    runtime = executed.openfhe_execution.runtime_receipt
+    context = contract.f1m_controller_context
+    if (
+        replay.candidate_id != contract.candidate.candidate_id
+        or replay.candidate_role != contract.candidate.candidate_role
+        or replay.candidate_policy_sha256
+        != contract.candidate.candidate_policy_digest
+        or replay.retained_phases != contract.candidate.retained_phases
+        or replay.accounting_sha256 != context.accounting_sha256
+        or replay.window_stream_sha256 != context.complete_window_stream_sha256
+        or replay.query_window_stream_sha256 != context.query_window_stream_sha256
+        or replay.query_vector_sha256 != contract.query_vector_sha256
+        or replay.plaintext_modulus != 65_537
+        or replay.state_reset_count != 0
+    ):
+        raise Day1BWorkerProtocolError(
+            "representative replay receipt differs from the worker input binding"
+        )
+    if type(runtime) is not OpenFHEQueryRuntimeReceipt:
+        raise TypeError("representative execution lacks one exact runtime receipt")
+    key_plan = runtime.day2_key_plan_authorization
+    if (
+        key_plan is None
+        or key_plan.day2_outer_archive_sha256 != contract.day2_outer_archive_sha256
+    ):
+        raise Day1BWorkerProtocolError(
+            "representative runtime lacks the exact anchored Day 2 plan"
+        )
+    if (
+        runtime_identity_policy.worker_adapter_schema_version
+        != DAY1B_WORKER_ADAPTER_SCHEMA
+        or runtime_identity_policy.worker_build_identity_sha256
+        != context.worker_build_identity_sha256
+    ):
+        raise Day1BWorkerProtocolError(
+            "worker runtime policy differs from the controller lineage"
+        )
+    expected_identity = project_expected_openfhe_worker_runtime_identity(
+        runtime_identity_policy
+    )
+    observed_identity = project_observed_openfhe_worker_runtime_identity(
+        runtime_identity_policy,
+        runtime,
+    )
+    expected_identity_sha256 = openfhe_worker_runtime_identity_sha256(
+        expected_identity
+    )
+    observed_identity_sha256 = openfhe_worker_runtime_identity_sha256(
+        observed_identity
+    )
+    if (
+        expected_identity_sha256 != context.worker_runtime_identity_sha256
+        or observed_identity_sha256 != expected_identity_sha256
+    ):
+        raise Day1BWorkerProtocolError(
+            "observed OpenFHE runtime identity differs from the anchored controller lineage"
+        )
+    limits = contract.resource_limits
+    if (
+        type(runtime.timeout_seconds) is not int
+        or runtime.timeout_seconds <= 0
+        or type(runtime.elapsed_ns) is not int
+        or runtime.elapsed_ns < 0
+        or type(runtime.resident_memory_limit_bytes) is not int
+        or runtime.resident_memory_limit_bytes <= 0
+        or type(runtime.peak_resident_memory_bytes) is not int
+        or runtime.peak_resident_memory_bytes < 0
+        or type(runtime.scratch_limit_bytes) is not int
+        or runtime.scratch_limit_bytes <= 0
+        or type(runtime.peak_scratch_bytes) is not int
+        or runtime.peak_scratch_bytes < 0
+        or runtime.timeout_seconds * 1_000_000_000
+        != limits.wall_clock_ns_per_candidate_cell
+        or runtime.resident_memory_limit_bytes
+        != limits.resident_memory_bytes_per_candidate_cell
+        or runtime.scratch_limit_bytes != limits.scratch_bytes_per_candidate_cell
+        or runtime.elapsed_ns > limits.wall_clock_ns_per_candidate_cell
+        or runtime.peak_resident_memory_bytes
+        > limits.resident_memory_bytes_per_candidate_cell
+        or runtime.peak_scratch_bytes > limits.scratch_bytes_per_candidate_cell
+    ):
+        raise Day1BWorkerProtocolError(
+            "representative runtime limits or observations differ from the worker policy"
+        )
+    payloads = _validate_representative_payload_inventory(
+        contract,
+        executed.openfhe_execution.serialized_payloads,
+        verified_objects=verified_result.serialized_objects,
+    )
+    if (
+        type(runtime.serialized_object_count) is not int
+        or runtime.serialized_object_count != len(payloads)
+        or type(runtime.serialized_object_bytes) is not int
+        or runtime.serialized_object_bytes
+        != sum(len(payload.payload) for payload in payloads)
+    ):
+        raise Day1BWorkerProtocolError(
+            "representative runtime payload totals differ from retained payloads"
+        )
+    observation = _ControllerCandidateObservation(
+        candidate_id=contract.candidate.candidate_id,
+        elapsed_ns=runtime.elapsed_ns,
+        peak_resident_memory_bytes=runtime.peak_resident_memory_bytes,
+        peak_scratch_bytes=runtime.peak_scratch_bytes,
+        terminal_failure_code=None,
+    )
+    (
+        native_projection_lines,
+        native_projection_sha256,
+        native_projection_line_count,
+        native_projection_byte_count,
+    ) = _native_non_f1m_spool_projection(contract, payloads)
+    return (
+        _ProductionInvocationAdmission(
+            contract_input_binding_sha256=contract.input_binding_sha256,
+            expected_registry_descriptor_sha256=(
+                _expected_registry_descriptor_sha256(expected_registry_descriptor)
+            ),
+            controller_observation_sha256=(
+                _controller_observation_sha256(observation)
+            ),
+            runtime_identity_sha256=observed_identity_sha256,
+            runtime_receipt_sha256=runtime.receipt_sha256,
+            representative_openfhe_receipt_sha256=receipt.receipt_sha256,
+            native_non_f1m_spool_lines=native_projection_lines,
+            native_non_f1m_projection_sha256=native_projection_sha256,
+            native_non_f1m_projection_line_count=(
+                native_projection_line_count
+            ),
+            native_non_f1m_projection_byte_count=(
+                native_projection_byte_count
+            ),
+            _token=_PRODUCTION_ADMISSION_TOKEN,
+        ),
+        observation,
+    )
+
+
+def _issue_day1b_worker_invocation_from_claimed_registry(
+    *,
+    contract: Day1BWorkerProtocolContract,
+    controller_phase_audits: tuple[Day1BWorkerPhaseAudit, ...],
+    registry: _ExpectedF1MRegistry,
+    observation: _ControllerCandidateObservation,
+    production_admission: _ProductionInvocationAdmission | None,
+) -> Day1BWorkerInvocationCapability:
+    if type(registry) is not _ExpectedF1MRegistry:
+        raise TypeError("invocation registry must be one exact claimed registry")
+    if type(observation) is not _ControllerCandidateObservation:
+        raise TypeError("invocation observation must be one exact controller observation")
+    if production_admission is not None and (
+        type(production_admission) is not _ProductionInvocationAdmission
+    ):
+        raise TypeError("production admission must be one exact private proof")
+    if production_admission is not None:
+        production_admission._validate()
+    descriptor = registry.descriptor
+    try:
+        if (
+            descriptor.size_class_set_sha256
+            != contract.expected_f1m_size_class_set_sha256
+            or descriptor.size_class_count != contract.expected_f1m_size_class_count
+        ):
+            raise Day1BWorkerProtocolError(
+                "size-class expectation differs from the worker input binding"
+            )
+        registry.validate_for_invocation(contract, controller_phase_audits)
+        limits = contract.resource_limits
+        expected_all = contract.expected_serialized_equivalence_class_count
+        if expected_all > limits.serialized_object_receipt_count_maximum:
+            raise Day1BWorkerProtocolError(
+                "all serialized equivalence classes exceed the receipt count cap"
+            )
+        if expected_all + 7 > limits.worker_frame_count_maximum:
+            raise Day1BWorkerProtocolError(
+                "all serialized equivalence classes plus seven control frames "
+                "exceed the frame count cap"
+            )
+        if production_admission is not None and (
+            observation.terminal_failure_code is not None
+            or not descriptor.anonymous_scratch_creation_isolation_verified
+            or not descriptor.weighted_query_range_coverage_verified
+            or contract.worker_streams_f1m_size_classes
+        ):
+            raise Day1BWorkerProtocolError(
+                "production invocation lacks nonterminal scratch/range/controller-only F1-M facts"
+            )
+        spool = _ObjectReceiptSpool(contract, registry)
+    except BaseException:
+        registry.close()
+        raise
+    binding = _InvocationBinding(
+        contract_input_binding_sha256=contract.input_binding_sha256,
+        invocation_id=contract.invocation_id,
+        candidate_id=contract.candidate.candidate_id,
+        controller_phase_audits=controller_phase_audits,
+        observation=observation,
+        expected_registry_descriptor=descriptor,
+        production_admission=production_admission,
+        spool=spool,
+    )
+    try:
+        return _mint_invocation_capability(binding)
+    except BaseException:
+        with suppress(BaseException):
+            spool.close()
+        raise
+
+
 def _test_only_issue_day1b_worker_invocation(
     *,
     contract: Day1BWorkerProtocolContract,
@@ -3860,27 +4508,7 @@ def _test_only_issue_day1b_worker_invocation(
         expected_f1m_registry_capability,
         consume=True,
     ).registry
-    descriptor = registry.descriptor
     try:
-        if (
-            descriptor.size_class_set_sha256 != contract.expected_f1m_size_class_set_sha256
-            or descriptor.size_class_count != contract.expected_f1m_size_class_count
-        ):
-            raise Day1BWorkerProtocolError(
-                "fixture size-class expectation differs from the worker input binding"
-            )
-        registry.validate_for_invocation(contract, controller_phase_audits)
-        limits = contract.resource_limits
-        expected_all = contract.expected_serialized_equivalence_class_count
-        if expected_all > limits.serialized_object_receipt_count_maximum:
-            raise Day1BWorkerProtocolError(
-                "all serialized equivalence classes exceed the receipt count cap"
-            )
-        if expected_all + 7 > limits.worker_frame_count_maximum:
-            raise Day1BWorkerProtocolError(
-                "all serialized equivalence classes plus seven control frames "
-                "exceed the frame count cap"
-            )
         observation = _ControllerCandidateObservation(
             candidate_id=contract.candidate.candidate_id,
             elapsed_ns=elapsed_ns,
@@ -3888,24 +4516,78 @@ def _test_only_issue_day1b_worker_invocation(
             peak_scratch_bytes=peak_scratch_bytes,
             terminal_failure_code=terminal_failure_code,
         )
-        spool = _ObjectReceiptSpool(contract, registry)
-    except BaseException:
-        registry.close()
-        raise
-    binding = _InvocationBinding(
-        contract_input_binding_sha256=contract.input_binding_sha256,
-        invocation_id=contract.invocation_id,
-        candidate_id=contract.candidate.candidate_id,
-        controller_phase_audits=controller_phase_audits,
-        observation=observation,
-        expected_registry_descriptor=descriptor,
-        spool=spool,
-    )
-    try:
-        return _mint_invocation_capability(binding)
+        return _issue_day1b_worker_invocation_from_claimed_registry(
+            contract=contract,
+            controller_phase_audits=controller_phase_audits,
+            registry=registry,
+            observation=observation,
+            production_admission=None,
+        )
     except BaseException:
         with suppress(BaseException):
-            spool.close()
+            registry.close()
+        raise
+
+
+def _issue_day1b_worker_invocation_from_representative_openfhe_execution(
+    *,
+    contract: Day1BWorkerProtocolContract,
+    controller_phase_audits: tuple[Day1BWorkerPhaseAudit, ...],
+    expected_f1m_registry_capability: Day1BExpectedF1MRegistryCapability,
+    execution_capability: Day1BRepresentativeOpenFHEExecutionCapability,
+    runtime_identity_policy: OpenFHEWorkerRuntimeIdentityPolicy,
+) -> Day1BWorkerInvocationCapability:
+    """Privately compose registry and native runtime facts into one invocation."""
+
+    if type(contract) is not Day1BWorkerProtocolContract:
+        raise TypeError("contract must be an exact Day1BWorkerProtocolContract")
+    _validate_controller_phase_audits(contract, controller_phase_audits)
+    if type(expected_f1m_registry_capability) is not Day1BExpectedF1MRegistryCapability:
+        raise TypeError("expected F1-M registry must be exact controller-minted evidence")
+    if type(execution_capability) is not Day1BRepresentativeOpenFHEExecutionCapability:
+        raise TypeError(
+            "representative OpenFHE execution must be exact runtime-minted authority"
+        )
+    if type(runtime_identity_policy) is not OpenFHEWorkerRuntimeIdentityPolicy:
+        raise TypeError("runtime identity policy must be one exact typed policy")
+
+    executed: ExecutedDay1BRepresentativeOpenFHE | None = None
+    registry: _ExpectedF1MRegistry | None = None
+    try:
+        executed = claim_day1b_representative_openfhe_execution(
+            execution_capability
+        )
+        registry = _active_expected_registry_binding(
+            expected_f1m_registry_capability,
+            consume=True,
+        ).registry
+        admission, observation = _production_admission_from_execution(
+            contract=contract,
+            executed=executed,
+            runtime_identity_policy=runtime_identity_policy,
+            expected_registry_descriptor=registry.descriptor,
+        )
+        return _issue_day1b_worker_invocation_from_claimed_registry(
+            contract=contract,
+            controller_phase_audits=controller_phase_audits,
+            registry=registry,
+            observation=observation,
+            production_admission=admission,
+        )
+    except BaseException:
+        if registry is None:
+            with suppress(BaseException):
+                abandon_day1b_expected_f1m_registry(
+                    expected_f1m_registry_capability
+                )
+        else:
+            with suppress(BaseException):
+                registry.close()
+        if executed is None:
+            with suppress(BaseException):
+                abandon_day1b_representative_openfhe_execution(
+                    execution_capability
+                )
         raise
 
 
@@ -4180,11 +4862,16 @@ class _ReceiptBuilder:
         spool: _ObjectReceiptSpool,
         controller_candidate_observation: _ControllerCandidateObservation,
         expected_registry_descriptor: Day1BExpectedF1MRegistryDescriptor,
+        production_admission: _ProductionInvocationAdmission | None,
     ) -> None:
         self.contract = contract
         self.spool = spool
         self.controller_candidate_observation = controller_candidate_observation
         self.expected_registry_descriptor = expected_registry_descriptor
+        self.production_admission = production_admission
+        self.native_projection_index = 0
+        self.native_projection_hasher = hashlib.sha256()
+        self.native_projection_byte_count = 0
         self.started = False
         self.ended = False
         self.current_spec: Day1BWorkerCandidateSpec | None = None
@@ -4321,6 +5008,22 @@ class _ReceiptBuilder:
             receipt=receipt,
             retain=True,
         )
+        if (
+            self.production_admission is not None
+            and category in _DAY1B_NATIVE_PAYLOAD_CATEGORIES
+        ):
+            assert line is not None
+            expected_lines = self.production_admission.native_non_f1m_spool_lines
+            if (
+                self.native_projection_index >= len(expected_lines)
+                or line != expected_lines[self.native_projection_index]
+            ):
+                raise Day1BWorkerProtocolError(
+                    "worker native payload projection differs from claimed execution"
+                )
+            self.native_projection_index += 1
+            self.native_projection_hasher.update(line)
+            self.native_projection_byte_count += len(line)
         accumulator.add(receipt, line, spool_line=spool_line)
         self.last_category_index = category_index
 
@@ -4559,9 +5262,29 @@ class _ReceiptBuilder:
             )
         )
         expected_all_count = self.contract.expected_serialized_equivalence_class_count
+        if self.production_admission is not None:
+            self.production_admission.require_decoder_binding(
+                contract=self.contract,
+                observation=self.controller_candidate_observation,
+                expected_registry_descriptor=self.expected_registry_descriptor,
+            )
         all_phases_complete = all(
             phase.outcome == "complete" for phase in self.completed_candidate.phases
         )
+        native_projection_complete = False
+        if self.production_admission is not None:
+            native_projection_complete = (
+                self.native_projection_index
+                == self.production_admission.native_non_f1m_projection_line_count
+                and self.native_projection_byte_count
+                == self.production_admission.native_non_f1m_projection_byte_count
+                and self.native_projection_hasher.hexdigest()
+                == self.production_admission.native_non_f1m_projection_sha256
+            )
+            if all_phases_complete and not native_projection_complete:
+                raise Day1BWorkerProtocolError(
+                    "worker native payload projection is incomplete"
+                )
         if spool_line_count > expected_all_count or (
             all_phases_complete and spool_line_count != expected_all_count
         ):
@@ -4569,6 +5292,19 @@ class _ReceiptBuilder:
                 "worker all serialized equivalence class count differs from the "
                 "controller-owned pre-dispatch count"
             )
+        production_execution_admissible = (
+            type(self.production_admission) is _ProductionInvocationAdmission
+            and all_phases_complete
+            and native_projection_complete
+            and self.completed_candidate.candidate_retry_count == 0
+            and self.completed_candidate.worker_declared_state_reset_count == 0
+            and self.completed_candidate.terminal_outcome is None
+            and self.completed_candidate.terminal_failure_code is None
+            and self.expected_registry_descriptor.anonymous_scratch_creation_isolation_verified
+            and self.expected_registry_descriptor.weighted_query_range_coverage_verified
+            and self.spool.observed_f1m_size_class_count == 0
+            and not self.contract.worker_streams_f1m_size_classes
+        )
         return Day1BWorkerCellReceipt(
             input_binding=self.contract,
             f1m_controller_context_sha256=(self.contract.f1m_controller_context_sha256),
@@ -4577,7 +5313,7 @@ class _ReceiptBuilder:
             candidate=self.completed_candidate,
             controller_schedule_phase_audits=controller_phase_audits,
             worker_declared_phase_audits_match_controller_schedule_audits=True,
-            runtime_state_continuity_verified=False,
+            runtime_state_continuity_verified=production_execution_admissible,
             controller_expected_f1m_size_class_set_sha256=(
                 self.contract.expected_f1m_size_class_set_sha256
             ),
@@ -4620,7 +5356,7 @@ class _ReceiptBuilder:
             weighted_query_range_coverage_verified=(
                 self.expected_registry_descriptor.weighted_query_range_coverage_verified
             ),
-            production_execution_admissible=False,
+            production_execution_admissible=production_execution_admissible,
             object_receipt_spool_sha256=spool_sha256,
             object_receipt_line_count=spool_line_count,
             object_receipt_byte_count=spool_byte_count,
@@ -4829,6 +5565,7 @@ def _consume_claimed_day1b_worker_frames(
         spool,
         controller_candidate_observation,
         invocation.expected_registry_descriptor,
+        invocation.production_admission,
     )
     length_prefix = bytearray()
     header_buffer = bytearray()
@@ -4962,6 +5699,7 @@ def consume_day1b_worker_frames(
 
 
 __all__ = (
+    "DAY1B_WORKER_ADAPTER_SCHEMA",
     "DAY1B_WORKER_FRAME_SCHEMA",
     "DAY1B_WORKER_F1M_BINDING_SCHEMA",
     "DAY1B_WORKER_F1M_SIZE_CLASS_SCHEMA",

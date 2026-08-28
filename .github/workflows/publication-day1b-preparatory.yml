@@ -145,5 +145,6 @@ jobs:
           echo 'Its typed D1BKEY01 key receipt remains pre-admission only.'
           echo 'Its Linux READY/DONE executable-map receipt remains pre-admission only.'
           echo 'Linux launcher-owned pathless scratch creation remains pre-admission only.'
-          echo 'The production Day1B candidate worker and admission receipt remain absent.'
+          echo 'The private production invocation issuer is installed and remains non-dispatching.'
+          echo 'The repository production adapter, dispatch, and artifact remain absent.'
           echo 'No publication execution or artifact production is permitted.'

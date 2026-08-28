@@ -46,10 +46,14 @@ Research repository for an update-aware maintenance layer around ciphertext–ci
   closes 18 cells / 486 physical records, schedule-v2 streaming, canonical
   serialized-object ledgers, per-cell resource observations, and a canonical
   overlap-only ordinary-query preparation/private-plan lifecycle with persistent
-  single-use F1-M commitments. Its production entry point still fails before
-  writing because the Day1 catalog, trace authority, resource policy, full OpenFHE
-  worker, and repository execution adapter are intentionally uninstalled; no
-  publication result exists.
+  single-use F1-M commitments. A private production invocation issuer now
+  consumes the same-replay native-execution capability and Linux anonymous
+  expected-F1-M registry, reconciles runtime identity, Day 2 size/key facts, and
+  resource observations, and permits only a complete nonterminal transcript to
+  set the existing admission fields. The repository production adapter remains
+  an unconditional hold, and the Day1 catalog, trace authority, resource-policy
+  binding, final Day 2 anchors, dispatch, and publication artifact are still
+  absent; no publication result exists.
 - Analysis isolation status: a standalone runner now exercises a fresh detached
   checkout under exact CPython 3.12.13 with `-I -S`, an isolated bytecode cache,
   an empty approved third-party import set, source/import/lock revalidation, and

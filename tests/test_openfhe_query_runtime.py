@@ -655,6 +655,9 @@ def test_expected_and_observed_worker_runtime_identity_are_independently_equal(
     )
 
     assert observed == expected
+    assert runtime.openfhe_worker_runtime_identity_sha256(observed) == (
+        runtime.openfhe_worker_runtime_identity_sha256(expected)
+    )
     assert expected["schema_version"] == (
         runtime.OPENFHE_WORKER_RUNTIME_IDENTITY_SCHEMA
     )
@@ -665,6 +668,25 @@ def test_expected_and_observed_worker_runtime_identity_are_independently_equal(
     assert expected["cpu_affinity_policy"] == runtime.OPENFHE_CPU_AFFINITY_POLICY
     assert "required_cpu_affinity" not in expected
     assert [0, 1] not in expected.values()
+
+
+@pytest.mark.parametrize("mutation", ("extra-key", "schema"))
+def test_worker_runtime_identity_digest_rejects_noncanonical_projection(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    document = runtime.project_expected_openfhe_worker_runtime_identity(
+        _runtime_identity_policy(tmp_path)
+    )
+    if mutation == "extra-key":
+        document["caller_fact"] = True
+        message = "keys are not exact"
+    else:
+        document["schema_version"] = "retargeted-runtime-identity-v1"
+        message = "projection is malformed"
+
+    with pytest.raises(runtime.OpenFHEQueryRuntimeError, match=message):
+        runtime.openfhe_worker_runtime_identity_sha256(document)
 
 
 def test_worker_runtime_identity_policy_rejects_non_linux_identity() -> None:

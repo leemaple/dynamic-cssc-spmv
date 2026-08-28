@@ -85,6 +85,20 @@ OPENFHE_WORKER_RUNTIME_MAPPING_POLICY = "linux-ready-done-executable-closure-v1"
 OPENFHE_DYNAMIC_LOADER_ENVIRONMENT_POLICY = "clear-v1"
 OPENFHE_CPU_AFFINITY_POLICY = "linux-controller-affinity-exact-match-v1"
 
+_OPENFHE_WORKER_RUNTIME_IDENTITY_KEYS = frozenset(
+    {
+        "cpu_affinity_policy",
+        "dynamic_loader_environment_policy",
+        "openfhe_runtime_receipt_schema_version",
+        "operating_system_identity",
+        "runtime_control_protocol_schema",
+        "runtime_mapping_policy",
+        "schema_version",
+        "worker_adapter_schema_version",
+        "worker_build_identity_sha256",
+    }
+)
+
 _LINUX_DISTRIBUTION_LIBRARY_ROOTS = tuple(
     Path(value)
     for value in (
@@ -525,6 +539,52 @@ def project_observed_openfhe_worker_runtime_identity(
             observed_worker_build_identity_sha256
         ),
     }
+
+
+def openfhe_worker_runtime_identity_sha256(
+    document: dict[str, object],
+) -> str:
+    """Hash one exact stable runtime projection under the canonical owner."""
+
+    if type(document) is not dict or set(document) != (
+        _OPENFHE_WORKER_RUNTIME_IDENTITY_KEYS
+    ):
+        raise OpenFHEQueryRuntimeError(
+            "OpenFHE worker runtime identity keys are not exact"
+        )
+    adapter_schema = document["worker_adapter_schema_version"]
+    operating_system = document["operating_system_identity"]
+    worker_build = document["worker_build_identity_sha256"]
+    if (
+        document["schema_version"] != OPENFHE_WORKER_RUNTIME_IDENTITY_SCHEMA
+        or document["openfhe_runtime_receipt_schema_version"]
+        != OPENFHE_QUERY_RUNTIME_RECEIPT_SCHEMA
+        or document["runtime_control_protocol_schema"]
+        != OPENFHE_RUNTIME_CONTROL_PROTOCOL_SCHEMA
+        or document["runtime_mapping_policy"]
+        != OPENFHE_WORKER_RUNTIME_MAPPING_POLICY
+        or document["dynamic_loader_environment_policy"]
+        != OPENFHE_DYNAMIC_LOADER_ENVIRONMENT_POLICY
+        or document["cpu_affinity_policy"] != OPENFHE_CPU_AFFINITY_POLICY
+        or type(adapter_schema) is not str
+        or not adapter_schema
+        or any(
+            ord(character) < 0x21 or ord(character) > 0x7E
+            for character in adapter_schema
+        )
+        or type(operating_system) is not str
+        or not operating_system.startswith("Linux-")
+        or any(
+            ord(character) < 0x21 or ord(character) > 0x7E
+            for character in operating_system
+        )
+        or type(worker_build) is not str
+        or _LOWER_SHA256.fullmatch(worker_build) is None
+    ):
+        raise OpenFHEQueryRuntimeError(
+            "OpenFHE worker runtime identity projection is malformed"
+        )
+    return hashlib.sha256(_canonical_bytes(document)).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -2596,6 +2656,7 @@ __all__ = (
     "execute_day2_anchored_openfhe_query",
     "execute_day2_anchored_strong_openfhe_query",
     "openfhe_worker_build_receipt_sha256",
+    "openfhe_worker_runtime_identity_sha256",
     "project_expected_openfhe_worker_runtime_identity",
     "project_observed_openfhe_worker_runtime_identity",
     "project_openfhe_worker_build_receipt",

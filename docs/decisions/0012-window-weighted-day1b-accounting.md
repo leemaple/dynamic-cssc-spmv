@@ -343,6 +343,36 @@ abandonment releases the retained plan bytes. Because both repository Day 2
 anchor sets are currently empty, this closes a typed future seam without
 granting a capability now.
 
+### Private production invocation issuer (Behavior Set v32)
+
+Behavior Set v32 installs one private composition boundary between the existing
+representative OpenFHE execution capability, the Linux anonymous expected-F1-M
+registry, and the existing streaming worker decoder. It does not add a public
+adapter or dispatch seam. The issuer consumes both single-use capabilities and
+independently verifies the candidate, role, policy, retained phases,
+accounting/window/query roots, query-vector digest, modulus, zero-reset fact,
+Day 2 outer archive, runtime build and stable runtime identity, exact resource
+limits and observations, closed serialized-payload taxonomy, canonical
+`D1BKEY01` frame, and anchored per-category byte lengths. Failure consumes or
+closes every capability and anonymous scratch object it has claimed.
+
+The resulting process-local invocation binding carries a private typed
+admission, not a caller Boolean or a new serialized authority. The existing
+worker decoder sets `runtime_state_continuity_verified` and
+`production_execution_admissible` only after all three phases complete in one
+nonterminal transcript with zero retry, zero reset, exact schedule audits,
+Linux scratch isolation, complete weighted query-range coverage, and zero
+worker-materialized F1-M size classes. Fixture issuers and controller-terminal
+paths remain false. Consequently v32 changes only the DAY1B Behavior Set
+version; the unit, worker input-binding, worker receipt, runtime receipt, native
+request/result, and artifact schemas remain unchanged.
+
+The repository-owned production adapter remains an unconditional `HOLD`, and
+the preparatory workflow still has no semantic inputs, producer invocation,
+artifact upload, or dispatch authority. This boundary therefore proves that
+already frozen typed facts can be composed without granting publication,
+performance, cost, security, or held-out execution authority.
+
 ## Consequences
 
 - Candidate state evolution and causal selection are unchanged.

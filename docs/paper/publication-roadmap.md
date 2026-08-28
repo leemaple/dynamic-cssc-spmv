@@ -1,6 +1,6 @@
 # Publication Roadmap
 
-> **Status date:** 2026-08-24 (Asia/Shanghai)
+> **Status date:** 2026-08-28 (Asia/Shanghai)
 >
 > **Target A:** *Journal of Cryptographic Engineering*
 >
@@ -398,7 +398,7 @@ implementation evidence only. It cannot dispatch until the trace and catalog
 authorities, repository execution adapter, and outcome-blind resource policy
 are installed, and it is not a 30-unit publication artifact.
 
-The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v30,
+The repository now also carries a PRE-S1 preparatory DAY1B Behavior Set v32,
 the unchanged empirical-null/authority-false `PENDING-FREEZE` placeholder, the
 separate reviewed resource-only amendment, and a manual no-input validation
 workflow. These freeze the current validator, protocol, administrative safety
@@ -422,8 +422,8 @@ the exact pre-admitted runner/library executable mapping closure from `/proc`,
 rehashes each admitted file through a no-follow descriptor, binds the raw
 mapping roots and process start-time identity, and requires the
 same executable map set at DONE. Darwin produces no mapping admission. The
-receipt remains pre-admission and cannot substitute for a production scratch
-capability or candidate-cell adapter.
+runtime receipt remains pre-admission and cannot substitute for the private
+candidate-cell issuer or repository production adapter.
 The separate Linux production scratch seam now opens every parent component
 without following symlinks, creates an exclusive private child and two fixed
 members relative to held directory descriptors, opens SQLite through
@@ -431,15 +431,15 @@ members relative to held directory descriptors, opens SQLite through
 returns an opaque single-use capability. Its exact identity receipt can set
 scratch-creation isolation true, but every authority and production-admission
 field remains false. This closes the launcher scratch-creation subgate only;
-the candidate-cell adapter and held-out dispatch remain on `HOLD`.
+the repository candidate-cell adapter and held-out dispatch remain on `HOLD`.
 The runner now generates the full supplied exact-index rotation inventory and
 eval-mult keys in one context/session, constructs the exact `D1BKEY01` frame,
 uses those keys in the same typed DAG, and returns a request/plan/segment/frame-
 bound receipt. Its rotation-plan hash now equals the exact LF-terminated
 `rotation-key-plan.json` member emitted by Day 2, and both Python and C++ reject
 alternate whitespace, ordering, or newline bytes. Query-derived plans and
-unanchored canonical Day 2 plan inputs remain pre-admission only. The v30
-source now preserves the rotation-plan digest in final Day 2 authority and can
+unanchored canonical Day 2 plan inputs remain pre-admission only. The current
+source preserves the rotation-plan digest in final Day 2 authority and can
 mint one opaque single-use plan capability only for the exact post-run anchored
 byte preimage; every runtime, dispatch, cost, performance, publication, and
 security flag remains false. With the current empty Day 2 anchors, no
@@ -450,7 +450,7 @@ hash-locked source-contract tests, static validation, amendment validation, and
 a real non-authorizing runtime smoke; it neither invokes the producer nor
 fetches or uploads publication data.
 
-The v30 runtime surface includes separate ordinary and strong anchored entry points. They
+The runtime surface includes separate ordinary and strong anchored entry points. They
 accept no caller-supplied plan object: the deep launcher consumes the opaque
 Day 2 plan capability before request construction, uses that exact plan for
 generation and verification, cross-checks the resulting key-material receipt,
@@ -458,22 +458,30 @@ and records the plan receipt in runtime receipt v7. The manual native smoke
 remains explicitly non-anchored, and this integration still supplies neither a
 production candidate-cell adapter nor dispatch authority.
 
-The same v30 surface now composes a collector-minted same-replay representative
+The same surface composes a collector-minted same-replay representative
 with one such anchored plan in a single-use pre-admission execution boundary.
 The joint receipt opens the replay and representative bindings, exact lifecycle
 authorization, runtime v7 receipt, reconstructed-output digest, and ordered
 serialized-payload receipt stream. Both capabilities are consumed on success
-or failure. The production worker invocation, registered scratch ownership,
-and candidate-cell transcript remain the next independent gates.
+or failure. That composed receipt remains pre-admission by itself.
 
 The candidate-cell core now passes that collector-minted capability directly
 to its execution adapter and requires its exact consumed terminal state before
 accepting a launch. The launch binds the replay receipt back to the worker
 contract's candidate, policy, retained phases, controller accounting root,
 query vector, and modulus. Controller or adapter failures abandon every
-still-live capability. This closes the in-process replay-to-worker handoff, but
-the repository production adapter, worker admission receipt, and dispatch
-authority remain absent.
+still-live capability. Behavior Set v32 now adds the private production
+invocation issuer at that deep boundary. It consumes the composed
+representative execution together with the Linux pathless expected-F1-M
+registry, independently reconciles replay, candidate, policy, phase,
+accounting, query, Day 2 archive, runtime identity, resource-limit,
+payload-taxonomy, canonical-key-frame, and anchored-size facts, and carries
+only a non-serializable typed admission into the existing streaming decoder. A
+complete nonterminal transcript can set the existing runtime-continuity and
+production-admissibility fields true; fixture and terminal paths remain false.
+No Day 1B unit, worker, runtime, request/result, or evidence schema changes. The
+issuer is private: the repository production candidate-cell worker adapter,
+workflow dispatch, publication artifact, and authority remain absent.
 
 The sole numeric exception in that pending document is the already
 preregistered, non-empirical protocol invariant
@@ -482,12 +490,10 @@ preregistered, non-empirical protocol invariant
 resource limit or authorize execution; every empirical numeric and method
 choice remains `null`.
 
-The remaining Day1B `HOLD` set is explicit: production integration of the
-controlled-scratch high-water and new creation-isolation capability, binding
-the Linux READY/DONE mapping receipt into a production candidate-cell worker adapter,
-consumption of the independently verified Day 2 plan capability, ADR 0012
-window-weighted equivalence accounting, the anchored Day 2 OpenFHE timing/size
-profile, the TRACE post-run anchor, and the Day-1 registration anchor. Full
+The remaining Day1B `HOLD` set is explicit: the repository-owned production
+adapter and actual worker transport, the frozen production resource-policy
+binding, the final anchored Day 2 OpenFHE timing/size profile and exact key-plan
+bytes, the TRACE post-run anchor, and the Day-1 registration anchor. Full
 per-query-arrival OpenFHE replay is forbidden: the frozen schedule
 would otherwise require 530,097,064 arrivals per trace unit and
 15,902,911,920 across all 30 units without adding independent layout states or

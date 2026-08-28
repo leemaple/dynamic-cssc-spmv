@@ -475,7 +475,7 @@ measurement-method field in this placeholder remains `null`; the separate
 amendment is the sole reviewed source of administrative limits and
 measurement-method tokens.
 
-The `dynamic-cssc-day1b-preparatory-behavior-set-v31` inventory and manual
+The `dynamic-cssc-day1b-preparatory-behavior-set-v32` inventory and manual
 `.github/workflows/publication-day1b-preparatory.yml` freeze and validate only
 the current pre-`S1` source surface, including the amendment and
 `docs/reviews/day1b-resource-amendment-review-2026-08-25.md`. A successful
@@ -589,7 +589,7 @@ the separate evidence path for real no-reuse enforcement. The accounting core
 does not mint a worker invocation, materialize per-query masks or ledger
 transitions, measure serialized OpenFHE sizes, or relax any dispatch gate.
 
-The current pre-S1 v31 controller additionally emits one bounded cardinality
+The pre-S1 v31 controller additionally emits one bounded cardinality
 row for every retained window to prove exact coverage of the controller audit.
 A zero-query row binds its window range, first query ordinal, state version, and
 zero multiplicity only: all query-plan digests are `null`, returned and masked
@@ -635,6 +635,25 @@ window-plan stream at v1 and advances the nullable F1-M window-cardinality row
 to v3, its canonical set to v4, and the cardinality-derivation root to v5. These
 version changes occur before any Day 1 registration, Day 2 profile/post-run, or
 Day 1B evidence anchor exists and authorize no execution.
+
+The current v32 increment installs one private, non-dispatching production
+invocation issuer without changing the Day 1B unit, worker input-binding,
+worker-receipt, runtime-receipt, or native request/result schema. The issuer
+must consume both the Linux anonymous expected-F1-M registry capability and the
+single-use representative OpenFHE execution capability in one process. Before
+minting a worker invocation it independently reconciles the same-replay
+candidate, role, policy, retained phases, accounting/window/query roots,
+query-vector digest, modulus, and zero-reset fact; the exact anchored Day 2
+outer archive; the controller-expected and READY/DONE-observed worker runtime
+identity; the exact resource limits and observations; and the closed native
+payload taxonomy, canonical `D1BKEY01` frame, and Day 2 serialized sizes. Only
+a complete, nonterminal, zero-retry, zero-reset worker transcript may then set
+the existing `runtime_state_continuity_verified` and
+`production_execution_admissible` fields true. Fixture issuers and every
+controller-terminal outcome keep both fields false. The issuer is private and
+the repository execution adapter remains an unconditional `HOLD`; no workflow
+dispatch, artifact producer, upload step, evidence anchor, performance claim,
+or publication authority is introduced by v32.
 
 The v23 surface also freezes canonical big-endian binary framing for the three
 metadata categories used in primary communication accounting. A ColumnIndex

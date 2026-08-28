@@ -19,9 +19,18 @@ from typing import BinaryIO
 
 import pytest
 
+import dynamic_cssc.openfhe_query_runner as openfhe_runner
+import dynamic_cssc.openfhe_query_runtime as openfhe_runtime
+import dynamic_cssc.publication_day1b_openfhe_execution as representative_openfhe
 import dynamic_cssc.publication_day1b_worker_protocol as worker_protocol
 from dynamic_cssc.day2_calibration_authority import PRIMITIVE_NAMES
+from dynamic_cssc.day2_openfhe_key_plan import Day2OpenFHEKeyPlanReceipt
+from dynamic_cssc.ordinary_query_lifecycle import OrdinaryExecutionAuthorizationReceipt
+from dynamic_cssc.publication_day1b_aggregate_bounds import (
+    SERIALIZED_PROTOCOL_OBJECT_CATEGORIES,
+)
 from dynamic_cssc.publication_day1b_expected_counts import (
+    Day1BControllerExpectedCombinedEvaluationKeySizeClass,
     Day1BControllerExpectedCounts,
     Day1BControllerExpectedPhaseCounts,
 )
@@ -31,6 +40,15 @@ from dynamic_cssc.publication_day1b_f1m_aggregation import (
     Day1BF1MControllerContext,
     Day1BF1MPhaseBoundary,
     Day1BF1MRouteCoverage,
+)
+from dynamic_cssc.publication_day1b_key_framing import (
+    DAY1B_COMBINED_EVALUATION_KEY_CATEGORY,
+    DAY1B_COMBINED_EVALUATION_KEY_FRAMING_SCHEMA,
+    Day1BCombinedEvaluationKeyFrame,
+)
+from dynamic_cssc.publication_day1b_replay_execution import (
+    Day1BQueryExecutionBinding,
+    Day1BReplayExecutionReceipt,
 )
 from dynamic_cssc.publication_day1b_worker_protocol import (
     DAY1B_WORKER_EXECUTION_BASIS,
@@ -73,6 +91,7 @@ from dynamic_cssc.publication_day1b_worker_protocol import (
     issue_day1b_anonymous_scratch_capability,
     prepare_day1b_expected_f1m_registry,
 )
+from dynamic_cssc.strong_execution import StrongExecutionAuthorizationReceipt
 
 _CURRENT_CONTROLLED_SCRATCH: Path
 _FIXTURE_UPDATE_PRIMITIVE_COUNTS = (3, 4) + (0,) * (len(PRIMITIVE_NAMES) - 2)
@@ -421,8 +440,15 @@ def _phase_audits() -> tuple[Day1BWorkerPhaseAudit, ...]:
     )
 
 
-def _formal_weighted_controller_only_f1m_contract() -> Day1BWorkerProtocolContract:
-    base = _contract()
+def _formal_weighted_controller_only_f1m_contract(
+    *,
+    candidate: Day1BWorkerCandidateSpec | None = None,
+    expected_f1m_objects: tuple[Day1BControllerExpectedF1MObject, ...] | None = None,
+) -> Day1BWorkerProtocolContract:
+    base = _contract(
+        candidate=candidate,
+        expected_f1m_objects=expected_f1m_objects,
+    )
     category_names = tuple(category for category, _transaction in base.serialized_categories)
     f1m_indices = tuple(
         category_names.index(category)
@@ -456,6 +482,470 @@ def _formal_weighted_controller_only_f1m_contract() -> Day1BWorkerProtocolContra
         expected_serialized_equivalence_class_count=(
             non_f1m_equivalence_classes
         ),
+    )
+
+
+def _production_admission_contract(
+    runtime_identity_sha256: str,
+    *,
+    execution_kind: str = "ordinary",
+) -> Day1BWorkerProtocolContract:
+    """Build a formal-taxonomy contract for the private issuer tests."""
+
+    candidate = (
+        Day1BWorkerCandidateSpec(
+            candidate_id="reserved-slack/beta=0.4",
+            candidate_role="reference",
+            strategy="ReservedSlack-CSSC",
+            f1m_policy="overlap-only",
+            candidate_policy_digest="9" * 64,
+            retained_phases=("tuning-prefix", "held-out"),
+        )
+        if execution_kind == "ordinary"
+        else None
+    )
+    expected_f1m_objects = (
+        _expected_f1m_objects(
+            candidate.candidate_id,
+            categories=("query-f1m-random-mask-ciphertexts",),
+        )
+        if candidate is not None
+        else None
+    )
+    base = _formal_weighted_controller_only_f1m_contract(
+        candidate=candidate,
+        expected_f1m_objects=expected_f1m_objects,
+    )
+    categories = SERIALIZED_PROTOCOL_OBJECT_CATEGORIES
+    category_index = {
+        category: index for index, (category, _transaction) in enumerate(categories)
+    }
+    phases: list[Day1BControllerExpectedPhaseCounts] = []
+    for phase_index, phase in enumerate(base.controller_expected_counts.phases):
+        logical = [0] * len(categories)
+        logical[category_index["update-publication-ciphertexts"]] = 2
+        logical[category_index["query-query-ciphertexts"]] = 3
+        logical[category_index["query-result-ciphertexts"]] = 1
+        logical[category_index["query-f1m-random-mask-ciphertexts"]] = (
+            phase.logical_protocol_object_counts[2]
+        )
+        logical[
+            category_index["query-f1m-encrypted-zero-dummy-ciphertexts"]
+        ] = phase.logical_protocol_object_counts[3]
+        logical[category_index[DAY1B_COMBINED_EVALUATION_KEY_CATEGORY]] = int(
+            phase_index == 0
+        )
+        worker = list(logical)
+        worker[category_index["query-f1m-random-mask-ciphertexts"]] = 0
+        worker[
+            category_index["query-f1m-encrypted-zero-dummy-ciphertexts"]
+        ] = 0
+        phases.append(
+            replace(
+                phase,
+                logical_protocol_object_counts=tuple(logical),
+                worker_streamed_protocol_object_counts=tuple(worker),
+            )
+        )
+
+    rotation_bytes = 11
+    eval_mult_bytes = 13
+    key_size_class = (
+        Day1BControllerExpectedCombinedEvaluationKeySizeClass.from_day2_authority(
+            day2_outer_archive_sha256=base.day2_outer_archive_sha256,
+            serialized_object_size_profile_sha256=(
+                base.serialized_object_size_profile_sha256
+            ),
+            serialized_rotation_key_inventory_bytes=rotation_bytes,
+            serialized_eval_mult_key_bytes=eval_mult_bytes,
+        )
+    )
+    expected_counts = replace(
+        base.controller_expected_counts,
+        serialized_categories=categories,
+        phases=tuple(phases),
+        combined_evaluation_key_size_class=key_size_class,
+    )
+    context = replace(
+        base.f1m_controller_context,
+        worker_build_identity_sha256="6" * 64,
+        worker_runtime_identity_sha256=runtime_identity_sha256,
+    )
+    coverage = replace(
+        base.f1m_route_coverage,
+        controller_context_sha256=context.context_sha256,
+    )
+    f1m_indices = {
+        category_index["query-f1m-random-mask-ciphertexts"],
+        category_index["query-f1m-encrypted-zero-dummy-ciphertexts"],
+    }
+    non_f1m_count = sum(
+        int(count > 0)
+        for phase in expected_counts.phases
+        for index, count in enumerate(phase.worker_streamed_protocol_object_counts)
+        if index not in f1m_indices
+    )
+    return replace(
+        base,
+        serialized_categories=categories,
+        serialized_rotation_key_inventory_bytes=rotation_bytes,
+        serialized_eval_mult_key_bytes=eval_mult_bytes,
+        combined_evaluation_key_size_class_sha256=(
+            key_size_class.combined_evaluation_key_size_class_sha256
+        ),
+        f1m_controller_context=context,
+        f1m_controller_context_sha256=context.context_sha256,
+        f1m_route_coverage=coverage,
+        f1m_route_coverage_sha256=coverage.route_coverage_sha256,
+        controller_expected_counts=expected_counts,
+        controller_expected_counts_sha256=expected_counts.expected_counts_sha256,
+        expected_serialized_equivalence_class_count=non_f1m_count,
+        resource_limits=replace(
+            base.resource_limits,
+            wall_clock_ns_per_candidate_cell=600 * 1_000_000_000,
+        ),
+    )
+
+
+def _runtime_identity_policy() -> openfhe_runtime.OpenFHEWorkerRuntimeIdentityPolicy:
+    return openfhe_runtime.OpenFHEWorkerRuntimeIdentityPolicy(
+        worker_adapter_schema_version=worker_protocol.DAY1B_WORKER_ADAPTER_SCHEMA,
+        worker_build_identity_sha256="6" * 64,
+        operating_system_identity="Linux-test-publication-runner",
+        cpu_affinity_policy_token=openfhe_runtime.OPENFHE_CPU_AFFINITY_POLICY,
+        required_cpu_affinity=(0, 1),
+    )
+
+
+def _serialized_payload(
+    category: str,
+    payload: bytes,
+    *,
+    subject_id: str | None = None,
+) -> openfhe_runtime.OpenFHESerializedPayload:
+    return openfhe_runtime.OpenFHESerializedPayload(
+        category=category,
+        subject_id=subject_id or f"fixture-{category}",
+        binary_framing_schema=(
+            DAY1B_COMBINED_EVALUATION_KEY_FRAMING_SCHEMA
+            if category == DAY1B_COMBINED_EVALUATION_KEY_CATEGORY
+            else None
+        ),
+        sha256=hashlib.sha256(payload).hexdigest(),
+        payload=payload,
+    )
+
+
+def _representative_payloads(
+    contract: Day1BWorkerProtocolContract,
+    *,
+    duplicate_native_category: bool = False,
+) -> tuple[openfhe_runtime.OpenFHESerializedPayload, ...]:
+    assert contract.serialized_rotation_key_inventory_bytes is not None
+    assert contract.serialized_eval_mult_key_bytes is not None
+    key_frame = Day1BCombinedEvaluationKeyFrame(
+        rotation_key_inventory=(
+            b"r" * contract.serialized_rotation_key_inventory_bytes
+        ),
+        eval_mult_keys=b"m" * contract.serialized_eval_mult_key_bytes,
+    ).to_bytes()
+    payloads = [
+        _serialized_payload(DAY1B_COMBINED_EVALUATION_KEY_CATEGORY, key_frame),
+        _serialized_payload(
+            "update-publication-ciphertexts",
+            b"u" * contract.ciphertext_bytes,
+        ),
+        _serialized_payload(
+            "query-query-ciphertexts",
+            b"q" * contract.ciphertext_bytes,
+        ),
+        _serialized_payload(
+            "query-result-ciphertexts",
+            b"o" * contract.ciphertext_bytes,
+        ),
+        _serialized_payload(
+            "query-f1m-random-mask-ciphertexts",
+            b"r" * contract.f1m_random_zero_sum_ciphertext_bytes,
+        ),
+    ]
+    if duplicate_native_category:
+        payloads.insert(
+            2,
+            _serialized_payload(
+                "update-publication-ciphertexts",
+                b"v" * contract.ciphertext_bytes,
+                subject_id="fixture-update-publication-ciphertexts-second",
+            ),
+        )
+    if contract.candidate.f1m_policy != "overlap-only":
+        payloads.append(
+            _serialized_payload(
+                "query-f1m-encrypted-zero-dummy-ciphertexts",
+                b"d" * contract.f1m_encrypted_zero_dummy_ciphertext_bytes,
+            )
+        )
+    return tuple(payloads)
+
+
+def _production_expected_f1m_objects(
+    contract: Day1BWorkerProtocolContract,
+) -> tuple[Day1BControllerExpectedF1MObject, ...]:
+    categories = (
+        ("query-f1m-random-mask-ciphertexts",)
+        if contract.candidate.f1m_policy == "overlap-only"
+        else DAY1B_WORKER_REQUIRED_F1M_SIZE_CLASS_CATEGORIES
+    )
+    return _expected_f1m_objects(
+        contract.candidate.candidate_id,
+        categories=categories,
+    )
+
+
+def _representative_execution_fixture(
+    contract: Day1BWorkerProtocolContract,
+    *,
+    execution_kind: str = "ordinary",
+    duplicate_native_category: bool = False,
+) -> representative_openfhe.ExecutedDay1BRepresentativeOpenFHE:
+    authorization_type = {
+        "ordinary": OrdinaryExecutionAuthorizationReceipt,
+        "strong": StrongExecutionAuthorizationReceipt,
+    }[execution_kind]
+    binding = Day1BQueryExecutionBinding(
+        candidate_id=contract.candidate.candidate_id,
+        candidate_role=contract.candidate.candidate_role,
+        candidate_policy_sha256=contract.candidate.candidate_policy_digest,
+        retained_phases=contract.candidate.retained_phases,
+        phase=contract.candidate.retained_phases[0],
+        window_index=1,
+        first_global_query_ordinal=1,
+        logical_query_multiplicity=1,
+        execution_kind=execution_kind,
+        descriptor_sha256="d" * 64,
+        version_id="version-0001",
+        cloud_program_sha256="e" * 64,
+        output_plan_sha256="f" * 64,
+        execution_binding_sha256="1" * 64,
+        private_plan_sha256="2" * 64,
+        query_vector_sha256=contract.query_vector_sha256,
+        plaintext_modulus=65_537,
+        logical_state_sha256="3" * 64,
+        expected_output_sha256=representative_openfhe._output_sha256(
+            (1,),
+            modulus=65_537,
+        ),
+        retained_private_bundle_count=1,
+    )
+    replay = Day1BReplayExecutionReceipt(
+        candidate_id=contract.candidate.candidate_id,
+        candidate_role=contract.candidate.candidate_role,
+        candidate_policy_sha256=contract.candidate.candidate_policy_digest,
+        retained_phases=contract.candidate.retained_phases,
+        accounting_sha256=contract.f1m_controller_context.accounting_sha256,
+        window_stream_sha256=(
+            contract.f1m_controller_context.complete_window_stream_sha256
+        ),
+        query_window_stream_sha256=(
+            contract.f1m_controller_context.query_window_stream_sha256
+        ),
+        query_execution_binding_stream_sha256="4" * 64,
+        query_execution_binding_count=1,
+        query_vector_sha256=contract.query_vector_sha256,
+        plaintext_modulus=65_537,
+        representative_query_execution_binding_sha256=binding.binding_sha256,
+        representative_phase=binding.phase,
+        representative_window_index=binding.window_index,
+        terminal_version_id=binding.version_id,
+        terminal_logical_state_sha256="5" * 64,
+        state_reset_count=0,
+    )
+    query_id = representative_openfhe._representative_query_id(replay, binding)
+    authorization = authorization_type(
+        query_id=query_id,
+        version_id=binding.version_id,
+        ledger_commitment_token="fixture-commitment",
+        query_preparation_sha256="7" * 64,
+        execution_binding_digest=binding.execution_binding_sha256,
+        authorization_transition_sha256="8" * 64,
+    )
+    runtime = openfhe_runtime.OpenFHEQueryRuntimeReceipt(
+        runner=type(
+            "FixtureRunner",
+            (),
+            {"to_document": lambda self: {"fixture": "runner"}},
+        )(),
+        execution_kind=execution_kind,
+        authorization=authorization,
+        day2_key_plan_authorization=Day2OpenFHEKeyPlanReceipt(
+            day2_source_git_sha="1" * 40,
+            day2_outer_archive_sha256=contract.day2_outer_archive_sha256,
+            rotation_key_plan_sha256="9" * 64,
+            day1a_authority_receipt_sha256="a" * 64,
+            day1a_inventory_sha256="b" * 64,
+            required_exact_indices=(1,),
+        ),
+        request_sha256="c" * 64,
+        request_byte_count=1,
+        result_sha256="d" * 64,
+        result_byte_count=1,
+        elapsed_ns=900,
+        timeout_seconds=600,
+        peak_resident_memory_bytes=7_000,
+        resident_memory_limit_bytes=(
+            contract.resource_limits.resident_memory_bytes_per_candidate_cell
+        ),
+        peak_scratch_bytes=8_000,
+        scratch_limit_bytes=contract.resource_limits.scratch_bytes_per_candidate_cell,
+        stdout_sha256="e" * 64,
+        stdout_byte_count=1,
+        stderr_sha256="f" * 64,
+        stderr_byte_count=0,
+        serialized_object_count=0,
+        serialized_object_bytes=0,
+        host_identity_sha256="0" * 64,
+        operating_system_identity="Linux-test-publication-runner",
+        cpu_affinity=(0, 1),
+        runtime_mapping_admission=type(
+            "FixtureMapping",
+            (),
+            {"to_document": lambda self: {"fixture": "mapping"}},
+        )(),
+    )
+    payloads = _representative_payloads(
+        contract,
+        duplicate_native_category=duplicate_native_category,
+    )
+    runtime = replace(
+        runtime,
+        serialized_object_count=len(payloads),
+        serialized_object_bytes=sum(len(item.payload) for item in payloads),
+    )
+    payload_root, payload_count, payload_bytes = (
+        representative_openfhe._payload_receipt_stream(payloads)
+    )
+    expected_output_sha256 = representative_openfhe._output_sha256(
+        (1,),
+        modulus=65_537,
+    )
+    receipt = representative_openfhe.Day1BRepresentativeOpenFHEReceipt(
+        replay_execution_receipt=replay,
+        representative_binding=binding,
+        runtime_receipt=runtime,
+        query_id=query_id,
+        expected_output_sha256=expected_output_sha256,
+        reconstructed_output_sha256=expected_output_sha256,
+        serialized_payload_receipt_stream_sha256=payload_root,
+        serialized_payload_count=payload_count,
+        serialized_payload_bytes=payload_bytes,
+    )
+    verified_objects = tuple(
+        openfhe_runner.OpenFHESerializedObjectReceipt(
+            category=payload.category,
+            subject_id=payload.subject_id,
+            relative_path=f"object-{index:06d}.bin",
+            byte_count=len(payload.payload),
+            sha256=payload.sha256,
+        )
+        for index, payload in enumerate(payloads)
+    )
+    execution = openfhe_runtime.ExecutedOpenFHEQuery(
+        verified_result=openfhe_runner.VerifiedOpenFHEQueryResult(
+            request_sha256=runtime.request_sha256,
+            operation_counts=(),
+            decrypted_results=(),
+            reconstructed_output=(1,),
+            key_material_receipt=object(),  # type: ignore[arg-type]
+            serialized_objects=verified_objects,
+            second_batch_row_zero=True,
+            publication_authority=False,
+        ),
+        runtime_receipt=runtime,
+        serialized_payloads=payloads,
+    )
+    return representative_openfhe.ExecutedDay1BRepresentativeOpenFHE(
+        receipt=receipt,
+        openfhe_execution=execution,
+    )
+
+
+def _production_capability_fixtures(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    contract: Day1BWorkerProtocolContract,
+    executed: representative_openfhe.ExecutedDay1BRepresentativeOpenFHE,
+) -> tuple[
+    openfhe_runtime.OpenFHEWorkerRuntimeIdentityPolicy,
+    Day1BExpectedF1MRegistryCapability,
+    representative_openfhe.Day1BRepresentativeOpenFHEExecutionCapability,
+]:
+    """Mint both private handoffs while keeping Linux isolation a separate test."""
+
+    policy = _runtime_identity_policy()
+    identity = openfhe_runtime.project_expected_openfhe_worker_runtime_identity(
+        policy
+    )
+    assert openfhe_runtime.openfhe_worker_runtime_identity_sha256(identity) == (
+        contract.f1m_controller_context.worker_runtime_identity_sha256
+    )
+    monkeypatch.setattr(
+        worker_protocol,
+        "project_observed_openfhe_worker_runtime_identity",
+        lambda _policy, _receipt: identity,
+    )
+    monkeypatch.setattr(
+        representative_openfhe,
+        "execute_day1b_representative_openfhe_query",
+        lambda **_kwargs: executed,
+    )
+    execution_capability = (
+        representative_openfhe.execute_day1b_representative_openfhe_query_for_production(
+            candidate_replay_capability=object(),  # type: ignore[arg-type]
+            day2_key_plan_capability=object(),  # type: ignore[arg-type]
+            ledger=object(),  # type: ignore[arg-type]
+            repository_root=_CURRENT_CONTROLLED_SCRATCH.resolve(),
+            runner_relative_path="fixture-runner",
+            scratch_root=_CURRENT_CONTROLLED_SCRATCH / "unused-runtime-scratch",
+            timeout_seconds=600,
+            resident_memory_limit_bytes=(
+                contract.resource_limits.resident_memory_bytes_per_candidate_cell
+            ),
+            scratch_limit_bytes=(
+                contract.resource_limits.scratch_bytes_per_candidate_cell
+            ),
+        )
+    )
+    registry_capability = _prepare_registry(
+        _production_expected_f1m_objects(contract),
+        contract=contract,
+    )
+    registry = worker_protocol._active_expected_registry_binding(
+        registry_capability,
+        consume=False,
+    ).registry
+    registry.descriptor = replace(
+        registry.descriptor,
+        anonymous_scratch_creation_isolation_verified=True,
+    )
+    return policy, registry_capability, execution_capability
+
+
+def _issue_platform_neutral_production_invocation(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    contract: Day1BWorkerProtocolContract,
+    executed: representative_openfhe.ExecutedDay1BRepresentativeOpenFHE,
+) -> Day1BWorkerInvocationCapability:
+    policy, registry, execution = _production_capability_fixtures(
+        monkeypatch,
+        contract=contract,
+        executed=executed,
+    )
+    return worker_protocol._issue_day1b_worker_invocation_from_representative_openfhe_execution(
+        contract=contract,
+        controller_phase_audits=_phase_audits(),
+        expected_f1m_registry_capability=registry,
+        execution_capability=execution,
+        runtime_identity_policy=policy,
     )
 
 
@@ -902,8 +1392,12 @@ def _outcome_transcript(
     *,
     outcomes: tuple[tuple[str, str | None], ...],
     omit_f1m_from_complete_phases: bool = False,
+    native_payloads: tuple[openfhe_runtime.OpenFHESerializedPayload, ...] | None = None,
 ) -> bytes:
     assert len(outcomes) == 3
+    native_representatives: dict[str, bytes] = {}
+    for payload in native_payloads or ():
+        native_representatives.setdefault(payload.category, payload.payload)
     candidate = contract.candidate
     frames = [
         _frame(0, "cell-start", input_binding=contract.input_binding_document()),
@@ -961,6 +1455,27 @@ def _outcome_transcript(
                     matching = (None,)
                 equivalence_class_counts.append(len(matching))
                 for ordinal, expected_object in enumerate(matching):
+                    if category in native_representatives:
+                        payload = native_representatives[category]
+                    elif category == DAY1B_COMBINED_EVALUATION_KEY_CATEGORY:
+                        assert (
+                            contract.serialized_rotation_key_inventory_bytes
+                            is not None
+                        )
+                        assert contract.serialized_eval_mult_key_bytes is not None
+                        payload = Day1BCombinedEvaluationKeyFrame(
+                            rotation_key_inventory=(
+                                b"r"
+                                * contract.serialized_rotation_key_inventory_bytes
+                            ),
+                            eval_mult_keys=(
+                                b"m" * contract.serialized_eval_mult_key_bytes
+                            ),
+                        ).to_bytes()
+                    else:
+                        payload = (
+                            f"{candidate.candidate_id}:{phase}:{category}:{ordinal}"
+                        ).encode()
                     frames.append(
                         _frame(
                             sequence,
@@ -979,9 +1494,7 @@ def _outcome_transcript(
                                 if expected_object is None
                                 else expected_object.f1m_size_class.to_document()
                             ),
-                            payload=(
-                                f"{candidate.candidate_id}:{phase}:{category}:{ordinal}"
-                            ).encode(),
+                            payload=payload,
                         )
                     )
                     sequence += 1
@@ -1070,6 +1583,50 @@ def _rewrite_first_frame(
         rewritten.extend(payload)
         position = payload_end
     assert changed
+    return bytes(rewritten)
+
+
+def _splice_first_frame(
+    transcript: bytes,
+    frame_kind: str,
+    mutate: object,
+    *,
+    predicate: object | None = None,
+) -> bytes:
+    frames: list[tuple[dict[str, object], bytes]] = []
+    position = 0
+    changed = False
+    while position < len(transcript):
+        header_size = int.from_bytes(transcript[position : position + 4], "big")
+        header_start = position + 4
+        header_end = header_start + header_size
+        header = json.loads(transcript[header_start:header_end])
+        payload_end = header_end + header["payload_byte_count"]
+        payload = transcript[header_end:payload_end]
+        if (
+            not changed
+            and header["frame_kind"] == frame_kind
+            and (predicate is None or predicate(header))
+        ):
+            frames.extend(mutate(header, payload))
+            changed = True
+        else:
+            frames.append((header, payload))
+        position = payload_end
+    assert changed
+
+    rewritten = bytearray()
+    for sequence, (header, payload) in enumerate(frames):
+        header_bytes = _canonical_bytes(
+            {
+                **header,
+                "sequence": sequence,
+                "payload_byte_count": len(payload),
+            }
+        )
+        rewritten.extend(len(header_bytes).to_bytes(4, "big"))
+        rewritten.extend(header_bytes)
+        rewritten.extend(payload)
     return bytes(rewritten)
 
 
@@ -3762,6 +4319,659 @@ def test_formal_weighted_f1m_registry_is_controller_only_not_worker_payload() ->
         )
     finally:
         evidence.close()
+
+
+@pytest.mark.parametrize("execution_kind", ("ordinary", "strong"))
+def test_private_production_admission_closes_replay_runtime_and_payload_facts(
+    monkeypatch: pytest.MonkeyPatch,
+    execution_kind: str,
+) -> None:
+    policy = _runtime_identity_policy()
+    identity = openfhe_runtime.project_expected_openfhe_worker_runtime_identity(
+        policy
+    )
+    identity_sha256 = openfhe_runtime.openfhe_worker_runtime_identity_sha256(
+        identity
+    )
+    contract = _production_admission_contract(
+        identity_sha256,
+        execution_kind=execution_kind,
+    )
+    executed = _representative_execution_fixture(
+        contract,
+        execution_kind=execution_kind,
+    )
+    expected = _production_expected_f1m_objects(contract)
+    registry = _prepare_registry(expected, contract=contract)
+    descriptor = describe_day1b_expected_f1m_registry(registry)
+    abandon_day1b_expected_f1m_registry(registry)
+    monkeypatch.setattr(
+        worker_protocol,
+        "project_observed_openfhe_worker_runtime_identity",
+        lambda _policy, _receipt: identity,
+    )
+
+    admission, observation = worker_protocol._production_admission_from_execution(
+        contract=contract,
+        executed=executed,
+        runtime_identity_policy=policy,
+        expected_registry_descriptor=descriptor,
+    )
+
+    assert admission.runtime_identity_sha256 == identity_sha256
+    assert admission.runtime_receipt_sha256 == (
+        executed.openfhe_execution.runtime_receipt.receipt_sha256
+    )
+    assert admission.representative_openfhe_receipt_sha256 == (
+        executed.receipt.receipt_sha256
+    )
+    assert observation == worker_protocol._ControllerCandidateObservation(
+        candidate_id=contract.candidate.candidate_id,
+        elapsed_ns=900,
+        peak_resident_memory_bytes=7_000,
+        peak_scratch_bytes=8_000,
+        terminal_failure_code=None,
+    )
+
+    retargeted_replay = replace(
+        executed.receipt.replay_execution_receipt,
+        window_stream_sha256="0" * 64,
+    )
+    retargeted_query_id = representative_openfhe._representative_query_id(
+        retargeted_replay,
+        executed.receipt.representative_binding,
+    )
+    retargeted_runtime = replace(
+        executed.receipt.runtime_receipt,
+        authorization=replace(
+            executed.receipt.runtime_receipt.authorization,
+            query_id=retargeted_query_id,
+        ),
+    )
+    retargeted_receipt = replace(
+        executed.receipt,
+        replay_execution_receipt=retargeted_replay,
+        runtime_receipt=retargeted_runtime,
+        query_id=retargeted_query_id,
+    )
+    retargeted_openfhe_execution = replace(
+        executed.openfhe_execution,
+        runtime_receipt=retargeted_runtime,
+    )
+    retargeted_execution = replace(
+        executed,
+        receipt=retargeted_receipt,
+        openfhe_execution=retargeted_openfhe_execution,
+    )
+    with pytest.raises(Day1BWorkerProtocolError, match="replay receipt differs"):
+        worker_protocol._production_admission_from_execution(
+            contract=contract,
+            executed=retargeted_execution,
+            runtime_identity_policy=policy,
+            expected_registry_descriptor=descriptor,
+        )
+
+    runtime = executed.openfhe_execution.runtime_receipt
+    object.__setattr__(runtime, "timeout_seconds", True)
+    try:
+        with pytest.raises(Day1BWorkerProtocolError, match="runtime limits"):
+            worker_protocol._production_admission_from_execution(
+                contract=contract,
+                executed=executed,
+                runtime_identity_policy=policy,
+                expected_registry_descriptor=descriptor,
+            )
+    finally:
+        object.__setattr__(runtime, "timeout_seconds", 600)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ("missing-key", "exactly one key frame"),
+        ("wrong-ciphertext-size", "ciphertext size differs"),
+        ("wrong-key-segments", "key payload differs"),
+        ("extra-category", "outside the frozen taxonomy"),
+    ),
+)
+def test_representative_payload_inventory_is_closed_to_day2_authority(
+    mutation: str,
+    message: str,
+) -> None:
+    policy = _runtime_identity_policy()
+    identity_sha256 = openfhe_runtime.openfhe_worker_runtime_identity_sha256(
+        openfhe_runtime.project_expected_openfhe_worker_runtime_identity(policy)
+    )
+    contract = _production_admission_contract(identity_sha256)
+    payloads = list(_representative_payloads(contract))
+    if mutation == "missing-key":
+        payloads.pop(0)
+    elif mutation == "wrong-ciphertext-size":
+        payloads[1] = _serialized_payload(
+            "update-publication-ciphertexts",
+            b"u" * (contract.ciphertext_bytes - 1),
+        )
+    elif mutation == "wrong-key-segments":
+        payloads[0] = _serialized_payload(
+            DAY1B_COMBINED_EVALUATION_KEY_CATEGORY,
+            Day1BCombinedEvaluationKeyFrame(
+                rotation_key_inventory=b"r" * 10,
+                eval_mult_keys=b"m" * 13,
+            ).to_bytes(),
+        )
+    else:
+        payloads.append(_serialized_payload("caller-defined-category", b"x"))
+
+    with pytest.raises(Day1BWorkerProtocolError, match=message):
+        worker_protocol._validate_representative_payload_inventory(
+            contract,
+            tuple(payloads),
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("same-length-ciphertext", "same-length-canonical-key", "verified-receipt"),
+)
+def test_private_production_issuer_rehashes_and_rebinds_native_payload_ingress(
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    policy = _runtime_identity_policy()
+    identity_sha256 = openfhe_runtime.openfhe_worker_runtime_identity_sha256(
+        openfhe_runtime.project_expected_openfhe_worker_runtime_identity(policy)
+    )
+    contract = _production_admission_contract(identity_sha256)
+    executed = _representative_execution_fixture(contract)
+    policy, registry, execution = _production_capability_fixtures(
+        monkeypatch,
+        contract=contract,
+        executed=executed,
+    )
+    payloads = executed.openfhe_execution.serialized_payloads
+    if mutation == "same-length-ciphertext":
+        payload = next(
+            item
+            for item in payloads
+            if item.category == "update-publication-ciphertexts"
+        )
+        object.__setattr__(payload, "payload", b"v" * len(payload.payload))
+    elif mutation == "same-length-canonical-key":
+        payload = next(
+            item
+            for item in payloads
+            if item.category == DAY1B_COMBINED_EVALUATION_KEY_CATEGORY
+        )
+        replacement = Day1BCombinedEvaluationKeyFrame(
+            rotation_key_inventory=(
+                b"x" * contract.serialized_rotation_key_inventory_bytes
+            ),
+            eval_mult_keys=b"y" * contract.serialized_eval_mult_key_bytes,
+        ).to_bytes()
+        assert len(replacement) == len(payload.payload)
+        object.__setattr__(payload, "payload", replacement)
+    else:
+        verified = executed.openfhe_execution.verified_result
+        receipts = list(verified.serialized_objects)
+        receipts[1] = replace(receipts[1], sha256="0" * 64)
+        object.__setattr__(verified, "serialized_objects", tuple(receipts))
+
+    with pytest.raises(
+        Day1BWorkerProtocolError,
+        match="payload bytes changed|differs from its verified runtime object",
+    ):
+        worker_protocol._issue_day1b_worker_invocation_from_representative_openfhe_execution(
+            contract=contract,
+            controller_phase_audits=_phase_audits(),
+            expected_f1m_registry_capability=registry,
+            execution_capability=execution,
+            runtime_identity_policy=policy,
+        )
+    with pytest.raises(
+        representative_openfhe.Day1BRepresentativeOpenFHEError,
+        match="consumed",
+    ):
+        representative_openfhe.describe_day1b_representative_openfhe_execution(
+            execution
+        )
+    with pytest.raises(Day1BWorkerProtocolError, match="consumed"):
+        describe_day1b_expected_f1m_registry(registry)
+    _assert_no_live_controlled_scratch()
+
+
+@pytest.mark.parametrize("execution_kind", ("ordinary", "strong"))
+def test_private_native_projection_admits_only_the_exact_complete_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+    execution_kind: str,
+) -> None:
+    identity_sha256 = openfhe_runtime.openfhe_worker_runtime_identity_sha256(
+        openfhe_runtime.project_expected_openfhe_worker_runtime_identity(
+            _runtime_identity_policy()
+        )
+    )
+    contract = _production_admission_contract(
+        identity_sha256,
+        execution_kind=execution_kind,
+    )
+    executed = _representative_execution_fixture(
+        contract,
+        execution_kind=execution_kind,
+    )
+    invocation = _issue_platform_neutral_production_invocation(
+        monkeypatch,
+        contract=contract,
+        executed=executed,
+    )
+    evidence = claim_day1b_worker_evidence(
+        consume_day1b_worker_frames(
+            (
+                _outcome_transcript(
+                    contract,
+                    outcomes=(('complete', None),) * 3,
+                    native_payloads=executed.openfhe_execution.serialized_payloads,
+                ),
+            ),
+            contract=contract,
+            invocation_capability=invocation,
+        )
+    )
+    try:
+        assert evidence.receipt.runtime_state_continuity_verified is True
+        assert evidence.receipt.production_execution_admissible is True
+    finally:
+        evidence.close()
+    _assert_no_live_controlled_scratch()
+
+
+def test_private_native_projection_uses_first_canonical_same_category_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity_sha256 = openfhe_runtime.openfhe_worker_runtime_identity_sha256(
+        openfhe_runtime.project_expected_openfhe_worker_runtime_identity(
+            _runtime_identity_policy()
+        )
+    )
+    contract = _production_admission_contract(identity_sha256)
+    executed = _representative_execution_fixture(
+        contract,
+        duplicate_native_category=True,
+    )
+    updates = tuple(
+        item
+        for item in executed.openfhe_execution.serialized_payloads
+        if item.category == "update-publication-ciphertexts"
+    )
+    assert len(updates) == 2
+    invocation = _issue_platform_neutral_production_invocation(
+        monkeypatch,
+        contract=contract,
+        executed=executed,
+    )
+    evidence = claim_day1b_worker_evidence(
+        consume_day1b_worker_frames(
+            (
+                _outcome_transcript(
+                    contract,
+                    outcomes=(("complete", None),) * 3,
+                    native_payloads=executed.openfhe_execution.serialized_payloads,
+                ),
+            ),
+            contract=contract,
+            invocation_capability=invocation,
+        )
+    )
+    try:
+        assert evidence.receipt.production_execution_admissible is True
+    finally:
+        evidence.close()
+    _assert_no_live_controlled_scratch()
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ("second-same-category-digest", "wrong-multiplicity", "missing", "extra"),
+)
+def test_private_native_projection_rejects_spool_tampering(
+    monkeypatch: pytest.MonkeyPatch,
+    tamper: str,
+) -> None:
+    identity_sha256 = openfhe_runtime.openfhe_worker_runtime_identity_sha256(
+        openfhe_runtime.project_expected_openfhe_worker_runtime_identity(
+            _runtime_identity_policy()
+        )
+    )
+    contract = _production_admission_contract(identity_sha256)
+    executed = _representative_execution_fixture(
+        contract,
+        duplicate_native_category=True,
+    )
+    updates = tuple(
+        item
+        for item in executed.openfhe_execution.serialized_payloads
+        if item.category == "update-publication-ciphertexts"
+    )
+    transcript = _outcome_transcript(
+        contract,
+        outcomes=(("complete", None),) * 3,
+        native_payloads=executed.openfhe_execution.serialized_payloads,
+    )
+    def update_predicate(header: dict[str, object]) -> bool:
+        return (
+            header["phase"] == "tuning-prefix"
+            and header["category"] == "update-publication-ciphertexts"
+        )
+    if tamper == "second-same-category-digest":
+        transcript = _rewrite_first_frame(
+            transcript,
+            "serialized-object",
+            lambda header, _payload: (header, updates[1].payload),
+            predicate=update_predicate,
+        )
+    elif tamper == "wrong-multiplicity":
+        transcript = _rewrite_first_frame(
+            transcript,
+            "serialized-object",
+            lambda header, payload: (
+                {**header, "multiplicity": header["multiplicity"] + 1},
+                payload,
+            ),
+            predicate=update_predicate,
+        )
+    elif tamper == "missing":
+        transcript = _splice_first_frame(
+            transcript,
+            "serialized-object",
+            lambda _header, _payload: (),
+            predicate=update_predicate,
+        )
+    else:
+        transcript = _splice_first_frame(
+            transcript,
+            "serialized-object",
+            lambda header, payload: (
+                (header, payload),
+                ({**header, "object_ordinal": 1}, payload),
+            ),
+            predicate=update_predicate,
+        )
+    invocation = _issue_platform_neutral_production_invocation(
+        monkeypatch,
+        contract=contract,
+        executed=executed,
+    )
+
+    with pytest.raises(
+        Day1BWorkerProtocolError,
+        match="native payload projection|serialized category object counts",
+    ):
+        consume_day1b_worker_frames(
+            (transcript,),
+            contract=contract,
+            invocation_capability=invocation,
+        )
+    _assert_no_live_controlled_scratch()
+
+
+def test_failed_production_transcript_remains_non_admissible_without_full_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity_sha256 = openfhe_runtime.openfhe_worker_runtime_identity_sha256(
+        openfhe_runtime.project_expected_openfhe_worker_runtime_identity(
+            _runtime_identity_policy()
+        )
+    )
+    contract = _production_admission_contract(identity_sha256)
+    executed = _representative_execution_fixture(contract)
+    invocation = _issue_platform_neutral_production_invocation(
+        monkeypatch,
+        contract=contract,
+        executed=executed,
+    )
+    evidence = claim_day1b_worker_evidence(
+        consume_day1b_worker_frames(
+            (
+                _outcome_transcript(
+                    contract,
+                    outcomes=(
+                        ("complete", None),
+                        ("failed", "candidate-execution-failed"),
+                        ("failed", "candidate-execution-failed"),
+                    ),
+                    native_payloads=executed.openfhe_execution.serialized_payloads,
+                ),
+            ),
+            contract=contract,
+            invocation_capability=invocation,
+        )
+    )
+    try:
+        assert evidence.receipt.runtime_state_continuity_verified is False
+        assert evidence.receipt.production_execution_admissible is False
+        assert evidence.receipt.object_receipt_line_count == 0
+    finally:
+        evidence.close()
+    _assert_no_live_controlled_scratch()
+
+
+def test_fixture_issuer_invalid_observation_consumes_registry_and_cleans_scratch() -> None:
+    contract = _contract()
+    expected = _expected_f1m_objects(contract.candidate.candidate_id)
+    registry = _prepare_registry(expected, contract=contract)
+
+    with pytest.raises(Day1BWorkerProtocolError):
+        _test_only_issue_day1b_worker_invocation(
+            contract=contract,
+            controller_phase_audits=_phase_audits(),
+            expected_f1m_registry_capability=registry,
+            elapsed_ns=True,
+            peak_resident_memory_bytes=7_000,
+            peak_scratch_bytes=8_000,
+            terminal_failure_code=None,
+        )
+    with pytest.raises(Day1BWorkerProtocolError, match="consumed"):
+        describe_day1b_expected_f1m_registry(registry)
+    _assert_no_live_controlled_scratch()
+
+
+def test_private_production_admission_token_is_not_caller_constructible() -> None:
+    line = b"fixture-native-line\n"
+    with pytest.raises(Day1BWorkerProtocolError, match="not repository-issued"):
+        worker_protocol._ProductionInvocationAdmission(
+            contract_input_binding_sha256="0" * 64,
+            expected_registry_descriptor_sha256="1" * 64,
+            controller_observation_sha256="2" * 64,
+            runtime_identity_sha256="1" * 64,
+            runtime_receipt_sha256="2" * 64,
+            representative_openfhe_receipt_sha256="3" * 64,
+            native_non_f1m_spool_lines=(line,),
+            native_non_f1m_projection_sha256=hashlib.sha256(line).hexdigest(),
+            native_non_f1m_projection_line_count=1,
+            native_non_f1m_projection_byte_count=len(line),
+            _token=object(),
+        )
+    forged = object.__new__(worker_protocol._ProductionInvocationAdmission)
+    with pytest.raises(Day1BWorkerProtocolError, match="SHA-256|repository-issued"):
+        forged._validate()
+
+
+def test_materialized_f1m_fixture_receipt_cannot_be_relabelled_as_production() -> None:
+    contract = _contract()
+    evidence = claim_day1b_worker_evidence(
+        _consume((_complete_transcript(contract),), contract=contract)
+    )
+    try:
+        with pytest.raises(Day1BWorkerProtocolError, match="production admission"):
+            replace(
+                evidence.receipt,
+                worker_observed_f1m_size_class_count=0,
+                runtime_state_continuity_verified=True,
+                anonymous_scratch_creation_isolation_verified=True,
+                production_execution_admissible=True,
+            )
+    finally:
+        evidence.close()
+
+
+def test_private_production_issuer_rejects_plain_or_forged_execution_authority() -> None:
+    policy = _runtime_identity_policy()
+    identity_sha256 = openfhe_runtime.openfhe_worker_runtime_identity_sha256(
+        openfhe_runtime.project_expected_openfhe_worker_runtime_identity(policy)
+    )
+    contract = _production_admission_contract(identity_sha256)
+    expected = _production_expected_f1m_objects(contract)
+    plain_registry = _prepare_registry(expected, contract=contract)
+    plain_execution = _representative_execution_fixture(contract)
+    with pytest.raises(TypeError, match="runtime-minted authority"):
+        worker_protocol._issue_day1b_worker_invocation_from_representative_openfhe_execution(
+            contract=contract,
+            controller_phase_audits=_phase_audits(),
+            expected_f1m_registry_capability=plain_registry,
+            execution_capability=plain_execution,  # type: ignore[arg-type]
+            runtime_identity_policy=policy,
+        )
+    assert describe_day1b_expected_f1m_registry(plain_registry).size_class_count == (
+        len(expected)
+    )
+    abandon_day1b_expected_f1m_registry(plain_registry)
+
+    forged_registry = _prepare_registry(expected, contract=contract)
+    forged_execution = object.__new__(
+        representative_openfhe.Day1BRepresentativeOpenFHEExecutionCapability
+    )
+    object.__setattr__(forged_execution, "_binding", None)
+    with pytest.raises(
+        representative_openfhe.Day1BRepresentativeOpenFHEError,
+        match="unissued",
+    ):
+        worker_protocol._issue_day1b_worker_invocation_from_representative_openfhe_execution(
+            contract=contract,
+            controller_phase_audits=_phase_audits(),
+            expected_f1m_registry_capability=forged_registry,
+            execution_capability=forged_execution,
+            runtime_identity_policy=policy,
+        )
+    with pytest.raises(Day1BWorkerProtocolError, match="consumed"):
+        describe_day1b_expected_f1m_registry(forged_registry)
+    _assert_no_live_controlled_scratch()
+
+
+@pytest.mark.skipif(
+    platform.system() != "Linux",
+    reason="production issuer requires Linux anonymous scratch",
+)
+@pytest.mark.parametrize("execution_kind", ("ordinary", "strong"))
+def test_private_production_issuer_consumes_both_capabilities_and_mints_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    execution_kind: str,
+) -> None:
+    policy = _runtime_identity_policy()
+    identity = openfhe_runtime.project_expected_openfhe_worker_runtime_identity(
+        policy
+    )
+    identity_sha256 = openfhe_runtime.openfhe_worker_runtime_identity_sha256(
+        identity
+    )
+    contract = _production_admission_contract(
+        identity_sha256,
+        execution_kind=execution_kind,
+    )
+    executed = _representative_execution_fixture(
+        contract,
+        execution_kind=execution_kind,
+    )
+    monkeypatch.setattr(
+        worker_protocol,
+        "project_observed_openfhe_worker_runtime_identity",
+        lambda _policy, _receipt: identity,
+    )
+    monkeypatch.setattr(
+        representative_openfhe,
+        "execute_day1b_representative_openfhe_query",
+        lambda **_kwargs: executed,
+    )
+    execution_capability = (
+        representative_openfhe.execute_day1b_representative_openfhe_query_for_production(
+            candidate_replay_capability=object(),  # type: ignore[arg-type]
+            day2_key_plan_capability=object(),  # type: ignore[arg-type]
+            ledger=object(),  # type: ignore[arg-type]
+            repository_root=tmp_path.resolve(),
+            runner_relative_path="fixture-runner",
+            scratch_root=tmp_path.resolve() / "unused-runtime-scratch",
+            timeout_seconds=600,
+            resident_memory_limit_bytes=(
+                contract.resource_limits.resident_memory_bytes_per_candidate_cell
+            ),
+            scratch_limit_bytes=(
+                contract.resource_limits.scratch_bytes_per_candidate_cell
+            ),
+        )
+    )
+    audits = _phase_audits()
+    expected = _production_expected_f1m_objects(contract)
+    window_cardinalities, window_batches = _fixture_registry_inputs(
+        expected,
+        candidate=contract.candidate,
+        controller_phase_audits=audits,
+    )
+    os.chmod(_CURRENT_CONTROLLED_SCRATCH, 0o700)
+    registry = prepare_day1b_expected_f1m_registry(
+        contract=contract,
+        controller_phase_audits=audits,
+        window_cardinalities=iter(window_cardinalities),
+        window_batches=iter(window_batches),
+        expected_f1m_objects=iter(expected),
+        launcher_scratch_parent=_CURRENT_CONTROLLED_SCRATCH,
+    )
+
+    invocation = (
+        worker_protocol._issue_day1b_worker_invocation_from_representative_openfhe_execution(
+            contract=contract,
+            controller_phase_audits=audits,
+            expected_f1m_registry_capability=registry,
+            execution_capability=execution_capability,
+            runtime_identity_policy=policy,
+        )
+    )
+    with pytest.raises(
+        representative_openfhe.Day1BRepresentativeOpenFHEError,
+        match="consumed",
+    ):
+        representative_openfhe.describe_day1b_representative_openfhe_execution(
+            execution_capability
+        )
+    with pytest.raises(Day1BWorkerProtocolError, match="consumed"):
+        describe_day1b_expected_f1m_registry(registry)
+
+    evidence = claim_day1b_worker_evidence(
+        consume_day1b_worker_frames(
+            (
+                _outcome_transcript(
+                    contract,
+                    outcomes=(("complete", None),) * 3,
+                    native_payloads=executed.openfhe_execution.serialized_payloads,
+                ),
+            ),
+            contract=contract,
+            invocation_capability=invocation,
+        )
+    )
+    try:
+        receipt = evidence.receipt
+        assert receipt.runtime_state_continuity_verified is True
+        assert receipt.production_execution_admissible is True
+        assert receipt.candidate.receipt_origin == "worker-complete-transcript"
+        assert receipt.candidate.terminal_outcome is None
+        assert all(
+            phase.outcome == "complete" and phase.failure_code is None
+            for phase in receipt.candidate.phases
+        )
+        assert receipt.worker_observed_f1m_size_class_count == 0
+        assert receipt.anonymous_scratch_creation_isolation_verified is True
+        assert receipt.weighted_query_range_coverage_verified is True
+    finally:
+        evidence.close()
+    _assert_no_live_controlled_scratch()
 
 
 def test_formal_weighted_mode_rejects_first_stray_worker_f1m_frame() -> None:
