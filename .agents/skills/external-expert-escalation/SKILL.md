@@ -47,7 +47,9 @@ Use only an already authorized AIGoCode session or credential. Discover the live
 model catalog and select the exact Fable 5 model only when it is currently
 listed; never guess a model alias, bypass a provider restriction, expose a token,
 or persist a credential in the repository. Prefer a streaming response when the
-provider times out on long non-streaming requests.
+provider times out on long non-streaming requests. When Fable 5 is actively
+reasoning, let that response finish instead of resending the packet or polling
+aggressively.
 
 If Fable 5 or the authorized channel is unavailable, record that fact and
 continue with local verification. Availability must not block safe progress.

@@ -20,8 +20,8 @@ experiment dispatch, result interpretation, and submission-draft review.
 
 When a high-consequence question remains unresolved after local evidence review
 and the available ChatGPT Pro/ZCode reviews do not converge, apply the
-`external-expert-escalation` project skill. Fable 5 is an escalation reviewer,
-not a routine extra vote.
+[`external-expert-escalation`](.agents/skills/external-expert-escalation/SKILL.md)
+project skill. Fable 5 is an escalation reviewer, not a routine extra vote.
 
 External model output is advisory review, never source authority, experimental
 evidence, or permission to weaken a fail-closed gate. Reviewers are read-only by
