@@ -19,6 +19,7 @@ from dynamic_cssc.route_a_strategy import (
     ROUTE_A_STRATEGY_CANDIDATES,
     adapt_route_a_strategy_window,
     advance_route_a_candidate,
+    advance_route_a_candidate_timed,
     initialize_route_a_candidate,
 )
 from dynamic_cssc.route_a_workloads import RouteAAcceptedGroup, RouteASetTransition
@@ -286,6 +287,44 @@ def test_query_bearing_net_zero_window_compiles_once_after_version_rebind(
         else ("v00000001",)
     ]
     assert advanced.transition.output_plan is not None
+
+
+@pytest.mark.parametrize("candidate_id", ROUTE_A_STRATEGY_CANDIDATES)
+def test_timed_advance_separates_state_transition_from_result_assembly(
+    candidate_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    groups = (_group(0, RouteASetTransition(0, 1, 0, 3, "insert")),)
+    window = _window(RouteASetTransitionReference(0, 0), query_count=1)
+    candidate = initialize_route_a_candidate(candidate_id, {}, rows=256)
+    clock = iter((100, 140, 200, 275))
+    monkeypatch.setattr(
+        route_a_strategy_module.time,
+        "perf_counter_ns",
+        lambda: next(clock),
+    )
+
+    timed = advance_route_a_candidate_timed(candidate, groups, window)
+
+    assert timed.state_transition_nanoseconds == 40
+    assert timed.result_assembly_nanoseconds == 75
+    assert timed.advance.transition.facts.query_count == 1
+    assert timed.advance.transition.output_plan is not None
+    assert timed.advance.candidate.state.logical == {(0, 1): 3}
+
+
+@pytest.mark.parametrize("candidate_id", ROUTE_A_STRATEGY_CANDIDATES)
+def test_timed_and_compatibility_advance_are_semantically_identical(
+    candidate_id: str,
+) -> None:
+    groups = (_group(0, RouteASetTransition(0, 1, 0, 3, "insert")),)
+    window = _window(RouteASetTransitionReference(0, 0), query_count=1)
+    candidate = initialize_route_a_candidate(candidate_id, {}, rows=256)
+
+    timed = advance_route_a_candidate_timed(candidate, groups, window)
+    compatible = advance_route_a_candidate(candidate, groups, window)
+
+    assert timed.advance == compatible
 
 
 @pytest.mark.parametrize("candidate_id", ROUTE_A_STRATEGY_CANDIDATES)

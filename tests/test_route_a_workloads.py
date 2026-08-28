@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 
 import pytest
 
 from dynamic_cssc.route_a_workloads import (
     generate_route_a_formal_trace,
     generate_route_a_qualification_trace,
+    validate_route_a_synthetic_trace,
 )
 
 
@@ -110,3 +112,24 @@ def test_synthetic_event_trace_has_one_closed_canonical_source_identity() -> Non
             "row": 255,
         }
     ]
+
+
+def test_synthetic_trace_validation_rebinds_typed_groups_to_canonical_bytes() -> None:
+    trace = generate_route_a_formal_trace(scale="S", formal_seed=20260822)
+
+    assert validate_route_a_synthetic_trace(trace) is trace
+
+    first = trace.accepted_groups[0]
+    transition = first.transitions[0]
+    forged = replace(
+        trace,
+        accepted_groups=(
+            replace(
+                first,
+                transitions=(replace(transition, after=transition.after + 1),),
+            ),
+            *trace.accepted_groups[1:],
+        ),
+    )
+    with pytest.raises(ValueError, match="canonical source bytes"):
+        validate_route_a_synthetic_trace(forged)

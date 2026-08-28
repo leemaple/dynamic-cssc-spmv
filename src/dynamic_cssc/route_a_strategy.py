@@ -8,6 +8,7 @@ same evidence window differently.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, replace
 from typing import Literal, TypeAlias, cast
 
@@ -40,9 +41,11 @@ __all__ = (
     "ROUTE_A_STRATEGY_CANDIDATES",
     "RouteAAdaptedWindow",
     "RouteACandidateAdvance",
+    "RouteACandidateTimedAdvance",
     "RouteACandidateState",
     "adapt_route_a_strategy_window",
     "advance_route_a_candidate",
+    "advance_route_a_candidate_timed",
     "initialize_route_a_candidate",
 )
 
@@ -103,6 +106,24 @@ class RouteACandidateAdvance:
     candidate: RouteACandidateState
     adapted_window: RouteAAdaptedWindow
     transition: RouteATransition
+
+
+@dataclass(frozen=True, slots=True)
+class RouteACandidateTimedAdvance:
+    """One advance plus non-overlapping monotonic phase observations."""
+
+    advance: RouteACandidateAdvance
+    state_transition_nanoseconds: int
+    result_assembly_nanoseconds: int
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.state_transition_nanoseconds) is not int
+            or self.state_transition_nanoseconds < 0
+            or type(self.result_assembly_nanoseconds) is not int
+            or self.result_assembly_nanoseconds < 0
+        ):
+            raise ValueError("Route A phase timings must be nonnegative integer nanoseconds")
 
 
 def adapt_route_a_strategy_window(
@@ -291,12 +312,40 @@ def _strong_version_only_publication(
     )
 
 
-def advance_route_a_candidate(
+def _assemble_route_a_query_result(
+    transition: RouteATransition,
+    query_count: int,
+) -> RouteATransition:
+    if query_count == 0:
+        return transition
+    facts = replace(transition.facts, query_count=query_count)
+    state = transition.state
+    if type(transition) is StrongTransition:
+        if type(state) is not StrongStrategyState:  # pragma: no cover - closed union
+            raise AssertionError("Route A strong transition changed state type")
+        bundle = compile_strong_execution(state.base, state.delta)
+        return StrongTransition(
+            state=state,
+            facts=facts,
+            output_plan=bundle.output_plan,
+            execution_bundle=bundle,
+        )
+    if type(transition) is Transition:
+        if type(state) is not StrategyState:  # pragma: no cover - closed union
+            raise AssertionError("Route A ordinary transition changed state type")
+        components = (state.base,) if state.delta is None else (state.base, state.delta)
+        output_plan = output_plan_for(components)
+        analyze_output_plan(output_plan)
+        return Transition(state=state, facts=facts, output_plan=output_plan)
+    raise TypeError("Route A transition has the wrong exact type")
+
+
+def advance_route_a_candidate_timed(
     candidate: RouteACandidateState,
     groups: tuple[RouteAAcceptedGroup, ...],
     route_a_window: RouteAPublicationWindow,
-) -> RouteACandidateAdvance:
-    """Adapt and advance one exact next window without a forgeable derived seam."""
+) -> RouteACandidateTimedAdvance:
+    """Advance one window while separating state work from query-plan assembly."""
 
     if type(candidate) is not RouteACandidateState:
         raise TypeError("candidate must be an exact RouteACandidateState")
@@ -320,14 +369,16 @@ def advance_route_a_candidate(
     if update_bearing != bool(window.ordered_set_transition_references):
         raise ValueError("Route A source transition count is inconsistent")
 
+    state_only_window = replace(publication_window, query_count=0)
+    transition_started = time.perf_counter_ns()
     if type(state) is StrongStrategyState:
         if candidate.candidate_id != "packed-coo-cloud-segmented-delta/segment-width=128":
             raise ValueError("Route A strong state has the wrong candidate identity")
         transition: RouteATransition
         transition = (
-            advance_strong_publication(state, publication_window)
-            if publication_window.updates or not update_bearing
-            else _strong_version_only_publication(state, publication_window)
+            advance_strong_publication(state, state_only_window)
+            if state_only_window.updates or not update_bearing
+            else _strong_version_only_publication(state, state_only_window)
         )
     elif type(state) is StrategyState:
         expected_strategy = {
@@ -337,12 +388,17 @@ def advance_route_a_candidate(
         if state.strategy != expected_strategy:
             raise ValueError("Route A ordinary state has the wrong candidate identity")
         transition = (
-            advance_publication(state, publication_window)
-            if publication_window.updates or not update_bearing
-            else _ordinary_version_only_publication(state, publication_window)
+            advance_publication(state, state_only_window)
+            if state_only_window.updates or not update_bearing
+            else _ordinary_version_only_publication(state, state_only_window)
         )
     else:  # pragma: no cover - the exact candidate wrapper owns this type
         raise TypeError("Route A candidate contains the wrong state type")
+    transition_finished = time.perf_counter_ns()
+
+    assembly_started = time.perf_counter_ns()
+    transition = _assemble_route_a_query_result(transition, window.query_count)
+    assembly_finished = time.perf_counter_ns()
 
     if transition.state.version_ordinal != window.version_after:
         raise AssertionError("Route A strategy transition violated the frozen version rule")
@@ -354,4 +410,18 @@ def advance_route_a_candidate(
             candidate.next_global_query_ordinal + window.query_count
         ),
     )
-    return RouteACandidateAdvance(next_candidate, adapted_window, transition)
+    return RouteACandidateTimedAdvance(
+        advance=RouteACandidateAdvance(next_candidate, adapted_window, transition),
+        state_transition_nanoseconds=transition_finished - transition_started,
+        result_assembly_nanoseconds=assembly_finished - assembly_started,
+    )
+
+
+def advance_route_a_candidate(
+    candidate: RouteACandidateState,
+    groups: tuple[RouteAAcceptedGroup, ...],
+    route_a_window: RouteAPublicationWindow,
+) -> RouteACandidateAdvance:
+    """Compatibility entry point retaining the exact unphased return type."""
+
+    return advance_route_a_candidate_timed(candidate, groups, route_a_window).advance

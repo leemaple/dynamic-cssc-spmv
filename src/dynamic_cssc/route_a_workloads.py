@@ -14,6 +14,7 @@ __all__ = (
     "RouteASyntheticTrace",
     "generate_route_a_formal_trace",
     "generate_route_a_qualification_trace",
+    "validate_route_a_synthetic_trace",
 )
 
 _COLUMNS = 8_193
@@ -158,6 +159,30 @@ def generate_route_a_formal_trace(
         scale=scale,
         formal_seed=formal_seed,
     )
+
+
+def validate_route_a_synthetic_trace(
+    trace: RouteASyntheticTrace,
+) -> RouteASyntheticTrace:
+    """Recompute and bind every typed field to the registered source bytes."""
+
+    if type(trace) is not RouteASyntheticTrace:
+        raise TypeError("trace must be an exact RouteASyntheticTrace")
+    if trace.suite_role == "qualification":
+        expected = generate_route_a_qualification_trace(
+            scale=trace.scale,
+            qualification_seed=trace.formal_seed,
+        )
+    elif trace.suite_role == "formal":
+        expected = generate_route_a_formal_trace(
+            scale=trace.scale,
+            formal_seed=trace.formal_seed,
+        )
+    else:  # pragma: no cover - the frozen dataclass type owns this field domain
+        raise ValueError("Route A synthetic trace has an unknown suite role")
+    if trace != expected:
+        raise ValueError("Route A typed trace differs from its canonical source bytes")
+    return trace
 
 
 def _generate_route_a_synthetic_trace(
