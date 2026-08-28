@@ -209,15 +209,38 @@ class TransitionFacts:
 class Transition:
     state: StrategyState
     facts: TransitionFacts
-    output_plan: OutputPlan
+    output_plan: OutputPlan | None
+
+    def __post_init__(self) -> None:
+        query_count = self.facts.query_count
+        if type(query_count) is not int or query_count < 0:
+            raise ValueError("transition query_count must be a nonnegative strict integer")
+        if (query_count == 0) != (self.output_plan is None):
+            raise ValueError(
+                "ordinary query-side plans exist exactly for query-bearing transitions"
+            )
 
 
 @dataclass(frozen=True, slots=True)
 class StrongTransition:
     state: StrongStrategyState
     facts: TransitionFacts
-    output_plan: OutputPlan
-    execution_bundle: StrongExecutionBundle
+    output_plan: OutputPlan | None
+    execution_bundle: StrongExecutionBundle | None
+
+    def __post_init__(self) -> None:
+        query_count = self.facts.query_count
+        if type(query_count) is not int or query_count < 0:
+            raise ValueError("transition query_count must be a nonnegative strict integer")
+        query_side_absent = self.output_plan is None and self.execution_bundle is None
+        if (query_count == 0) != query_side_absent:
+            raise ValueError(
+                "strong query-side plans exist exactly for query-bearing transitions"
+            )
+        if self.execution_bundle is not None and (
+            self.output_plan != self.execution_bundle.output_plan
+        ):
+            raise ValueError("strong output plan must match its execution bundle")
 
 
 def _compile_strong_bundle(
@@ -1343,7 +1366,11 @@ def advance_publication(
     if not _is_strict_int(window.query_count) or window.query_count < 0:
         raise ValueError("window.query_count must be a nonnegative strict integer")
     if not window.updates:
-        plan = _output_plan_for_state(state)
+        plan = (
+            _output_plan_for_state(state)
+            if window.query_count > 0
+            else None
+        )
         return Transition(
             state=state,
             facts=TransitionFacts(
@@ -1423,7 +1450,11 @@ def advance_publication(
             rebuilt_output_block_ids=rebuilt_output_block_ids,
             active_component_ids=(base.component_id,),
         )
-        return Transition(new_state, facts, _checked_output_plan((base,)))
+        return Transition(
+            new_state,
+            facts,
+            _query_output_plan((base,), window.query_count),
+        )
     if state.strategy in {"Mini-CSSC-Delta", "PeriodicRepack"}:
         if (
             state.strategy == "PeriodicRepack"
@@ -1553,7 +1584,11 @@ def advance_strong_publication(
         raise TypeError("_predecessor must be a repository-minted capability")
     candidate = _validated_strong_candidate(state, window)
     if not window.updates:
-        bundle = _compile_strong_bundle(state.base, state.delta)
+        bundle = (
+            _compile_strong_bundle(state.base, state.delta)
+            if window.query_count > 0
+            else None
+        )
         return StrongTransition(
             state=state,
             facts=TransitionFacts(
@@ -1566,7 +1601,7 @@ def advance_strong_publication(
                     else (state.base.component_id,)
                 ),
             ),
-            output_plan=bundle.output_plan,
+            output_plan=bundle.output_plan if bundle is not None else None,
             execution_bundle=bundle,
         )
 
@@ -1617,7 +1652,11 @@ def advance_strong_publication(
     )
     if not trusted_replay:
         _assert_strong_strategy_invariants(new_state)
-    bundle = _compile_strong_bundle(new_state.base, new_state.delta)
+    bundle = (
+        _compile_strong_bundle(new_state.base, new_state.delta)
+        if window.query_count > 0
+        else None
+    )
     component_ids = [new_state.base.component_id]
     if new_state.delta.segments:
         component_ids.append(STRONG_COMPONENT_ID)
@@ -1642,7 +1681,7 @@ def advance_strong_publication(
             patched_chunk_ids=tuple(sorted(patched_chunks)),
             active_component_ids=tuple(component_ids),
         ),
-        output_plan=bundle.output_plan,
+        output_plan=bundle.output_plan if bundle is not None else None,
         execution_bundle=bundle,
     )
 
@@ -1651,6 +1690,15 @@ def _checked_output_plan(components: tuple[PublishedComponent, ...]) -> OutputPl
     plan = output_plan_for(components)
     analyze_output_plan(plan)
     return plan
+
+
+def _query_output_plan(
+    components: tuple[PublishedComponent, ...],
+    query_count: int,
+) -> OutputPlan | None:
+    """Compile query-side metadata only when the window contains a query."""
+
+    return _checked_output_plan(components) if query_count > 0 else None
 
 
 def _delta_ciphertext_count(state: StrategyState) -> int:
@@ -1808,7 +1856,11 @@ def _advance_cssc_delta(
         patched_chunk_ids=tuple(sorted(patched_chunks)),
         active_component_ids=tuple(component.component_id for component in components),
     )
-    return Transition(new_state, facts, _checked_output_plan(components))
+    return Transition(
+        new_state,
+        facts,
+        _query_output_plan(components, window.query_count),
+    )
 
 
 def _advance_local_repack(
@@ -1853,7 +1905,7 @@ def _advance_local_repack(
             rebuilt_output_block_ids=block_ids,
             active_component_ids=(base.component_id,),
         ),
-        output_plan=_checked_output_plan((base,)),
+        output_plan=_query_output_plan((base,), window.query_count),
     )
 
 
@@ -1903,7 +1955,7 @@ def _fold_periodic(
             ),
             active_component_ids=(base.component_id,),
         ),
-        output_plan=_checked_output_plan((base,)),
+        output_plan=_query_output_plan((base,), window.query_count),
     )
 
 
@@ -2080,4 +2132,12 @@ def _advance_packed_coo(
         patched_chunk_ids=tuple(sorted(patched_chunks)),
         active_component_ids=_active_component_ids(new_state),
     )
-    return Transition(new_state, facts, _packed_coo_output_plan(new_state))
+    return Transition(
+        new_state,
+        facts,
+        (
+            _packed_coo_output_plan(new_state)
+            if window.query_count > 0
+            else None
+        ),
+    )

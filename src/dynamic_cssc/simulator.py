@@ -272,6 +272,9 @@ class _QueryAccountingTemplate:
 
 def _query_shape(transition: Transition | StrongTransition) -> tuple[object, ...]:
     state = transition.state
+    output_plan = transition.output_plan
+    if output_plan is None:
+        raise AssertionError("query shape requires a query-bearing transition")
     components = (
         (state.base,)
         if isinstance(state, StrongStrategyState) or state.delta is None
@@ -286,11 +289,11 @@ def _query_shape(transition: Transition | StrongTransition) -> tuple[object, ...
     )
     output_shape = tuple(
         (share.component_id, share.output_block_id, share.slot_to_logical)
-        for share in transition.output_plan.shares
+        for share in output_plan.shares
     )
     return (
-        transition.output_plan.logical_output_size,
-        transition.output_plan.slot_count,
+        output_plan.logical_output_size,
+        output_plan.slot_count,
         component_shape,
         output_shape,
     )
@@ -340,6 +343,7 @@ def _cached_ordinary_accounting(
     zero_query = replace(
         transition,
         facts=replace(transition.facts, query_count=0),
+        output_plan=None,
     )
     return _apply_query_template(account_transition(zero_query), template, queries)
 
@@ -360,6 +364,8 @@ def _cached_strong_accounting(
     zero_query = replace(
         transition,
         facts=replace(transition.facts, query_count=0),
+        output_plan=None,
+        execution_bundle=None,
     )
     return _apply_query_template(account_strong_transition(zero_query), template, queries)
 
@@ -449,6 +455,8 @@ def account_transition_with_compiled(
     queries = facts.query_count
     if queries == 0:
         return WindowAccounting(metrics, (), None), None
+    if transition.output_plan is None:
+        raise AssertionError("query-bearing ordinary transition must carry an OutputPlan")
 
     components = (state.base,) if state.delta is None else (state.base, state.delta)
     compiled = compile_query(
@@ -565,9 +573,13 @@ def account_strong_transition_with_bundle(
     if queries == 0:
         return WindowAccounting(metrics, (), None), None
 
-    counts = transition.execution_bundle.cloud_counts
-    analysis = transition.execution_bundle.output_analysis
-    f1m = transition.execution_bundle.f1m_counts
+    bundle = transition.execution_bundle
+    if transition.output_plan is None or bundle is None:
+        raise AssertionError("query-bearing strong transition must carry its execution bundle")
+
+    counts = bundle.cloud_counts
+    analysis = bundle.output_analysis
+    f1m = bundle.f1m_counts
     query_ciphertexts = dict(counts.ciphertext_inputs_by_role).get("query", 0)
     if not (
         query_ciphertexts == counts.multiply_ciphertexts == counts.relinearizations
@@ -598,10 +610,10 @@ def account_strong_transition_with_bundle(
     metrics.mask_random_elements = queries * f1m.random_elements
     metrics.mask_mapped_elements = queries * analysis.mask_mapped_elements
     metrics.client_reorder_elements = queries * analysis.client_reorder_elements
-    rotations = _rotation_counts_for_program(transition.execution_bundle.cloud_plan.program)
+    rotations = _rotation_counts_for_program(bundle.cloud_plan.program)
     if sum(rotations.values()) != counts.rotations:
         raise AssertionError("exact rotation counts must reconcile with the query DAG")
-    masked_share_ids = _masked_output_share_ids(transition.execution_bundle.output_plan)
+    masked_share_ids = _masked_output_share_ids(bundle.output_plan)
     routes = tuple(
         F1MRouteAccounting(
             result_id=route.result_id,
@@ -615,7 +627,7 @@ def account_strong_transition_with_bundle(
                 else "encrypted-zero-dummy"
             ),
         )
-        for result_ordinal, route in enumerate(transition.execution_bundle.result_routes)
+        for result_ordinal, route in enumerate(bundle.result_routes)
     )
     if (
         sum(route.kind == "random-zero-sum" for route in routes) * queries
@@ -630,15 +642,15 @@ def account_strong_transition_with_bundle(
             tuple(sorted(rotations.items())),
             QueryPlanAccounting(
                 version_id=transition.state.version_id,
-                cloud_program_digest=transition.execution_bundle.cloud_program_digest,
-                output_plan_digest=transition.execution_bundle.output_plan_digest,
-                execution_binding_digest=(transition.execution_bundle.execution_binding_digest),
-                private_plan_digest=transition.execution_bundle.private_plan_digest,
-                returned_share_count=len(transition.execution_bundle.result_routes),
+                cloud_program_digest=bundle.cloud_program_digest,
+                output_plan_digest=bundle.output_plan_digest,
+                execution_binding_digest=bundle.execution_binding_digest,
+                private_plan_digest=bundle.private_plan_digest,
+                returned_share_count=len(bundle.result_routes),
                 f1m_routes=routes,
             ),
         ),
-        transition.execution_bundle,
+        bundle,
     )
 
 
