@@ -1,82 +1,83 @@
 # Dynamic CSSC for Mutable Encrypted SpMV
 
-Research repository for an update-aware maintenance layer around ciphertext–ciphertext sparse matrix–vector multiplication (SpMV) using CSSC and OpenFHE BFV.
+Research implementation and evidence package for a version-bound maintenance
+layer around ciphertext--ciphertext sparse matrix--vector multiplication using
+CSSC and OpenFHE BFV.
 
-## Status
+## Current publication state
 
-- Project direction: **GO**
-- Original whole-block RM-aligned ELLPACK delta: **KILLED**
-- Latest audited merged-source gates before this WIP: **R0 PASS + Phase 2 E4 PASS** at
-  `fcb00e0d7f111f3ab5003c111b124df83ae11813`; P0a remains a narrower historical
-  slot-layout PASS at `eb15adf5da22f600a31d4b62897ed35c1ecde2e2`
-- Current gate: **strong-reference admission and complete accounting → full-baseline
-  causal Day 1**
-- Day 1 full-baseline status: **HOLD before dispatch**. The role-aware contract is
-  14 fixed records = 13 selectable references + one client-lane ablation, with
-  13 tuning records and two non-executed aliases. The repository-owned
-  zero-argument catalog deliberately fails closed until the composite
-  strong-reference registration anchor is installed; no partial-reference
-  artifact is an allowed fallback. The ADR 0008 whole-query integration passed
-  its `fcb00e0d`-bound witness in run `32581653504` (GitHub Actions artifact-wrapper SHA-256
-  `c5f44b0c9475a66d49b48332e335cb58811cf4eec579ebff631123c4e4711afe`). That is
-  narrow fixture-correctness evidence, not candidate registration; the strong candidate
-  remains unregistered and Day 2 remains downstream of the resulting operation plan.
-- Main functional mode: **F1-M**, designed to separate component outputs with
-  one-time zero-sum blinding. Current evidence checks mechanism and correctness
-  only; it does not establish a security proof or leakage-prevention claim.
-- Outcome-blind structure pilot: **pre-freeze and permanently non-admissible**.
-  Its fixed coverage is the three real datasets × T1/T2 × partitions 0–4,
-  using exactly the first `floor(V/10)` canonical schema-valid events per
-  dataset. It may size the resource envelope from aggregate structure, health,
-  and resource facts only; it cannot dispatch candidates, inspect query or
-  performance outcomes, mint evidence authority, or enter a Publication
-  Evidence Lineage. Its only files are `structure-pilot-report.json` and
-  `checksums.sha256`. Its manual workflow requires a pre-provisioned, empty,
-  mode-`0700`, external scratch root bound identically through
-  `PUBLICATION_STRUCTURE_PILOT_SCRATCH_ROOT`, `TMPDIR`, and `SQLITE_TMPDIR`
-  before Python starts. The report binds that root's closed policy and
-  path/device/inode identity, but does not claim scratch occupancy or a
-  transient scratch high-water. Its top-level wall-clock and process-RSS fields
-  stop after final revalidation and scratch teardown, immediately before report
-  serialization and installation; they do not measure those installation steps.
-  The closed acquisition-bundle adapter is implemented, but
-  production remains on **HOLD** while the checkout is dirty and the three real
-  verified bundles are absent; no structure-pilot output currently exists.
-- Publication Day1B implementation status: a tested first-wave per-unit producer
-  closes 18 cells / 486 physical records, schedule-v2 streaming, canonical
-  serialized-object ledgers, per-cell resource observations, and a canonical
-  overlap-only ordinary-query preparation/private-plan lifecycle with persistent
-  single-use F1-M commitments. Its production entry point still fails before
-  writing because the Day1 catalog, trace authority, resource policy, full OpenFHE
-  worker, and repository execution adapter are intentionally uninstalled; no
-  publication result exists.
-- Analysis isolation status: a standalone runner now exercises a fresh detached
-  checkout under exact CPython 3.12.13 with `-I -S`, an isolated bytecode cache,
-  an empty approved third-party import set, source/import/lock revalidation, and
-  no-replace atomic output installation. Its on-disk receipt is descriptive and
-  cannot grant claim authority until the central evidence chain independently
-  admits the completed run.
-- OpenFHE baseline: **v1.5.1**, pinned by commit in `config/params_manifest.json`
+The active paper is a **Route C methods and evidence-boundary manuscript**. It
+does not report a comparative performance winner.
 
-The original v2.1 task specification is preserved verbatim in [`docs/task-v2.1-original.md`](docs/task-v2.1-original.md). The current machine-checkable contract is
-[`docs/protocol-patch-v2.1b.md`](docs/protocol-patch-v2.1b.md); v2.1a remains only as
-the historical correction trail. Audited R0/P0a evidence is digest-addressed and archived in
-the GitHub release
-[`r1-p0a-v21b-20260822`](https://github.com/leemaple/dynamic-cssc-spmv/releases/tag/r1-p0a-v21b-20260822).
+- External-review packet: [`route-c-external-review-v1`](https://github.com/leemaple/dynamic-cssc-spmv/tree/route-c-external-review-v1)
+- Exact reviewed commit: `f4fe461ace07bceaf674a9cad61f98bd74f67531`
+- Independent final review marker: [`route-c-external-review-v1-pro-pass`](https://github.com/leemaple/dynamic-cssc-spmv/tree/route-c-external-review-v1-pro-pass)
+- ChatGPT Pro narrow closure verdict: `PASS`, P0 = 0, P1 = 0, external circulation ready
+- ZCode GLM-5.3 Max manuscript verdict: `PASS`, P0 = 0, P1 = 0
 
-## Repository gates
+The reviewed manuscript makes protocol, conditional functional-correctness,
+source-conformance, reproducibility, and fail-closed evidence-boundary claims.
+It makes no formal-security, end-to-end admission, comparative-performance, or
+state-of-the-art superiority claim.
 
-| Gate | Purpose | Workflow |
-|---|---|---|
-| P-1 | Freeze roles, leakage mode, dimensions, packing, and OpenFHE parameters | `ci.yml` |
-| P0a | Probe actual BFV packed-slot rotation semantics | `p0a-rotation-probe.yml` |
-| Phase 2 correctness witness | Bind and validate the real CSSC-base-plus-strong-delta query | `strong-whole-query-witness.yml` (manual; latest audited E4 PASS is bound to `fcb00e0d`, admission still pending) |
-| Structure pilot | Size the outcome-independent resource envelope from the exact `floor(V/10)` structure prefix; never produce publication evidence | `publication-structure-pilot.yml` (manual, pre-freeze, non-admissible) |
-| Day 1 | Produce complete role-aware causal artifacts only after repository admission; fail closed otherwise | `day1-cost-model.yml` |
-| Historical P0b exploratory probe | Run the isolated OpenFHE raw-block mechanism over every supplied exact rotation; the workflow keeps the legacy 11-block setting and lacks the registered R3 bindings, so it is not publication-authoritative Day 2 evidence | `day2-microbench.yml` |
-| Review pack | Produce a SHA-256-addressed audit bundle for an external expert | `review-bundle.yml` |
+## Authoritative experiment outcome
 
-## Local quick start
+The final implementation candidate
+`baefc8cc183816c51ce42573bafde8178173044d` entered `main` as the tree-identical
+Experiment Source Snapshot S1
+`ee58627bb5752c6ac1ee2c5132c6574f9cb66552`. Exact-S1 CI run `33258436732`
+passed 2,403 tests with two expected runner-dependent skips. Exact-main PRE-S1
+run `33259569284` passed 583 tests and both pinned OpenFHE 1.5.1 ordinary and
+strong real-query smokes. Descriptive registration run `33259894587` did not
+mint authority. The data-only registration anchor then formed Evidence-Freeze
+Snapshot S2 `c7ff6820d9323f1850c1c5c57fd9070db88db120`; S2 CI run
+`33260167517` also passed.
+
+The sole permitted, permanently non-admissible qualification run `33261434612`
+started from exact S2. q1 completed, but q2 independent replay was still
+running at the frozen 45-minute computational deadline. The external controller
+cancelled only that exact run. q3--q6 did not run, q5 never started, no dispatch
+capability was minted, and acquisition plus the 16-unit formal campaign were
+not launched.
+
+The only provider artifact was the one-day
+`q1-simulator-pre-replay-handoff`, artifact ID `9717884587`, provider digest
+`sha256:51cbfc2a5473c0fe78d6d169cc2c4a7278ac39d7472ff37e5642e190b7e2c008`.
+It is permanently **NON-EVIDENCE** and cannot support a strategy-cost or native
+OpenFHE result.
+
+Under the frozen preregistration, this outcome selected Route C. The
+qualification may not be rerun in this lineage, and partial q1/q2 observations
+may not be repackaged as paper performance evidence.
+
+## What the repository contributes
+
+The implementation closes four coupled interfaces around static CSSC:
+
+1. a Publication Window binds logical matrix state, physical components,
+   versioned global-column query metadata, complete `OutputPlan`, and prepared
+   queries;
+2. query reorganization uses the version's true global column identities rather
+   than physical lane ordinals;
+3. private reconstruction handles overlap, disjoint output blocks, and implicit
+   zeros under one complete plan;
+4. overlap-scoped F1-M masking uses a durable reserve-before-sample ledger, while
+   the fixed `c=128` strong path exposes a public segment schedule and retains a
+   private leader merge.
+
+The Cloud interface is intentionally narrow: it receives typed public programs,
+permitted identifiers, and encrypted operands, but not matrix/query plaintexts,
+component RowMaps, the complete OutputPlan, individual mask plaintexts, or
+unblinded component outputs. Client B does learn the versioned layout and
+reconstruction metadata. The stated threat model is static semi-honest with at
+most one corrupted party and no Cloud/client collusion; no broader security
+theorem is claimed.
+
+## Reproducing source-level verification
+
+Python 3.11 or newer is required for ordinary development. The frozen CI and
+PRE-S1 records above identify their exact environments and the pinned OpenFHE
+source. A local source-level verification can be started with:
 
 ```bash
 python -m venv .venv
@@ -87,66 +88,56 @@ pytest -q
 python -m dynamic_cssc.cli smoke --output-dir results/smoke --seed 20260821
 ```
 
-The smoke run is a **model prediction**, not an OpenFHE measurement. Publication results must distinguish `predicted` and `measured` data.
+The CLI smoke is a model prediction, not a cryptographic performance
+measurement. Green tests, CI, PRE-S1, descriptive registration, and historical
+smokes do not substitute for the formal artifacts that were never authorized.
 
-## CI design
+Do not dispatch the historical publication workflows in an attempt to recreate
+the closed Route A campaign. Their fail-closed behavior and terminal disposition
+are part of the research record.
 
-Fast Python validation runs on every push and pull request. OpenFHE compilation and cryptographic measurements are manual workflows because they are heavier and parameter-sensitive. Every publication-authoritative workflow must upload a digest-addressed artifact containing raw data, manifests, logs, commit metadata, and checksums; retention is recorded separately and is not described as permanent. The Day 2 probe executable can emit raw blocks for mechanism testing, but the historical workflow does not produce or authorize the complete R3 archive.
+## Paper and review package
 
-## Review checkpoints
+- [`docs/paper/manuscript-draft.md`](docs/paper/manuscript-draft.md): authoritative English Route C manuscript source
+- [`docs/paper/manuscript-draft.docx`](docs/paper/manuscript-draft.docx): rendered English review document with editable equations
+- [`docs/paper/paper-idea-detailed-zh.md`](docs/paper/paper-idea-detailed-zh.md): Chinese technical companion, not an equivalent submission manuscript
+- [`docs/paper/paper-idea-detailed-zh.docx`](docs/paper/paper-idea-detailed-zh.docx): rendered Chinese technical companion
+- [`docs/paper/claim-ledger-draft.md`](docs/paper/claim-ledger-draft.md): sentence-level claim/evidence permissions
+- [`docs/paper/references.bib`](docs/paper/references.bib): primary-source bibliography
+- [`docs/reviews/route-c-external-review-packet-2026-08-30.md`](docs/reviews/route-c-external-review-packet-2026-08-30.md): exact packet hashes and QA record
+- [`docs/reviews/chatgpt-pro-route-c-manuscript-review-2026-08-30.md`](docs/reviews/chatgpt-pro-route-c-manuscript-review-2026-08-30.md): initial commit-bound manuscript review
+- [`docs/reviews/zcode-glm53-max-route-c-manuscript-review-2026-08-30.md`](docs/reviews/zcode-glm53-max-route-c-manuscript-review-2026-08-30.md): independent GLM-5.3 Max review
+- [`docs/research/route-c-manuscript-citation-audit-2026-08-30.md`](docs/research/route-c-manuscript-citation-audit-2026-08-30.md): all-used-key primary-source citation audit
+- [`docs/research/route-c-submission-venue-review-2026-08-30.md`](docs/research/route-c-submission-venue-review-2026-08-30.md): current official-source venue, deadline, format, and fee comparison
+- [`docs/paper/submission-metadata-and-release-checklist.md`](docs/paper/submission-metadata-and-release-checklist.md): remaining author-owned metadata, licensing, release, and submission stop conditions
 
-External review is expected after:
+The immutable review tag, not the moving branch, is the authoritative external
+packet.
 
-1. P-1 + P0a slot-layout evidence;
-2. held-out Day 1 Pareto result;
-3. P0b/Day 2 measured constants and gate verdict;
-4. minimal OpenFHE prototype;
-5. paper experiment freeze.
+## Evidence layers
 
-See [`docs/review-checkpoints.md`](docs/review-checkpoints.md).
+| Layer | Exact object | What it can establish |
+|---|---|---|
+| S1 | `ee58627bb5752c6ac1ee2c5132c6574f9cb66552` | Experiment source, frozen behaviors, source conformance, and conditional functional propositions |
+| S2 | `c7ff6820d9323f1850c1c5c57fd9070db88db120` | Data-only registration anchor and exact pre-execution freeze |
+| Qualification | Run `33261434612` | The frozen deadline was missed, no authority was minted, and Route C was selected |
+| Formal campaign | Not dispatched | No synthetic, ordered-event, native, terminal, aggregate, or S3 performance result exists |
+| Review packet | Tag `route-c-external-review-v1` | Exact manuscript, Word documents, bibliography, figures, ledger, audits, and hashes |
 
-## Publication plan
+Historical R0/P0a and implementation evidence remains in the repository for
+provenance. It is not current empirical evidence. The earlier R0/P0a bundle is
+preserved in release
+[`r1-p0a-v21b-20260822`](https://github.com/leemaple/dynamic-cssc-spmv/releases/tag/r1-p0a-v21b-20260822).
 
-The manuscript is being developed as a cryptographic-engineering systems and
-empirical-characterization paper, not as a new primitive or formal-security
-claim. The current publication materials are:
+## Availability and release boundary
 
-- [`docs/paper/manuscript-draft.md`](docs/paper/manuscript-draft.md): methods-first
-  manuscript with result sentences deliberately withheld behind evidence gates;
-- [`docs/paper/publication-preregistration-draft.md`](docs/paper/publication-preregistration-draft.md):
-  frozen candidate roles, three-real-dataset sampling frame, T1/T2 transforms,
-  fixed-corpus paired analysis, and stop/fallback rules;
-- [`docs/paper/publication-roadmap.md`](docs/paper/publication-roadmap.md):
-  dependency-ordered path from strong-reference admission through measured
-  calibration, real-stream execution, R4, and the submission package;
-- [`docs/paper/claim-ledger-draft.md`](docs/paper/claim-ledger-draft.md):
-  sentence-level design, correctness, and empirical claim gates;
-- [`docs/paper/paper-idea-detailed-zh.md`](docs/paper/paper-idea-detailed-zh.md):
-  detailed Chinese explanation of the paper idea, equations, narrowed novelty
-  boundary, evidence model, and remaining execution path;
-- [`docs/paper/references.bib`](docs/paper/references.bib): primary-source citation
-  database for the venue-formatted manuscript;
-- [`docs/research/dynamic-cssc-novelty-related-work-boundary.md`](docs/research/dynamic-cssc-novelty-related-work-boundary.md):
-  claim-by-claim novelty boundary against primary prior art;
-- [`docs/research/related-work-primary-source-gap-audit-2026-08-28.md`](docs/research/related-work-primary-source-gap-audit-2026-08-28.md):
-  latest primary-source gap audit, comparator classification, and mandatory
-  Related Work additions;
-- [`docs/research/publication-venues-datasets-preregistration.md`](docs/research/publication-venues-datasets-preregistration.md):
-  official-source venue, licensing, dataset, and sampling rationale;
-- [`docs/reviews/day1a-critical-path-static-audit-2026-08-28.md`](docs/reviews/day1a-critical-path-static-audit-2026-08-28.md):
-  non-authorizing Day 1A performance diagnosis and frozen 300-minute stop-loss;
-- [`docs/reviews/day1b-production-admission-contract-review-2026-08-28.md`](docs/reviews/day1b-production-admission-contract-review-2026-08-28.md):
-  minimum production-admission bridge and explicitly prohibited scope growth;
-- [`docs/reviews/publication-completion-matrix-2026-08-28.md`](docs/reviews/publication-completion-matrix-2026-08-28.md):
-  requirement-by-requirement evidence status, critical path, and conditional
-  submission schedule;
-- [`docs/reviews/zcode-max-publication-audit-2026-08-23.md`](docs/reviews/zcode-max-publication-audit-2026-08-23.md):
-  independent ZCode GLM-5.3 Max submission audit and adjudicated blockers.
+The source and review packet are publicly reachable through the immutable tags
+above. No archival DOI or admitted empirical artifact is claimed. The repository
+currently has no top-level license file; public visibility must not be read as a
+license grant. A submission release therefore still requires human decisions on
+author order and affiliations, funding, competing interests, CRediT roles,
+AI-use disclosure, software/data license, venue, and archival repository/DOI.
 
-The primary target is the *Journal of Cryptographic Engineering*. Synthetic
-Day 1 evidence cannot populate the publication verdict; that verdict requires
-the preregistered 30 paired real-source trace units, measured OpenFHE
-calibration, complete serialized protocol-object accounting within the frozen
-transaction scope, mixed-circuit correctness, and R4 or an explicitly narrower
-conclusion. Evaluation keys are inventoried separately; HTTP/TLS, filesystem,
-artifact-container, and workflow framing are outside that scope.
+The paper's data-and-code availability statement must be updated only after
+those release decisions are complete. Until then, cite the exact immutable tag
+and claim ledger rather than a moving branch.

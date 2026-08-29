@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dynamic-cssc-spmv"
 version = "0.1.0"
-description = "Cost modeling and OpenFHE probes for mutable ciphertext-ciphertext SpMV"
+description = "Version-bound maintenance and fail-closed evidence tooling for mutable ciphertext-ciphertext SpMV"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
