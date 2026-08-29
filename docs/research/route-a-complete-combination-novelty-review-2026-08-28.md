@@ -13,8 +13,8 @@
 - Route A 审计稿：
   [`publication-preregistration-route-a.md`](../paper/publication-preregistration-route-a.md)
 - Route A 最终候选 SHA-256：
-  `caea6c5a15baf3b1ee8f988a82b1271ce82eadb7ba8cd87d51dc0970fab6baa0`
-- Route A 最终候选行数：`1438`
+  `f860f9580802b713f7a5417d10448f38e24eb779dfb5b3dceb8b9bc4a7f12cad`
+- Route A 最终候选行数：`1446`
 - 起点边界报告 SHA-256：
   `0984b0c7f537c40cff852b3662f5f866c37f4eed227b286e4db89f428fed8925`
 - 起点 `references.bib` SHA-256：
@@ -43,6 +43,13 @@ range 端点与 SET-reference 顺序。这些都是窗口与版本的记账闭�
 C1--C4、角色与威胁模型、数据源、证据矩阵或成本声明；
 因此本次仍只重新绑定精确候选字节并复核 novelty-bearing 段落，不重开一手来源
 检索。
+
+第三次实现前审查只澄清短期 provider `NON-EVIDENCE` transport 位于私有证据
+admission boundary、保留 exact preparation/consumed-ledger bytes 供只读 replay，且
+这些私有字节不进入协议 Cloud 或正式工件。逐字复核贡献句、§2.1 角色边界以及
+§2.2--§2.5 的 C1--C4 后，没有新增机制、放宽威胁模型或改变组合 claim vector；
+因此仅重新绑定精确候选字节，不重开文献检索。任何 novelty-bearing 文本漂移仍使
+本 PASS 失效。
 
 第三次实现前阅读发现，窗口内同一坐标的多次 SET 可被解释为逐次物理应用，或先
 归约为一个首值到末值的净更新；两种解释会改变成本记账。本次窄修订明确采用项目

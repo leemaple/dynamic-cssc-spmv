@@ -189,6 +189,17 @@ def _canonical_bytes(value: object) -> bytes:
         raise StrongExecutionError("strong query value is not canonical JSON") from error
 
 
+def _reject_duplicate_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise StrongExecutionError(
+                "strong query preparation contains a duplicate JSON key"
+            )
+        result[key] = value
+    return result
+
+
 def _is_strict_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -567,6 +578,153 @@ def canonical_strong_query_preparation_bytes(
     return _canonical_bytes(canonical_strong_query_preparation_payload(bundle, prepared))
 
 
+def decode_strong_query_preparation_bytes(
+    bundle: StrongExecutionBundle,
+    content: bytes,
+    *,
+    expected_query_id: str,
+    expected_vector: tuple[int, ...],
+) -> PreparedStrongQuery:
+    """Decode exact retained private bytes into one bundle-bound replay operand."""
+
+    _validate_bundle(bundle)
+    if type(content) is not bytes:
+        raise TypeError("strong query preparation content must be exact bytes")
+    try:
+        payload = json.loads(
+            content.decode("ascii"),
+            object_pairs_hook=_reject_duplicate_pairs,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise StrongExecutionError(
+            "strong query preparation is not canonical ASCII JSON"
+        ) from error
+    if type(payload) is not dict or _canonical_bytes(payload) != content:
+        raise StrongExecutionError(
+            "strong query preparation is not one canonical object"
+        )
+    if set(payload) != {
+        "bindings",
+        "f1m_operands",
+        "format",
+        "ledger_commitment_token",
+        "modulus",
+        "query_id",
+        "query_operands",
+        "version_id",
+    } or payload.get("format") != STRONG_QUERY_PREPARATION_SCHEMA:
+        raise StrongExecutionError(
+            "strong query preparation does not match its closed schema"
+        )
+    bindings = payload.get("bindings")
+    query_operands = payload.get("query_operands")
+    f1m_operands = payload.get("f1m_operands")
+    if (
+        type(bindings) is not dict
+        or set(bindings)
+        != {
+            "cloud_program_digest",
+            "execution_binding_digest",
+            "output_plan_digest",
+            "private_plan_digest",
+        }
+        or type(query_operands) is not list
+        or type(f1m_operands) is not list
+        or payload.get("query_id") != expected_query_id
+    ):
+        raise StrongExecutionError(
+            "strong query preparation differs from its expected replay target"
+        )
+
+    def strict_values(value: object, *, label: str) -> tuple[int, ...]:
+        if type(value) is not list or any(not _is_strict_int(item) for item in value):
+            raise StrongExecutionError(
+                f"strong query preparation {label} values are invalid"
+            )
+        return tuple(value)
+
+    decoded_queries: list[PreparedQueryOperand] = []
+    for operand in query_operands:
+        if (
+            type(operand) is not dict
+            or set(operand) != {"ciphertext_id", "values"}
+            or type(operand.get("ciphertext_id")) is not str
+            or not operand["ciphertext_id"]
+        ):
+            raise StrongExecutionError(
+                "strong query preparation query operand is invalid"
+            )
+        decoded_queries.append(
+            PreparedQueryOperand(
+                ciphertext_id=operand["ciphertext_id"],
+                values=strict_values(operand.get("values"), label="query operand"),
+            )
+        )
+    decoded_f1m: list[PreparedF1MOperand] = []
+    for operand in f1m_operands:
+        if (
+            type(operand) is not dict
+            or set(operand)
+            != {
+                "ciphertext_id",
+                "component_id",
+                "kind",
+                "output_block_id",
+                "result_id",
+                "values",
+            }
+            or any(
+                type(operand.get(field)) is not str or not operand[field]
+                for field in (
+                    "ciphertext_id",
+                    "component_id",
+                    "output_block_id",
+                    "result_id",
+                )
+            )
+            or operand.get("kind")
+            not in ("random-zero-sum", "encrypted-zero-dummy")
+        ):
+            raise StrongExecutionError(
+                "strong query preparation F1-M operand is invalid"
+            )
+        decoded_f1m.append(
+            PreparedF1MOperand(
+                ciphertext_id=operand["ciphertext_id"],
+                result_id=operand["result_id"],
+                kind=operand["kind"],
+                query_id=expected_query_id,
+                version_id=payload["version_id"],
+                output_plan_digest=bindings["output_plan_digest"],
+                component_id=operand["component_id"],
+                output_block_id=operand["output_block_id"],
+                values=strict_values(operand.get("values"), label="F1-M operand"),
+            )
+        )
+    prepared = PreparedStrongQuery(
+        query_id=expected_query_id,
+        version_id=payload.get("version_id"),
+        modulus=payload.get("modulus"),
+        vector=_validated_vector(
+            expected_vector,
+            length=bundle.base.layout_spec.cols,
+        ),
+        cloud_program_digest=bindings.get("cloud_program_digest"),
+        output_plan_digest=bindings.get("output_plan_digest"),
+        execution_binding_digest=bindings.get("execution_binding_digest"),
+        private_plan_digest=bindings.get("private_plan_digest"),
+        ledger_commitment_token=payload.get("ledger_commitment_token"),
+        query_operands=tuple(decoded_queries),
+        f1m_operands=tuple(decoded_f1m),
+    )
+    _validate_prepared(bundle, prepared)
+    if canonical_strong_query_preparation_bytes(bundle, prepared) != content:
+        raise StrongExecutionError(
+            "decoded strong query preparation does not round-trip exactly"
+        )
+    return prepared
+
+
 def authorize_strong_execution(
     bundle: StrongExecutionBundle,
     prepared: PreparedStrongQuery,
@@ -705,5 +863,57 @@ def execute_strong_plaintext(
     )
     returned_shares = {
         route.output_share_id: returned[route.result_id] for route in bundle.result_routes
+    }
+    return reconstruct_output(bundle.output_plan, returned_shares, modulus=modulus)
+
+
+def replay_strong_plaintext_read_only(
+    bundle: StrongExecutionBundle,
+    prepared: PreparedStrongQuery,
+    *,
+    modulus: int,
+    ledger: PreparedF1MCommitmentLedger,
+) -> tuple[int, ...]:
+    """Verify one consumed batch read-only, then replay its exact typed oracle."""
+
+    _validate_bundle(bundle)
+    if not _is_strict_int(modulus) or modulus < 2 or modulus != prepared.modulus:
+        raise StrongExecutionError("replay modulus must match the prepared query modulus")
+    _validate_prepared(bundle, prepared)
+    try:
+        ledger.verify_consumed_prepared_f1m(
+            _prepared_f1m_commitments(prepared.f1m_operands),
+            commitment_token=prepared.ledger_commitment_token,
+            query_id=prepared.query_id,
+            version_id=prepared.version_id,
+            output_plan_digest=prepared.output_plan_digest,
+            private_plan_digest=bundle.private_plan_digest,
+            execution_binding_digest=bundle.execution_binding_digest,
+            modulus=prepared.modulus,
+        )
+    except (TypeError, ValueError, RuntimeError) as error:
+        raise StrongExecutionError(
+            "strong read-only replay ledger verification failed"
+        ) from error
+    ciphertext_inputs = {
+        spec.value_ciphertext_id: spec.values for spec in bundle.value_operand_specs
+    }
+    ciphertext_inputs.update(
+        {operand.ciphertext_id: operand.values for operand in prepared.query_operands}
+    )
+    ciphertext_inputs.update(
+        {operand.ciphertext_id: operand.values for operand in prepared.f1m_operands}
+    )
+    returned = execute_cloud_plan(
+        bundle.cloud_plan,
+        ciphertext_inputs=ciphertext_inputs,
+        plaintext_masks={
+            mask.mask_id: mask.values for mask in bundle.cloud_plan.program.plaintext_masks
+        },
+        modulus=modulus,
+    )
+    returned_shares = {
+        route.output_share_id: returned[route.result_id]
+        for route in bundle.result_routes
     }
     return reconstruct_output(bundle.output_plan, returned_shares, modulus=modulus)

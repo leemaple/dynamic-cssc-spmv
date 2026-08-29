@@ -1,14 +1,15 @@
-"""Direct synthetic Route A cell execution with redacted audit bindings.
+"""Direct synthetic Route A cell execution with split private/public bindings.
 
 The evaluator owns one candidate state, one crash-persistent F1-M ledger, and
-every directly executed query in a cell.  Private preparation bytes are hashed
-and discarded; only canonical public identities, digests, and consumption
-receipts can leave the process.
+every directly executed query in a cell.  Exact private preparation and ledger
+bytes may cross only the short-lived, authority-false replay boundary; formal
+receipts and final cells expose canonical redacted identities and digests only.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import resource
 import stat
 import sys
@@ -23,8 +24,10 @@ from dynamic_cssc.metrics import StrategyMetrics
 from dynamic_cssc.ordinary_query_lifecycle import (
     bind_ordinary_execution,
     canonical_ordinary_query_preparation_bytes,
+    decode_ordinary_query_preparation_bytes,
     execute_ordinary_plaintext,
     prepare_ordinary_query,
+    replay_ordinary_plaintext_read_only,
 )
 from dynamic_cssc.plaintext_oracle import direct_spmv
 from dynamic_cssc.route_a_contract import (
@@ -60,14 +63,17 @@ from dynamic_cssc.simulator import (
 from dynamic_cssc.strategy_state import StrongTransition, Transition
 from dynamic_cssc.strong_execution import (
     canonical_strong_query_preparation_bytes,
+    decode_strong_query_preparation_bytes,
     execute_strong_plaintext,
     prepare_strong_query,
+    replay_strong_plaintext_read_only,
 )
 
 __all__ = (
     "RouteAEvaluationError",
     "RouteASyntheticCellRun",
     "evaluate_route_a_synthetic_cell",
+    "replay_route_a_synthetic_cell_read_only",
     "route_a_evidence_stream_root",
 )
 
@@ -140,7 +146,7 @@ def _scratch_bytes(root: Path) -> int:
         status = path.lstat()
         if not stat.S_ISREG(status.st_mode):
             raise RouteAEvaluationError("controlled scratch contains a non-regular member")
-        total += status.st_size
+        total += status.st_blocks * 512
     return total
 
 
@@ -151,7 +157,7 @@ def _peak_rss_kib() -> int:
 
 @dataclass(frozen=True, slots=True)
 class RouteASyntheticCellRun:
-    """One canonical cell plus only the redacted streams needed for replay."""
+    """One cell plus redacted evidence and short-lived private replay material."""
 
     cell: RouteACanonicalStrategyCell
     window_trace_bytes: bytes
@@ -160,6 +166,9 @@ class RouteASyntheticCellRun:
     preparation_digest_documents: tuple[bytes, ...]
     consumption_receipt_documents: tuple[bytes, ...]
     output_digest_documents: tuple[bytes, ...]
+    private_preparation_documents: tuple[bytes, ...]
+    ledger_snapshot_bytes: bytes
+    ledger_snapshot_sha256: str
     scratch_high_water_bytes: int
 
     def __post_init__(self) -> None:
@@ -183,6 +192,9 @@ class RouteASyntheticCellRun:
         if any(bindings[field] != value for field, value in expected.items()):
             raise RouteAEvaluationError("cell binding root differs from its redacted stream")
         query_count = self.cell.document["counts"]["queries"]
+        recorded_scratch = self.cell.document["measurements"][
+            "scratch_allocated_bytes"
+        ]
         if (
             any(
                 len(stream) != query_count
@@ -191,12 +203,60 @@ class RouteASyntheticCellRun:
                     self.preparation_digest_documents,
                     self.consumption_receipt_documents,
                     self.output_digest_documents,
+                    self.private_preparation_documents,
                 )
             )
+            or type(self.ledger_snapshot_bytes) is not bytes
+            or not self.ledger_snapshot_bytes.startswith(b"SQLite format 3\x00")
+            or type(self.ledger_snapshot_sha256) is not str
+            or hashlib.sha256(self.ledger_snapshot_bytes).hexdigest()
+            != self.ledger_snapshot_sha256
             or type(self.scratch_high_water_bytes) is not int
             or self.scratch_high_water_bytes < 0
+            or recorded_scratch != self.scratch_high_water_bytes
         ):
-            raise RouteAEvaluationError("redacted stream cardinality does not close the cell")
+            raise RouteAEvaluationError("Route A replay material does not close the cell")
+        for ordinal, private_bytes in enumerate(self.private_preparation_documents):
+            try:
+                private_document = json.loads(private_bytes.decode("ascii"))
+                preparation_document = json.loads(
+                    self.preparation_digest_documents[ordinal].decode("ascii")
+                )
+                receipt_document = json.loads(
+                    self.consumption_receipt_documents[ordinal].decode("ascii")
+                )
+                query_document = json.loads(
+                    self.query_identity_documents[ordinal].decode("ascii")
+                )
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise RouteAEvaluationError(
+                    "Route A replay material is not canonical JSON"
+                ) from error
+            canonical_private = json.dumps(
+                private_document,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+            query_id = hashlib.sha256(
+                self.query_identity_documents[ordinal]
+            ).hexdigest()
+            if (
+                type(private_document) is not dict
+                or canonical_private != private_bytes
+                or private_document.get("query_id") != query_id
+                or private_document.get("ledger_commitment_token")
+                != receipt_document.get("ledger_commitment_token")
+                or hashlib.sha256(private_bytes).hexdigest()
+                != preparation_document.get("query_preparation_sha256")
+                or preparation_document.get("query_id") != query_id
+                or receipt_document.get("query_id") != query_id
+                or query_document.get("global_query_ordinal") != ordinal
+            ):
+                raise RouteAEvaluationError(
+                    "private preparation order or binding differs from redacted evidence"
+                )
 
 
 def _query_domain(trace: RouteASyntheticTrace) -> RouteAQueryVectorDomain:
@@ -211,7 +271,7 @@ def _query_domain(trace: RouteASyntheticTrace) -> RouteAQueryVectorDomain:
     )
 
 
-def evaluate_route_a_synthetic_cell(
+def _evaluate_route_a_synthetic_cell(
     trace: RouteASyntheticTrace,
     *,
     strategy_candidate_id: str,
@@ -220,6 +280,8 @@ def evaluate_route_a_synthetic_cell(
     unit_attempt_ordinal: int,
     machine_plan_bytes: bytes,
     scratch_directory: Path,
+    replay_preparation_documents: tuple[bytes, ...] | None,
+    replay_ledger_snapshot_bytes: bytes | None,
 ) -> RouteASyntheticCellRun:
     """Execute every direct query in one exact synthetic strategy cell."""
 
@@ -265,7 +327,26 @@ def evaluate_route_a_synthetic_cell(
         trace.initial_state(),
         rows=trace.rows,
     )
-    ledger = SQLiteMaskBindingLedger(scratch_directory / "mask-ledger.sqlite3")
+    replay_mode = replay_preparation_documents is not None
+    if replay_mode != (replay_ledger_snapshot_bytes is not None):
+        raise RouteAEvaluationError(
+            "read-only replay requires both exact preparations and ledger bytes"
+        )
+    ledger_path = scratch_directory / "mask-ledger.sqlite3"
+    if replay_mode:
+        if (
+            type(replay_preparation_documents) is not tuple
+            or any(type(document) is not bytes for document in replay_preparation_documents)
+            or type(replay_ledger_snapshot_bytes) is not bytes
+            or not replay_ledger_snapshot_bytes.startswith(b"SQLite format 3\x00")
+        ):
+            raise RouteAEvaluationError("read-only replay material has an invalid exact type")
+        ledger_path.write_bytes(replay_ledger_snapshot_bytes)
+        if ledger_path.read_bytes() != replay_ledger_snapshot_bytes:
+            raise RouteAEvaluationError("read-only replay ledger installation changed bytes")
+        ledger = SQLiteMaskBindingLedger.open_existing_read_only(ledger_path)
+    else:
+        ledger = SQLiteMaskBindingLedger(ledger_path)
     scratch_high_water = _scratch_bytes(scratch_directory)
     metrics = StrategyMetrics(
         strategy=strategy_candidate_id,
@@ -281,6 +362,10 @@ def evaluate_route_a_synthetic_cell(
     preparation_digest_documents: list[bytes] = []
     consumption_receipt_documents: list[bytes] = []
     output_digest_documents: list[bytes] = []
+    private_preparation_documents: list[bytes] = []
+    replay_preparation_ordinal = 0
+    commitment_tokens: list[str] = []
+    reservation_bindings: list[tuple[str, str, str, str, str]] = []
     ci_metadata_documents: list[bytes] = []
     update_metadata_documents: list[bytes] = []
     query_metadata_documents: list[bytes] = []
@@ -296,6 +381,7 @@ def evaluate_route_a_synthetic_cell(
         transition_nanoseconds += timed.state_transition_nanoseconds
         result_nanoseconds += timed.result_assembly_nanoseconds
         accepted_set_transitions += advanced.adapted_window.accepted_set_transition_count
+        scratch_high_water = max(scratch_high_water, _scratch_bytes(scratch_directory))
 
         result_followup_started = time.perf_counter_ns()
         transition = advanced.transition
@@ -356,41 +442,93 @@ def evaluate_route_a_synthetic_cell(
             )
             query_identity_documents.append(query_identity.document_bytes)
             if ordinary_bundle is not None:
-                prepared = prepare_ordinary_query(
-                    ordinary_bundle,
-                    query_id=query_identity.query_id,
-                    vector=vector.values,
-                    modulus=_MODULUS,
-                    ledger=ledger,
-                )
-                preparation_bytes = canonical_ordinary_query_preparation_bytes(
-                    ordinary_bundle,
-                    prepared,
-                )
-                typed_output = execute_ordinary_plaintext(
-                    ordinary_bundle,
-                    prepared,
-                    modulus=_MODULUS,
-                    ledger=ledger,
-                )
+                if replay_mode:
+                    assert replay_preparation_documents is not None
+                    if replay_preparation_ordinal >= len(replay_preparation_documents):
+                        raise RouteAEvaluationError(
+                            "read-only replay preparation stream is truncated"
+                        )
+                    preparation_bytes = replay_preparation_documents[
+                        replay_preparation_ordinal
+                    ]
+                    prepared = decode_ordinary_query_preparation_bytes(
+                        ordinary_bundle,
+                        preparation_bytes,
+                        expected_query_id=query_identity.query_id,
+                        expected_vector=vector.values,
+                    )
+                    typed_output = replay_ordinary_plaintext_read_only(
+                        ordinary_bundle,
+                        prepared,
+                        modulus=_MODULUS,
+                        ledger=ledger,
+                    )
+                else:
+                    prepared = prepare_ordinary_query(
+                        ordinary_bundle,
+                        query_id=query_identity.query_id,
+                        vector=vector.values,
+                        modulus=_MODULUS,
+                        ledger=ledger,
+                    )
+                    scratch_high_water = max(
+                        scratch_high_water,
+                        _scratch_bytes(scratch_directory),
+                    )
+                    preparation_bytes = canonical_ordinary_query_preparation_bytes(
+                        ordinary_bundle,
+                        prepared,
+                    )
+                    typed_output = execute_ordinary_plaintext(
+                        ordinary_bundle,
+                        prepared,
+                        modulus=_MODULUS,
+                        ledger=ledger,
+                    )
             elif execution_bundle is not None:
-                prepared = prepare_strong_query(
-                    execution_bundle,
-                    query_id=query_identity.query_id,
-                    vector=vector.values,
-                    modulus=_MODULUS,
-                    ledger=ledger,
-                )
-                preparation_bytes = canonical_strong_query_preparation_bytes(
-                    execution_bundle,
-                    prepared,
-                )
-                typed_output = execute_strong_plaintext(
-                    execution_bundle,
-                    prepared,
-                    modulus=_MODULUS,
-                    ledger=ledger,
-                )
+                if replay_mode:
+                    assert replay_preparation_documents is not None
+                    if replay_preparation_ordinal >= len(replay_preparation_documents):
+                        raise RouteAEvaluationError(
+                            "read-only replay preparation stream is truncated"
+                        )
+                    preparation_bytes = replay_preparation_documents[
+                        replay_preparation_ordinal
+                    ]
+                    prepared = decode_strong_query_preparation_bytes(
+                        execution_bundle,
+                        preparation_bytes,
+                        expected_query_id=query_identity.query_id,
+                        expected_vector=vector.values,
+                    )
+                    typed_output = replay_strong_plaintext_read_only(
+                        execution_bundle,
+                        prepared,
+                        modulus=_MODULUS,
+                        ledger=ledger,
+                    )
+                else:
+                    prepared = prepare_strong_query(
+                        execution_bundle,
+                        query_id=query_identity.query_id,
+                        vector=vector.values,
+                        modulus=_MODULUS,
+                        ledger=ledger,
+                    )
+                    scratch_high_water = max(
+                        scratch_high_water,
+                        _scratch_bytes(scratch_directory),
+                    )
+                    preparation_bytes = canonical_strong_query_preparation_bytes(
+                        execution_bundle,
+                        prepared,
+                    )
+                    typed_output = execute_strong_plaintext(
+                        execution_bundle,
+                        prepared,
+                        modulus=_MODULUS,
+                        ledger=ledger,
+                    )
             else:  # pragma: no cover - query plan and bundle are constructed together
                 raise AssertionError("query-bearing transition lacks an execution bundle")
             direct_output = direct_spmv(
@@ -403,6 +541,14 @@ def evaluate_route_a_synthetic_cell(
             if typed_output != direct_output:
                 raise RouteAEvaluationError("typed query output differs from direct Ax mod t")
             preparation_sha256 = hashlib.sha256(preparation_bytes).hexdigest()
+            private_preparation_documents.append(preparation_bytes)
+            replay_preparation_ordinal += 1
+            commitment_tokens.append(prepared.ledger_commitment_token)
+            reservation_bindings.extend(
+                operand.binding
+                for operand in prepared.f1m_operands
+                if operand.kind == "random-zero-sum"
+            )
             typed_output_sha256 = hashlib.sha256(
                 canonical_route_a_document(
                     {
@@ -462,6 +608,7 @@ def evaluate_route_a_synthetic_cell(
             scratch_high_water = max(scratch_high_water, _scratch_bytes(scratch_directory))
         result_nanoseconds += time.perf_counter_ns() - result_followup_started
 
+    terminal_result_started = time.perf_counter_ns()
     if metrics.rotations != sum(rotations.values()):
         raise RouteAEvaluationError("rotation stream does not reconcile with primitive counts")
     expected_state = trace.initial_state()
@@ -476,6 +623,20 @@ def evaluate_route_a_synthetic_cell(
                 expected_state[coordinate] = source_transition.after
     if candidate.state.logical != expected_state:
         raise RouteAEvaluationError("terminal candidate state differs from source replay")
+    if replay_mode:
+        assert replay_preparation_documents is not None
+        if replay_preparation_ordinal != len(replay_preparation_documents):
+            raise RouteAEvaluationError("read-only replay preparation stream has extra records")
+    ledger.verify_closed_consumed_prepared_f1m_ledger(
+        commitment_tokens=tuple(commitment_tokens),
+        reservation_bindings=tuple(reservation_bindings),
+    )
+    observed_ledger_snapshot = ledger_path.read_bytes()
+    if replay_mode and observed_ledger_snapshot != replay_ledger_snapshot_bytes:
+        raise RouteAEvaluationError("read-only replay mutated the exact ledger snapshot")
+    ledger_snapshot_bytes = observed_ledger_snapshot
+    ledger_snapshot_sha256 = hashlib.sha256(ledger_snapshot_bytes).hexdigest()
+    scratch_high_water = max(scratch_high_water, _scratch_bytes(scratch_directory))
 
     query_identity_tuple = tuple(query_identity_documents)
     preparation_digest_tuple = tuple(preparation_digest_documents)
@@ -509,6 +670,7 @@ def evaluate_route_a_synthetic_cell(
             "query-version-plan-metadata": tuple(query_metadata_documents),
         },
     )
+    result_nanoseconds += time.perf_counter_ns() - terminal_result_started
     rho_text = _rho_string(rho)
     cell = validate_route_a_strategy_cell(
         {
@@ -592,5 +754,64 @@ def evaluate_route_a_synthetic_cell(
         preparation_digest_documents=preparation_digest_tuple,
         consumption_receipt_documents=consumption_receipt_tuple,
         output_digest_documents=output_digest_tuple,
+        private_preparation_documents=tuple(private_preparation_documents),
+        ledger_snapshot_bytes=ledger_snapshot_bytes,
+        ledger_snapshot_sha256=ledger_snapshot_sha256,
         scratch_high_water_bytes=scratch_high_water,
+    )
+
+
+def evaluate_route_a_synthetic_cell(
+    trace: RouteASyntheticTrace,
+    *,
+    strategy_candidate_id: str,
+    rho: Fraction,
+    shard_identity_sha256: str,
+    unit_attempt_ordinal: int,
+    machine_plan_bytes: bytes,
+    scratch_directory: Path,
+) -> RouteASyntheticCellRun:
+    """Execute a producer cell with fresh single-use masks and a durable ledger."""
+
+    return _evaluate_route_a_synthetic_cell(
+        trace,
+        strategy_candidate_id=strategy_candidate_id,
+        rho=rho,
+        shard_identity_sha256=shard_identity_sha256,
+        unit_attempt_ordinal=unit_attempt_ordinal,
+        machine_plan_bytes=machine_plan_bytes,
+        scratch_directory=scratch_directory,
+        replay_preparation_documents=None,
+        replay_ledger_snapshot_bytes=None,
+    )
+
+
+def replay_route_a_synthetic_cell_read_only(
+    trace: RouteASyntheticTrace,
+    *,
+    strategy_candidate_id: str,
+    rho: Fraction,
+    shard_identity_sha256: str,
+    unit_attempt_ordinal: int,
+    machine_plan_bytes: bytes,
+    scratch_directory: Path,
+    private_preparation_documents: tuple[bytes, ...],
+    ledger_snapshot_bytes: bytes,
+) -> RouteASyntheticCellRun:
+    """Reexecute one exact producer lane without reserving, sampling, or consuming.
+
+    The caller owns ``scratch_directory`` and must destroy it after guard acceptance
+    or after any replay/guard failure; it contains the private immutable ledger copy.
+    """
+
+    return _evaluate_route_a_synthetic_cell(
+        trace,
+        strategy_candidate_id=strategy_candidate_id,
+        rho=rho,
+        shard_identity_sha256=shard_identity_sha256,
+        unit_attempt_ordinal=unit_attempt_ordinal,
+        machine_plan_bytes=machine_plan_bytes,
+        scratch_directory=scratch_directory,
+        replay_preparation_documents=private_preparation_documents,
+        replay_ledger_snapshot_bytes=ledger_snapshot_bytes,
     )

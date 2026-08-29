@@ -9,7 +9,10 @@ import pytest
 
 from dynamic_cssc.cssc import publish_component
 from dynamic_cssc.events import NetUpdate, PublicationWindow
-from dynamic_cssc.mask_ledger import SQLiteMaskBindingLedger
+from dynamic_cssc.mask_ledger import (
+    PreparedF1MCommitmentError,
+    SQLiteMaskBindingLedger,
+)
 from dynamic_cssc.ordinary_query_lifecycle import (
     ORDINARY_EXECUTION_AUTHORIZATION_SCHEMA,
     ORDINARY_PRIVATE_PLAN_SCHEMA,
@@ -23,8 +26,10 @@ from dynamic_cssc.ordinary_query_lifecycle import (
     canonical_ordinary_query_preparation_bytes,
     canonical_ordinary_query_preparation_payload,
     claim_ordinary_execution,
+    decode_ordinary_query_preparation_bytes,
     execute_ordinary_plaintext,
     prepare_ordinary_query,
+    replay_ordinary_plaintext_read_only,
 )
 from dynamic_cssc.query_compiler import compile_query
 from dynamic_cssc.strategy_state import advance_publication, initialize_strategy
@@ -91,6 +96,50 @@ def test_single_source_private_query_executes_once_without_overlap_masks(
             modulus=97,
             ledger=SQLiteMaskBindingLedger(ledger_path),
         )
+
+
+def test_closed_read_only_ledger_accepts_consumed_batch_without_commitment_rows(
+    tmp_path: Path,
+) -> None:
+    bundle = _single_source_bundle()
+    vector = (5, 7, 11, 13)
+    ledger_path = tmp_path / "ordinary-ledger.sqlite3"
+    ledger = SQLiteMaskBindingLedger(ledger_path)
+    prepared = prepare_ordinary_query(
+        bundle,
+        query_id="ordinary-zero-commitment-replay",
+        vector=vector,
+        modulus=97,
+        ledger=ledger,
+    )
+    assert prepared.f1m_operands == ()
+    preparation_bytes = canonical_ordinary_query_preparation_bytes(bundle, prepared)
+    assert execute_ordinary_plaintext(
+        bundle,
+        prepared,
+        modulus=97,
+        ledger=ledger,
+    ) == (21, 44)
+    frozen_ledger_bytes = ledger_path.read_bytes()
+
+    replay_ledger = SQLiteMaskBindingLedger.open_existing_read_only(ledger_path)
+    decoded = decode_ordinary_query_preparation_bytes(
+        bundle,
+        preparation_bytes,
+        expected_query_id=prepared.query_id,
+        expected_vector=vector,
+    )
+    assert replay_ordinary_plaintext_read_only(
+        bundle,
+        decoded,
+        modulus=97,
+        ledger=replay_ledger,
+    ) == (21, 44)
+    replay_ledger.verify_closed_consumed_prepared_f1m_ledger(
+        commitment_tokens=(prepared.ledger_commitment_token,),
+        reservation_bindings=(),
+    )
+    assert ledger_path.read_bytes() == frozen_ledger_bytes
 
 
 def test_overlap_masks_are_bound_cancel_and_reconstruct_exactly(tmp_path: Path) -> None:
@@ -235,6 +284,141 @@ def test_private_plan_and_preparation_have_closed_canonical_schemas(tmp_path: Pa
     assert hashlib.sha256(private_bytes).hexdigest() == bundle.private_plan_digest
     assert preparation_payload["bindings"]["private_plan_digest"] == bundle.private_plan_digest
     assert preparation_payload["ledger_commitment_token"] == prepared.ledger_commitment_token
+
+
+def test_exact_preparation_decodes_and_replays_against_an_immutable_consumed_ledger(
+    tmp_path: Path,
+) -> None:
+    bundle = _overlap_bundle()
+    ledger_path = tmp_path / "ordinary-ledger.sqlite3"
+    ledger = SQLiteMaskBindingLedger(ledger_path)
+    vector = (5, 7, 11, 13)
+    prepared = prepare_ordinary_query(
+        bundle,
+        query_id="ordinary-read-only-replay",
+        vector=vector,
+        modulus=97,
+        ledger=ledger,
+    )
+    preparation_bytes = canonical_ordinary_query_preparation_bytes(bundle, prepared)
+    assert execute_ordinary_plaintext(bundle, prepared, modulus=97, ledger=ledger) == (31, 44)
+    frozen_ledger_bytes = ledger_path.read_bytes()
+
+    replay_ledger = SQLiteMaskBindingLedger.open_existing_read_only(ledger_path)
+    decoded = decode_ordinary_query_preparation_bytes(
+        bundle,
+        preparation_bytes,
+        expected_query_id=prepared.query_id,
+        expected_vector=vector,
+    )
+    assert decoded == prepared
+    assert replay_ordinary_plaintext_read_only(
+        bundle,
+        decoded,
+        modulus=97,
+        ledger=replay_ledger,
+    ) == (31, 44)
+    replay_ledger.verify_closed_consumed_prepared_f1m_ledger(
+        commitment_tokens=(prepared.ledger_commitment_token,),
+        reservation_bindings=tuple(
+            operand.binding
+            for operand in prepared.f1m_operands
+            if operand.kind == "random-zero-sum"
+        ),
+    )
+    assert ledger_path.read_bytes() == frozen_ledger_bytes
+    with pytest.raises(RuntimeError, match="read-only"):
+        replay_ledger.reserve_all(
+            tuple(
+                operand.binding
+                for operand in prepared.f1m_operands
+                if operand.kind == "random-zero-sum"
+            )
+        )
+
+
+def test_preparation_decoder_rejects_noncanonical_or_retargeted_bytes(
+    tmp_path: Path,
+) -> None:
+    bundle = _overlap_bundle()
+    vector = (5, 7, 11, 13)
+    prepared = prepare_ordinary_query(
+        bundle,
+        query_id="ordinary-decode-tamper",
+        vector=vector,
+        modulus=97,
+        ledger=SQLiteMaskBindingLedger(tmp_path / "ordinary-ledger.sqlite3"),
+    )
+    canonical = canonical_ordinary_query_preparation_bytes(bundle, prepared)
+    retargeted = canonical.replace(
+        b'"query_id":"ordinary-decode-tamper"',
+        b'"query_id":"ordinary-decode-forged"',
+        1,
+    )
+
+    with pytest.raises(OrdinaryQueryLifecycleError):
+        decode_ordinary_query_preparation_bytes(
+            bundle,
+            retargeted,
+            expected_query_id=prepared.query_id,
+            expected_vector=vector,
+        )
+    with pytest.raises(OrdinaryQueryLifecycleError, match="canonical"):
+        decode_ordinary_query_preparation_bytes(
+            bundle,
+            canonical + b" ",
+            expected_query_id=prepared.query_id,
+            expected_vector=vector,
+        )
+
+
+def test_read_only_replay_rejects_unconsumed_and_extra_ledger_batches(
+    tmp_path: Path,
+) -> None:
+    bundle = _overlap_bundle()
+    vector = (5, 7, 11, 13)
+    ledger_path = tmp_path / "ordinary-ledger.sqlite3"
+    ledger = SQLiteMaskBindingLedger(ledger_path)
+    unconsumed = prepare_ordinary_query(
+        bundle,
+        query_id="ordinary-unconsumed-replay",
+        vector=vector,
+        modulus=97,
+        ledger=ledger,
+    )
+    read_only = SQLiteMaskBindingLedger.open_existing_read_only(ledger_path)
+    with pytest.raises(OrdinaryQueryLifecycleError, match="read-only replay ledger"):
+        replay_ordinary_plaintext_read_only(
+            bundle,
+            unconsumed,
+            modulus=97,
+            ledger=read_only,
+        )
+
+    assert execute_ordinary_plaintext(
+        bundle,
+        unconsumed,
+        modulus=97,
+        ledger=ledger,
+    ) == (31, 44)
+    extra = prepare_ordinary_query(
+        bundle,
+        query_id="ordinary-extra-replay",
+        vector=vector,
+        modulus=97,
+        ledger=ledger,
+    )
+    assert execute_ordinary_plaintext(bundle, extra, modulus=97, ledger=ledger) == (31, 44)
+    closed_read_only = SQLiteMaskBindingLedger.open_existing_read_only(ledger_path)
+    with pytest.raises(PreparedF1MCommitmentError, match="missing, extra"):
+        closed_read_only.verify_closed_consumed_prepared_f1m_ledger(
+            commitment_tokens=(unconsumed.ledger_commitment_token,),
+            reservation_bindings=tuple(
+                operand.binding
+                for operand in unconsumed.f1m_operands
+                if operand.kind == "random-zero-sum"
+            ),
+        )
 
 
 def test_tampered_private_operand_fails_before_consuming_valid_batch(tmp_path: Path) -> None:

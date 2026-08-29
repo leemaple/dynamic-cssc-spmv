@@ -99,6 +99,14 @@ admission boundary it may read and rehash every enumerated retained canonical
 object, including RowMap, OutputPlan, and disposable test-secret-key bytes.
 It emits only typed validity, digests, and redacted receipts; private object or
 secret-key bytes never enter the Cloud-facing interface or a formal artifact.
+The provider's one-day `NON-EVIDENCE` producer-to-replay handoff is inside this
+private admission boundary and is not the protocol Cloud. For simulator cells
+it retains the exact ordered private preparation bytes and the exact consumed
+ledger snapshot needed to verify reservation, mask, commitment-token, and
+single-consumption records without resampling or mutation. The replay archive
+remains short-lived private transport; the guard emits only the redacted final
+cell and receipts, and no private preparation or ledger bytes enter a formal
+artifact.
 
 P1 is evaluated in a malformed/stale-package model: a test may replace one or
 more enumerated binding fields or retained byte objects before admission. It is
@@ -411,7 +419,7 @@ its one-second deadline; no boundary may split an accepted-event group.
 
 The canonical machine plan is
 `config/route-a-publication-plan.json`, whose exact retained-file SHA-256 is
-`c391119d36ea882919cf787167baa9c80f346d2860fce9e3b8f98421a034fbfb`.
+`14fe871e801be61ec49ea4c5f152502a62b06cbeb63d32f3e66319ba1f4f4743`.
 The file is reviewed together with this document. The runner must reject any
 plan whose retained bytes do not match that digest; changing the file requires
 a new preregistration review and digest.

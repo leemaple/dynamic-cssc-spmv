@@ -99,7 +99,7 @@ def _repository(tmp_path: Path) -> tuple[Path, str]:
         json.dumps(
             {
                 "roles": roles,
-                "schema_version": "dynamic-cssc-route-a-behavior-set-registry-v1",
+                "schema_version": "dynamic-cssc-route-a-behavior-set-registry-v2",
                 "stage1_documents": {
                     "config/route-a-publication-plan.json": hashlib.sha256(plan_bytes).hexdigest()
                 },

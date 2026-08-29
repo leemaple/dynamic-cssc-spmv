@@ -69,7 +69,7 @@
     "expected_synthetic_shard_artifacts": 6,
     "formal_non_evidence_handoff_artifact_count": 17,
     "formal_non_evidence_handoff_retention_days": 1,
-    "formal_non_evidence_handoff_rule": "for-each-admitted-attempt-exactly-one-provider-artifact-for-the-acquisition-transform-containing-receipt-and-derived-canonical-objects-but-no-raw-source-bytes-plus-exactly-one-per-shard-containing-the-complete-producer-payload-openfhe-handoffs-also-contain-the-content-addressed-build-and-all-three-retained-test-packages-never-a-formal-artifact;any-provider-object-from-a-failed-attempt-is-permanently-NON-ADMISSIBLE-diagnostic-material-with-its-attempt-ordinal-and-never-occupies-an-expected-formal-identity",
+    "formal_non_evidence_handoff_rule": "for-each-admitted-attempt-exactly-one-provider-artifact-for-the-acquisition-transform-containing-receipt-and-derived-canonical-objects-but-no-raw-source-bytes-plus-exactly-one-per-shard-containing-the-complete-producer-payload;simulator-handoffs-retain-the-exact-ordered-private-preparation-bytes-and-exact-consumed-ledger-snapshot-inside-the-one-day-private-admission-boundary;openfhe-handoffs-also-contain-the-content-addressed-build-and-all-three-retained-test-packages;these-handoffs-are-provider-transport-not-the-protocol-Cloud-and-never-formal-artifacts;any-provider-object-from-a-failed-attempt-is-permanently-NON-ADMISSIBLE-diagnostic-material-with-its-attempt-ordinal-and-never-occupies-an-expected-formal-identity",
     "formal_shard_artifact_count": 16,
     "qualification_non_evidence_artifact_count": 6,
     "qualification_non_evidence_artifact_retention_days": 1,
@@ -680,7 +680,7 @@
       ],
       "attempt_scope": "nominal-unit-attempt-is-zero-and-the-sole-provider-replacement-is-one;attempt-ordinal-is-part-of-the-lane-digest-so-the-replacement-never-reuses-a-query-id-or-five-field-F1M-reservation-identity;replay-reuses-only-the-producer-lane-from-the-same-attempt",
       "process_scope": "producer-role=simulator-with-json-null-ordinal;producer-role=openfhe-warmup-with-ordinal-zero;producer-role=openfhe-recorded-with-ordinal-zero-through-two;independent-replay-is-not-a-new-evaluation-lane-and-for-synthetic-SNAP-and-openfhe-reuses-the-exact-original-producer-lane-and-query-ids-from-the-same-unit-attempt-in-read-only-verification-mode",
-      "replay_ledger_rule": "every-simulator-SNAP-and-openfhe-replay-rehashes-and-verifies-the-producer-prepared-query-reservation-mask-result-and-exactly-once-consumed-token-records-but-never-reserves-samples-consumes-or-mutates-the-ledger;missing-unconsumed-duplicate-or-mismatched-records-reject",
+      "replay_ledger_rule": "every-simulator-SNAP-and-openfhe-replay-rehashes-and-verifies-the-producer-prepared-query-reservation-mask-result-and-exactly-once-consumed-token-records;simulator-replay-decodes-the-exact-ordered-private-preparation-bytes-and-opens-the-exact-consumed-SQLite-ledger-snapshot-immutable-read-only-with-byte-equality-before-and-after;replay-never-reserves-samples-consumes-or-mutates-the-ledger;missing-extra-unconsumed-duplicate-reordered-retargeted-or-mismatched-records-reject",
       "schema_version": "dynamic-cssc-route-a-evaluation-lane-identity-v2",
       "sha256_scope": "exact-canonical-document-bytes"
     },

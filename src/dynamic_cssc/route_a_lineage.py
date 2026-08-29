@@ -49,7 +49,7 @@ ROUTE_A_BEHAVIOR_ROLES = (
 )
 ROUTE_A_REGISTRATION_ANCHOR_PATH = "config/route-a-registration-anchors.json"
 _BEHAVIOR_REGISTRY_PATH = "config/route-a-behavior-sets.json"
-_BEHAVIOR_REGISTRY_SCHEMA = "dynamic-cssc-route-a-behavior-set-registry-v1"
+_BEHAVIOR_REGISTRY_SCHEMA = "dynamic-cssc-route-a-behavior-set-registry-v2"
 _BEHAVIOR_INVENTORY_SCHEMA = "dynamic-cssc-route-a-behavior-inventory-v1"
 _REGISTRATION_EVIDENCE_SCHEMA = "dynamic-cssc-route-a-registration-evidence-v1"
 _REGISTRATION_ANCHOR_SET_SCHEMA = "dynamic-cssc-route-a-registration-anchor-set-v1"
