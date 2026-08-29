@@ -437,3 +437,35 @@ passing, with Ruff, `compileall`, JSON parsing, Stage-1 hash-chain equality, and
 `git diff --check` also passing. These checks are non-authorizing. The new exact
 commit still requires the same-packet Pro/ZCode/Fable terminal review,
 exact-head CI, and PRE-S1 before any qualification dispatch.
+
+### 5.6 Earliest-only fail-safe wait amendment
+
+ChatGPT Pro's terminal review of exact unpushed commit
+`3e0ac9335f9d020d0465fb605a76599e0f9b4db7` returned **AMEND; P0=0,
+P1=1, P2=3**. It independently closed all three findings from Section 5.5,
+then found one narrower control-plane defect: after a later successful but stale
+provider read, the watcher checked the already-frozen local fail-safe deadline
+but computed its next sleep only from the provider-clock remainder. With a
+15-second polling interval, a five-second local remainder and a twenty-second
+stale provider remainder could therefore sleep ten seconds beyond the immutable
+local boundary. This could delay Route C enforcement, although the terminal
+provider-timestamp check still prevented a false GO.
+
+The successor adds a deterministic red regression for that exact ordering. The
+unfixed implementation requests cancellation at `00:45:10` instead of the
+frozen `00:45:00` boundary. The production wait now takes the minimum of the
+poll interval, provider-threshold remainder, and local-fail-safe remainder.
+Both subtractions stay within one clock domain: provider minus provider and
+controller minus controller. The new regression and the prior stale-Date
+regression pass; Pro's four requested controller files pass **96 tests**, the
+broader controller/GitHub/results/CLI/workflow/postrun set passes **112 tests**,
+and the independent lineage file passes **27 tests**, for **139 distinct
+lightweight tests** in the recorded local packet. Ruff passes on both changed
+Python files. No OpenFHE, S/M-scale, source acquisition, qualification workflow,
+formal unit, artifact installation, or authority-producing action ran.
+
+The scientific contribution, C1--C4 vector, threat model, matrix, seed/order,
+45/55/60-minute and 12-hour gates, Stage-1 document bytes and hashes, role
+schemas, and all authority-false boundaries are unchanged. The exact successor
+still requires narrow same-commit external review, exact-head CI, and PRE-S1;
+this amendment itself authorizes no publication execution.

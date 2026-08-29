@@ -1189,13 +1189,23 @@ def watch_route_a_qualification(
                 or controller_now < local_fail_safe_deadline
             )
             if not failed_job_observed and before_provider_threshold and before_local_fail_safe:
-                remaining = (
+                provider_remaining = (
                     float(poll_interval_seconds)
                     if threshold_at is None
-                    else min(
-                        float(poll_interval_seconds),
-                        max(0.0, (threshold_at - provider_now).total_seconds()),
+                    else max(0.0, (threshold_at - provider_now).total_seconds())
+                )
+                local_remaining = (
+                    float(poll_interval_seconds)
+                    if local_fail_safe_deadline is None
+                    else max(
+                        0.0,
+                        (local_fail_safe_deadline - controller_now).total_seconds(),
                     )
+                )
+                remaining = min(
+                    float(poll_interval_seconds),
+                    provider_remaining,
+                    local_remaining,
                 )
                 wait(remaining)
                 continue

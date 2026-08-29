@@ -346,6 +346,51 @@ def test_live_stop_loss_never_extends_the_local_fail_safe_for_a_stale_provider_d
     assert provider.cancelled == [999]
 
 
+def test_live_stop_loss_bounds_successful_stale_read_wait_by_local_fail_safe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_at = BASE + timedelta(minutes=44, seconds=40)
+    second_local_at = first_at + timedelta(seconds=15)
+    stale = _observation(second_local_at)
+    stale = replace(
+        stale,
+        provider_observed_at=first_at,
+        run=replace(stale.run, updated_at=first_at),
+    )
+    deadline_observation = _observation(BASE + timedelta(minutes=45))
+    at_local_deadline = replace(
+        deadline_observation,
+        provider_observed_at=first_at,
+        run=replace(deadline_observation.run, updated_at=first_at),
+    )
+    terminal_at = BASE + timedelta(minutes=45, seconds=1)
+    provider = _Provider(
+        [
+            _observation(first_at),
+            stale,
+            at_local_deadline,
+            _observation(
+                terminal_at,
+                q5_completed_at=terminal_at,
+                terminal_cancelled=True,
+            ),
+        ],
+        clock=_Clock(first_at),
+    )
+    monkeypatch.setattr(controller_module, "_utc_now", provider.clock)
+
+    result = watch_route_a_qualification(
+        provider,
+        _request(),
+        poll_interval_seconds=15,
+        wait=provider.clock.wait,
+    )
+
+    assert result.decision == "route-c-cancelled"
+    assert result.cancellation_requested_at == BASE + timedelta(minutes=45)
+    assert provider.cancelled == [999]
+
+
 def test_live_stop_loss_accepts_jobs_as_the_serial_dag_is_instantiated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
