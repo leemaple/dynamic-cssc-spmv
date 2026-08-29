@@ -1,9 +1,10 @@
-# Version-Bound Maintenance for Mutable Homomorphic Sparse Matrix--Vector Multiplication
+# Version-Bound Maintenance for Mutable Homomorphic Sparse Matrix--Vector Multiplication: A Fail-Closed Evaluation Boundary
 
-> **Manuscript status:** methods-first working draft. Bracketed result fields are
-> deliberately unset. No performance, complete-reference, security, or
-> end-to-end claim may be filled without the gate named beside it.
-> Evidence status last synchronized: 2026-08-28.
+> **Manuscript status:** Route C methods/boundary working draft. The frozen
+> engineering lineage is complete, but the one-shot qualification selected the
+> preregistered stop route. No comparative performance, complete-reference,
+> security, or end-to-end claim is released. Evidence status last synchronized:
+> 2026-08-30.
 
 ## Abstract
 
@@ -23,21 +24,24 @@ the Cloud execute a public page-wide schedule while the client privately merges
 segment leaders. A typed bundle binds the CSSC base, delta, operands, routes,
 and operation graph and fails closed on version or plan substitution.
 
-Our evaluation protocol advances persistent strategy snapshots through a
-chronological warm-up/tuning/held-out split, excludes an offline oracle from
-selection, and keeps predicted counts, admitted OpenFHE unit-cost measurements,
-and end-to-end evidence separate.
-A historical commit-bound OpenFHE 1.5.1 witness at
-`fcb00e0d7f111f3ab5003c111b124df83ae11813` validates one base-plus-delta query
-fixture; it is not evidence for later source changes. A later private Day 1B
-production issuer passed exact-head Linux CI and a dedicated ordinary/strong
-real-runner PRE-S1 run, but that run explicitly minted no publication authority or
-artifact. A bounded Day 1A performance re-diagnostic is authorized as exactly one
-NON-ADMISSIBLE run that can never be cited as formal evidence, and the project has
-zero formal empirical results. Complete accounting, real-stream comparison, and
-calibrated performance therefore remain gated.
-The final manuscript will report **[R2B/R3/R4 result sentence withheld until the
-corresponding commit-bound artifacts pass]**.
+Our evaluation protocol compares three fixed maintenance mechanisms under the
+same versioned event streams, query schedules, public parameters, and initial
+states. It separates directly measured state-transition costs, exact typed
+operation counts, type-derived serialized-byte bounds, a narrowly registered
+query-linearity projection, and native OpenFHE observations. The frozen matrix
+contains six synthetic shards, four ordered-event shards derived from one SNAP
+source object, and six native OpenFHE cases. Independent replay and terminal
+admission must accept exactly the resulting 17 pre-aggregate artifacts before
+analysis can release any empirical sentence.
+
+The sole preregistered, permanently non-admissible qualification did not reach
+its combined guard within the frozen computational deadline. The external
+controller cancelled only that exact run, no formal-dispatch capability was
+created, and the acquisition and 16-unit formal campaign were therefore not
+started. We report the protocol, its definition-level functional obligations,
+the source/evidence separation, and this fail-closed evaluation boundary. We do
+not convert partial qualification execution into strategy-cost or native-
+OpenFHE performance evidence.
 
 **Keywords:** homomorphic encryption; sparse matrix--vector multiplication;
 mutable sparse matrices; cryptographic engineering; reproducible evaluation
@@ -89,10 +93,10 @@ version semantics or overstating evidence?
    segment/page shapes, cloud-side leader reduction, private leader merging, and
    a deterministic whole-query execution bundle. We do not claim a new HE
    primitive or a formal security proof.
-5. **Causal, fail-closed evaluation.** We maintain independent candidate states,
-   tune only on a chronological prefix, expose ablations separately from
-   selectable references, and bind every reported claim to an evidence level and
-   digest-addressed artifact.
+5. **Causal, fail-closed evaluation.** We freeze three strategy identities rather
+   than train an online selector, advance independent states through identical
+   deterministic streams, separate measured and projected quantities, and bind
+   every reportable claim to independently replayed, digest-addressed evidence.
 
 ## 2. Background and Related Work
 
@@ -137,7 +141,7 @@ The closest methods are not interchangeable experimental baselines:
 | D'Agata et al. [@dagata2026gpu] | GPU/FIDESlib CKKS ciphertext--ciphertext SpMSpM with public sparse metadata | No | Extends the same static design space to GPU execution; not a dynamic SpMV baseline. |
 | Rhombus [@he2024rhombus] | Plaintext-matrix/encrypted-vector MVM with additive output shares | No | A different two-party PPML protocol; the random-share primitive is prior art, while versioned overlap binding is our narrower integration claim. |
 | Damie et al. [@damie2025secure] | Secret-shared sparse matrix multiplication in MPC | Not this protocol | Shows secure sparse arithmetic outside FHE; incomparable without a common threat and cost model. |
-| This work | Version-bound CSSC base plus designated maintenance components (admission pending) | Yes | Studies publication, query recompilation, private reconstruction, and causal costs; claims no static-format or primitive novelty. |
+| This work | Version-bound CSSC base plus designated maintenance components; formal evaluation stopped at qualification | Yes | Studies publication, query recompilation, private reconstruction, and causal-cost contracts; claims no static-format, primitive, or comparative-performance novelty. |
 
 ### 2.2 Mutable sparse layouts
 
@@ -290,18 +294,41 @@ This evidence is deliberately narrow. It does not establish complete candidate
 costs, candidate registration, mixed-circuit parameter safety, security,
 performance, or an end-to-end deployment.
 
-The current engineering line retains those boundaries while adding fail-closed
-experiment lineage, replay, and worker contracts. The reviewed private Day 1B issuer
-implementation is commit-bound at
-`8a37c930edd1f404f7828dd574a4a2d0c29864e9`. Exact-head Linux CI run
-`33135852470` reported 2,178 passing tests and two expected skips because the
-ordinary CI job does not build the real OpenFHE query runner. Dedicated PRE-S1 run
-`33138110298` built OpenFHE `1.5.1@1306d14f8c26`, executed both ordinary and
-strong real-runner smokes, passed the 632-test closed contract and Ruff, and exposed
-zero artifacts. Its terminal boundary still states that the repository production
-adapter, dispatch, and publication artifact are absent and that no publication
-execution is permitted. These are implementation and admission-safety observations,
-not paper results.
+The Route A engineering line retains those boundaries while adding a closed
+qualification and evidence path. A six-job, permanently non-admissible
+qualification first exercises a synthetic producer/replay pair, then a
+case-shaped native producer with one discarded warm-up and three fresh-key
+recorded lanes, exact package replay with zero key generation and zero
+encryption, a cross-domain combined guard, and a post-run resource record. Its
+artifacts have one-day retention, carry no publication authority, and can never
+enter the paper's formal result set. An external controller enforces the frozen
+computational and end-to-end deadlines and can only return a non-serializable,
+short-lived dispatch capability after a fresh provider reread.
+
+Formal execution was specified as a separate strictly serial campaign,
+conditional on qualification success. Every unit would have had an
+experiment-source checkout, producer,
+one-day non-evidence handoff, independent replay, guard, and formal artifact.
+The terminal validator admits exactly one acquisition artifact, six synthetic
+artifacts, four ordered-event artifacts, and six native artifacts before one
+aggregate and a compatible detached analysis snapshot may be created. A clean
+source snapshot, a data-only registration snapshot, and an analysis snapshot
+may have different commit identifiers only when a repository-owned closed
+Behavior Set and compatibility receipt prove that every behavior-bearing blob
+remains identical where required. The qualification did not succeed, so none of
+these formal units or downstream objects was created.
+
+Historical exact-head CI and real-runner smokes are useful engineering
+observations, but they do not transfer across behavior changes. The final
+reviewed tree was merged as Experiment Source Snapshot S1
+`ee58627bb5752c6ac1ee2c5132c6574f9cb66552`; exact-main CI and PRE-S1 passed.
+A descriptive registration was then installed as the only data change in
+Evidence-Freeze Snapshot S2
+`c7ff6820d9323f1850c1c5c57fd9070db88db120`, whose CI and closed-Behavior-Set
+compatibility checks passed. The sole qualification subsequently selected
+Route C, so the formal campaign, terminal admission, aggregate, and analysis
+chain were deliberately not run. No statement in this section is empirical
+evidence for a maintenance strategy.
 
 Generative-AI systems assisted literature discovery, code and test generation,
 adversarial review, and drafting during development. Their outputs are neither
@@ -311,166 +338,286 @@ artifacts, and accept responsibility for every claim and released result.
 
 ## 6. Evaluation Methodology
 
-Before inspecting publication held-out results, we will freeze the complete
-experiment and this currently pending preregistration draft. Each candidate
-owns an independent persistent state advanced through
-the same chronological accepted-event groups. Common half-open group-ordinal
-ranges define 10% warm-up, 30% tuning, and 60% held-out phases for every
-freshness/rho cell, with atomic window closure at each boundary. The selected
-candidate ID is chosen independently within each frozen
-`(trace unit, semantics, freshness, rho)` cell from that cell's tuning prefix,
-then fixed for its held-out suffix. The held-out offline
-oracle is a diagnostic bound only.
+The experiment is frozen before any formal artifact is inspected. It does not
+train a selector, choose a winner on a tuning prefix, or use a held-out oracle.
+Every strategy owns an independent persistent state and consumes the same
+ordered event groups, publication boundaries, queries, initial logical matrix,
+and public parameters. The intervention is therefore the maintenance mechanism,
+not the workload history.
 
-Once the repository composite admission gate succeeds, the experiment emits 14
-fixed records: 13 selectable references and one client-lane ablation. The
-designated strong cloud-segmented `c=128` candidate then fills the previously
-missing reference role, while the client-lane packed-COO path remains a separately plotted,
-non-selectable ablation. Synthetic traces test mechanisms; the publication
-verdict uses three officially linked temporal sources selected under a recorded
-terms assessment:
-the three official typed SNAP Stack Overflow interaction objects
-[@snap_stackoverflow_temporal_network; @paranjape_motifs_in_temporal_networks],
-the Wikimedia MediaWiki History Simple English Wikipedia all-time object in
-version 2026-07 [@wikimedia_mediawiki_history_simplewiki_2026_07], and the 12
-NYC TLC 2022 monthly yellow-taxi Parquet objects plus the unversioned official
-zone lookup as linked and accessed on 2026-08-23; acquisition-time local hashes
-and an independently admitted URL-to-byte acquisition receipt remain pending
-[@nyc_tlc_yellow_trip_records_2022; @nyc_tlc_yellow_trip_data_dictionary]. If it
-is separately frozen, acquired, and executed, LDBC SNB Interactive v2 SF30 will
-be reported only as a synthetic natural-delete auxiliary panel, never as part
-of the fixed-corpus primary decision [@ldbc_snb_interactive_v2].
+### 6.1 Fixed strategies
 
-For each real source, two deterministic transforms--cumulative recurrence and a
-32,768-event sliding window--are applied to five disjoint source-entity
-partitions. The full robustness panel therefore contains 30 paired trace units,
-not 30 independent domains and not random reruns of one trace. The sole
-confirmatory family is fixed in advance to T2 at 0.1 s freshness and contains
-15 paired `(dataset, source-partition)` units. T1 and the 1.0 s freshness panels
-are prespecified secondary robustness analyses and cannot authorize, replace,
-or rescue the headline. Each unit targets
-131,072 accepted raw events in the 4096-by-8193 manifest domain and uses the
-same candidates, queries, and continuous 10/30/60 state history.
+The three strategy identities are:
 
-Primary results use complete serialization accounting within the preregistered
-protocol-object transaction scope, measured OpenFHE calibration, all 15
-fixed-corpus unit effects, and a descriptive
-10,000-resample dataset-stratified partition-weighting sensitivity. Evaluation
-keys are reported as a separate one-time inventory; HTTP/TLS,
-filesystem, artifact-container, and workflow framing are excluded from this
-transaction scope. A headline improvement concerns the tuning-selected
-procedure relative to the frozen
-recompress-every-window candidate `periodic-repack/windows=1` in the sole
-T2-at-0.1-s confirmatory family. It requires at least a 15% paired median
-reduction, strictly positive effects and non-domination in all 15 units at two
-adjacent prespecified rho grid points, and calibration-classification
-stability. The partition-resampling interval is descriptive, not a confidence
-interval; no sign test, Holm adjustment, or population inference is claimed.
-Full details and stop rules appear in
-`publication-preregistration-draft.md` and must be frozen before execution.
+1. `periodic-repack/windows=1`, which reconstructs and republishes a complete
+   static CSSC layout at every Publication Window;
+2. `padding-reuse`, which reuses the lowest-ordinal tombstone, then natural
+   padding, and otherwise rebuilds the affected fixed horizontal row partition;
+   and
+3. `packed-coo-cloud-segmented-delta/segment-width=128`, which keeps a CSSC base
+   and appends overflow into cloud-executable, row-owned 128-lane segments. It
+   never folds online in the registered experiment.
 
-Calibration archives exactly three complete warm-up blocks and then consumes
-exactly 14 outcome-independent whole measurement blocks. Warm-up blocks cover
-the same profiles and cases but do not enter the projection or estimator; each
-measurement block contains the closed 14-primitive vocabulary in a deterministic
-SHAKE256/Fisher--Yates order derived from seed `2026082302`, its block ordinal,
-and a calibration-only domain. The per-primitive median across those 14 blocks
-is the point estimate. Per-operation seconds retain exact arithmetic through a
-canonical terminating-decimal-or-reduced-fraction encoding. The nested
-sensitivity analysis resamples one shared
-block-ordinal sequence, preserving cross-primitive covariance, recomputes all
-primitive medians, reruns
-the 13-reference tuning selection for every cell with a canonical-ID tie break,
-then recomputes the corresponding fixed held-out effects and Pareto relations
-on the same 15 units. It does not resample deterministic partitions in this
-calibration loop. Thus it propagates timing, selector, and dominance
-instability instead of holding the point-estimate winner fixed. Every analyzed
-cell is digest-linked to its source bundle, mapping, accepted-event stream,
-split, and replay receipt; a later workflow must independently rehash those
-objects before any empirical claim is released.
+These candidates are mechanisms to compare, not actions of an online policy.
+A slower strategy, a crossing cost curve, or the absence of a global winner is
+a reportable outcome rather than a failed experiment.
 
-## 7. Results
+### 6.2 Synthetic matrix
 
-### 7.1 Correctness gates
+The synthetic suite uses a mixed insert/delete/modify workload at two frozen
+scales: S has 256 rows, 8,193 columns, and 512 accepted updates; M has 1,024
+rows, 8,193 columns, and 2,048 accepted updates. The formal seeds are
+`20260822`, `20260823`, and `20260824`, giving six scale--seed shards. Every
+shard evaluates all three strategies at
+$\rho\in\{0.01,0.1,1,10\}$.
 
-**Historical audited fact:** R0 and the narrow Phase 2 fixture pass at `fcb00e0d`.
-For any later evidence role, drift in that role's frozen Behavior Set requires a
-new run; evidence-only and analysis-only snapshots require the separate S1/S2/S3
-compatibility receipt defined by ADR 0010.
+For a reduced fraction $\rho=p/q$ and zero-based accepted-event ordinal $a$,
+the number of queries inserted after event group $a$ is
 
-**Day 1A operational boundary:** diagnostic run `33099397289` failed the frozen
-300-minute producer-to-replay-guard gate. The producer consumed 285 minutes; at the
-deadline the replay calculation was still running and its guard had not begun. The
-run was cancelled at the exact stop-loss and produced no formal shard or aggregate
-evidence. One bounded source change at
-`efdd9af894842a219080f93c8d36fb09ee93b161` hoists a single base event stream,
-removes a redundant logical-state copy while retaining the deep divergence guard,
-and emits non-authorizing stage timings. Its exact-head CI and descriptive
-registration passed. Disposable S2
-`2db4bc87c54d3b5d448f17e4e8d62eae668f16d1` authorizes exactly one same-input
-NON-ADMISSIBLE diagnostic, run `33130154591`; its unchanged 300-minute deadline is
-`2026-08-28T05:35:25Z`. This lineage can never be cited as a formal Day 1A result.
+$$
+Q_a=
+\left\lfloor\frac{(a+1)p}{q}\right\rfloor-
+\left\lfloor\frac{ap}{q}\right\rfloor,
+$$
 
-**Day 1B operational boundary:** the private issuer at `8a37c930` has a local
-dual-axis PASS and two advisory external-review PASS verdicts with no unresolved
-P0/P1, plus the Linux CI and PRE-S1 observations summarized in Section 5. The
-repository adapter still requires exact Day 2 plan authority and TRACE authority.
-No Day 1B worker dispatch, held-out access, publication artifact, or empirical claim
-is authorized.
+so the first $N$ complete groups contain exactly
 
-**Withheld:** formal Day 1A completion, mixed-circuit, and R4 results.
+$$
+\sum_{a=0}^{N-1}Q_a=\left\lfloor\frac{Np}{q}\right\rfloor
+$$
 
-### 7.2 Causal count results
+queries. The $0.01$, $0.1$, and $1$ cells execute directly. The $\rho=10$
+cell is not timed; it is an exact registered transformation of the same
+strategy and shard's $\rho=1$ query-linear count and byte fields. Any event,
+window, state, or non-whitelisted-field mismatch rejects the entire shard.
 
-**[Populate only from an accepted R2B artifact whose exact 14/13 candidate-role
-contract, replay receipts, trace checksums, and rotation inventory verify.]**
+### 6.3 Ordered events from one real source
 
-### 7.3 Measured calibration and end-to-end validation
+The sole external object is the SNAP Stack Overflow answer-to-question stream
+`sx-stackoverflow-a2q.txt.gz`
+[@snap_stackoverflow_temporal_network; @paranjape_motifs_in_temporal_networks].
+Acquisition records the final URL, response headers, exact compressed length,
+and SHA-256 digest. An independent guard downloads the object again and
+requires identical response-body bytes; the admitted artifact omits the raw
+compressed object.
 
-**Exploratory mechanism check only:** GitHub run `32712608022` at `f11e97d`
-completed all 14 primitive profiles over eight caller-supplied exact rotation
-indices. The independently rehashed probe document has SHA-256
-`8b7db293687484bdf27e5f703bfb9e237fdaba3e3f6c8d736b33ce4c4e068207`.
-It contains three warm-up blocks but only 11 measurement blocks and explicitly
-sets `publication_raw_block_contract_satisfied=false`; the historically named
-`R3-Day2` package is therefore permanently non-R3 and supplies no manuscript
-estimate or claim.
+The first 1,000,000 eligible records freeze the row/column mapping. Source-ID
+hashing defines two deterministic partitions, each with 1,024 rows and 8,193
+columns. After the mapping prefix, each partition consumes 4,096 accepted
+records under two semantics. T1 is cumulative occurrence,
 
-**[Populate only from accepted Day 2, calibrated replay, mixed-circuit, and R4
-artifacts. Include all 14 whole raw measurement blocks, their exact
-index/profile cases, and uncertainty, not only medians.]**
+$$
+A_{uv}(t)=\min\{7,N_{uv}(t)\},
+$$
+
+whereas T2 retains the most recent $K=1024$ accepted events and performs expiry
+before admission in one indivisible atomic group. The synthetic logical clock
+advances by one second per 128 accepted records. Both partitions and both
+semantics run all three strategies at $\rho\in\{0.1,1\}$, yielding four
+ordered-event shards. They support conclusions about deterministic interactions
+within one source, not multi-source or historical wall-clock generalization.
+
+### 6.4 Native OpenFHE cases
+
+The native matrix contains three strategies at the S and M scales, hence six
+cases. Every case uses seed `20260822`, $\rho=1$, the terminal accepted-event
+prefix (512 for S and 2,048 for M), and the query after the last complete event
+group. Version, component inventory, query vector, `OutputPlan`, typed execution
+plan, and canonical input bytes are fixed together.
+
+Each case performs one discarded warm-up, three fresh-key producer evaluations,
+and three exact package replays:
+
+$$
+6\times(1+3+3)=42
+$$
+
+native evaluations in total. The three recorded producers are technical
+repetitions, not independent population samples. We report their raw values,
+median, and range, separately for production and replay. Replay deserializes the
+retained context, secret/public keys, evaluation-key frame, and input
+ciphertexts. Its lifecycle receipt must show zero context generation, zero key
+generation, zero evaluation-key generation, and zero encryption, while its
+cloud-program operation inventory must equal that of the corresponding
+producer package.
+
+### 6.5 Measurements and accounting
+
+For strategy $k$, scale or source unit $s$, and query/update ratio $\rho$, the
+result remains a typed vector rather than a synthetic score:
+
+$$
+\mathbf{c}_{k,s,\rho}=
+\left(
+T_{\mathrm{state}},
+T_{\mathrm{assembly}},
+N_{\mathrm{op}},
+B_{\mathrm{meta}},
+\overline{B}_{\mathrm{crypto}},
+\mathrm{RSS}_{\max},
+\mathrm{scratch}_{\max}
+\right).
+$$
+
+Synthetic and ordered-event cells directly measure state-transition,
+result-assembly, and independent-replay time, peak RSS, and controlled scratch;
+they exactly count events, windows, queries, typed operations, and object
+multiplicities. Their cryptographic-object bytes are conservative type-derived
+bounds,
+
+$$
+\overline{B}_{\mathrm{crypto}}=\sum_j m_jU_j,
+$$
+
+where $m_j$ is the exact multiplicity and $U_j$ is the Stage-1 maximum for type
+$j$. Canonical metadata bytes are measured separately. Native cases instead
+report observed serialized-object bytes, typed-operation inventories, process
+time, RSS, and scratch. Simulator counts are never converted into OpenFHE
+latency, and evidence-replay overhead is never presented as strategy execution
+cost.
+
+For the registered $\rho=10$ projection, only query-linear fields change:
+
+$$
+n^{(10)}_{q,p}=10n^{(1)}_{q,p},\qquad
+n^{(10)}_{u,p}=n^{(1)}_{u,p}.
+$$
+
+Wall time, RSS, scratch, and native latency are unavailable for this projected
+cell. Protocol-byte transfer time at bandwidth $b$ Mbps is reported only as the
+transparent conversion
+
+$$
+T_{\mathrm{net}}(B,b)=\frac{8B}{b\times10^6};
+$$
+
+HTTP/TLS, artifact wrappers, filesystems, and private replay transport remain
+separate evidence-pipeline costs.
+
+The paired strategy contrast for unit $u$ is
+
+$$
+\tau_{a,b}(u,\rho)=C_a(E_u,\rho)-C_b(E_u,\rho),
+$$
+
+where $C$ is one preregistered field or the full typed cost vector. With only
+two scales, two deterministic source partitions, and three technical native
+repetitions, we report all raw points and mechanism-level decompositions. We do
+not fit scaling exponents, attach population $p$ values or confidence intervals,
+or claim a global winner or Pareto frontier.
+
+### 6.6 Evidence admission and stopping
+
+Before formal execution, one six-job qualification must complete within the
+frozen 45-minute computational path and 55-minute total path, satisfy the
+necessary $6C_q\leq9000\,\mathrm{s}$ planning screen, and survive a fresh
+external-controller reread. Qualification artifacts are permanently
+non-evidence and cannot enter the formal result set.
+
+The formal campaign is serial and admits exactly
+
+$$
+1\ \text{acquisition}
++6\ \text{synthetic}
++4\ \text{ordered-event}
++6\ \text{OpenFHE}
+=17
+$$
+
+pre-aggregate artifacts. Before launching each unit, the controller reserves
+its full remaining worst-case budget. The preregistered 12-hour figure is an
+acceptance threshold, not a guarantee that provider-side cancellation cannot
+overshoot. Across the 17 enumerated units, at most one whole-unit replacement
+is allowed, and only for a provider failure rather than a data-dependent or
+scientific outcome. Terminal admission rejects missing, extra, duplicated,
+wrong-attempt, or wrong-kind objects before aggregation and compatible detached
+analysis.
+
+## 7. Evidence Outcome
+
+### 7.1 Evidence status
+
+Exact-head CI, PRE-S1, descriptive registration, and S1--S2 compatibility gates
+closed before execution. Qualification run `33261434612` was then dispatched
+once from exact S2 while importing behavior from exact S1. At the frozen
+45-minute computational threshold, the independent simulator replay was still
+running and the combined guard had not started. The external controller
+requested cancellation of that exact run. The terminal workflow conclusion is
+`cancelled`; the only retained object was the one-day q1 pre-replay handoff,
+which is permanently non-admissible.
+
+No q5 guarded bundle, q6 post-run record, live dispatch capability, acquisition
+artifact, formal shard, terminal admission record, aggregate, or compatible S3
+analysis exists. The project therefore has zero reportable strategy-cost,
+ordered-event, or native OpenFHE results. CI logs, qualification handoffs,
+partially completed jobs, and local copies are not alternative result sources.
+
+### 7.2 Synthetic and ordered-event costs
+
+The six synthetic and four ordered-event formal shards were not dispatched.
+Consequently this paper presents no strategy ranking, speedup, projected timing,
+or cost trade-off plot. The frozen schemas and analysis code remain part of the
+reproducibility package, but an empty or partial table is not treated as a
+measurement result.
+
+### 7.3 Native OpenFHE execution
+
+The six formal native cases were not dispatched. PRE-S1 ordinary and strong
+smokes demonstrate only that the pinned OpenFHE paths executed at the frozen
+source identity; they are not benchmark observations. No native median, range,
+speedup, memory result, or serialized-package comparison is claimed.
+
+### 7.4 Preregistered Route C disposition
+
+The qualification deadline failure is one of the preregistered falsifiers. It
+selects Route C without a threshold change, selective rerun, smaller matrix, or
+reuse of the partial handoff. GitHub's terminal metadata also reported two
+never-executed downstream cancelled jobs with `completedAt` one second earlier
+than `startedAt`; the controller rejected that terminal observation fail-closed.
+This provider-boundary anomaly did not create a false GO and did not cause the
+deadline failure. It is recorded as an implementation limitation for any future
+lineage, not as permission to modify S1 and repeat this one-shot attempt.
 
 ## 8. Limitations
 
 The threat model is narrow and provides no formal security theorem. Client B
 learns layout and reconstruction metadata; the Cloud learns shapes, counts,
 schedules, timing, opaque identifiers, and digests. The current witness covers
-one frozen fixture and one segment width. Unit microbenchmarks do not imply
-end-to-end latency or noise safety. Synthetic traces do not imply robustness on
-real update streams. A negative or boundary empirical result remains a valid
-outcome; held-out retuning is prohibited.
+one frozen fixture and one segment width. The real-stream matrix uses one source,
+two deterministic partitions, and two registered semantics; it does not support
+cross-domain generalization. The two synthetic scales do not identify an
+asymptotic exponent, and three fresh-key native repetitions do not identify a
+population distribution. The $\rho=10$ row is a registered count/byte projection,
+not a timing measurement. Unit microbenchmarks do not imply end-to-end latency
+or noise safety, and type-derived byte bounds are not observed ciphertext sizes.
+The present boundary is operational rather than a comparative strategy result:
+the formal matrix was never authorized. Post-outcome retuning, threshold
+changes, and selective reuse of qualification fragments are prohibited.
 
 ## 9. Conclusion
 
 Mutable encrypted sparse computation requires more than an updatable container:
 matrix state, query reorganization, encrypted execution, and reconstruction must
 commit to the same version and be evaluated under complete causal costs. This
-work supplies that explicit contract around CSSC and a witnessed strong-delta
-execution path. The final empirical conclusion is intentionally deferred until
-the complete, preregistered evidence chain passes.
+work supplies that explicit contract around CSSC, three fixed maintenance
+mechanisms, and a fail-closed paired evaluation. The bounded attempt also shows
+the consequence of treating feasibility gates as real falsifiers: when the sole
+qualification did not reach its combined guard by the frozen deadline, the
+system produced no authority and the formal campaign did not run. The resulting
+Route C manuscript therefore makes protocol and evidence-boundary claims, not
+comparative performance claims.
 
 ## Data and code availability
 
-The publication artifact will contain the frozen source-object register,
-acquisition receipts, local hashes, transform and rejection summaries, derived
-trace manifests, query vector, scheduled-event programs, raw calibration
-blocks, Day1B records, replay receipts, analysis inputs and outputs, and the
-exact source identities needed to verify them. Raw publisher objects will be
-redistributed only where the recorded terms permit; otherwise the artifact will
-provide exact official URLs, downloader code, byte hashes, and reproducible
-derivation instructions. No empirical artifact or archival DOI is claimed by
-this working draft. This section must be replaced with the accepted repository
-release and archival DOI before submission.
+The Route C package will identify exact S1 and S2; the closed Behavior Sets and
+compatibility receipt; exact-head CI, PRE-S1, and descriptive-registration run
+identities; the qualification workflow disposition; the frozen schemas,
+functional propositions, source-conformance record, and verification code. It
+will explicitly state that the one-day q1 handoff was non-evidence and that no
+acquisition, formal, terminal, aggregate, or analysis artifact was created. No
+empirical artifact or archival DOI is claimed by this working draft. This
+section must be replaced with the accepted repository release and archival DOI
+before submission.
 
 ## Statements and declarations
 
