@@ -1,0 +1,267 @@
+{
+  "$id": "https://github.com/leemaple/dynamic-cssc-spmv/raw/main/schemas/route-a-strategy-cell-v2.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "bindings": {
+      "additionalProperties": false,
+      "properties": {
+        "ledger_root": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "machine_plan_sha256": {"const": "c391119d36ea882919cf787167baa9c80f346d2860fce9e3b8f98421a034fbfb"},
+        "prepared_query_root": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "query_id_root": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "source_rho1_document_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "transform_id": {"enum": [null, "rho1-to-rho10-exact-query-linearity-v1"]}
+      },
+      "required": [
+        "ledger_root",
+        "machine_plan_sha256",
+        "prepared_query_root",
+        "query_id_root",
+        "source_rho1_document_sha256",
+        "transform_id"
+      ],
+      "type": "object"
+    },
+    "correctness": {
+      "additionalProperties": false,
+      "properties": {
+        "binding_acceptance": {"type": ["boolean", "null"]},
+        "claim_authority": {"const": false},
+        "execution_performed": {"type": "boolean"},
+        "oracle_equality": {"type": ["boolean", "null"]},
+        "source_rho": {"enum": [null, "1"]}
+      },
+      "required": [
+        "binding_acceptance",
+        "claim_authority",
+        "execution_performed",
+        "oracle_equality",
+        "source_rho"
+      ],
+      "type": "object"
+    },
+    "counts": {
+      "additionalProperties": false,
+      "properties": {
+        "queries": {"$ref": "#/$defs/nonnegativeInteger"},
+        "updates": {"$ref": "#/$defs/nonnegativeInteger"},
+        "windows": {"$ref": "#/$defs/nonnegativeInteger"}
+      },
+      "required": ["queries", "updates", "windows"],
+      "type": "object"
+    },
+    "evaluation": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"enum": ["directly-measured", "exact-query-linear-projection"]},
+        "source_rho": {"enum": [null, "1"]},
+        "target_rho": {"enum": ["1/100", "1/10", "1", "10"]}
+      },
+      "required": ["mode", "source_rho", "target_rho"],
+      "type": "object"
+    },
+    "identity": {
+      "additionalProperties": false,
+      "properties": {
+        "formal_seed_or_null": {"enum": [null, 20260821, 20260822, 20260823, 20260824]},
+        "object_sha256_or_null": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "partition_or_null": {"enum": [null, 0, 1]},
+        "rho": {"enum": ["1/100", "1/10", "1", "10"]},
+        "scale_or_null": {"enum": [null, "S", "M"]},
+        "semantics_or_null": {"enum": [null, "T1", "T2"]},
+        "shard_identity_sha256": {"$ref": "#/$defs/sha256"},
+        "source_kind": {"enum": ["synthetic", "snap-a2q"]},
+        "strategy_candidate_id": {
+          "enum": [
+            "periodic-repack/windows=1",
+            "padding-reuse",
+            "packed-coo-cloud-segmented-delta/segment-width=128"
+          ]
+        },
+        "suite_role": {"enum": ["qualification", "formal"]},
+        "unit_attempt_ordinal": {"enum": [0, 1]}
+      },
+      "required": [
+        "formal_seed_or_null",
+        "object_sha256_or_null",
+        "partition_or_null",
+        "rho",
+        "scale_or_null",
+        "semantics_or_null",
+        "shard_identity_sha256",
+        "source_kind",
+        "strategy_candidate_id",
+        "suite_role",
+        "unit_attempt_ordinal"
+      ],
+      "type": "object"
+    },
+    "measurements": {
+      "additionalProperties": false,
+      "properties": {
+        "native_latency_seconds": {"$ref": "#/$defs/decimalOrNull"},
+        "peak_rss_kib": {"$ref": "#/$defs/nonnegativeIntegerOrNull"},
+        "producer_result_assembly_seconds": {"$ref": "#/$defs/decimalOrNull"},
+        "producer_state_transition_seconds": {"$ref": "#/$defs/decimalOrNull"},
+        "replay_seconds": {"$ref": "#/$defs/decimalOrNull"},
+        "scratch_allocated_bytes": {"$ref": "#/$defs/nonnegativeIntegerOrNull"}
+      },
+      "required": [
+        "native_latency_seconds",
+        "peak_rss_kib",
+        "producer_result_assembly_seconds",
+        "producer_state_transition_seconds",
+        "replay_seconds",
+        "scratch_allocated_bytes"
+      ],
+      "type": "object"
+    },
+    "primitive_counts": {
+      "additionalProperties": false,
+      "properties": {
+        "absorbed_updates": {"$ref": "#/$defs/nonnegativeInteger"},
+        "additions": {"$ref": "#/$defs/nonnegativeInteger"},
+        "blinding_additions": {"$ref": "#/$defs/nonnegativeInteger"},
+        "blinding_dummy_ciphertexts": {"$ref": "#/$defs/nonnegativeInteger"},
+        "blinding_encryptions": {"$ref": "#/$defs/nonnegativeInteger"},
+        "blinding_mask_ciphertexts": {"$ref": "#/$defs/nonnegativeInteger"},
+        "cc_multiplications": {"$ref": "#/$defs/nonnegativeInteger"},
+        "ci_full_sync_entries": {"$ref": "#/$defs/nonnegativeInteger"},
+        "ci_patch_entries": {"$ref": "#/$defs/nonnegativeInteger"},
+        "client_merges": {"$ref": "#/$defs/nonnegativeInteger"},
+        "client_reorder_elements": {"$ref": "#/$defs/nonnegativeInteger"},
+        "compaction_ciphertexts": {"$ref": "#/$defs/nonnegativeInteger"},
+        "decryptions": {"$ref": "#/$defs/nonnegativeInteger"},
+        "metadata_units": {"$ref": "#/$defs/nonnegativeInteger"},
+        "mask_mapped_elements": {"$ref": "#/$defs/nonnegativeInteger"},
+        "mask_random_elements": {"$ref": "#/$defs/nonnegativeInteger"},
+        "overflow_updates": {"$ref": "#/$defs/nonnegativeInteger"},
+        "plaintext_masks": {"$ref": "#/$defs/nonnegativeInteger"},
+        "query_ciphertexts": {"$ref": "#/$defs/nonnegativeInteger"},
+        "relinearizations": {"$ref": "#/$defs/nonnegativeInteger"},
+        "result_ciphertexts": {"$ref": "#/$defs/nonnegativeInteger"},
+        "rotations": {"$ref": "#/$defs/nonnegativeInteger"},
+        "update_ciphertexts": {"$ref": "#/$defs/nonnegativeInteger"},
+        "update_encryptions": {"$ref": "#/$defs/nonnegativeInteger"}
+      },
+      "required": [
+        "update_encryptions",
+        "update_ciphertexts",
+        "compaction_ciphertexts",
+        "query_ciphertexts",
+        "result_ciphertexts",
+        "cc_multiplications",
+        "relinearizations",
+        "rotations",
+        "additions",
+        "plaintext_masks",
+        "blinding_mask_ciphertexts",
+        "blinding_dummy_ciphertexts",
+        "blinding_encryptions",
+        "blinding_additions",
+        "decryptions",
+        "client_merges",
+        "mask_random_elements",
+        "mask_mapped_elements",
+        "client_reorder_elements",
+        "ci_patch_entries",
+        "ci_full_sync_entries",
+        "metadata_units",
+        "overflow_updates",
+        "absorbed_updates"
+      ],
+      "type": "object"
+    },
+    "rotation_inventory": {
+      "additionalProperties": false,
+      "properties": {
+        "measured_counts_by_exact_index": {
+          "items": {
+            "items": false,
+            "prefixItems": [
+              {"not": {"const": 0}, "type": "integer"},
+              {"minimum": 1, "type": "integer"}
+            ],
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "required_indices": {
+          "items": {"not": {"const": 0}, "type": "integer"},
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": ["measured_counts_by_exact_index", "required_indices"],
+      "type": "object"
+    },
+    "schema_version": {"const": "dynamic-cssc-route-a-strategy-cell-v2"},
+    "serialized_bytes": {"$ref": "#/$defs/serializedCategoryMap"},
+    "serialized_object_multiplicities": {"$ref": "#/$defs/serializedCategoryMap"},
+    "window_query_counts": {
+      "items": {"$ref": "#/$defs/nonnegativeInteger"},
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "identity",
+    "evaluation",
+    "counts",
+    "window_query_counts",
+    "primitive_counts",
+    "rotation_inventory",
+    "serialized_object_multiplicities",
+    "serialized_bytes",
+    "measurements",
+    "correctness",
+    "bindings"
+  ],
+  "title": "Dynamic CSSC Route A strategy cell v2",
+  "type": "object",
+  "$defs": {
+    "decimalOrNull": {
+      "oneOf": [
+        {"pattern": "^(0|[1-9][0-9]*)\\.[0-9]{9}$", "type": "string"},
+        {"type": "null"}
+      ]
+    },
+    "nonnegativeInteger": {"minimum": 0, "type": "integer"},
+    "nonnegativeIntegerOrNull": {
+      "oneOf": [
+        {"$ref": "#/$defs/nonnegativeInteger"},
+        {"type": "null"}
+      ]
+    },
+    "serializedCategoryMap": {
+      "additionalProperties": false,
+      "properties": {
+        "one-time-evaluation-key-material": {"$ref": "#/$defs/nonnegativeInteger"},
+        "query-f1m-encrypted-zero-dummy-ciphertexts": {"$ref": "#/$defs/nonnegativeInteger"},
+        "query-f1m-random-mask-ciphertexts": {"$ref": "#/$defs/nonnegativeInteger"},
+        "query-query-ciphertexts": {"$ref": "#/$defs/nonnegativeInteger"},
+        "query-result-ciphertexts": {"$ref": "#/$defs/nonnegativeInteger"},
+        "query-version-plan-metadata": {"$ref": "#/$defs/nonnegativeInteger"},
+        "update-column-index-synchronization": {"$ref": "#/$defs/nonnegativeInteger"},
+        "update-publication-ciphertexts": {"$ref": "#/$defs/nonnegativeInteger"},
+        "update-version-plan-metadata": {"$ref": "#/$defs/nonnegativeInteger"}
+      },
+      "required": [
+        "update-column-index-synchronization",
+        "update-publication-ciphertexts",
+        "update-version-plan-metadata",
+        "query-query-ciphertexts",
+        "query-result-ciphertexts",
+        "query-f1m-random-mask-ciphertexts",
+        "query-f1m-encrypted-zero-dummy-ciphertexts",
+        "query-version-plan-metadata",
+        "one-time-evaluation-key-material"
+      ],
+      "type": "object"
+    },
+    "sha256": {"pattern": "^[0-9a-f]{64}$", "type": "string"}
+  }
+}

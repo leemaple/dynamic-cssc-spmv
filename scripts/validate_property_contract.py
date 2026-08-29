@@ -762,11 +762,22 @@ def _persistent_strong_record(case: dict[str, object]) -> dict[str, object]:
             raise PropertyContractValidationError(
                 f"persistent strong wave {wave_index} segment/page count changed"
             )
-        bundle = transition.execution_bundle
-        if transition.output_plan != bundle.output_plan:
-            raise PropertyContractValidationError(
-                f"persistent strong wave {wave_index} returned mismatched plans"
-            )
+        transition_bundle = transition.execution_bundle
+        if window.query_count:
+            if (
+                transition_bundle is None
+                or transition.output_plan != transition_bundle.output_plan
+            ):
+                raise PropertyContractValidationError(
+                    f"persistent strong wave {wave_index} returned mismatched plans"
+                )
+            bundle = transition_bundle
+        else:
+            if transition_bundle is not None or transition.output_plan is not None:
+                raise PropertyContractValidationError(
+                    f"persistent strong wave {wave_index} claimed query execution"
+                )
+            bundle = compile_strong_execution(state.base, state.delta)
         output_summary = _json_summary(asdict(bundle.output_analysis))
         cloud_summary = _json_summary(asdict(bundle.cloud_counts))
         phase = _EXPECTED_STRONG_PHASES[wave_index]

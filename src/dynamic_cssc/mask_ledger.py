@@ -83,6 +83,20 @@ class PreparedF1MCommitmentLedger(MaskBindingLedger, Protocol):
     ) -> None:
         """Atomically verify the exact committed operands and consume the batch once."""
 
+    def verify_consumed_prepared_f1m(
+        self,
+        commitments: Iterable[PreparedF1MCommitment],
+        *,
+        commitment_token: str,
+        query_id: str,
+        version_id: str,
+        output_plan_digest: str,
+        private_plan_digest: str,
+        execution_binding_digest: str,
+        modulus: int,
+    ) -> None:
+        """Read-only verification of one already consumed exact batch."""
+
 
 def _is_strict_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
@@ -175,6 +189,7 @@ class SQLiteMaskBindingLedger:
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
+        self._read_only = False
         if str(path) == ":memory:":
             raise ValueError("mask binding ledger must be persistent")
         connection = self._connect()
@@ -255,7 +270,63 @@ class SQLiteMaskBindingLedger:
         finally:
             connection.close()
 
+    @classmethod
+    def open_existing_read_only(cls, path: str | Path) -> SQLiteMaskBindingLedger:
+        """Open an exact existing ledger without creating or mutating any bytes."""
+
+        ledger_path = Path(path)
+        try:
+            ledger_path.lstat()
+        except OSError as error:
+            raise PreparedF1MCommitmentError(
+                "read-only prepared F1-M ledger is unavailable"
+            ) from error
+        if not ledger_path.is_file() or ledger_path.is_symlink():
+            raise PreparedF1MCommitmentError(
+                "read-only prepared F1-M ledger must be one regular file"
+            )
+        ledger = object.__new__(cls)
+        ledger.path = ledger_path
+        ledger._read_only = True
+        connection = ledger._connect()
+        try:
+            required_tables = {
+                "mask_binding_reservations",
+                "prepared_f1m_batches",
+                "prepared_f1m_commitments",
+            }
+            observed_tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_schema WHERE type = 'table'"
+                )
+            }
+            if observed_tables != required_tables:
+                raise PreparedF1MCommitmentError(
+                    "read-only prepared F1-M ledger schema is not closed"
+                )
+            if tuple(connection.execute("PRAGMA foreign_key_check").fetchall()):
+                raise PreparedF1MCommitmentError(
+                    "read-only prepared F1-M ledger has a foreign-key violation"
+                )
+        finally:
+            connection.close()
+        return ledger
+
+    def _require_writable(self) -> None:
+        if self._read_only:
+            raise RuntimeError("prepared F1-M ledger is read-only")
+
     def _connect(self) -> sqlite3.Connection:
+        if self._read_only:
+            connection = sqlite3.connect(
+                f"{self.path.resolve().as_uri()}?mode=ro&immutable=1",
+                timeout=30.0,
+                uri=True,
+            )
+            connection.execute("PRAGMA query_only = ON")
+            connection.execute("PRAGMA foreign_keys = ON")
+            return connection
         connection = sqlite3.connect(self.path, timeout=30.0)
         connection.execute("PRAGMA busy_timeout = 30000")
         connection.execute("PRAGMA foreign_keys = ON")
@@ -263,6 +334,7 @@ class SQLiteMaskBindingLedger:
         return connection
 
     def reserve_all(self, bindings: Iterable[MaskBinding]) -> None:
+        self._require_writable()
         requested = tuple(bindings)
         if not requested:
             return
@@ -306,6 +378,7 @@ class SQLiteMaskBindingLedger:
         execution_binding_digest: str,
         modulus: int,
     ) -> str:
+        self._require_writable()
         requested = _validate_commitments(
             commitments,
             query_id=query_id,
@@ -415,6 +488,7 @@ class SQLiteMaskBindingLedger:
         execution_binding_digest: str,
         modulus: int,
     ) -> None:
+        self._require_writable()
         requested = _validate_commitments(
             commitments,
             query_id=query_id,
@@ -514,5 +588,185 @@ class SQLiteMaskBindingLedger:
             if connection.in_transaction:
                 connection.rollback()
             raise
+        finally:
+            connection.close()
+
+    def verify_consumed_prepared_f1m(
+        self,
+        commitments: Iterable[PreparedF1MCommitment],
+        *,
+        commitment_token: str,
+        query_id: str,
+        version_id: str,
+        output_plan_digest: str,
+        private_plan_digest: str,
+        execution_binding_digest: str,
+        modulus: int,
+    ) -> None:
+        """Verify an exact consumed batch without changing the ledger."""
+
+        requested = _validate_commitments(
+            commitments,
+            query_id=query_id,
+            version_id=version_id,
+            output_plan_digest=output_plan_digest,
+            private_plan_digest=private_plan_digest,
+            execution_binding_digest=execution_binding_digest,
+            modulus=modulus,
+        )
+        if not _valid_sha256(commitment_token):
+            raise PreparedF1MCommitmentError("prepared F1-M commitment token is invalid")
+        expected_rows = tuple(
+            sorted(
+                (
+                    commitment.component_id,
+                    commitment.output_block_id,
+                    commitment.kind,
+                    len(commitment.values),
+                    _values_digest(commitment, modulus=modulus),
+                )
+                for commitment in requested
+            )
+        )
+        connection = self._connect()
+        try:
+            batch = connection.execute(
+                """
+                SELECT
+                    query_id,
+                    version_id,
+                    output_plan_digest,
+                    private_plan_digest,
+                    execution_binding_digest,
+                    modulus,
+                    consumed
+                FROM prepared_f1m_batches
+                WHERE commitment_token = ?
+                """,
+                (commitment_token,),
+            ).fetchone()
+            if batch != (
+                query_id,
+                version_id,
+                output_plan_digest,
+                private_plan_digest,
+                execution_binding_digest,
+                str(modulus),
+                1,
+            ):
+                raise PreparedF1MCommitmentError(
+                    "prepared F1-M replay batch is absent, unconsumed, or mismatched"
+                )
+            stored_rows = tuple(
+                connection.execute(
+                    """
+                    SELECT component_id, output_block_id, kind, value_count, values_digest
+                    FROM prepared_f1m_commitments
+                    WHERE commitment_token = ?
+                    ORDER BY component_id, output_block_id
+                    """,
+                    (commitment_token,),
+                ).fetchall()
+            )
+            if stored_rows != expected_rows:
+                raise PreparedF1MCommitmentError(
+                    "prepared F1-M replay operands differ from the consumed ledger"
+                )
+        finally:
+            connection.close()
+
+    def verify_closed_consumed_prepared_f1m_ledger(
+        self,
+        *,
+        commitment_tokens: tuple[str, ...],
+        reservation_bindings: tuple[MaskBinding, ...],
+    ) -> None:
+        """Reject missing, extra, duplicate, or unconsumed rows in a replay ledger."""
+
+        if (
+            type(commitment_tokens) is not tuple
+            or any(not _valid_sha256(token) for token in commitment_tokens)
+            or len(set(commitment_tokens)) != len(commitment_tokens)
+            or type(reservation_bindings) is not tuple
+            or len(set(reservation_bindings)) != len(reservation_bindings)
+        ):
+            raise PreparedF1MCommitmentError(
+                "closed prepared F1-M replay ledger expectation is invalid"
+            )
+        for binding in reservation_bindings:
+            if (
+                type(binding) is not tuple
+                or len(binding) != 5
+                or not _valid_id(binding[0])
+                or not _valid_id(binding[1])
+                or not _valid_sha256(binding[2])
+                or not _valid_id(binding[3])
+                or not _valid_id(binding[4])
+            ):
+                raise PreparedF1MCommitmentError(
+                    "closed prepared F1-M replay reservation is invalid"
+                )
+        connection = self._connect()
+        try:
+            observed_batches = tuple(
+                connection.execute(
+                    """
+                    SELECT commitment_token
+                    FROM prepared_f1m_batches
+                    WHERE consumed = 1
+                    ORDER BY commitment_token
+                    """
+                ).fetchall()
+            )
+            all_batch_count = connection.execute(
+                "SELECT COUNT(*) FROM prepared_f1m_batches"
+            ).fetchone()
+            observed_reservations = tuple(
+                connection.execute(
+                    """
+                    SELECT
+                        query_id,
+                        version_id,
+                        output_plan_digest,
+                        component_id,
+                        output_block_id
+                    FROM mask_binding_reservations
+                    ORDER BY
+                        query_id,
+                        version_id,
+                        output_plan_digest,
+                        component_id,
+                        output_block_id
+                    """
+                ).fetchall()
+            )
+            observed_commitment_tokens = tuple(
+                row[0]
+                for row in connection.execute(
+                    """
+                    SELECT DISTINCT commitment_token
+                    FROM prepared_f1m_commitments
+                    ORDER BY commitment_token
+                    """
+                ).fetchall()
+            )
+            foreign_key_violations = tuple(
+                connection.execute("PRAGMA foreign_key_check").fetchall()
+            )
+            if (
+                observed_batches != tuple((token,) for token in sorted(commitment_tokens))
+                or all_batch_count != (len(commitment_tokens),)
+                or observed_reservations != tuple(sorted(reservation_bindings))
+                # Subset is intentional: a legitimate consumed batch may have zero
+                # commitment rows, but every stored row must belong to an expected batch.
+                or any(
+                    token not in commitment_tokens for token in observed_commitment_tokens
+                )
+                or foreign_key_violations
+            ):
+                raise PreparedF1MCommitmentError(
+                    "prepared F1-M replay ledger is missing, extra, duplicated, unconsumed, "
+                    "or has invalid commitment rows"
+                )
         finally:
             connection.close()

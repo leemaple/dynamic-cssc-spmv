@@ -155,6 +155,17 @@ def _canonical_bytes(value: object) -> bytes:
     return rendered.encode("ascii")
 
 
+def _reject_duplicate_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise OrdinaryQueryLifecycleError(
+                "ordinary query preparation contains a duplicate JSON key"
+            )
+        result[key] = value
+    return result
+
+
 def _is_strict_int(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -483,6 +494,146 @@ def canonical_ordinary_query_preparation_bytes(
     return _canonical_bytes(canonical_ordinary_query_preparation_payload(bundle, prepared))
 
 
+def decode_ordinary_query_preparation_bytes(
+    bundle: OrdinaryExecutionBundle,
+    content: bytes,
+    *,
+    expected_query_id: str,
+    expected_vector: tuple[int, ...],
+) -> PreparedOrdinaryQuery:
+    """Decode exact retained private bytes into one bundle-bound replay operand."""
+
+    _validate_bundle(bundle)
+    if type(content) is not bytes:
+        raise TypeError("ordinary query preparation content must be exact bytes")
+    try:
+        payload = json.loads(
+            content.decode("ascii"),
+            object_pairs_hook=_reject_duplicate_pairs,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise OrdinaryQueryLifecycleError(
+            "ordinary query preparation is not canonical ASCII JSON"
+        ) from error
+    if type(payload) is not dict or _canonical_bytes(payload) != content:
+        raise OrdinaryQueryLifecycleError(
+            "ordinary query preparation is not one canonical object"
+        )
+    if set(payload) != {
+        "bindings",
+        "f1m_operands",
+        "format",
+        "ledger_commitment_token",
+        "modulus",
+        "query_id",
+        "query_operands",
+        "version_id",
+    } or payload.get("format") != ORDINARY_QUERY_PREPARATION_SCHEMA:
+        raise OrdinaryQueryLifecycleError(
+            "ordinary query preparation does not match its closed schema"
+        )
+    bindings = payload.get("bindings")
+    query_operands = payload.get("query_operands")
+    f1m_operands = payload.get("f1m_operands")
+    if (
+        type(bindings) is not dict
+        or set(bindings)
+        != {
+            "cloud_program_digest",
+            "execution_binding_digest",
+            "output_plan_digest",
+            "private_plan_digest",
+        }
+        or type(query_operands) is not list
+        or type(f1m_operands) is not list
+        or payload.get("query_id") != expected_query_id
+    ):
+        raise OrdinaryQueryLifecycleError(
+            "ordinary query preparation differs from its expected replay target"
+        )
+
+    def strict_values(value: object, *, label: str) -> tuple[int, ...]:
+        if type(value) is not list or any(not _is_strict_int(item) for item in value):
+            raise OrdinaryQueryLifecycleError(
+                f"ordinary query preparation {label} values are invalid"
+            )
+        return tuple(value)
+
+    decoded_queries: list[PreparedOrdinaryQueryOperand] = []
+    for operand in query_operands:
+        if (
+            type(operand) is not dict
+            or set(operand) != {"ciphertext_id", "values"}
+            or not _valid_id(operand.get("ciphertext_id"))
+        ):
+            raise OrdinaryQueryLifecycleError(
+                "ordinary query preparation query operand is invalid"
+            )
+        decoded_queries.append(
+            PreparedOrdinaryQueryOperand(
+                ciphertext_id=operand["ciphertext_id"],
+                values=strict_values(operand.get("values"), label="query operand"),
+            )
+        )
+    decoded_f1m: list[PreparedOrdinaryF1MOperand] = []
+    for operand in f1m_operands:
+        if (
+            type(operand) is not dict
+            or set(operand)
+            != {
+                "ciphertext_id",
+                "component_id",
+                "kind",
+                "output_block_id",
+                "result_id",
+                "values",
+            }
+            or not _valid_id(operand.get("ciphertext_id"))
+            or not _valid_id(operand.get("component_id"))
+            or operand.get("kind") != "random-zero-sum"
+            or not _valid_id(operand.get("output_block_id"))
+            or not _valid_id(operand.get("result_id"))
+        ):
+            raise OrdinaryQueryLifecycleError(
+                "ordinary query preparation F1-M operand is invalid"
+            )
+        decoded_f1m.append(
+            PreparedOrdinaryF1MOperand(
+                ciphertext_id=operand["ciphertext_id"],
+                result_id=operand["result_id"],
+                kind="random-zero-sum",
+                query_id=expected_query_id,
+                version_id=payload["version_id"],
+                output_plan_digest=bindings["output_plan_digest"],
+                component_id=operand["component_id"],
+                output_block_id=operand["output_block_id"],
+                values=strict_values(operand.get("values"), label="F1-M operand"),
+            )
+        )
+    prepared = PreparedOrdinaryQuery(
+        query_id=expected_query_id,
+        version_id=payload.get("version_id"),
+        modulus=payload.get("modulus"),
+        vector=_validated_vector(
+            expected_vector,
+            length=bundle.compiled.components[0].layout_spec.cols,
+        ),
+        cloud_program_digest=bindings.get("cloud_program_digest"),
+        output_plan_digest=bindings.get("output_plan_digest"),
+        execution_binding_digest=bindings.get("execution_binding_digest"),
+        private_plan_digest=bindings.get("private_plan_digest"),
+        ledger_commitment_token=payload.get("ledger_commitment_token"),
+        query_operands=tuple(decoded_queries),
+        f1m_operands=tuple(decoded_f1m),
+    )
+    _validate_prepared(bundle, prepared)
+    if canonical_ordinary_query_preparation_bytes(bundle, prepared) != content:
+        raise OrdinaryQueryLifecycleError(
+            "decoded ordinary query preparation does not round-trip exactly"
+        )
+    return prepared
+
+
 def authorize_ordinary_execution(
     bundle: OrdinaryExecutionBundle,
     prepared: PreparedOrdinaryQuery,
@@ -627,6 +778,72 @@ def execute_ordinary_plaintext(
         raise OrdinaryQueryLifecycleError("ordinary typed execution failed") from error
 
 
+def replay_ordinary_plaintext_read_only(
+    bundle: OrdinaryExecutionBundle,
+    prepared: PreparedOrdinaryQuery,
+    *,
+    modulus: int,
+    ledger: PreparedF1MCommitmentLedger,
+) -> tuple[int, ...]:
+    """Verify one consumed batch read-only, then replay its exact typed oracle."""
+
+    _validate_bundle(bundle)
+    _validate_prepared(bundle, prepared)
+    if not _is_strict_int(modulus) or modulus != prepared.modulus:
+        raise OrdinaryQueryLifecycleError(
+            "replay modulus must match the prepared ordinary query"
+        )
+    try:
+        ledger.verify_consumed_prepared_f1m(
+            _prepared_f1m_commitments(prepared.f1m_operands),
+            commitment_token=prepared.ledger_commitment_token,
+            query_id=prepared.query_id,
+            version_id=prepared.version_id,
+            output_plan_digest=prepared.output_plan_digest,
+            private_plan_digest=prepared.private_plan_digest,
+            execution_binding_digest=prepared.execution_binding_digest,
+            modulus=prepared.modulus,
+        )
+    except (TypeError, ValueError, RuntimeError) as error:
+        raise OrdinaryQueryLifecycleError(
+            "ordinary read-only replay ledger verification failed"
+        ) from error
+    compiled = bundle.compiled
+    ciphertext_inputs = {
+        spec.value_ciphertext_id: spec.values for spec in compiled.operand_specs
+    }
+    ciphertext_inputs.update(
+        {operand.ciphertext_id: operand.values for operand in prepared.query_operands}
+    )
+    ciphertext_inputs.update(
+        {operand.ciphertext_id: operand.values for operand in prepared.f1m_operands}
+    )
+    try:
+        returned = execute_compiled_query(
+            compiled,
+            expected_f1m_policy="overlap-only",
+            ciphertext_inputs=ciphertext_inputs,
+            plaintext_masks={
+                mask.mask_id: mask.values
+                for mask in compiled.cloud_plan.program.plaintext_masks
+            },
+            modulus=modulus,
+        )
+        returned_shares = {
+            (route.component_id, route.output_block_id): returned[route.result_id]
+            for route in compiled.result_routes
+        }
+        return reconstruct_output(
+            compiled.output_plan,
+            returned_shares,
+            modulus=modulus,
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise OrdinaryQueryLifecycleError(
+            "ordinary read-only typed replay failed"
+        ) from error
+
+
 __all__ = (
     "ORDINARY_EXECUTION_AUTHORIZATION_SCHEMA",
     "ORDINARY_PRIVATE_PLAN_SCHEMA",
@@ -645,6 +862,8 @@ __all__ = (
     "canonical_ordinary_query_preparation_bytes",
     "canonical_ordinary_query_preparation_payload",
     "claim_ordinary_execution",
+    "decode_ordinary_query_preparation_bytes",
     "execute_ordinary_plaintext",
     "prepare_ordinary_query",
+    "replay_ordinary_plaintext_read_only",
 )

@@ -327,7 +327,20 @@ def _persistent_strong_record(case: dict[str, object]) -> dict[str, object]:
         page_count = (
             len(state.delta.segments) + state.delta.segments_per_page - 1
         ) // state.delta.segments_per_page
-        final_compile = _strong_query_compile_summary(transition.execution_bundle)
+        transition_bundle = transition.execution_bundle
+        if window.query_count:
+            if transition_bundle is None:
+                raise PropertyContractError(
+                    "query-bearing persistent strong wave lost its execution bundle"
+                )
+            property_probe_bundle = transition_bundle
+        else:
+            if transition_bundle is not None or transition.output_plan is not None:
+                raise PropertyContractError(
+                    "zero-query persistent strong wave claimed query execution"
+                )
+            property_probe_bundle = compile_strong_execution(state.base, state.delta)
+        final_compile = _strong_query_compile_summary(property_probe_bundle)
         waves.append(
             {
                 "window_index": window.index,
@@ -337,8 +350,8 @@ def _persistent_strong_record(case: dict[str, object]) -> dict[str, object]:
                 "segment_count": len(state.delta.segments),
                 "page_count": page_count,
                 "facts": asdict(transition.facts),
-                "output_plan": asdict(transition.execution_bundle.output_analysis),
-                "cloud_counts": asdict(transition.execution_bundle.cloud_counts),
+                "output_plan": asdict(property_probe_bundle.output_analysis),
+                "cloud_counts": asdict(property_probe_bundle.cloud_counts),
                 "query_compile": final_compile,
             }
         )

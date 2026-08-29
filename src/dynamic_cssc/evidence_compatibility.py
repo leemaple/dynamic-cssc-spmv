@@ -1466,15 +1466,20 @@ def _verify_data_anchor_history(
             raise EvidenceCompatibilityError(
                 f"{history_label} may not remove or retarget the exact post-run anchor"
             )
+        parents = _commit_parents(repository_root, commit)
         internal_parents = tuple(
             parent
-            for parent in _commit_parents(repository_root, commit)
+            for parent in parents
             if parent == start_git_sha
             or (
                 _is_ancestor(repository_root, start_git_sha, parent)
                 and _is_ancestor(repository_root, parent, end_git_sha)
             )
         )
+        if len(internal_parents) != len(parents):
+            raise EvidenceCompatibilityError(
+                f"{history_label} contains a merge parent outside the approved ancestry"
+            )
         if not internal_parents:
             raise EvidenceCompatibilityError(
                 f"{history_label} contains a commit without an internal ancestry edge"
@@ -1551,6 +1556,38 @@ def _verify_data_anchor_history(
                     f"{history_label} Day2 profile installation must change only its data path"
                 )
     return profile_installation_git_sha
+
+
+def verify_repository_data_anchor_history(
+    repository_root: Path,
+    *,
+    start_git_sha: str,
+    end_git_sha: str,
+) -> None:
+    """Verify every ancestry edge permits only monotonic repository data anchors."""
+
+    repository_root = _repository(repository_root)
+    start_git_sha = _exact_commit(
+        repository_root,
+        start_git_sha,
+        "start_git_sha",
+    )
+    end_git_sha = _exact_commit(
+        repository_root,
+        end_git_sha,
+        "end_git_sha",
+    )
+    if not _is_ancestor(repository_root, start_git_sha, end_git_sha):
+        raise EvidenceCompatibilityError(
+            "repository data-only history end must descend from its start"
+        )
+    _verify_data_anchor_history(
+        repository_root,
+        start_git_sha=start_git_sha,
+        end_git_sha=end_git_sha,
+        allowed_paths=_REPOSITORY_DATA_ONLY_ANCHOR_PATHS,
+        history_label="repository data-only history",
+    )
 
 
 def _unique_first_compatibility_record_installation(
@@ -2564,5 +2601,6 @@ __all__ = (
     "verify_current_role_source",
     "verify_day1b_resource_amendment_schema_source",
     "verify_evidence_compatibility",
+    "verify_repository_data_anchor_history",
     "verify_repository_anchor_history",
 )

@@ -28,8 +28,10 @@ from dynamic_cssc.strong_execution import (
     canonical_strong_query_preparation_bytes,
     claim_strong_execution,
     compile_strong_execution,
+    decode_strong_query_preparation_bytes,
     execute_strong_plaintext,
     prepare_strong_query,
+    replay_strong_plaintext_read_only,
 )
 from dynamic_cssc.strong_packed_coo import (
     STRONG_COMPONENT_ID,
@@ -336,6 +338,49 @@ def test_strong_preparation_mints_one_exact_launch_authorization() -> None:
     assert ledger.consumed is True
     with pytest.raises(StrongExecutionError, match="absent or consumed"):
         claim_strong_execution(capability, bundle, prepared)
+
+
+def test_strong_exact_preparation_replays_without_mutating_consumed_ledger(
+    tmp_path: Path,
+) -> None:
+    bundle = _three_result_bundle()
+    vector = tuple(range(12))
+    ledger_path = tmp_path / "strong-read-only.sqlite3"
+    ledger = SQLiteMaskBindingLedger(ledger_path)
+    prepared = prepare_strong_query(
+        bundle,
+        query_id="strong-read-only-replay",
+        vector=vector,
+        modulus=97,
+        ledger=ledger,
+    )
+    preparation_bytes = canonical_strong_query_preparation_bytes(bundle, prepared)
+    expected = execute_strong_plaintext(bundle, prepared, modulus=97, ledger=ledger)
+    frozen_ledger_bytes = ledger_path.read_bytes()
+
+    replay_ledger = SQLiteMaskBindingLedger.open_existing_read_only(ledger_path)
+    decoded = decode_strong_query_preparation_bytes(
+        bundle,
+        preparation_bytes,
+        expected_query_id=prepared.query_id,
+        expected_vector=vector,
+    )
+    assert decoded == prepared
+    assert replay_strong_plaintext_read_only(
+        bundle,
+        decoded,
+        modulus=97,
+        ledger=replay_ledger,
+    ) == expected
+    replay_ledger.verify_closed_consumed_prepared_f1m_ledger(
+        commitment_tokens=(prepared.ledger_commitment_token,),
+        reservation_bindings=tuple(
+            operand.binding
+            for operand in prepared.f1m_operands
+            if operand.kind == "random-zero-sum"
+        ),
+    )
+    assert ledger_path.read_bytes() == frozen_ledger_bytes
 
 
 def test_duplicate_random_mask_query_fails_closed(tmp_path: Path) -> None:
