@@ -8,7 +8,9 @@ from pathlib import Path
 
 import pytest
 
+import dynamic_cssc.mask_ledger as mask_ledger_module
 import dynamic_cssc.output_plan as output_plan_module
+import dynamic_cssc.strong_execution as strong_execution_module
 from dynamic_cssc.cloud_execution_plan import canonical_cloud_program_bytes
 from dynamic_cssc.cssc import publish_component
 from dynamic_cssc.mask_ledger import (
@@ -30,8 +32,10 @@ from dynamic_cssc.strong_execution import (
     compile_strong_execution,
     decode_strong_query_preparation_bytes,
     execute_strong_plaintext,
+    execute_strong_query_lifecycle,
     prepare_strong_query,
     replay_strong_plaintext_read_only,
+    replay_strong_query_lifecycle,
 )
 from dynamic_cssc.strong_packed_coo import (
     STRONG_COMPONENT_ID,
@@ -381,6 +385,125 @@ def test_strong_exact_preparation_replays_without_mutating_consumed_ledger(
         ),
     )
     assert ledger_path.read_bytes() == frozen_ledger_bytes
+
+
+def test_deep_strong_lifecycle_matches_stepwise_bytes_output_and_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mask_ledger_module.secrets, "token_hex", lambda _: "b" * 64)
+    monkeypatch.setattr(output_plan_module.secrets, "randbelow", lambda _: 7)
+    bundle = _three_result_bundle()
+    vector = tuple(range(12))
+    deep_ledger_path = tmp_path / "deep-strong.sqlite3"
+    deep = execute_strong_query_lifecycle(
+        bundle,
+        query_id="strong-deep-equivalence",
+        vector=vector,
+        modulus=97,
+        ledger=SQLiteMaskBindingLedger(deep_ledger_path),
+    )
+
+    stepwise_ledger = SQLiteMaskBindingLedger(tmp_path / "stepwise-strong.sqlite3")
+    prepared = prepare_strong_query(
+        bundle,
+        query_id="strong-deep-equivalence",
+        vector=vector,
+        modulus=97,
+        ledger=stepwise_ledger,
+    )
+    preparation_bytes = canonical_strong_query_preparation_bytes(bundle, prepared)
+    output = execute_strong_plaintext(
+        bundle,
+        prepared,
+        modulus=97,
+        ledger=stepwise_ledger,
+    )
+
+    assert deep.prepared == prepared
+    assert deep.preparation_bytes == preparation_bytes
+    assert deep.output == output == (53, 0, 0, 28)
+    frozen_ledger_bytes = deep_ledger_path.read_bytes()
+    replay = replay_strong_query_lifecycle(
+        bundle,
+        deep.preparation_bytes,
+        expected_query_id=deep.prepared.query_id,
+        expected_vector=vector,
+        modulus=97,
+        ledger=SQLiteMaskBindingLedger.open_existing_read_only(deep_ledger_path),
+    )
+    assert replay == deep
+    assert deep_ledger_path.read_bytes() == frozen_ledger_bytes
+
+
+def test_deep_strong_replay_rejects_noncanonical_bytes_before_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _three_result_bundle()
+    vector = tuple(range(12))
+    ledger_path = tmp_path / "deep-strong-tamper.sqlite3"
+    producer = execute_strong_query_lifecycle(
+        bundle,
+        query_id="strong-deep-tamper",
+        vector=vector,
+        modulus=97,
+        ledger=SQLiteMaskBindingLedger(ledger_path),
+    )
+    executor_entered = False
+
+    def forbidden_executor(*args: object, **kwargs: object) -> object:
+        nonlocal executor_entered
+        executor_entered = True
+        raise AssertionError("typed execution must be unreachable")
+
+    monkeypatch.setattr(
+        strong_execution_module,
+        "_execute_validated_cloud_plan",
+        forbidden_executor,
+    )
+    with pytest.raises(StrongExecutionError, match="canonical"):
+        replay_strong_query_lifecycle(
+            bundle,
+            producer.preparation_bytes + b" ",
+            expected_query_id=producer.prepared.query_id,
+            expected_vector=vector,
+            modulus=97,
+            ledger=SQLiteMaskBindingLedger.open_existing_read_only(ledger_path),
+        )
+    assert executor_entered is False
+
+
+def test_deep_strong_producer_rejects_invalid_bundle_before_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tampered = replace(_three_result_bundle(), cloud_program_digest="0" * 64)
+    executor_entered = False
+
+    def forbidden_executor(*args: object, **kwargs: object) -> object:
+        nonlocal executor_entered
+        executor_entered = True
+        raise AssertionError("typed execution must be unreachable")
+
+    monkeypatch.setattr(
+        strong_execution_module,
+        "_execute_validated_cloud_plan",
+        forbidden_executor,
+    )
+    ledger_path = tmp_path / "invalid-strong.sqlite3"
+    ledger = SQLiteMaskBindingLedger(ledger_path)
+    initial_ledger_bytes = ledger_path.read_bytes()
+    with pytest.raises(StrongExecutionError, match="deterministically derived"):
+        execute_strong_query_lifecycle(
+            tampered,
+            query_id="strong-invalid-bundle",
+            vector=tuple(range(12)),
+            modulus=97,
+            ledger=ledger,
+        )
+    assert executor_entered is False
+    assert ledger_path.read_bytes() == initial_ledger_bytes
 
 
 def test_duplicate_random_mask_query_fails_closed(tmp_path: Path) -> None:

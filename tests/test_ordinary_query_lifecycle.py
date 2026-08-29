@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+import dynamic_cssc.mask_ledger as mask_ledger_module
+import dynamic_cssc.ordinary_query_lifecycle as ordinary_lifecycle_module
 from dynamic_cssc.cssc import publish_component
 from dynamic_cssc.events import NetUpdate, PublicationWindow
 from dynamic_cssc.mask_ledger import (
@@ -28,8 +30,10 @@ from dynamic_cssc.ordinary_query_lifecycle import (
     claim_ordinary_execution,
     decode_ordinary_query_preparation_bytes,
     execute_ordinary_plaintext,
+    execute_ordinary_query_lifecycle,
     prepare_ordinary_query,
     replay_ordinary_plaintext_read_only,
+    replay_ordinary_query_lifecycle,
 )
 from dynamic_cssc.query_compiler import compile_query
 from dynamic_cssc.strategy_state import advance_publication, initialize_strategy
@@ -335,6 +339,127 @@ def test_exact_preparation_decodes_and_replays_against_an_immutable_consumed_led
                 if operand.kind == "random-zero-sum"
             )
         )
+
+
+def test_deep_ordinary_lifecycle_matches_stepwise_bytes_output_and_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mask_ledger_module.secrets, "token_hex", lambda _: "a" * 64)
+    bundle = _single_source_bundle()
+    vector = (5, 7, 11, 13)
+    deep_ledger_path = tmp_path / "deep-ordinary.sqlite3"
+    deep = execute_ordinary_query_lifecycle(
+        bundle.compiled,
+        query_id="ordinary-deep-equivalence",
+        vector=vector,
+        modulus=97,
+        ledger=SQLiteMaskBindingLedger(deep_ledger_path),
+    )
+
+    stepwise_ledger = SQLiteMaskBindingLedger(tmp_path / "stepwise-ordinary.sqlite3")
+    prepared = prepare_ordinary_query(
+        bundle,
+        query_id="ordinary-deep-equivalence",
+        vector=vector,
+        modulus=97,
+        ledger=stepwise_ledger,
+    )
+    preparation_bytes = canonical_ordinary_query_preparation_bytes(bundle, prepared)
+    output = execute_ordinary_plaintext(
+        bundle,
+        prepared,
+        modulus=97,
+        ledger=stepwise_ledger,
+    )
+
+    assert deep.prepared == prepared
+    assert deep.preparation_bytes == preparation_bytes
+    assert deep.output == output == (21, 44)
+    frozen_ledger_bytes = deep_ledger_path.read_bytes()
+    replay = replay_ordinary_query_lifecycle(
+        bundle.compiled,
+        deep.preparation_bytes,
+        expected_query_id=deep.prepared.query_id,
+        expected_vector=vector,
+        modulus=97,
+        ledger=SQLiteMaskBindingLedger.open_existing_read_only(deep_ledger_path),
+    )
+    assert replay == deep
+    assert deep_ledger_path.read_bytes() == frozen_ledger_bytes
+
+
+def test_deep_ordinary_replay_rejects_noncanonical_bytes_before_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _single_source_bundle()
+    vector = (5, 7, 11, 13)
+    ledger_path = tmp_path / "deep-ordinary-tamper.sqlite3"
+    producer = execute_ordinary_query_lifecycle(
+        bundle.compiled,
+        query_id="ordinary-deep-tamper",
+        vector=vector,
+        modulus=97,
+        ledger=SQLiteMaskBindingLedger(ledger_path),
+    )
+    executor_entered = False
+
+    def forbidden_executor(*args: object, **kwargs: object) -> object:
+        nonlocal executor_entered
+        executor_entered = True
+        raise AssertionError("typed execution must be unreachable")
+
+    monkeypatch.setattr(
+        ordinary_lifecycle_module,
+        "_execute_validated_cloud_plan",
+        forbidden_executor,
+    )
+    with pytest.raises(OrdinaryQueryLifecycleError, match="canonical"):
+        replay_ordinary_query_lifecycle(
+            bundle.compiled,
+            producer.preparation_bytes + b" ",
+            expected_query_id=producer.prepared.query_id,
+            expected_vector=vector,
+            modulus=97,
+            ledger=SQLiteMaskBindingLedger.open_existing_read_only(ledger_path),
+        )
+    assert executor_entered is False
+
+
+def test_deep_ordinary_producer_rejects_invalid_compilation_before_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    compiled = replace(
+        _single_source_bundle().compiled,
+        f1m_policy="uniform-random-or-zero",
+    )
+    executor_entered = False
+
+    def forbidden_executor(*args: object, **kwargs: object) -> object:
+        nonlocal executor_entered
+        executor_entered = True
+        raise AssertionError("typed execution must be unreachable")
+
+    monkeypatch.setattr(
+        ordinary_lifecycle_module,
+        "_execute_validated_cloud_plan",
+        forbidden_executor,
+    )
+    ledger_path = tmp_path / "invalid-ordinary.sqlite3"
+    ledger = SQLiteMaskBindingLedger(ledger_path)
+    initial_ledger_bytes = ledger_path.read_bytes()
+    with pytest.raises(OrdinaryQueryLifecycleError):
+        execute_ordinary_query_lifecycle(
+            compiled,
+            query_id="ordinary-invalid-compilation",
+            vector=(5, 7, 11, 13),
+            modulus=97,
+            ledger=ledger,
+        )
+    assert executor_entered is False
+    assert ledger_path.read_bytes() == initial_ledger_bytes
 
 
 def test_preparation_decoder_rejects_noncanonical_or_retargeted_bytes(

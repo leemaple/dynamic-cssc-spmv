@@ -76,7 +76,7 @@ def test_synthetic_cell_does_not_recompile_one_query_more_than_twice(
     )
 
     queries = run.cell.document["counts"]["queries"]
-    assert compile_calls <= 2 * queries
+    assert queries <= compile_calls <= 2 * queries
 
 
 @pytest.mark.parametrize("candidate_id", ROUTE_A_STRATEGY_CANDIDATES)
@@ -127,7 +127,7 @@ def test_synthetic_replay_does_not_recompile_one_query_more_than_twice(
     )
 
     queries = replay.final_cell.document["counts"]["queries"]
-    assert compile_calls <= 2 * queries
+    assert queries <= compile_calls <= 2 * queries
 
 
 def test_direct_oracle_mismatch_fails_before_output_digests_are_retained(

@@ -783,6 +783,24 @@ def claim_ordinary_execution(
 ) -> OrdinaryExecutionAuthorizationReceipt:
     """Consume a lifecycle-minted capability at one exact execution boundary."""
 
+    binding = _take_ordinary_execution_binding(capability)
+    _validate_bundle(bundle)
+    _validate_prepared(bundle, prepared)
+    preparation_bytes = _canonical_ordinary_query_preparation_bytes_for_validated_query(
+        prepared
+    )
+    return _verify_ordinary_execution_binding(
+        binding,
+        prepared,
+        preparation_bytes=preparation_bytes,
+    )
+
+
+def _take_ordinary_execution_binding(
+    capability: OrdinaryExecutionCapability,
+) -> _OrdinaryExecutionAuthorizationBinding:
+    """Atomically claim one exact lifecycle-minted execution binding."""
+
     if type(capability) is not OrdinaryExecutionCapability:
         raise TypeError("capability must be an exact lifecycle-minted authorization")
     lock = getattr(capability, "_lock", None)
@@ -795,52 +813,17 @@ def claim_ordinary_execution(
         binding = getattr(capability, "_binding", None)
     if type(binding) is not _OrdinaryExecutionAuthorizationBinding:
         raise OrdinaryQueryLifecycleError("ordinary execution capability is not authoritative")
-    _validate_bundle(bundle)
-    _validate_prepared(bundle, prepared)
-    preparation_bytes = _canonical_ordinary_query_preparation_bytes_for_validated_query(
-        prepared
-    )
-    return _claim_ordinary_execution_for_validated_query(
-        capability,
-        bundle,
-        prepared,
-        preparation_bytes=preparation_bytes,
-        binding=binding,
-        already_claimed=True,
-    )
+    return binding
 
 
-def _claim_ordinary_execution_for_validated_query(
-    capability: OrdinaryExecutionCapability,
-    bundle: OrdinaryExecutionBundle,
+def _verify_ordinary_execution_binding(
+    binding: _OrdinaryExecutionAuthorizationBinding,
     prepared: PreparedOrdinaryQuery,
     *,
     preparation_bytes: bytes,
-    binding: _OrdinaryExecutionAuthorizationBinding | None = None,
-    already_claimed: bool = False,
 ) -> OrdinaryExecutionAuthorizationReceipt:
-    """Claim a capability for the exact query validated by this module."""
+    """Verify that a claimed binding authorizes these canonical query bytes."""
 
-    if not already_claimed:
-        if type(capability) is not OrdinaryExecutionCapability:
-            raise TypeError("capability must be an exact lifecycle-minted authorization")
-        lock = getattr(capability, "_lock", None)
-        if type(lock) is not type(threading.Lock()):
-            raise OrdinaryQueryLifecycleError(
-                "ordinary execution capability is not authoritative"
-            )
-        with lock:
-            if getattr(capability, "_claimed", None) is not False:
-                raise OrdinaryQueryLifecycleError(
-                    "ordinary execution capability is absent or consumed"
-                )
-            object.__setattr__(capability, "_claimed", True)
-            binding = getattr(capability, "_binding", None)
-        if type(binding) is not _OrdinaryExecutionAuthorizationBinding:
-            raise OrdinaryQueryLifecycleError(
-                "ordinary execution capability is not authoritative"
-            )
-    assert type(binding) is _OrdinaryExecutionAuthorizationBinding
     receipt = binding.receipt
     expected_preparation_sha256 = hashlib.sha256(preparation_bytes).hexdigest()
     if (
@@ -880,9 +863,9 @@ def execute_ordinary_plaintext(
         preparation_bytes=preparation_bytes,
         ledger=ledger,
     )
-    _claim_ordinary_execution_for_validated_query(
-        authorization,
-        bundle,
+    binding = _take_ordinary_execution_binding(authorization)
+    _verify_ordinary_execution_binding(
+        binding,
         prepared,
         preparation_bytes=preparation_bytes,
     )
@@ -960,9 +943,9 @@ def execute_ordinary_query_lifecycle(
         preparation_bytes=preparation_bytes,
         ledger=ledger,
     )
-    _claim_ordinary_execution_for_validated_query(
-        authorization,
-        bundle,
+    binding = _take_ordinary_execution_binding(authorization)
+    _verify_ordinary_execution_binding(
+        binding,
         prepared,
         preparation_bytes=preparation_bytes,
     )

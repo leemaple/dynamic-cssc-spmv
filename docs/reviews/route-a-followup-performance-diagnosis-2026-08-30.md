@@ -15,7 +15,8 @@ qualification.
 - Closed qualification run: GitHub Actions run `33261434612`.
 - Expiring q1 transport artifact: provider artifact `9717884587`, named
   `q1-simulator-pre-replay-handoff`, provider digest
-  `sha256:51cb6800...`; it is permanently NON-EVIDENCE.
+  `sha256:51cbfc2a5473c0fe78d6d169cc2c4a7278ac39d7472ff37e5642e190b7e2c008`;
+  it is permanently NON-EVIDENCE.
 - A diagnostic copy of the exact q1 payload was retained outside the repository.
   Its suite archive SHA-256 is
   `59752a15cccbb3833146354806137f62d3744cf26bf69091eb9f6313f8477d26`.
@@ -146,3 +147,36 @@ findings, explicit assumptions, and the cheapest falsifying checks. Reviewers
 must distinguish a system defect from an evidence-pipeline defect. Even a PASS
 does not authorize a new experiment; CI and a separate preregistration remain
 mandatory.
+
+### Exact-commit independent dispositions
+
+Both advisory reviewers inspected public commit
+`e204bb90fcfce0b2e9f3082fc2849c2de41e3b4b` and agreed that the implementation
+gate passes without a blocking finding:
+
+- ChatGPT Pro: `PASS`, P0 = 0, P1 = 0, P2 = 2;
+- ZCode GLM-5.3 Max: `PASS`, P0 = 0, P1 = 0, P2 = 3.
+
+Both reviewers found that producer-internal object trust remains inside the
+stated repository-code boundary, retained replay bytes still receive deep
+validation and exact canonical round-trip checks, the private plaintext-oracle
+seam is safe in the reviewed call graph, and call-count tests are meaningful
+only together with the existing semantic and direct-oracle tests. Neither
+review authorizes dispatch or reopens the old qualification.
+
+The successor hardening accepts every concrete nonblocking finding:
+
+1. the truncated provider digest above is corrected to the exact digest;
+2. the compile-count regression now has both a validation lower bound and a
+   redundancy upper bound;
+3. ordinary and strong deep producer/replay APIs are tested directly against
+   their stepwise canonical bytes and outputs;
+4. noncanonical replay bytes and invalid producer inputs are proven to fail
+   before typed execution, without ledger mutation; and
+5. the private ordinary claim helper no longer accepts an `already_claimed`
+   boolean or relies on an optimization-sensitive `assert`; atomic claim and
+   exact binding verification are separate private operations.
+
+The focused successor test set reports `62 passed`; Ruff and
+`git diff --check` pass. A green exact-commit remote CI remains required before
+the successor can enter a separate preregistration review.
