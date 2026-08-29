@@ -1329,6 +1329,14 @@ def _verify_route_a_openfhe_producer_result(
     object_root: Path,
     expected_output: tuple[int, ...],
 ) -> VerifiedRouteAOpenFHEProducerResult:
+    if request_bytes != _build_openfhe_query_request(
+        view,
+        repository_root=None,
+        key_generation_plan=None,
+    ):
+        raise OpenFHEQueryRunnerError(
+            "Route A producer request differs from the canonical typed request"
+        )
     raw = _read_bounded_exact_file(
         result_path,
         maximum=_RESULT_BYTES_MAXIMUM,
@@ -1587,6 +1595,14 @@ def _verify_route_a_openfhe_replay_result(
     object_root: Path,
     expected_output: tuple[int, ...],
 ) -> VerifiedRouteAOpenFHEReplayResult:
+    if request_bytes != _build_openfhe_query_request(
+        view,
+        repository_root=None,
+        key_generation_plan=None,
+    ):
+        raise OpenFHEQueryRunnerError(
+            "Route A replay request differs from the canonical typed request"
+        )
     package_manifest_sha256 = _sha256(
         package_manifest_sha256,
         field="Route A package manifest SHA-256",

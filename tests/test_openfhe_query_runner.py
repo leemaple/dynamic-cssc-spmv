@@ -534,6 +534,42 @@ def test_route_a_producer_and_replay_verifiers_split_lifecycle_from_cloud(
     assert dict(replay.lifecycle_operation_inventory)["encrypt_count"] == 0
 
 
+def test_route_a_verifiers_reject_canonical_request_not_derived_from_typed_input(
+    tmp_path: Path,
+) -> None:
+    bundle, prepared = _bundle_and_prepared(tmp_path)
+    request_bytes = build_ordinary_openfhe_query_request(bundle, prepared)
+    result_path, object_root, _document = _write_route_a_result_fixture(
+        tmp_path,
+        bundle,
+        prepared,
+        request_bytes,
+    )
+    mutated = json.loads(request_bytes)
+    mutated["bindings"]["query_private_plan_sha256"] = "f" * 64
+    mutated_request_bytes = _canonical(mutated)
+
+    with pytest.raises(OpenFHEQueryRunnerError, match="canonical typed request"):
+        verify_route_a_ordinary_openfhe_producer_result(
+            bundle,
+            prepared,
+            request_bytes=mutated_request_bytes,
+            result_path=result_path,
+            object_root=object_root,
+            expected_output=(31, 44),
+        )
+    with pytest.raises(OpenFHEQueryRunnerError, match="canonical typed request"):
+        verify_route_a_ordinary_openfhe_replay_result(
+            bundle,
+            prepared,
+            request_bytes=mutated_request_bytes,
+            package_manifest_sha256="d" * 64,
+            result_path=result_path,
+            object_root=object_root,
+            expected_output=(31, 44),
+        )
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     (("context_generation_count", 1), ("encrypt_count", 1)),

@@ -272,7 +272,11 @@ std::string ReadFile(const fs::path& path, std::uint64_t maximum) {
         Fail("request path must be one direct regular file");
     }
     const auto size = fs::file_size(path);
-    if (size == 0 || size > maximum || size > std::numeric_limits<std::size_t>::max()) {
+    // Every caller supplies a bound no larger than 2 GiB, so passing the
+    // bound also proves that the value is representable as size_t on every
+    // supported runner.  Avoid a tautological uintmax_t/size_t comparison on
+    // 64-bit builds, where GCC diagnoses it under -Werror.
+    if (size == 0 || size > maximum) {
         Fail("request file exceeds its fixed byte bounds");
     }
     std::ifstream stream(path, std::ios::in | std::ios::binary);
@@ -566,7 +570,12 @@ std::map<std::int64_t, std::int64_t> ParseRotationCatalog(
         const auto openfhe = StrictInteger(
             Member(entry, "openfhe_index", "openfhe_index"), "openfhe_index");
         if (logical == 0 || openfhe == 0 || logical <= previousLogical ||
-            std::uint64_t(openfhe < 0 ? -openfhe : openfhe) >= slotCount) {
+            openfhe == std::numeric_limits<std::int64_t>::min()) {
+            Fail("rotation catalog is outside the single-row exact contract");
+        }
+        const auto openfheMagnitude = static_cast<std::uint64_t>(
+            openfhe < 0 ? -openfhe : openfhe);
+        if (openfheMagnitude >= slotCount) {
             Fail("rotation catalog is outside the single-row exact contract");
         }
         previousLogical = logical;
@@ -912,9 +921,11 @@ CombinedEvaluationKeySegments ParseCombinedEvaluationKeyFrame(
     }
     const auto rotationSize = ReadUint64BigEndian(frame, 8);
     const auto evalMultSize = ReadUint64BigEndian(frame, 48);
+    // A segment that fits within this already-materialized string is
+    // necessarily representable as size_t.  The frame-size checks therefore
+    // subsume explicit size_t-maximum comparisons without target-width
+    // warnings.
     if (rotationSize == 0 || evalMultSize == 0 ||
-        rotationSize > std::numeric_limits<std::size_t>::max() ||
-        evalMultSize > std::numeric_limits<std::size_t>::max() ||
         rotationSize > frame.size() - 88 ||
         evalMultSize != frame.size() - 88 - rotationSize) {
         Fail("combined evaluation-key frame segment lengths changed");
@@ -934,7 +945,12 @@ template <typename Value>
 Value DeserializeOpenFHE(const std::string& content, const std::string& field) {
     std::stringstream stream(content);
     Value value;
-    Serial::Deserialize(value, stream, SerType::BINARY);
+    try {
+        Serial::Deserialize(value, stream, SerType::BINARY);
+    }
+    catch (const std::exception&) {
+        Fail(field + " OpenFHE deserialization failed");
+    }
     if (!value) {
         Fail(field + " OpenFHE deserialization failed");
     }
@@ -1007,13 +1023,13 @@ void RequireDirectEmptyDirectory(const fs::path& root, const std::string& field)
     }
 }
 
-std::vector<RouteAPackageMember> ReadRouteAPackage(const fs::path& packageRoot) {
+std::vector<RouteAPackageMember> ReadRouteAPackage(
+    const fs::path& packageRoot,
+    const std::string& manifestBytes) {
     const auto rootStatus = fs::symlink_status(packageRoot);
     if (fs::is_symlink(rootStatus) || !fs::is_directory(rootStatus)) {
         Fail("Route A package-dir must be one direct directory");
     }
-    const auto manifestBytes = ReadFile(
-        packageRoot / "manifest.json", kRequestByteMaximum);
     json::Document manifest;
     manifest.Parse<json::kParseValidateEncodingFlag>(
         manifestBytes.data(), manifestBytes.size());
@@ -2065,7 +2081,8 @@ int RunRouteAReplay(const RunnerArguments& args) {
     const auto packageManifestBytes = ReadFile(
         packageRoot / "manifest.json", kRequestByteMaximum);
     const auto packageManifestSha256 = HashUtil::HashString(packageManifestBytes);
-    const auto packageMembers = ReadRouteAPackage(packageRoot);
+    const auto packageMembers = ReadRouteAPackage(
+        packageRoot, packageManifestBytes);
     const std::set<std::string> singletonRoles{
         "authorization-receipt",
         "canonical-request",

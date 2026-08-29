@@ -22,15 +22,15 @@ preparation and SQLite ledger per lane, consume-once authorization, typed and
 direct \(Ax \bmod 65537\) oracles, an immutable read-only replay, and terminal
 pre/post ledger-byte equality. The current local contract evidence is:
 
-- 179 Route A/OpenFHE runner, runtime, controller, native-case, lifecycle,
+- 197 Route A/OpenFHE runner, runtime, controller, native-case, lifecycle,
   package, strategy, workload, and independent-oracle tests;
 - Ruff and `git diff --check` success; and
 - no Route A S/M-shaped native timing and no one-shot M qualification run.
 
 Those facts close the Python-side query-ID, single-use lifecycle, per-recorded-
-lane package, route-specific producer/replay verifier, and package reinspection
-seams. They do not yet close pinned OpenFHE compilation, a three-package native
-guard, the full q3/q4 stage artifact, or the qualification workflow.
+lane package, route-specific producer/replay verifier, package reinspection,
+and three-package native guard seams. They do not yet close the full q3/q4
+stage artifact or the qualification workflow.
 
 ## Reviewer status
 
@@ -71,6 +71,17 @@ layer; and scope source-level forbidden-call tests to the q4 function rather
 than the whole same-binary source. All three are incorporated in the candidate
 contract below; the code and Stage-1 documents still require terminal hash/CI
 closure.
+
+A second exact-source compile/API audit found one P0 and four P2 items. The P0
+was the OpenFHE 1.5.1 generic `Serial::Deserialize` return type; commit
+`c52023160c1989e8f8ab294eed2941c13fe31fc0` corrected it and GitHub PRE-S1 run
+`33231272745` then built the pinned runner and completed both real OpenFHE
+smokes successfully. The follow-up patch also rejects `INT64_MIN` before signed
+negation, removes target-width-tautological comparisons, parses the package
+from the single already-hashed manifest snapshot, catches deserialization
+exceptions, and binds both Python Route A result verifiers to the exact
+canonical request re-derived from their typed inputs. These follow-up bytes
+still require an exact-head GitHub rerun before the material gate closes.
 
 ### ChatGPT Pro through Ego Lite
 
@@ -215,8 +226,8 @@ used as a freshness discriminator.
 The material gate does not pass merely because the candidate decisions above
 are coherent. Before q3/q4 can be called runnable, the implementation must add:
 
-1. compile the candidate same-binary modes against pinned OpenFHE 1.5.1 and
-   close any compile/API audit findings;
+1. rerun pinned OpenFHE PRE-S1 on the final follow-up bytes and close the exact
+   compile/API audit head;
 2. run the four process lanes as one discarded warm-up plus three recorded
    fresh-key packages and enforce the cross-package guard;
 3. add stage-observed q3/q4 owned-child execution and cleanup;

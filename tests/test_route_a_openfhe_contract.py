@@ -89,9 +89,31 @@ def test_openfhe_151_deserialization_and_member_lookup_compile_contract_is_exact
     # OpenFHE 1.5.1's generic Serial::Deserialize overload returns void.
     assert "Serial::Deserialize(value, stream, SerType::BINARY);" in deserialize
     assert "!Serial::Deserialize" not in deserialize
+    assert "catch (const std::exception&)" in deserialize
     # Literal roles use a non-owning value so a temporary std::string cannot
     # trigger GCC's -Wdangling-reference diagnostic on the returned member.
     assert lookup.count("std::string_view role") == 2
+
+
+def test_route_a_replay_uses_one_manifest_snapshot_and_width_safe_parsing() -> None:
+    source = (ROOT / "cpp/openfhe_query_runner.cpp").read_text()
+    replay = _function_body(source, "int RunRouteAReplay(", "int main(")
+    rotation_catalog = _function_body(
+        source,
+        "std::map<std::int64_t, std::int64_t> ParseRotationCatalog(",
+        "std::vector<std::int32_t> ParseExactRotationIndices(",
+    )
+    key_frame = _function_body(
+        source,
+        "CombinedEvaluationKeySegments ParseCombinedEvaluationKeyFrame(",
+        "template <typename Value>",
+    )
+
+    assert replay.count('packageRoot / "manifest.json"') == 1
+    assert "ReadRouteAPackage(\n        packageRoot, packageManifestBytes)" in replay
+    assert "openfhe == std::numeric_limits<std::int64_t>::min()" in rotation_catalog
+    assert "openfhe < 0 ? -openfhe : openfhe" in rotation_catalog
+    assert "numeric_limits<std::size_t>::max" not in key_frame
 
 
 def test_route_a_producer_retains_context_keys_and_one_unchanged_day1b_frame() -> None:
