@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760" role="img" aria-labelledby="title desc">
+  <title id="title">Route A evidence boundary and preregistered Route C stop</title>
+  <desc id="desc">The reviewed source and registration snapshot passed engineering gates. The one-shot non-admissible qualification reached q2 but not the q5 combined guard by the frozen deadline. The run was cancelled and formal execution remained barred.</desc>
+  <defs>
+    <marker id="arrow2" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#445a6c"/>
+    </marker>
+    <filter id="shadow2" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#182735" flood-opacity="0.13"/>
+    </filter>
+    <style>
+      text { font-family: Arial, sans-serif; }
+      .title { font-size: 30px; font-weight: 700; fill: #18344b; }
+      .subtitle { font-size: 17px; font-weight: 400; fill: #516577; }
+      .head { font-size: 18px; font-weight: 700; fill: #18344b; }
+      .body { font-size: 14px; font-weight: 400; fill: #3d5366; }
+      .small { font-size: 13px; font-weight: 400; fill: #596d7e; }
+      .white { font-size: 16px; font-weight: 700; fill: #ffffff; }
+      .arrow { stroke: #445a6c; stroke-width: 3; fill: none; marker-end: url(#arrow2); }
+      .dashed { stroke: #9aa9b5; stroke-width: 3; stroke-dasharray: 10 9; fill: none; marker-end: url(#arrow2); }
+    </style>
+  </defs>
+
+  <rect width="1400" height="760" rx="24" fill="#f7fafc"/>
+  <text x="60" y="58" class="title">The frozen gate stopped the campaign before evidence admission</text>
+  <text x="60" y="88" class="subtitle">Engineering witnesses closed; qualification remained non-evidence; no formal-dispatch capability or performance result was minted.</text>
+
+  <text x="70" y="145" class="head">SOURCE AND REGISTRATION</text>
+  <g filter="url(#shadow2)">
+    <rect x="70" y="168" width="250" height="104" rx="14" fill="#e7f3fb" stroke="#4e92be" stroke-width="2"/>
+    <text x="92" y="203" class="head">S1 experiment source</text>
+    <text x="92" y="230" class="body">exact-head CI + PRE-S1</text>
+    <text x="92" y="253" class="small">engineering authority only</text>
+
+    <rect x="375" y="168" width="250" height="104" rx="14" fill="#e7f3fb" stroke="#4e92be" stroke-width="2"/>
+    <text x="397" y="203" class="head">Descriptive registration</text>
+    <text x="397" y="230" class="body">second-process reinspection</text>
+    <text x="397" y="253" class="small">formal authority = false</text>
+
+    <rect x="680" y="168" width="250" height="104" rx="14" fill="#e7f3fb" stroke="#4e92be" stroke-width="2"/>
+    <text x="702" y="203" class="head">S2 evidence freeze</text>
+    <text x="702" y="230" class="body">registration anchor only</text>
+    <text x="702" y="253" class="small">Behavior Set exact-compatible</text>
+  </g>
+  <path d="M320 220 H375" class="arrow"/>
+  <path d="M625 220 H680" class="arrow"/>
+
+  <text x="70" y="342" class="head">ONE-SHOT, PERMANENTLY NON-ADMISSIBLE QUALIFICATION</text>
+  <g filter="url(#shadow2)">
+    <rect x="70" y="367" width="190" height="103" rx="14" fill="#eaf7f0" stroke="#57a778" stroke-width="2"/>
+    <text x="92" y="402" class="head">q1 producer</text>
+    <text x="92" y="429" class="body">completed</text>
+    <text x="92" y="452" class="small">handoff is non-evidence</text>
+
+    <rect x="305" y="367" width="210" height="103" rx="14" fill="#fff0de" stroke="#db893e" stroke-width="2"/>
+    <text x="327" y="402" class="head">q2 replay</text>
+    <text x="327" y="429" class="body">running at deadline</text>
+    <text x="327" y="452" class="small">cancelled fail-closed</text>
+
+    <rect x="560" y="367" width="150" height="103" rx="14" fill="#eef1f4" stroke="#aab5be" stroke-width="2"/>
+    <text x="582" y="402" class="head">q3</text>
+    <text x="582" y="429" class="body">not run</text>
+
+    <rect x="755" y="367" width="150" height="103" rx="14" fill="#eef1f4" stroke="#aab5be" stroke-width="2"/>
+    <text x="777" y="402" class="head">q4</text>
+    <text x="777" y="429" class="body">not run</text>
+
+    <rect x="950" y="354" width="185" height="129" rx="14" fill="#f9e5e6" stroke="#bc5258" stroke-width="3"/>
+    <text x="972" y="390" class="head">q5 combined guard</text>
+    <text x="972" y="419" class="body">never started</text>
+    <text x="972" y="445" class="small">required by 45 min gate</text>
+    <text x="972" y="466" class="small">no guarded bundle</text>
+
+    <rect x="1180" y="367" width="150" height="103" rx="14" fill="#eef1f4" stroke="#aab5be" stroke-width="2"/>
+    <text x="1202" y="402" class="head">q6</text>
+    <text x="1202" y="429" class="body">not run</text>
+  </g>
+  <path d="M805 272 V320 H165 V367" class="arrow"/>
+  <path d="M260 419 H305" class="arrow"/>
+  <path d="M515 419 H560" class="dashed"/>
+  <path d="M710 419 H755" class="dashed"/>
+  <path d="M905 419 H950" class="dashed"/>
+  <path d="M1135 419 H1180" class="dashed"/>
+
+  <rect x="305" y="510" width="830" height="58" rx="29" fill="#a83f46"/>
+  <text x="402" y="546" class="white">FROZEN 45-MINUTE DECISION: NO GO → exact run cancelled → Route C</text>
+
+  <path d="M720 568 V610" class="arrow"/>
+  <g filter="url(#shadow2)">
+    <rect x="220" y="620" width="420" height="82" rx="14" fill="#f4f5f6" stroke="#aab5be" stroke-width="2"/>
+    <text x="244" y="652" class="head">Formal campaign</text>
+    <text x="244" y="680" class="body">acquisition + 16 shards: NOT DISPATCHED</text>
+
+    <rect x="760" y="620" width="420" height="82" rx="14" fill="#f4f5f6" stroke="#aab5be" stroke-width="2"/>
+    <text x="784" y="652" class="head">Paper evidence</text>
+    <text x="784" y="680" class="body">zero strategy-cost or native-performance results</text>
+  </g>
+  <path d="M720 610 H430 V620" class="arrow"/>
+  <path d="M720 610 H970 V620" class="arrow"/>
+</svg>

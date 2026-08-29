@@ -1,16 +1,17 @@
-# Version-Bound Maintenance for Mutable Homomorphic Sparse Matrix--Vector Multiplication
+# Version-Bound Maintenance for Mutable Homomorphic Sparse Matrix--Vector Multiplication: A Fail-Closed Evaluation Boundary
 
-> **Manuscript status:** methods-first working draft. Bracketed result fields are
-> deliberately unset. No performance, complete-reference, security, or
-> end-to-end claim may be filled without the gate named beside it.
-> Evidence status last synchronized: 2026-08-28.
+> **Manuscript status:** Route C methods/boundary working draft. The frozen
+> engineering lineage is complete, but the one-shot qualification selected the
+> preregistered stop route. No comparative performance, complete-reference,
+> security, or end-to-end claim is released. Evidence status last synchronized:
+> 2026-08-30.
 
 ## Abstract
 
 Compressed sparse layouts make homomorphic sparse matrix--vector multiplication
 practical for static patterns, but updates also change value placement, query-
 reorganization metadata, and encrypted-output-to-row mappings. Full
-recompression at each freshness boundary can dominate update cost; auxiliary
+recompression at each freshness boundary requires base-wide work; auxiliary
 components trade publication work for query work and observable structure.
 
 We present an update-aware layer around the published Compressed Sparse Sorted
@@ -23,21 +24,25 @@ the Cloud execute a public page-wide schedule while the client privately merges
 segment leaders. A typed bundle binds the CSSC base, delta, operands, routes,
 and operation graph and fails closed on version or plan substitution.
 
-Our evaluation protocol advances persistent strategy snapshots through a
-chronological warm-up/tuning/held-out split, excludes an offline oracle from
-selection, and keeps predicted counts, admitted OpenFHE unit-cost measurements,
-and end-to-end evidence separate.
-A historical commit-bound OpenFHE 1.5.1 witness at
-`fcb00e0d7f111f3ab5003c111b124df83ae11813` validates one base-plus-delta query
-fixture; it is not evidence for later source changes. A later private Day 1B
-production issuer passed exact-head Linux CI and a dedicated ordinary/strong
-real-runner PRE-S1 run, but that run explicitly minted no publication authority or
-artifact. A bounded Day 1A performance re-diagnostic is authorized as exactly one
-NON-ADMISSIBLE run that can never be cited as formal evidence, and the project has
-zero formal empirical results. Complete accounting, real-stream comparison, and
-calibrated performance therefore remain gated.
-The final manuscript will report **[R2B/R3/R4 result sentence withheld until the
-corresponding commit-bound artifacts pass]**.
+Our frozen evaluation protocol was specified to compare three fixed maintenance
+mechanisms under the same versioned event streams, query schedules, public
+parameters, and initial states. An admitted execution would have separated
+state-transition costs, exact typed operation counts, type-derived
+serialized-byte bounds, a narrowly registered query-linearity projection, and
+native OpenFHE observations. The frozen matrix specified six synthetic shards,
+four ordered-event shards derived from one SNAP source object, and six native
+OpenFHE cases. Independent replay and terminal admission would have had to
+accept exactly the resulting 17 pre-aggregate artifacts before analysis could
+release any empirical sentence.
+
+The sole preregistered, permanently non-admissible qualification did not reach
+its combined guard within the frozen computational deadline. The external
+controller cancelled only that exact run, no formal-dispatch capability was
+created, and the acquisition and 16-unit formal campaign were therefore not
+started. We report the protocol, its definition-level functional obligations,
+the source/evidence separation, and this fail-closed evaluation boundary. We do
+not convert partial qualification execution into strategy-cost or native-
+OpenFHE performance evidence.
 
 **Keywords:** homomorphic encryption; sparse matrix--vector multiplication;
 mutable sparse matrices; cryptographic engineering; reproducible evaluation
@@ -51,7 +56,7 @@ turn a matrix's support into layout metadata and require a client to align the
 encrypted query with physical value lanes. CSSC addresses the static case by
 sorting rows, packing capacity-fitting rectangles, and retaining the metadata
 needed to recover logical outputs. Its own stated limitation is a static sparse
-pattern.
+pattern [@gao2026cssc].
 
 A mutable matrix cannot be handled by changing values alone. An insertion may
 consume padding, create an overflow component, change a row permutation, or force
@@ -67,7 +72,7 @@ periodically fold auxiliary state into the base. Their relative merit depends on
 the update/query ratio, freshness deadline, layout history, communication
 bandwidth, and the exact encrypted output path. Evaluating each window from a
 fresh initial layout, selecting with held-out information, or omitting returned
-ciphertexts and masking work can reverse the apparent ranking.
+ciphertexts and masking work can confound a comparison.
 
 This paper therefore asks a narrower, auditable question: how should mutable
 CSSC state be published, queried, reconstructed, and compared without breaking
@@ -89,10 +94,10 @@ version semantics or overstating evidence?
    segment/page shapes, cloud-side leader reduction, private leader merging, and
    a deterministic whole-query execution bundle. We do not claim a new HE
    primitive or a formal security proof.
-5. **Causal, fail-closed evaluation.** We maintain independent candidate states,
-   tune only on a chronological prefix, expose ablations separately from
-   selectable references, and bind every reported claim to an evidence level and
-   digest-addressed artifact.
+5. **Causal, fail-closed evaluation.** We freeze three strategy identities rather
+   than train an online selector, advance independent states through identical
+   deterministic streams, separate measured and projected quantities, and bind
+   every reportable claim to independently replayed, digest-addressed evidence.
 
 ## 2. Background and Related Work
 
@@ -116,7 +121,8 @@ sharing to split an MVM output.
 Our claimed gap is the narrower mutable CSSC publication and reconstruction
 contract; it is not a new static packing or cryptographic primitive.
 
-The CSSC aggregation pseudocode has a non-power-of-two ambiguity. We use a
+Our source audit of CSSC [@gao2026cssc] finds a non-power-of-two ambiguity in
+the printed aggregation pseudocode. We use a
 corrected `totalSum`-compatible stored-power/prefix graph that preserves the
 paper-derived abstract count
 `floor(log2 w) + popcount(w) - 1`. We present this as a compatibility correction,
@@ -124,20 +130,22 @@ not as a new aggregation algorithm or verified author-code behavior; the
 `totalSum` connection is grounded in the HElib SIMD reduction literature
 [@halevi2014algorithms].
 
-The closest methods are not interchangeable experimental baselines:
+The closest methods are not interchangeable experimental baselines.
+
+**Table 1. Closest method families and the boundary of this work.**
 
 | Work | Principal representation or setting | Mutable support? | Relation to this paper |
 |---|---|---:|---|
 | CSSC [@gao2026cssc] | Sparse-coordinate compression with `ColumnIndex`/`RowMap` | No | Direct static substrate; its published layout and reorganization are not our contribution. |
-| Lodia [@yu2025lodia] | Low-diagonal decomposition for batched FHE SpMV | No | Establishes earlier sparsity-aware encrypted SpMV; different decomposition and leakage/cost interface. |
+| Lodia [@yu2025lodia] | Low-diagonal decomposition for batched FHE SpMV | Not described | Establishes earlier sparsity-aware encrypted SpMV; different decomposition and leakage/cost interface. |
 | CipherSkip [@xiong2026cipherskip] | Encrypted values and indices for arbitrary-shape SpGEMM and chained products | No matrix-state publication protocol | Its server-side alignment concerns encrypted intermediate products, not insert/delete/update of a published sparse layout. |
-| SparseE [@wei2026sparsee] | Encrypted-index Scatter--Gather--Apply with a permutation/expansion accelerator | Not established by the public abstract | Establishes an encrypted-index hardware co-design boundary; no public full text, DOI, or comparable software artifact was verified. |
-| Diagonal Packing [@mutluergil2026diagonal] | Row/column reordering to reduce occupied cyclic diagonals | No | HE-aware static compiler optimization; no mutable CSSC publication or reconstruction. |
-| Ferguson et al. [@ferguson2025unstructured] | CKKS ciphertext--ciphertext SpMSpM with public sparse metadata | No | Demonstrates prior FHE sparsity exploitation under a PPML workload; different operation, scheme, and small square matrices. |
-| D'Agata et al. [@dagata2026gpu] | GPU/FIDESlib CKKS ciphertext--ciphertext SpMSpM with public sparse metadata | No | Extends the same static design space to GPU execution; not a dynamic SpMV baseline. |
-| Rhombus [@he2024rhombus] | Plaintext-matrix/encrypted-vector MVM with additive output shares | No | A different two-party PPML protocol; the random-share primitive is prior art, while versioned overlap binding is our narrower integration claim. |
-| Damie et al. [@damie2025secure] | Secret-shared sparse matrix multiplication in MPC | Not this protocol | Shows secure sparse arithmetic outside FHE; incomparable without a common threat and cost model. |
-| This work | Version-bound CSSC base plus designated maintenance components (admission pending) | Yes | Studies publication, query recompilation, private reconstruction, and causal costs; claims no static-format or primitive novelty. |
+| SparseE [@wei2026sparsee] | Encrypted-index Scatter--Gather--Apply with a permutation/expansion accelerator | Not established by the public descriptions | Establishes an encrypted-index hardware co-design boundary; as of 2026-08-30, an official program abstract and a BUAA institutional summary were public, but no public full text, DOI, or public software repository was located. |
+| Diagonal Packing [@mutluergil2026diagonal] | Row/column reordering to reduce occupied cyclic diagonals | Not described | HE-aware static compiler optimization; no mutable CSSC publication or reconstruction is described. |
+| Ferguson et al. [@ferguson2025unstructured] | CKKS ciphertext--ciphertext SpMSpM with public sparse metadata | Not described | Demonstrates prior FHE sparsity exploitation under a PPML workload; different operation, scheme, and small square matrices. |
+| D'Agata et al. [@dagata2026gpu] | GPU/FIDESlib CKKS ciphertext--ciphertext SpMSpM with public sparse metadata | Not described | Extends the same static design space to GPU execution; a dynamic SpMV publication protocol is not described. |
+| Rhombus [@he2024rhombus] | Plaintext-matrix/encrypted-vector MVM with additive output shares | Not described | A different two-party PPML protocol; the random-share primitive is prior art, while versioned overlap binding is our narrower integration claim. |
+| Damie et al. [@damie2025secure] | Secret-shared sparse matrix multiplication in MPC | Not described | Shows secure sparse arithmetic outside FHE; incomparable without a common threat and cost model. |
+| This work | Version-bound CSSC base plus designated maintenance components; formal evaluation stopped at qualification | Yes | Studies publication, query recompilation, private reconstruction, and causal-cost contracts; claims no static-format, primitive, or comparative-performance novelty. |
 
 ### 2.2 Mutable sparse layouts
 
@@ -154,9 +162,10 @@ complete cost accounting.
 ### 2.3 Dynamic encrypted data systems and masking
 
 Dynamic SSE, encrypted databases, ShieldDB, and oblivious transaction systems
-already study updates, client state, epochs, padding, and leakage. They do not
-instantiate the same ciphertext--ciphertext CSSC query, but they prevent broad
-claims that batching or versioned updates are new. d-DSE directly shows that
+already study updates, client state, epochs, padding, and leakage
+[@cash2014dynamic; @vo2021shielddb; @crooks2018obladi]. They do not instantiate
+the same ciphertext--ciphertext CSSC query, but they prevent broad claims that
+batching or versioned updates are new. d-DSE directly shows that
 update-volume leakage remains a separate problem and that padding can impose
 large storage and communication costs [@liu2024ddse]. CKKS-Auth Tree uses
 versioned root commitments and timestamps to detect stale or replayed
@@ -167,23 +176,30 @@ checks, or replay rejection in isolation. Fixed segments, dummy work, and
 visible schedules are therefore described through an explicit leakage surface,
 not as a generic update-leakage solution.
 
-Canceling one-time masks also predate this work. We therefore state the exact
-leakage and recipient roles and avoid the terms `simulation-secure` or `prevents
-leakage` without a separate proof [@cash2014dynamic; @vo2021shielddb;
-@crooks2018obladi; @bonawitz2017secureagg]. Authorized homomorphic database
+Canceling one-time masks also predate this work [@bonawitz2017secureagg]. We
+therefore state the exact leakage and recipient roles and avoid the terms
+`simulation-secure` or `prevents leakage` without a separate proof. Authorized
+homomorphic database
 updates also predate this work and delimit any claim about encrypted mutability
 [@parbat2023authorized].
 
 ## 3. System and Threat Model
 
-The system has Client A, which owns the mutable matrix; Client B, which owns the
-query and secret key and receives the result; and a semi-honest Cloud evaluator.
-At most one party is corrupted and the Cloud does not collude with either client.
-The model excludes malicious behavior, adaptive corruption, availability,
-side-channel, traffic-analysis, and collusion claims.
+The system has Client A, which owns the mutable matrix, updates, CSSC metadata,
+component `ColumnIndex` arrays and `RowMap`s, the complete `OutputPlan`, and the
+F1-M reservation/sampling ledger; Client B, which owns the query and secret key
+and receives the result; and a semi-honest Cloud evaluator. Client A and Client
+B are both authorized to read the complete `RowMap`-sensitive `OutputPlan`;
+`private` means private from the Cloud, not private between the two clients.
+Client A sends the versioned column metadata and complete plan to Client B,
+samples and encrypts F1-M operands under Client B's public key, and never sends
+the individual mask plaintexts to Client B. At most one party is corrupted and
+the Cloud does not collude with either client. The model excludes malicious
+behavior, adaptive corruption, availability, side-channel, traffic-analysis,
+and collusion claims.
 
 Client B is authorized to learn the versioned global column indices, component
-RowMaps, complete reconstruction plan, and final result. The Cloud is authorized
+`RowMap`s, complete reconstruction plan, and final result. The Cloud is authorized
 to learn public parameters, ciphertext shapes and counts, public page/segment
 shapes, the operation schedule, opaque identifiers, query/version identifiers,
 and plan digests. The interface classifies matrix/query plaintexts, global
@@ -194,6 +210,17 @@ all leakage is prevented or that the implementation realizes a
 simulation-based notion.
 
 ## 4. Design
+
+Figure 1 shows the protocol boundary. Client A owns matrix publication, the
+complete plan and private metadata, constructs the version commit, and prepares
+the encrypted F1-M operands. Client B owns the query and key set, uses the
+version-matched column metadata to gather and encrypt query values, and uses its
+copy of the complete plan to recover logical coordinates. The Cloud receives
+only the typed public program, encrypted operands, and permitted identifiers.
+The diagram is an interface summary, not a claim that the listed metadata is
+cryptographically hidden from every side channel.
+
+![Figure 1. Version-bound mutable CSSC publication, execution, and private reconstruction.](assets/route-c-protocol-flow.png){width=6.3in}
 
 ### 4.1 Publication Windows
 
@@ -219,9 +246,10 @@ query-plaintext confidentiality.
 
 ### 4.2 Versioned query reorganization
 
-Each CSSC value lane stores an original matrix-column identifier or a padding
-sentinel. Client A sends versioned plaintext column metadata to Client B. Client
-B gathers one aligned vector per encrypted value chunk and encrypts it. The
+Each CSSC value lane is paired with a parallel original matrix-column identifier
+or a padding sentinel. Client A sends versioned plaintext column metadata to
+Client B. Client B gathers one aligned vector per encrypted value chunk and
+encrypts it. The
 matrix column domain is independent of the ciphertext-slot domain; reducing a
 global column identifier modulo the slot count changes the function and is
 forbidden.
@@ -269,6 +297,157 @@ the 4,096-lane effective domain, and is the exact 127-active-plus-one-padding
 boundary covered by the pinned witness. We make no optimality or
 cross-segment-width claim.
 
+### 4.5 Definition-level functional propositions
+
+The following statements are conditional functional propositions about the
+frozen typed interfaces and algorithms. They are not empirical conclusions and
+not a malicious- or simulation-security theorem. The exact-S1
+source-conformance record maps every premise below to the corresponding
+validator, state transition, reconstruction routine, or ledger transition; the
+registered tests exercise legal cases and substitutions but do not replace the
+proof arguments.
+
+#### P1: binding soundness
+
+For publication version $v$, let
+
+$$
+\mathcal{P}^{(v)}=
+\left(
+s^{(v)},
+\{C_k^{(v)}\}_{k=1}^{K_v},
+\{CI_k^{(v)}\}_{k=1}^{K_v},
+\{RM_k^{(v)}\}_{k=1}^{K_v},
+O^{(v)},Q^{(v)},B^{(v)}
+\right),
+$$
+
+where $s^{(v)}$ is the canonical logical-state identity binding the logical
+matrix $A^{(v)}$, $C_k$ are ordered physical components,
+$CI_k$ and $RM_k$ are their global-column and row mappings, $O$ is the private
+OutputPlan, $Q$ is the prepared-query binding, and $B$ is the immutable typed
+identity and digest bundle. Let $B^{(v,q)}$ be the authoritative binding for
+query $q$. The registered acceptance predicate has the shape
+
+$$
+\operatorname{Accept}(X;B^{(v,q)})=
+\bigwedge_{f\in\mathcal{F}}[X_f=B_f^{(v,q)}]
+\;\land\!
+\bigwedge_{o\in\mathcal{O}}
+[\operatorname{SHA256}(\operatorname{bytes}_X(o))=B_o^{(v,q)}],
+$$
+
+where $\mathcal{F}$ enumerates every typed version, query, component, mapping,
+plan, parameter, and execution identity, and $\mathcal{O}$ enumerates every
+retained canonical byte object. Hence acceptance implies equality for every
+enumerated field and rehashed object. The capability and formal-artifact paths
+are downstream of this conjunction, so a failed conjunct cannot mint them.
+
+The proof is a case analysis over the closed predicate: each field class occurs
+as a necessary conjunct, retained bytes are rehashed inside the private
+admission process, and no earlier branch reaches the issuer. This establishes a
+functional binding property for ordinary inputs and malformed/stale
+substitutions. It says nothing about deliberate SHA-256 collisions, compromised
+hosts, or side channels.
+
+#### P2: multi-component reconstruction
+
+Let $A_k^{(v)}$ be the physical-output-row by global-logical-column matrix
+represented by component $k$, and let $E_k$ embed its declared physical output
+rows into the logical matrix domain. The admitted decomposition is complete
+when
+
+$$
+A^{(v)}=\sum_{k=1}^{K_v}E_k\!\left(A_k^{(v)}\right)\pmod t.
+$$
+
+Assume each component execution decrypts to $A_k^{(v)}x$ in its declared lanes,
+every lane has exactly its declared logical coordinate, the OutputPlan is total,
+and P3 masks cancel. For logical row $r$, the reconstruction operator sums all
+contributors mapped to $r$, places disjoint blocks in logical order, and uses
+zero when the contributor set is empty. Therefore
+
+$$
+R_{O^{(v)}}\!\left(\{A_k^{(v)}x\}_{k=1}^{K_v}\right)_r
+=\sum_{k=1}^{K_v}\left(E_k(A_k^{(v)})x\right)_r.
+$$
+
+By completeness of the admitted decomposition,
+
+$$
+\sum_{k=1}^{K_v}\left(E_k(A_k^{(v)})x\right)_r
+=\left(A^{(v)}x\right)_r\pmod t.
+$$
+
+The equality is coordinatewise: overlap is ordinary addition in
+$\mathbb{Z}_t$, disjoint blocks have disjoint images under the embeddings, and
+an unmaterialized row contributes the additive identity. It holds for any
+admitted number of components under the stated completeness and totality
+premises; the finite tests only check the implementation of those premises.
+
+#### P3: mask cancellation and ledger-scoped no-reuse
+
+For an overlap group $G_r=(k_1,\ldots,k_g)$ in canonical contributor order with
+$g\ge 2$, Client A samples
+
+$$
+m_{r,k_1},\ldots,m_{r,k_{g-1}}
+\overset{\mathrm{u.a.r.}}{\leftarrow}\mathbb{Z}_t,
+\qquad
+m_{r,k_g}=-\sum_{i=1}^{g-1}m_{r,k_i}\pmod t.
+$$
+
+Thus $\sum_{k\in G_r}m_{r,k}=0\pmod t$, and P2 reconstruction removes the
+random operands without changing the logical output coordinate. Groups of size
+zero or one receive no random tuple; an encrypted-zero dummy is a separate
+accounted object.
+
+For no-reuse, the durable state machine is
+
+$$
+\textsf{unseen}\rightarrow\textsf{reserved}
+\rightarrow\textsf{prepared}\rightarrow\textsf{consumed}.
+$$
+
+One transaction reserves every five-field key
+`(query, version, plan digest, component, output block)` before the first random
+sample. A prepared batch additionally binds the private plan, execution binding,
+modulus, operand commitments, and a unique token; verification consumes that
+token atomically. Uniqueness constraints plus exact terminal closure reject a
+duplicate key or token, commitment drift, orphan record, or second consumption.
+The evaluation-lane digest includes the unit-attempt ordinal, so the single
+provider-replacement allowance cannot reuse the same reservation identity. This
+is an invariant of one uncompromised durable SQLite ledger, not a rollback,
+cloning, compromise, or cross-device guarantee.
+
+#### P4: fixed-segment reconstruction
+
+For a logical row $r$, partition its auxiliary post-multiplication lane values
+$a_{r,c}x_c$ in canonical entry order into $J_r$ segments
+$S_{r,1},\ldots,S_{r,J_r}$ of $c=128$ lanes, so every populated
+$S_{r,j}[\ell]$ is one such $a_{r,c}x_c$ value, and pad only the final unused
+suffix with zeros. The seven-stage public reduction places
+
+$$
+L_{r,j}=\sum_{\ell=0}^{127}S_{r,j}[\ell]
+$$
+
+in the predetermined leader lane. The private OutputPlan maps every leader back
+to $r$, so Client B obtains
+
+$$
+\sum_{j=1}^{J_r}L_{r,j}
+=\sum_{j=1}^{J_r}\sum_{\ell=0}^{127}S_{r,j}[\ell],
+$$
+
+which is exactly the auxiliary contribution to row $r$; adding the CSSC-base
+contribution and applying P2 gives the direct logical product. The proof is an
+induction on $J_r$: one segment is the fixed reduction identity, and appending a
+row-owned segment adds exactly its leader sum without changing prior leaders.
+The 127/128/129, tombstone, padding, disjoint, and overlap cases are boundary
+tests of this construction, not its general proof and not evidence that 128 is
+an optimal width.
+
 ## 5. Implementation and Evidence
 
 At historical baseline commit `fcb00e0d`, the Python implementation supplied typed persistent states, a common query
@@ -283,25 +462,58 @@ passed in run `32581653504`. The witness exercises a 4096-by-8193 fixture,
 global-column anti-aliasing, the 127-of-128 segment boundary, the unused second
 BFV batching row, explicit no-relinearize/relinearize transitions, random and
 dummy F1-M operands, and equality with both typed and direct plaintext oracles.
-Its GitHub Actions artifact-wrapper SHA-256 digest is
-`c5f44b0c9475a66d49b48332e335cb58811cf4eec579ebff631123c4e4711afe`.
+Its GitHub Actions artifact-wrapper SHA-256 digest is recorded in the
+version-bound claim-ledger supplement (`c5f44b0c…4711afe`).
 
 This evidence is deliberately narrow. It does not establish complete candidate
 costs, candidate registration, mixed-circuit parameter safety, security,
 performance, or an end-to-end deployment.
 
-The current engineering line retains those boundaries while adding fail-closed
-experiment lineage, replay, and worker contracts. The reviewed private Day 1B issuer
-implementation is commit-bound at
-`8a37c930edd1f404f7828dd574a4a2d0c29864e9`. Exact-head Linux CI run
-`33135852470` reported 2,178 passing tests and two expected skips because the
-ordinary CI job does not build the real OpenFHE query runner. Dedicated PRE-S1 run
-`33138110298` built OpenFHE `1.5.1@1306d14f8c26`, executed both ordinary and
-strong real-runner smokes, passed the 632-test closed contract and Ruff, and exposed
-zero artifacts. Its terminal boundary still states that the repository production
-adapter, dispatch, and publication artifact are absent and that no publication
-execution is permitted. These are implementation and admission-safety observations,
-not paper results.
+**Table 2. Definition-level obligations and their Route C disposition.**
+
+| Obligation | Frozen implementation and review boundary | Claim permitted in this manuscript |
+|---|---|---|
+| P1: exact binding | Typed version/query/plan/payload identities, fresh byte rehashing, independent replay, and source-conformance mapping | Conditional binding proposition and fail-closed interface design; no end-to-end admission claim |
+| P2: multi-component reconstruction | Private `OutputPlan`, direct plaintext oracle, overlap/concatenation/implicit-zero checks | Definition-level reconstruction proof under the admitted-plan premises; no formal-run result |
+| P3: F1-M cancellation and no-reuse | Modular cancellation proof plus durable reserve-before-sample SQLite state machine | Cancellation and ledger-local invariant only; no simulation-security, rollback, cloning, or cross-device claim |
+| P4: fixed 128-lane segment path | Seven-stage reduction proof and 127/128/129 boundary tests | Correctness proposition for the frozen segment construction; no optimal-width or performance claim |
+| Evidence release | S1/S2 Behavior Sets, independent guards, terminal controller, and exact object-count contract | Engineering/source conformance and the Route C stop decision only; no strategy-cost evidence |
+
+The Route A engineering line retains those boundaries while adding a closed
+qualification and evidence path. A six-job, permanently non-admissible
+qualification first exercises a synthetic producer/replay pair, then a
+case-shaped native producer with one discarded warm-up and three fresh-key
+recorded lanes, exact package replay with zero key generation and zero
+encryption, a cross-domain combined guard, and a post-run resource record. Its
+artifacts have one-day retention, carry no publication authority, and can never
+enter the paper's formal result set. An external controller enforces the frozen
+computational and end-to-end deadlines and can only return a non-serializable,
+short-lived dispatch capability after a fresh provider reread.
+
+Formal execution was specified as a separate strictly serial campaign,
+conditional on qualification success. Every unit would have had an
+experiment-source checkout, producer,
+one-day non-evidence handoff, independent replay, guard, and formal artifact.
+The terminal validator admits exactly one acquisition artifact, six synthetic
+artifacts, four ordered-event artifacts, and six native artifacts before one
+aggregate and a compatible detached analysis snapshot may be created. A clean
+source snapshot, a data-only registration snapshot, and an analysis snapshot
+may have different commit identifiers only when a repository-owned closed
+Behavior Set and compatibility receipt prove that every behavior-bearing blob
+remains identical where required. The qualification did not succeed, so none of
+these formal units or downstream objects was created.
+
+Historical exact-head CI and real-runner smokes are useful engineering
+observations, but they do not transfer across behavior changes. The final
+reviewed tree was merged as Experiment Source Snapshot S1
+`ee58627bb5752c6ac1ee2c5132c6574f9cb66552`; exact-main CI and PRE-S1 passed.
+A descriptive registration was then installed as the only data change in
+Evidence-Freeze Snapshot S2
+`c7ff6820d9323f1850c1c5c57fd9070db88db120`, whose CI and closed-Behavior-Set
+compatibility checks passed. The sole qualification subsequently selected
+Route C, so the formal campaign, terminal admission, aggregate, and analysis
+chain were deliberately not run. No statement in this section is empirical
+evidence for a maintenance strategy.
 
 Generative-AI systems assisted literature discovery, code and test generation,
 adversarial review, and drafting during development. Their outputs are neither
@@ -311,166 +523,331 @@ artifacts, and accept responsibility for every claim and released result.
 
 ## 6. Evaluation Methodology
 
-Before inspecting publication held-out results, we will freeze the complete
-experiment and this currently pending preregistration draft. Each candidate
-owns an independent persistent state advanced through
-the same chronological accepted-event groups. Common half-open group-ordinal
-ranges define 10% warm-up, 30% tuning, and 60% held-out phases for every
-freshness/rho cell, with atomic window closure at each boundary. The selected
-candidate ID is chosen independently within each frozen
-`(trace unit, semantics, freshness, rho)` cell from that cell's tuning prefix,
-then fixed for its held-out suffix. The held-out offline
-oracle is a diagnostic bound only.
+Sections 6.1--6.6 preserve the frozen counterfactual execution and reporting
+protocol. Because qualification failed, none of the acquisitions, formal cells,
+native cases, measurements, or reports specified below occurred. The protocol
+was frozen before any formal artifact could be inspected. It specified no
+trained selector, winner chosen on a tuning prefix, or held-out oracle. Every
+strategy would have owned an independent persistent state and consumed the same
+ordered event groups, publication boundaries, queries, initial logical matrix,
+and public parameters. The intended intervention was therefore the maintenance
+mechanism, not the workload history.
 
-Once the repository composite admission gate succeeds, the experiment emits 14
-fixed records: 13 selectable references and one client-lane ablation. The
-designated strong cloud-segmented `c=128` candidate then fills the previously
-missing reference role, while the client-lane packed-COO path remains a separately plotted,
-non-selectable ablation. Synthetic traces test mechanisms; the publication
-verdict uses three officially linked temporal sources selected under a recorded
-terms assessment:
-the three official typed SNAP Stack Overflow interaction objects
-[@snap_stackoverflow_temporal_network; @paranjape_motifs_in_temporal_networks],
-the Wikimedia MediaWiki History Simple English Wikipedia all-time object in
-version 2026-07 [@wikimedia_mediawiki_history_simplewiki_2026_07], and the 12
-NYC TLC 2022 monthly yellow-taxi Parquet objects plus the unversioned official
-zone lookup as linked and accessed on 2026-08-23; acquisition-time local hashes
-and an independently admitted URL-to-byte acquisition receipt remain pending
-[@nyc_tlc_yellow_trip_records_2022; @nyc_tlc_yellow_trip_data_dictionary]. If it
-is separately frozen, acquired, and executed, LDBC SNB Interactive v2 SF30 will
-be reported only as a synthetic natural-delete auxiliary panel, never as part
-of the fixed-corpus primary decision [@ldbc_snb_interactive_v2].
+### 6.1 Fixed strategies
 
-For each real source, two deterministic transforms--cumulative recurrence and a
-32,768-event sliding window--are applied to five disjoint source-entity
-partitions. The full robustness panel therefore contains 30 paired trace units,
-not 30 independent domains and not random reruns of one trace. The sole
-confirmatory family is fixed in advance to T2 at 0.1 s freshness and contains
-15 paired `(dataset, source-partition)` units. T1 and the 1.0 s freshness panels
-are prespecified secondary robustness analyses and cannot authorize, replace,
-or rescue the headline. Each unit targets
-131,072 accepted raw events in the 4096-by-8193 manifest domain and uses the
-same candidates, queries, and continuous 10/30/60 state history.
+The three strategy identities were:
 
-Primary results use complete serialization accounting within the preregistered
-protocol-object transaction scope, measured OpenFHE calibration, all 15
-fixed-corpus unit effects, and a descriptive
-10,000-resample dataset-stratified partition-weighting sensitivity. Evaluation
-keys are reported as a separate one-time inventory; HTTP/TLS,
-filesystem, artifact-container, and workflow framing are excluded from this
-transaction scope. A headline improvement concerns the tuning-selected
-procedure relative to the frozen
-recompress-every-window candidate `periodic-repack/windows=1` in the sole
-T2-at-0.1-s confirmatory family. It requires at least a 15% paired median
-reduction, strictly positive effects and non-domination in all 15 units at two
-adjacent prespecified rho grid points, and calibration-classification
-stability. The partition-resampling interval is descriptive, not a confidence
-interval; no sign test, Holm adjustment, or population inference is claimed.
-Full details and stop rules appear in
-`publication-preregistration-draft.md` and must be frozen before execution.
+1. `periodic-repack/windows=1`, which would have reconstructed and republished a complete
+   static CSSC layout at every Publication Window;
+2. `padding-reuse`, which would have reused the lowest-ordinal tombstone, then natural
+   padding, and otherwise rebuilds the affected fixed horizontal row partition;
+   and
+3. `packed-coo-cloud-segmented-delta/segment-width=128`, which would have kept a
+   CSSC base and appended overflow into cloud-executable, row-owned 128-lane
+   segments. It was not to fold online in the registered experiment.
 
-Calibration archives exactly three complete warm-up blocks and then consumes
-exactly 14 outcome-independent whole measurement blocks. Warm-up blocks cover
-the same profiles and cases but do not enter the projection or estimator; each
-measurement block contains the closed 14-primitive vocabulary in a deterministic
-SHAKE256/Fisher--Yates order derived from seed `2026082302`, its block ordinal,
-and a calibration-only domain. The per-primitive median across those 14 blocks
-is the point estimate. Per-operation seconds retain exact arithmetic through a
-canonical terminating-decimal-or-reduced-fraction encoding. The nested
-sensitivity analysis resamples one shared
-block-ordinal sequence, preserving cross-primitive covariance, recomputes all
-primitive medians, reruns
-the 13-reference tuning selection for every cell with a canonical-ID tie break,
-then recomputes the corresponding fixed held-out effects and Pareto relations
-on the same 15 units. It does not resample deterministic partitions in this
-calibration loop. Thus it propagates timing, selector, and dominance
-instability instead of holding the point-estimate winner fixed. Every analyzed
-cell is digest-linked to its source bundle, mapping, accepted-event stream,
-split, and replay receipt; a later workflow must independently rehash those
-objects before any empirical claim is released.
+These candidates were mechanisms specified for comparison, not actions of an
+online policy. A slower strategy, a crossing cost curve, or the absence of a
+global winner would have been a reportable outcome rather than a failed
+experiment.
 
-## 7. Results
+### 6.2 Synthetic matrix
 
-### 7.1 Correctness gates
+The synthetic suite was specified to use a mixed insert/delete/modify workload
+at two frozen scales: S would have had 256 rows, 8,193 columns, and 512 accepted
+updates; M would have had 1,024 rows, 8,193 columns, and 2,048 accepted updates.
+The formal seeds were `20260822`, `20260823`, and `20260824`, defining six
+scale--seed shards. Every shard would have evaluated all three strategies at
+$\rho\in\{0.01,0.1,1,10\}$.
 
-**Historical audited fact:** R0 and the narrow Phase 2 fixture pass at `fcb00e0d`.
-For any later evidence role, drift in that role's frozen Behavior Set requires a
-new run; evidence-only and analysis-only snapshots require the separate S1/S2/S3
-compatibility receipt defined by ADR 0010.
+For a reduced fraction $\rho=p/q$ and zero-based accepted-event ordinal $a$,
+the number of queries inserted after event group $a$ is
 
-**Day 1A operational boundary:** diagnostic run `33099397289` failed the frozen
-300-minute producer-to-replay-guard gate. The producer consumed 285 minutes; at the
-deadline the replay calculation was still running and its guard had not begun. The
-run was cancelled at the exact stop-loss and produced no formal shard or aggregate
-evidence. One bounded source change at
-`efdd9af894842a219080f93c8d36fb09ee93b161` hoists a single base event stream,
-removes a redundant logical-state copy while retaining the deep divergence guard,
-and emits non-authorizing stage timings. Its exact-head CI and descriptive
-registration passed. Disposable S2
-`2db4bc87c54d3b5d448f17e4e8d62eae668f16d1` authorizes exactly one same-input
-NON-ADMISSIBLE diagnostic, run `33130154591`; its unchanged 300-minute deadline is
-`2026-08-28T05:35:25Z`. This lineage can never be cited as a formal Day 1A result.
+$$
+Q_a=
+\left\lfloor\frac{(a+1)p}{q}\right\rfloor-
+\left\lfloor\frac{ap}{q}\right\rfloor,
+$$
 
-**Day 1B operational boundary:** the private issuer at `8a37c930` has a local
-dual-axis PASS and two advisory external-review PASS verdicts with no unresolved
-P0/P1, plus the Linux CI and PRE-S1 observations summarized in Section 5. The
-repository adapter still requires exact Day 2 plan authority and TRACE authority.
-No Day 1B worker dispatch, held-out access, publication artifact, or empirical claim
-is authorized.
+so the first $N$ complete groups contain exactly
 
-**Withheld:** formal Day 1A completion, mixed-circuit, and R4 results.
+$$
+\sum_{a=0}^{N-1}Q_a=\left\lfloor\frac{Np}{q}\right\rfloor
+$$
 
-### 7.2 Causal count results
+queries. The $0.01$, $0.1$, and $1$ cells were specified for direct execution.
+The $\rho=10$ cell would not have been timed; it was registered as an exact
+transformation of the same strategy and shard's $\rho=1$ query-linear count and
+byte fields. Any event, window, state, or non-whitelisted-field mismatch would
+have rejected the entire shard.
 
-**[Populate only from an accepted R2B artifact whose exact 14/13 candidate-role
-contract, replay receipts, trace checksums, and rotation inventory verify.]**
+### 6.3 Ordered events from one real source
 
-### 7.3 Measured calibration and end-to-end validation
+The sole external object would have been the SNAP Stack Overflow
+answer-to-question stream
+`sx-stackoverflow-a2q.txt.gz`
+[@snap_stackoverflow_temporal_network; @paranjape_motifs_in_temporal_networks].
+The acquisition job was specified to record the final URL, response headers,
+exact compressed length, and SHA-256 digest. An independent guard would have
+downloaded the object again and required identical response-body bytes; an
+admitted artifact would have omitted the raw compressed object.
 
-**Exploratory mechanism check only:** GitHub run `32712608022` at `f11e97d`
-completed all 14 primitive profiles over eight caller-supplied exact rotation
-indices. The independently rehashed probe document has SHA-256
-`8b7db293687484bdf27e5f703bfb9e237fdaba3e3f6c8d736b33ce4c4e068207`.
-It contains three warm-up blocks but only 11 measurement blocks and explicitly
-sets `publication_raw_block_contract_satisfied=false`; the historically named
-`R3-Day2` package is therefore permanently non-R3 and supplies no manuscript
-estimate or claim.
+The first 1,000,000 eligible records were specified to freeze the row/column
+mapping. Source-ID hashing would have defined two deterministic partitions,
+each with 1,024 rows and 8,193 columns. After the mapping prefix, each partition
+would have consumed 4,096 accepted records under two semantics. T1 was defined
+as cumulative occurrence,
 
-**[Populate only from accepted Day 2, calibrated replay, mixed-circuit, and R4
-artifacts. Include all 14 whole raw measurement blocks, their exact
-index/profile cases, and uncertainty, not only medians.]**
+$$
+A_{uv}(t)=\min\{7,N_{uv}(t)\},
+$$
+
+whereas T2 would have retained the most recent $K=1024$ accepted events and
+performed expiry before admission in one indivisible atomic group. The synthetic
+logical clock would have advanced by one second per 128 accepted records. Both
+partitions and both semantics were specified to run all three strategies at
+$\rho\in\{0.1,1\}$, yielding four ordered-event shards. If admitted, those
+shards could only have supported conclusions about deterministic interactions
+within one source, not multi-source or historical wall-clock generalization.
+
+### 6.4 Native OpenFHE cases
+
+The native matrix was specified to contain three strategies at the S and M
+scales, hence six cases. Every case would have used seed `20260822`, $\rho=1$,
+the terminal accepted-event prefix (512 for S and 2,048 for M), and the query
+after the last complete event group. Version, component inventory, query vector,
+`OutputPlan`, typed execution plan, and canonical input bytes were frozen
+together.
+
+Each case was specified to perform one discarded warm-up, three fresh-key
+producer evaluations, and three exact package replays:
+
+$$
+6\times(1+3+3)=42
+$$
+
+native evaluations in total. The three producer repetitions specified for
+recording were technical repetitions, not independent population samples. An
+admitted execution would have reported their raw values, median, and range,
+separately for production and replay. Replay was specified to deserialize the
+retained context, secret/public keys, evaluation-key frame, and input
+ciphertexts. Its lifecycle receipt would have had to show zero context
+generation, zero key generation, zero evaluation-key generation, and zero
+encryption, while its cloud-program operation inventory would have had to equal
+that of the corresponding producer package.
+
+### 6.5 Measurements and accounting
+
+For strategy $k$, scale or source unit $s$, and query/update ratio $\rho$, the
+result was specified as a typed vector rather than a synthetic score:
+
+$$
+\mathbf{c}_{k,s,\rho}=
+\left(
+T_{\mathrm{state}},
+T_{\mathrm{assembly}},
+N_{\mathrm{op}},
+B_{\mathrm{meta}},
+\overline{B}_{\mathrm{crypto}},
+\mathrm{RSS}_{\max},
+\mathrm{scratch}_{\max}
+\right).
+$$
+
+Synthetic and ordered-event cells were specified to measure state-transition,
+result-assembly, and independent-replay time, peak RSS, and controlled scratch;
+they would have exactly counted events, windows, queries, typed operations, and
+object multiplicities. Their cryptographic-object bytes were specified as
+conservative type-derived bounds,
+
+$$
+\overline{B}_{\mathrm{crypto}}=\sum_j m_jU_j,
+$$
+
+where $m_j$ is the exact multiplicity and $U_j$ is the registration-time,
+pre-execution Stage-1 maximum serialized size frozen for type $j$. Canonical
+metadata bytes would have been measured separately. Native cases instead were
+specified to report observed serialized-object bytes, typed-operation
+inventories, process time, RSS, and scratch. Simulator counts were never to be
+converted into OpenFHE latency, and evidence-replay overhead was never to be
+presented as strategy execution cost.
+
+For the registered $\rho=10$ projection, only query-linear fields change:
+
+$$
+n^{(10)}_{q,p}=10n^{(1)}_{q,p},\qquad
+n^{(10)}_{u,p}=n^{(1)}_{u,p}.
+$$
+
+Wall time, RSS, scratch, and native latency would have been unavailable for this
+projected cell. Protocol-byte transfer time at bandwidth $b$ Mbps was specified
+only as the transparent conversion
+
+$$
+T_{\mathrm{net}}(B,b)=\frac{8B}{b\times10^6};
+$$
+
+HTTP/TLS, artifact wrappers, filesystems, and private replay transport were to
+remain separate evidence-pipeline costs.
+
+The paired strategy contrast for unit $u$ is
+
+$$
+\tau_{a,b}(u,\rho)=C_a(E_u,\rho)-C_b(E_u,\rho),
+$$
+
+where $C$ is one preregistered field or the full typed cost vector. With only
+two scales, two deterministic source partitions, and three technical native
+repetitions, an admitted execution would have reported all raw points and
+mechanism-level decompositions. It would not have fitted scaling exponents,
+attached population $p$ values or confidence intervals, or claimed a global
+winner or Pareto frontier.
+
+### 6.6 Evidence admission and stopping
+
+Before formal execution, one six-job qualification was required to complete
+within the frozen 45-minute computational path and 55-minute total path, satisfy
+the necessary $6C_q\leq9000\,\mathrm{s}$ planning screen, and survive a fresh
+external-controller reread. Here $C_q$ is the registered per-case native-runtime
+estimate: the sum of provider-API `startedAt`--`completedAt` durations for the
+qualification's native producer job, native replay/guard job, and entire
+combined-guard job. Qualification artifacts were permanently non-evidence and
+could not enter the formal result set.
+
+The formal campaign was specified as serial and would have admitted exactly
+
+$$
+1\ \text{acquisition}
++6\ \text{synthetic}
++4\ \text{ordered-event}
++6\ \text{OpenFHE}
+=17
+$$
+
+pre-aggregate artifacts. Before launching each unit, the controller would have
+reserved its full remaining worst-case budget. The preregistered 12-hour figure
+was an
+acceptance threshold, not a guarantee that provider-side cancellation cannot
+overshoot. Across the 17 enumerated units, at most one whole-unit replacement
+would have been allowed, and only for a provider failure rather than a
+data-dependent or scientific outcome. Terminal admission would have rejected
+missing, extra, duplicated, wrong-attempt, or wrong-kind objects before
+aggregation and compatible detached analysis.
+
+## 7. Evidence Outcome
+
+### 7.1 Evidence status
+
+Exact-head CI, PRE-S1, descriptive registration, and S1--S2 compatibility gates
+closed before execution. Qualification run `33261434612` was then dispatched
+once from exact S2 while importing behavior from exact S1. At the frozen
+45-minute computational threshold, the independent simulator replay was still
+running and the combined guard had not started. The external controller
+requested cancellation of that exact run. The terminal workflow conclusion is
+`cancelled`; the only retained object was the one-day q1 pre-replay handoff,
+which is permanently non-admissible.
+
+No q5 guarded bundle, q6 post-run record, live dispatch capability, acquisition
+artifact, formal shard, terminal admission record, aggregate, or compatible S3
+analysis exists. The project therefore has zero reportable strategy-cost,
+ordered-event, or native OpenFHE results. CI logs, qualification handoffs,
+partially completed jobs, and local copies are not alternative result sources.
+
+Figure 2 records the evidence boundary rather than a performance curve. Green
+and blue boxes are engineering or workflow observations at their exact source
+identities; none is promoted into the absent formal result set.
+
+![Figure 2. Exact source freeze, one-shot qualification stop, and the resulting Route C evidence boundary.](assets/route-c-evidence-boundary.png){width=6.3in}
+
+**Table 3. What each evidence layer proves and does not prove.**
+
+| Layer | Exact disposition | Supports | Does not support |
+|---|---|---|---|
+| S1 CI and PRE-S1 | Passed at exact S1 `ee58627b…` | Registered tests, source build, and ordinary/strong smoke execution at that identity | Strategy costs, complete-reference coverage, or formal artifact admission |
+| Registration and S2 | Descriptive archive reinspected; data-only anchor installed at `c7ff6820…` | Exact S1/S2 identity and closed-Behavior-Set compatibility | Qualification GO or a replayable dispatch authority |
+| Qualification | One exact run; q1 completed, q2 was cancelled at the frozen stop, q5 never started | Preregistered Route C decision and fail-closed provenance | Any simulator/native performance estimator or partial formal result |
+| Formal campaign | Not dispatched | The absence of unauthorized execution | Strategy ranking, speedup, ordered-event findings, or native resource claims |
+
+**Table 4. Compact standalone provenance for the Route C stopping outcome.**
+
+| Object or gate | Exact identity | Terminal disposition |
+|---|---|---|
+| Experiment source | S1 `ee58627bb5752c6ac1ee2c5132c6574f9cb66552` | CI run `33258436732` passed: 2,403 tests and 2 expected runner-dependent skips |
+| Real-runner preparation | PRE-S1 run `33259569284` | Passed: 583 tests and pinned OpenFHE 1.5.1 ordinary/strong smokes |
+| Evidence freeze | Registration run `33259894587`; S2 `c7ff6820d9323f1850c1c5c57fd9070db88db120` | Descriptive authority false; S2 CI run `33260167517` passed |
+| One-shot qualification | Run `33261434612` | `cancelled`; q1 completed, q2 stopped at the frozen gate, q3--q6 did not run, and q5 never started |
+| Sole provider object | Artifact ID `9717884587`, digest `sha256:51cbfc2a…2c008` | One-day q1 handoff; permanently non-evidence; no formal artifact exists |
+
+The version-bound `claim-ledger-draft.md` supplement records the full provider
+digest, exact authority states, and the closed claim mapping. It is part of the
+circulation packet rather than an alternative source of empirical results.
+
+### 7.2 Synthetic and ordered-event costs
+
+The six synthetic and four ordered-event formal shards were not dispatched.
+Consequently this paper presents no strategy ranking, speedup, projected timing,
+or cost trade-off plot. The frozen schemas and analysis code remain part of the
+reproducibility package, but an empty or partial table is not treated as a
+measurement result.
+
+### 7.3 Native OpenFHE execution
+
+The six formal native cases were not dispatched. PRE-S1 ordinary and strong
+smokes demonstrate only that the pinned OpenFHE paths executed at the frozen
+source identity; they are not benchmark observations. No native median, range,
+speedup, memory result, or serialized-package comparison is claimed.
+
+### 7.4 Preregistered Route C disposition
+
+The qualification deadline failure is one of the preregistered falsifiers. It
+selects Route C without a threshold change, selective rerun, smaller matrix, or
+reuse of the partial handoff. GitHub's terminal metadata also reported two
+never-executed downstream cancelled jobs with `completedAt` one second earlier
+than `startedAt`; the controller rejected that terminal observation fail-closed.
+This provider-boundary anomaly did not create a false GO and did not cause the
+deadline failure. It is recorded as an implementation limitation for any future
+lineage, not as permission to modify S1 and repeat this one-shot attempt.
 
 ## 8. Limitations
 
 The threat model is narrow and provides no formal security theorem. Client B
 learns layout and reconstruction metadata; the Cloud learns shapes, counts,
 schedules, timing, opaque identifiers, and digests. The current witness covers
-one frozen fixture and one segment width. Unit microbenchmarks do not imply
-end-to-end latency or noise safety. Synthetic traces do not imply robustness on
-real update streams. A negative or boundary empirical result remains a valid
-outcome; held-out retuning is prohibited.
+one frozen fixture and one segment width. The real-stream matrix uses one source,
+two deterministic partitions, and two registered semantics; it does not support
+cross-domain generalization. The two synthetic scales do not identify an
+asymptotic exponent, and three fresh-key native repetitions do not identify a
+population distribution. The $\rho=10$ row is a registered count/byte projection,
+not a timing measurement. Unit microbenchmarks do not imply end-to-end latency
+or noise safety, and type-derived byte bounds are not observed ciphertext sizes.
+The present boundary is operational rather than a comparative strategy result:
+the formal matrix was never authorized. Post-outcome retuning, threshold
+changes, and selective reuse of qualification fragments are prohibited.
 
 ## 9. Conclusion
 
 Mutable encrypted sparse computation requires more than an updatable container:
 matrix state, query reorganization, encrypted execution, and reconstruction must
 commit to the same version and be evaluated under complete causal costs. This
-work supplies that explicit contract around CSSC and a witnessed strong-delta
-execution path. The final empirical conclusion is intentionally deferred until
-the complete, preregistered evidence chain passes.
+work supplies that explicit contract around CSSC, three fixed maintenance
+mechanisms, and a fail-closed paired evaluation. The bounded attempt also shows
+the consequence of treating feasibility gates as real falsifiers: when the sole
+qualification did not reach its combined guard by the frozen deadline, the
+system produced no authority and the formal campaign did not run. The resulting
+Route C manuscript therefore makes protocol and evidence-boundary claims, not
+comparative performance claims.
 
 ## Data and code availability
 
-The publication artifact will contain the frozen source-object register,
-acquisition receipts, local hashes, transform and rejection summaries, derived
-trace manifests, query vector, scheduled-event programs, raw calibration
-blocks, Day1B records, replay receipts, analysis inputs and outputs, and the
-exact source identities needed to verify them. Raw publisher objects will be
-redistributed only where the recorded terms permit; otherwise the artifact will
-provide exact official URLs, downloader code, byte hashes, and reproducible
-derivation instructions. No empirical artifact or archival DOI is claimed by
-this working draft. This section must be replaced with the accepted repository
-release and archival DOI before submission.
+The Route C package will identify exact S1 and S2; the closed Behavior Sets and
+compatibility receipt; exact-head CI, PRE-S1, and descriptive-registration run
+identities; the qualification workflow disposition; the frozen schemas,
+functional propositions, source-conformance record, and verification code. It
+will explicitly state that the one-day q1 handoff was non-evidence and that no
+acquisition, formal, terminal, aggregate, or analysis artifact was created. No
+empirical artifact or archival DOI is claimed by this working draft. This
+section must be replaced with the accepted repository release and archival DOI
+before submission.
 
 ## Statements and declarations
 
