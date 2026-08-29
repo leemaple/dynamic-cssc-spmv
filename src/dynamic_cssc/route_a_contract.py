@@ -127,9 +127,7 @@ class RouteAQueryVectorDomain:
         formal_seed: int,
     ) -> RouteAQueryVectorDomain:
         if scale not in {"S", "M"} or formal_seed not in _FORMAL_SYNTHETIC_SEEDS:
-            raise ValueError(
-                "formal query-vector scope requires S/M and seed 20260822..20260824"
-            )
+            raise ValueError("formal query-vector scope requires S/M and seed 20260822..20260824")
         return cls(
             kind="synthetic",
             suite_role="formal",
@@ -208,8 +206,12 @@ class RouteAEvaluationLane:
     strategy_candidate_id: str
     rho: Fraction
     unit_attempt_ordinal: int
-    execution_process_role: Literal["simulator"]
-    process_ordinal_or_null: None
+    execution_process_role: Literal[
+        "simulator",
+        "openfhe-warmup",
+        "openfhe-recorded",
+    ]
+    process_ordinal_or_null: int | None
 
     def __post_init__(self) -> None:
         if (
@@ -220,10 +222,29 @@ class RouteAEvaluationLane:
             or self.rho not in _ROUTE_A_RHOS - {Fraction(10)}
             or type(self.unit_attempt_ordinal) is not int
             or self.unit_attempt_ordinal not in {0, 1}
-            or self.execution_process_role != "simulator"
-            or self.process_ordinal_or_null is not None
+            or type(self.execution_process_role) is not str
+            or (
+                self.execution_process_role == "simulator"
+                and self.process_ordinal_or_null is not None
+            )
+            or (
+                self.execution_process_role == "openfhe-warmup"
+                and (
+                    type(self.process_ordinal_or_null) is not int
+                    or self.process_ordinal_or_null != 0
+                )
+            )
+            or (
+                self.execution_process_role == "openfhe-recorded"
+                and (
+                    type(self.process_ordinal_or_null) is not int
+                    or self.process_ordinal_or_null not in {0, 1, 2}
+                )
+            )
+            or self.execution_process_role
+            not in {"simulator", "openfhe-warmup", "openfhe-recorded"}
         ):
-            raise ValueError("Route A simulator evaluation lane is not a closed identity")
+            raise ValueError("Route A evaluation lane is not a closed identity")
 
     @classmethod
     def simulator(
@@ -241,6 +262,43 @@ class RouteAEvaluationLane:
             unit_attempt_ordinal=unit_attempt_ordinal,
             execution_process_role="simulator",
             process_ordinal_or_null=None,
+        )
+
+    @classmethod
+    def openfhe_warmup(
+        cls,
+        *,
+        shard_identity_sha256: str,
+        strategy_candidate_id: str,
+        rho: Fraction,
+        unit_attempt_ordinal: int,
+    ) -> RouteAEvaluationLane:
+        return cls(
+            shard_identity_sha256=shard_identity_sha256,
+            strategy_candidate_id=strategy_candidate_id,
+            rho=rho,
+            unit_attempt_ordinal=unit_attempt_ordinal,
+            execution_process_role="openfhe-warmup",
+            process_ordinal_or_null=0,
+        )
+
+    @classmethod
+    def openfhe_recorded(
+        cls,
+        *,
+        shard_identity_sha256: str,
+        strategy_candidate_id: str,
+        rho: Fraction,
+        unit_attempt_ordinal: int,
+        process_ordinal: int,
+    ) -> RouteAEvaluationLane:
+        return cls(
+            shard_identity_sha256=shard_identity_sha256,
+            strategy_candidate_id=strategy_candidate_id,
+            rho=rho,
+            unit_attempt_ordinal=unit_attempt_ordinal,
+            execution_process_role="openfhe-recorded",
+            process_ordinal_or_null=process_ordinal,
         )
 
     def to_document(self) -> dict[str, object]:
@@ -333,8 +391,7 @@ def route_a_query_batch_counts(
     numerator = rho.numerator
     denominator = rho.denominator
     return tuple(
-        ((ordinal + 1) * numerator // denominator)
-        - (ordinal * numerator // denominator)
+        ((ordinal + 1) * numerator // denominator) - (ordinal * numerator // denominator)
         for ordinal in range(accepted_group_count)
     )
 

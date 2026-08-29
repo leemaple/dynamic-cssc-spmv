@@ -64,13 +64,16 @@ system from defects in the evidence pipeline.
 
 ## AIGoCode handling
 
-Use only an already authorized AIGoCode session or credential. Discover the live
-model catalog and select the exact Fable 5 model only when it is currently
-listed; never guess a model alias, bypass a provider restriction, expose a token,
-or persist a credential in the repository. Prefer a streaming response when the
+Use the local Terminal's Claude Code CLI as the Fable 5 review channel. The
+AIGoCode website is only the already-authorized credential, documentation, and
+live-model-catalog surface; do not submit the review packet through its web chat.
+After confirming the exact model is listed, invoke Claude Code with the full
+model ID `claude-fable-5`, `effort=max`, and a read-only permission mode such as
+`plan`. Never guess a model alias, bypass a provider restriction, expose a token,
+or persist a credential in the repository. Prefer streaming output when the
 provider times out on long non-streaming requests. When Fable 5 is actively
-reasoning, let that response finish instead of resending the packet or polling
-aggressively.
+reasoning, let that Terminal request finish instead of resending the packet or
+polling aggressively.
 
 If Fable 5 or the authorized channel is unavailable, record that fact and
 continue with local verification. Availability must not block safe progress.

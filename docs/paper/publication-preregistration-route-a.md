@@ -419,7 +419,7 @@ its one-second deadline; no boundary may split an accepted-event group.
 
 The canonical machine plan is
 `config/route-a-publication-plan.json`, whose exact retained-file SHA-256 is
-`14fe871e801be61ec49ea4c5f152502a62b06cbeb63d32f3e66319ba1f4f4743`.
+`5895fde4760ee6651b1fe34da35d14892e2f84e482ad8d2bd45caa8afc49d17b`.
 The file is reviewed together with this document. The runner must reject any
 plan whose retained bytes do not match that digest; changing the file requires
 a new preregistration review and digest.
@@ -955,22 +955,62 @@ all retained canonical input bytes before native execution.
 
 One OpenFHE case is one producer/replay/guard shard. Its producer job runs one
 discarded warm-up process followed by three recorded fresh-key processes; the
-producer uploads exactly one one-day NON-EVIDENCE handoff containing the build,
-manifest, warm-up receipt, and all three separately framed retained packages.
+producer uploads exactly one one-day NON-EVIDENCE handoff containing one
+content-addressed build package, one discarded warm-up receipt, three separate
+canonical-manifest-closed retained packages, one stage ledger, and one outer
+checksum inventory. The build and warm-up receipt are handoff-level objects and
+are not copied into each recorded package.
 The dependent replay job independently downloads and rehashes that handoff and
 re-executes/verifies all three recorded packages before one guard admits exactly
 one case artifact. Producer
 repetitions use fresh disposable keypairs relative to one another. Each retained
-test package contains its disposable test secret/public/evaluation keys,
-canonical request, encrypted operands, and expected plaintext-oracle binding.
-Replay generates no new keypair; it runs the deterministic Cloud-evaluation
-path on those exact retained ciphertext and evaluation-key bytes. It requires
-exact package identity and operation inventory, a valid output ciphertext, and
-exact decrypted equality to both oracles. Output-ciphertext byte equality is not
-an acceptance predicate; package/input byte identity and decrypted semantic
-equality are. Thus the 25-minute specific gate is per complete case shard, not
-per child process; 60 minutes remains only a universal absolute ceiling that
-the tighter gate can never reach.
+test package contains exactly: the canonical request; producer result receipt;
+exact serialized producer CryptoContext; disposable secret and public keys;
+one unchanged `D1BKEY01` evaluation-key frame; every input and producer-result
+ciphertext; lane-specific private preparation; consume-once authorization
+receipt; consumed SQLite ledger snapshot; typed and direct oracle bindings;
+case binding; lane/query binding with recorded ordinal 0, 1, or 2; structural
+comparability vector; and one canonical manifest binding the build and every
+member's role, subject, byte count, relative path, and SHA-256. Replay generates no new context or
+keypair: it must not call `MakeContext`, `GenCryptoContext`, `KeyGen`,
+`EvalMultKeyGen`, `EvalRotateKeyGen`, or `Encrypt`. It clears process-local
+OpenFHE context/evaluation-key caches and deserializes the exact retained
+CryptoContext, disposable secret/public keys, the single retained evaluation-
+key frame, and every input ciphertext before running the deterministic Cloud-
+evaluation path. The discarded warm-up is not replayed; only recorded process
+ordinals 0, 1, and 2 have retained packages and independent q4 replays. Replay
+reads its canonical request only from that package and accepts no caller-
+supplied replacement request, key, or ciphertext.
+
+The operation contract is split into two orthogonal inventories. The exact
+typed Cloud-program inventory is identical in q3 and q4 and covers
+`EvalMultNoRelin`, relinearization, rotations, plaintext multiplication,
+ciphertext addition, F1-M addition, and result return. The exact lifecycle
+inventory is mode-specific: every producer reports one context generation, one
+key generation, one multiplication-key generation, one automorphism-key
+generation, one encryption per input ciphertext, zero deserializations, and one
+decryption per result; every replay reports zero context/key/evaluation-key
+generation and zero encryption, one context/secret/public/multiplication-key/
+automorphism-key deserialization, one deserialization per exact input
+ciphertext, and one decryption per result. A Route-A-specific verifier derives
+both expected inventories from the package and typed DAG; the legacy Day 1B v4
+verifier remains unchanged.
+
+Replay requires exact package identity, both exact inventories, a valid output
+ciphertext, and exact decrypted equality to both oracles. Output-ciphertext byte
+equality is not an acceptance predicate; package/input byte identity and
+decrypted semantic equality are. Thus the 25-minute specific gate is per
+complete case shard, not per child process; 60 minutes remains only a universal
+absolute ceiling that the tighter gate can never reach.
+
+The stored evaluation-key object is exactly one unchanged `D1BKEY01` frame.
+Its rotation and multiplication-key segment sizes and 88-byte header are
+decomposition fields, not additional transmitted objects. The public key and
+full frame are counted once in the one-time protocol key inventory. Serialized
+CryptoContext, secret-key, private ledger/preparation/oracle, producer-result,
+package-manifest, and checksum bytes are reported separately as private replay-
+evidence transport overhead; they are not Cloud communication and do not enter
+the nine-category communication sum.
 Every recorded repetition must:
 
 - decrypt exactly to the typed and direct plaintext oracles;

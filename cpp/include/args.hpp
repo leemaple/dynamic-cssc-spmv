@@ -19,7 +19,11 @@ inline std::unordered_map<std::string, std::string> ParseArgs(int argc, char** a
         if (index + 1 >= argc) {
             throw std::invalid_argument("missing value for " + key);
         }
-        result[key.substr(2)] = argv[++index];
+        const auto [iterator, inserted] = result.emplace(key.substr(2), argv[++index]);
+        static_cast<void>(iterator);
+        if (!inserted) {
+            throw std::invalid_argument("duplicate argument: " + key);
+        }
     }
     return result;
 }

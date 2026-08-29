@@ -13,8 +13,8 @@
 - Route A 审计稿：
   [`publication-preregistration-route-a.md`](../paper/publication-preregistration-route-a.md)
 - Route A 最终候选 SHA-256：
-  `f860f9580802b713f7a5417d10448f38e24eb779dfb5b3dceb8b9bc4a7f12cad`
-- Route A 最终候选行数：`1446`
+  `232cd9d9599b56ffa62f108dcf1bf268e59031c8206fb0ebcf1e9a742ddfc5d7`
+- Route A 最终候选行数：`1486`
 - 起点边界报告 SHA-256：
   `0984b0c7f537c40cff852b3662f5f866c37f4eed227b286e4db89f428fed8925`
 - 起点 `references.bib` SHA-256：
@@ -59,6 +59,15 @@ admission boundary、保留 exact preparation/consumed-ledger bytes 供只读 re
 非声明；45/55/60 分钟和 12 小时门槛也未放宽。因此本次仍只重新绑定精确候选字节
 并复核 novelty-bearing 段落，无需重开一手来源检索；任何上述元素漂移仍立即使本
 PASS 失效。
+
+本次 native q3/q4 material-gate 窄修订只把已由 producer 生成但此前未作为
+retained object 保存的 exact serialized CryptoContext 加入私有 replay package，
+并把相同的 Cloud-program 操作清单与 producer/replay 各自不同的 lifecycle 操作
+清单分开。它没有改变贡献句、C1--C4、动态 CSSC 机制、查询重组、RowMap 重构、
+F1-M mask 作用域、角色/威胁模型、数据源、比较候选或论文声明；CryptoContext、
+secret key、ledger 与 oracle bytes 仍是证据传输开销而非新增 Cloud 协议机制。
+因此对 §1.1、§2.1--§2.5 的本地逐字复核支持仅重新绑定精确候选字节，不重开
+一手来源检索；任何 novelty-bearing 漂移仍会使本 PASS 失效。
 
 ## 2. 本次判定的“完整组合”
 

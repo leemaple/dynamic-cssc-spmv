@@ -56,9 +56,7 @@ def _anchored_day2_key_plan() -> day2_key_plan.Day2OpenFHEKeyPlanCapability:
             "day1a_inventory_sha256": "7" * 64,
             "effective_slots": 4096,
             "eval_rotate_case_ids": [f"index={index}" for index in indices],
-            "inventory_source_schema_version": (
-                "dynamic-cssc-day1a-rotation-inventory-v1"
-            ),
+            "inventory_source_schema_version": ("dynamic-cssc-day1a-rotation-inventory-v1"),
             "key_plan_kind": "direct-exact-index-v1",
             "planned_exact_indices": list(indices),
             "required_exact_indices": list(indices),
@@ -300,9 +298,7 @@ def test_runner_build_identity_binds_binary_sources_compiler_flags_and_libraries
     assert set(dict(identity.source_sha256)) == set(runtime._SOURCE_PATHS)
     assert identity.linkage_inspection_format == "test-linked-library-inspector-v1"
     assert identity.linked_system_library_load_names == ("test-system-library",)
-    assert tuple(item.load_name for item in identity.linked_libraries) == (
-        "libOPENFHEpke.so",
-    )
+    assert tuple(item.load_name for item in identity.linked_libraries) == ("libOPENFHEpke.so",)
     assert identity.linked_libraries[0].resolved_path == str(library)
     assert identity.linked_libraries[0].needed_load_names == ("test-needed",)
     assert identity.to_document()["schema_version"] == (
@@ -341,8 +337,7 @@ def test_linkage_parsers_resolve_physical_openfhe_and_retain_dyld_cache_names(
         runtime,
         "_linkage_tool_output",
         lambda _arguments, **_kwargs: (
-            "linux-vdso.so.1 (0x0001)\n"
-            f"libOPENFHEpke.so.1 => {linux_library} (0x0002)\n"
+            f"linux-vdso.so.1 (0x0001)\nlibOPENFHEpke.so.1 => {linux_library} (0x0002)\n"
         ),
     )
     linux_format, linux_entries, linux_system = runtime._linux_linked_library_paths(runner)
@@ -360,9 +355,7 @@ def test_linkage_parsers_resolve_physical_openfhe_and_retain_dyld_cache_names(
         return f"cmd LC_RPATH\npath {darwin_library.parent} (offset 12)\n"
 
     monkeypatch.setattr(runtime, "_linkage_tool_output", darwin_output)
-    darwin_format, darwin_entries, darwin_system = runtime._darwin_linked_library_paths(
-        runner
-    )
+    darwin_format, darwin_entries, darwin_system = runtime._darwin_linked_library_paths(runner)
     assert darwin_format == "darwin-otool-direct-v1"
     assert darwin_entries == (("@rpath/libOPENFHEpke.1.dylib", darwin_library),)
     assert darwin_system == ("/usr/lib/libSystem.B.dylib",)
@@ -515,6 +508,66 @@ def test_process_controller_requires_exact_ready_done_handshake(
         )
 
 
+def test_process_controller_closes_route_a_producer_and_replay_inputs(
+    tmp_path: Path,
+) -> None:
+    runner = _shell_runner(tmp_path, "route-a-mode-runner")
+    repository = tmp_path.resolve()
+    producer, request, producer_result, producer_objects = _process_scratch(
+        tmp_path,
+        "route-a-producer-scratch",
+    )
+
+    producer_observation = runtime.run_controlled_openfhe_process(
+        runner,
+        repository_root=repository,
+        scratch_root=producer,
+        request_path=request,
+        route_a_mode="producer",
+        result_path=producer_result,
+        object_root=producer_objects,
+        timeout_seconds=10,
+        scratch_limit_bytes=1024 * 1024,
+    )
+
+    assert producer_observation.stdout == f"{producer_result}\n".encode()
+
+    replay, replay_request, replay_result, replay_objects = _process_scratch(
+        tmp_path,
+        "route-a-replay-scratch",
+    )
+    replay_request.unlink()
+    package = tmp_path.resolve() / "retained-package"
+    package.mkdir()
+    replay_observation = runtime.run_controlled_openfhe_process(
+        runner,
+        repository_root=repository,
+        scratch_root=replay,
+        request_path=None,
+        package_root=package,
+        route_a_mode="replay",
+        result_path=replay_result,
+        object_root=replay_objects,
+        timeout_seconds=10,
+        scratch_limit_bytes=1024 * 1024,
+    )
+
+    assert replay_observation.stdout == f"{replay_result}\n".encode()
+    with pytest.raises(runtime.OpenFHEQueryRuntimeError, match="input mode"):
+        runtime.run_controlled_openfhe_process(
+            runner,
+            repository_root=repository,
+            scratch_root=replay,
+            request_path=request,
+            package_root=package,
+            route_a_mode="replay",
+            result_path=replay_result,
+            object_root=replay_objects,
+            timeout_seconds=10,
+            scratch_limit_bytes=1024 * 1024,
+        )
+
+
 def test_failed_anchored_launch_consumes_both_authorities_and_cleans_scratch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -535,9 +588,7 @@ def test_failed_anchored_launch_consumes_both_authorities_and_cleans_scratch(
         version_id="runtime-cleanup-version-1",
         component_prefix="runtime-cleanup-b",
     )
-    bundle = bind_ordinary_execution(
-        compile_query((first, second), f1m_policy="overlap-only")
-    )
+    bundle = bind_ordinary_execution(compile_query((first, second), f1m_policy="overlap-only"))
     ledger = SQLiteMaskBindingLedger(tmp_path / "mask-ledger.sqlite3")
     prepared = prepare_ordinary_query(
         bundle,

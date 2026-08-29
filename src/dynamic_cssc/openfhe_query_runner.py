@@ -52,17 +52,15 @@ from dynamic_cssc.strong_execution import (
 
 OPENFHE_QUERY_REQUEST_SCHEMA = "dynamic-cssc-full-openfhe-query-request-v4"
 OPENFHE_QUERY_RESULT_SCHEMA = "dynamic-cssc-full-openfhe-query-result-v4"
+ROUTE_A_OPENFHE_PRODUCER_RESULT_SCHEMA = "dynamic-cssc-route-a-openfhe-producer-result-v1"
+ROUTE_A_OPENFHE_REPLAY_RESULT_SCHEMA = "dynamic-cssc-route-a-openfhe-replay-result-v1"
 OPENFHE_QUERY_PARAMETER_PROFILE = "day1b-full-query-pre-admission-depth2-0-0-v1"
 OPENFHE_KEY_GENERATION_PLAN_SCHEMA = "dynamic-cssc-openfhe-key-generation-plan-v2"
 OPENFHE_QUERY_DERIVED_ROTATION_KEY_PLAN_SCHEMA = (
     "dynamic-cssc-openfhe-query-derived-rotation-key-plan-v1"
 )
-OPENFHE_KEY_MATERIAL_INPUT_BINDING_SCHEMA = (
-    "dynamic-cssc-openfhe-key-material-input-binding-v2"
-)
-OPENFHE_KEY_GENERATION_SESSION_SCHEMA = (
-    "dynamic-cssc-openfhe-key-generation-session-v2"
-)
+OPENFHE_KEY_MATERIAL_INPUT_BINDING_SCHEMA = "dynamic-cssc-openfhe-key-material-input-binding-v2"
+OPENFHE_KEY_GENERATION_SESSION_SCHEMA = "dynamic-cssc-openfhe-key-generation-session-v2"
 OPENFHE_KEY_MATERIAL_RECEIPT_SCHEMA = "dynamic-cssc-openfhe-key-material-receipt-v2"
 
 _DAY2_ROTATION_KEY_PLAN_SCHEMA = "dynamic-cssc-publication-rotation-key-plan-v2"
@@ -80,6 +78,29 @@ _OPERATION_COUNT_KEYS = (
     "eval_rotate",
     "relinearize",
     "return_result",
+)
+_ROUTE_A_CLOUD_OPERATION_KEYS = (
+    "add_f1m_mask",
+    "eval_add_ciphertext",
+    "eval_mult_plaintext_mask",
+    "eval_rotate",
+    "multiply_ciphertexts",
+    "relinearize",
+    "return_result",
+)
+_ROUTE_A_LIFECYCLE_OPERATION_KEYS = (
+    "automorphism_key_deserialize_count",
+    "automorphism_key_generation_count",
+    "context_generation_count",
+    "crypto_context_deserialize_count",
+    "decrypt_count",
+    "encrypt_count",
+    "eval_mult_key_deserialize_count",
+    "eval_mult_key_generation_count",
+    "input_ciphertext_deserialize_count",
+    "key_generation_count",
+    "public_key_deserialize_count",
+    "secret_key_deserialize_count",
 )
 
 
@@ -155,9 +176,7 @@ class OpenFHEKeyMaterialReceipt:
             "combined_frame_byte_count": self.combined_frame_byte_count,
             "combined_frame_sha256": self.combined_frame_sha256,
             "crypto_context_parameter_sha256": self.crypto_context_parameter_sha256,
-            "crypto_context_serialization_sha256": (
-                self.crypto_context_serialization_sha256
-            ),
+            "crypto_context_serialization_sha256": (self.crypto_context_serialization_sha256),
             "eval_mult_segment_byte_count": self.eval_mult_segment_byte_count,
             "eval_mult_segment_sha256": self.eval_mult_segment_sha256,
             "formal_authority_granted": False,
@@ -186,6 +205,32 @@ class VerifiedOpenFHEQueryResult:
     decrypted_results: tuple[tuple[str, tuple[int, ...]], ...]
     reconstructed_output: tuple[int, ...]
     key_material_receipt: OpenFHEKeyMaterialReceipt
+    serialized_objects: tuple[OpenFHESerializedObjectReceipt, ...]
+    second_batch_row_zero: bool
+    publication_authority: bool
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedRouteAOpenFHEProducerResult:
+    request_sha256: str
+    cloud_program_operation_inventory: tuple[tuple[str, int], ...]
+    lifecycle_operation_inventory: tuple[tuple[str, int], ...]
+    decrypted_results: tuple[tuple[str, tuple[int, ...]], ...]
+    reconstructed_output: tuple[int, ...]
+    key_material_receipt: OpenFHEKeyMaterialReceipt
+    serialized_objects: tuple[OpenFHESerializedObjectReceipt, ...]
+    second_batch_row_zero: bool
+    publication_authority: bool
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedRouteAOpenFHEReplayResult:
+    request_sha256: str
+    package_manifest_sha256: str
+    cloud_program_operation_inventory: tuple[tuple[str, int], ...]
+    lifecycle_operation_inventory: tuple[tuple[str, int], ...]
+    decrypted_results: tuple[tuple[str, tuple[int, ...]], ...]
+    reconstructed_output: tuple[int, ...]
     serialized_objects: tuple[OpenFHESerializedObjectReceipt, ...]
     second_batch_row_zero: bool
     publication_authority: bool
@@ -470,17 +515,17 @@ def _ciphertext_values(
     f1m_kind = {ciphertext_id: kind for ciphertext_id, kind, _vector in f1m_vectors}
     expected = {operand.ciphertext_id for operand in program.ciphertext_inputs}
     if set(values) != expected:
-        raise OpenFHEQueryRunnerError(
-            "private values do not exactly cover ciphertext inputs"
-        )
+        raise OpenFHEQueryRunnerError("private values do not exactly cover ciphertext inputs")
     result: list[dict[str, object]] = []
     for operand in sorted(
         program.ciphertext_inputs,
         key=lambda item: item.ciphertext_id,
     ):
         vector = values[operand.ciphertext_id]
-        if type(vector) is not tuple or len(vector) != operand.length or any(
-            type(value) is not int for value in vector
+        if (
+            type(vector) is not tuple
+            or len(vector) != operand.length
+            or any(type(value) is not int for value in vector)
         ):
             raise OpenFHEQueryRunnerError("ciphertext input vector is not exact")
         kind = f1m_kind.get(operand.ciphertext_id)
@@ -520,12 +565,10 @@ def _ordinary_query_view(
         ciphertext_values=_ciphertext_values(
             program=compiled.cloud_plan.program,
             value_vectors=tuple(
-                (spec.value_ciphertext_id, spec.values)
-                for spec in compiled.operand_specs
+                (spec.value_ciphertext_id, spec.values) for spec in compiled.operand_specs
             ),
             query_vectors=tuple(
-                (operand.ciphertext_id, operand.values)
-                for operand in prepared.query_operands
+                (operand.ciphertext_id, operand.values) for operand in prepared.query_operands
             ),
             f1m_vectors=tuple(
                 (operand.ciphertext_id, operand.kind, operand.values)
@@ -558,12 +601,10 @@ def _strong_query_view(
         ciphertext_values=_ciphertext_values(
             program=bundle.cloud_plan.program,
             value_vectors=tuple(
-                (spec.value_ciphertext_id, spec.values)
-                for spec in bundle.value_operand_specs
+                (spec.value_ciphertext_id, spec.values) for spec in bundle.value_operand_specs
             ),
             query_vectors=tuple(
-                (operand.ciphertext_id, operand.values)
-                for operand in prepared.query_operands
+                (operand.ciphertext_id, operand.values) for operand in prepared.query_operands
             ),
             f1m_vectors=tuple(
                 (operand.ciphertext_id, operand.kind, operand.values)
@@ -606,16 +647,14 @@ def _build_openfhe_query_request(
             field="rotation key plan",
         )
         program_indices = {
-            openfhe_index
-            for _logical_shift, openfhe_index in program.rotation_catalog.entries
+            openfhe_index for _logical_shift, openfhe_index in program.rotation_catalog.entries
         }
         if not program_indices.issubset(key_plan.required_exact_indices):
             raise OpenFHEQueryRunnerError(
                 "key-generation plan does not cover every program rotation"
             )
         if (
-            plan_document["schema_version"]
-            == OPENFHE_QUERY_DERIVED_ROTATION_KEY_PLAN_SCHEMA
+            plan_document["schema_version"] == OPENFHE_QUERY_DERIVED_ROTATION_KEY_PLAN_SCHEMA
             and key_plan != derived_key_plan
         ):
             raise OpenFHEQueryRunnerError(
@@ -716,9 +755,7 @@ def _expected_serialized_subjects(
         if role == "f1m-mask":
             category = {
                 "random-zero-sum": "query-f1m-random-mask-ciphertexts",
-                "encrypted-zero-dummy": (
-                    "query-f1m-encrypted-zero-dummy-ciphertexts"
-                ),
+                "encrypted-zero-dummy": ("query-f1m-encrypted-zero-dummy-ciphertexts"),
             }[value["f1m_kind"]]
         else:
             category = category_by_role[role]
@@ -727,6 +764,17 @@ def _expected_serialized_subjects(
     assert type(result_ids) is list
     subjects.extend(("query-result-ciphertexts", value) for value in result_ids)
     return tuple(subjects)
+
+
+def _route_a_expected_serialized_subjects(
+    request: dict[str, object],
+) -> tuple[tuple[str, str], ...]:
+    return (
+        ("route-a-private-replay-crypto-context", "crypto-context"),
+        ("route-a-private-replay-secret-key", "secret-key"),
+        ("one-time-evaluation-key-material", "public-key"),
+        *_expected_serialized_subjects(request),
+    )
 
 
 def _read_exact_member(
@@ -835,9 +883,7 @@ def _key_material_input_binding_sha256(request: dict[str, object]) -> str:
 def _key_generation_session_sha256(receipt: dict[str, object]) -> str:
     document = {
         "crypto_context_parameter_sha256": receipt["crypto_context_parameter_sha256"],
-        "crypto_context_serialization_sha256": receipt[
-            "crypto_context_serialization_sha256"
-        ],
+        "crypto_context_serialization_sha256": receipt["crypto_context_serialization_sha256"],
         "eval_mult_segment_byte_count": receipt["eval_mult_segment_byte_count"],
         "eval_mult_segment_sha256": receipt["eval_mult_segment_sha256"],
         "input_binding_sha256": receipt["input_binding_sha256"],
@@ -942,22 +988,18 @@ def _verify_key_material_receipt(
         or combined_bytes
         != DAY1B_COMBINED_EVALUATION_KEY_HEADER_BYTES + rotation_bytes + eval_mult_bytes
         or digests["request_sha256"] != request_sha256
-        or digests["rotation_key_plan_sha256"]
-        != key_plan["rotation_key_plan_sha256"]
+        or digests["rotation_key_plan_sha256"] != key_plan["rotation_key_plan_sha256"]
         or digests["key_generation_plan_sha256"] != expected_key_plan_sha256
         or digests["crypto_context_parameter_sha256"] != expected_parameter_sha256
         or digests["input_binding_sha256"] != _key_material_input_binding_sha256(request)
-        or digests["key_generation_session_sha256"]
-        != _key_generation_session_sha256(value)
+        or digests["key_generation_session_sha256"] != _key_generation_session_sha256(value)
     ):
         raise OpenFHEQueryRunnerError("key-material receipt binding/status is not exact")
     return OpenFHEKeyMaterialReceipt(
         combined_frame_byte_count=combined_bytes,
         combined_frame_sha256=digests["combined_frame_sha256"],
         crypto_context_parameter_sha256=digests["crypto_context_parameter_sha256"],
-        crypto_context_serialization_sha256=digests[
-            "crypto_context_serialization_sha256"
-        ],
+        crypto_context_serialization_sha256=digests["crypto_context_serialization_sha256"],
         eval_mult_segment_byte_count=eval_mult_bytes,
         eval_mult_segment_sha256=digests["eval_mult_segment_sha256"],
         generated_exact_indices=generated,
@@ -1037,9 +1079,7 @@ def _verify_openfhe_query_result(
         request_sha256=request_sha256,
     )
     operation_counts = result["operation_counts"]
-    if type(operation_counts) is not dict or set(operation_counts) != set(
-        _OPERATION_COUNT_KEYS
-    ):
+    if type(operation_counts) is not dict or set(operation_counts) != set(_OPERATION_COUNT_KEYS):
         raise OpenFHEQueryRunnerError("OpenFHE operation-count vocabulary is not exact")
     observed_counts = {
         key: _strict_nonnegative(operation_counts[key], field=f"operation count {key}")
@@ -1058,14 +1098,14 @@ def _verify_openfhe_query_result(
             raise OpenFHEQueryRunnerError("OpenFHE decrypted result keys are not exact")
         result_id = item["result_id"]
         values = item["values"]
-        if result_id != program.result_ids[index] or type(values) is not list or len(
-            values
-        ) != program.slot_count:
+        if (
+            result_id != program.result_ids[index]
+            or type(values) is not list
+            or len(values) != program.slot_count
+        ):
             raise OpenFHEQueryRunnerError("OpenFHE decrypted result identity/length changed")
         vector = tuple(values)
-        if any(
-            type(value) is not int or not 0 <= value < view.modulus for value in vector
-        ):
+        if any(type(value) is not int or not 0 <= value < view.modulus for value in vector):
             raise OpenFHEQueryRunnerError("OpenFHE decrypted result is outside Z_t")
         decrypted_by_id[result_id] = vector
     returned_shares = {
@@ -1113,12 +1153,16 @@ def _verify_openfhe_query_result(
             root_status.st_mode,
             root_status.st_nlink,
         )
-        if not stat.S_ISDIR(root_status.st_mode) or (
-            path_status.st_dev,
-            path_status.st_ino,
-            path_status.st_mode,
-            path_status.st_nlink,
-        ) != root_identity:
+        if (
+            not stat.S_ISDIR(root_status.st_mode)
+            or (
+                path_status.st_dev,
+                path_status.st_ino,
+                path_status.st_mode,
+                path_status.st_nlink,
+            )
+            != root_identity
+        ):
             raise OpenFHEQueryRunnerError(
                 "OpenFHE serialized-object root is not a direct directory"
             )
@@ -1277,10 +1321,510 @@ def verify_strong_openfhe_query_result(
     )
 
 
+def _verify_route_a_openfhe_producer_result(
+    view: _PreparedOpenFHEQueryView,
+    *,
+    request_bytes: bytes,
+    result_path: Path,
+    object_root: Path,
+    expected_output: tuple[int, ...],
+) -> VerifiedRouteAOpenFHEProducerResult:
+    raw = _read_bounded_exact_file(
+        result_path,
+        maximum=_RESULT_BYTES_MAXIMUM,
+        field="Route A OpenFHE producer result",
+    )
+    result = _decode_json(raw, field="Route A OpenFHE producer result")
+    if raw != _canonical_bytes(result):
+        raise OpenFHEQueryRunnerError("Route A OpenFHE producer result is not canonical JSON")
+    expected_result_keys = {
+        "bindings",
+        "cloud_program_operation_inventory",
+        "decrypted_results",
+        "key_generation_plan",
+        "key_material_receipt",
+        "lifecycle_operation_inventory",
+        "mode",
+        "openfhe",
+        "publication_authority",
+        "request_sha256",
+        "schema_version",
+        "second_batch_row_zero",
+        "serialized_objects",
+        "status",
+    }
+    if set(result) != expected_result_keys:
+        raise OpenFHEQueryRunnerError("Route A producer result keys are not exact")
+    request = _decode_json(request_bytes, field="Route A OpenFHE producer request")
+    request_sha256 = hashlib.sha256(request_bytes).hexdigest()
+    if (
+        result["schema_version"] != ROUTE_A_OPENFHE_PRODUCER_RESULT_SCHEMA
+        or result["status"] != "pass"
+        or result["mode"] != "producer"
+        or result["request_sha256"] != request_sha256
+        or result["bindings"] != request["bindings"]
+        or result["key_generation_plan"] != request["key_generation_plan"]
+        or result["openfhe"] != request["openfhe"]
+        or result["publication_authority"] is not False
+        or result["second_batch_row_zero"] is not True
+    ):
+        raise OpenFHEQueryRunnerError("Route A producer result binding/status is not exact")
+    key_material_receipt = _verify_key_material_receipt(
+        result["key_material_receipt"],
+        request=request,
+        request_sha256=request_sha256,
+    )
+    expected_counts = _expected_operation_counts(view.cloud_plan.program)
+    cloud_inventory = result["cloud_program_operation_inventory"]
+    if type(cloud_inventory) is not dict or set(cloud_inventory) != set(
+        _ROUTE_A_CLOUD_OPERATION_KEYS
+    ):
+        raise OpenFHEQueryRunnerError("Route A cloud operation inventory is not exact")
+    observed_cloud = {
+        key: _strict_nonnegative(cloud_inventory[key], field=f"Route A cloud {key}")
+        for key in _ROUTE_A_CLOUD_OPERATION_KEYS
+    }
+    if observed_cloud != {key: expected_counts[key] for key in _ROUTE_A_CLOUD_OPERATION_KEYS}:
+        raise OpenFHEQueryRunnerError("Route A cloud operation inventory changed")
+    lifecycle = result["lifecycle_operation_inventory"]
+    if type(lifecycle) is not dict or set(lifecycle) != set(_ROUTE_A_LIFECYCLE_OPERATION_KEYS):
+        raise OpenFHEQueryRunnerError("Route A producer lifecycle inventory is not exact")
+    observed_lifecycle = {
+        key: _strict_nonnegative(lifecycle[key], field=f"Route A lifecycle {key}")
+        for key in _ROUTE_A_LIFECYCLE_OPERATION_KEYS
+    }
+    expected_lifecycle = {key: 0 for key in _ROUTE_A_LIFECYCLE_OPERATION_KEYS}
+    expected_lifecycle.update(
+        {
+            "automorphism_key_generation_count": 1,
+            "context_generation_count": 1,
+            "decrypt_count": expected_counts["decrypt"],
+            "encrypt_count": expected_counts["encrypt"],
+            "eval_mult_key_generation_count": 1,
+            "key_generation_count": 1,
+        }
+    )
+    if observed_lifecycle != expected_lifecycle:
+        raise OpenFHEQueryRunnerError("Route A producer lifecycle inventory changed")
+
+    program = view.cloud_plan.program
+    decrypted = result["decrypted_results"]
+    if type(decrypted) is not list or len(decrypted) != len(program.result_ids):
+        raise OpenFHEQueryRunnerError("Route A decrypted result cardinality changed")
+    decrypted_by_id: dict[str, tuple[int, ...]] = {}
+    for index, item in enumerate(decrypted):
+        if type(item) is not dict or set(item) != {"result_id", "values"}:
+            raise OpenFHEQueryRunnerError("Route A decrypted result keys are not exact")
+        result_id = item["result_id"]
+        values = item["values"]
+        if (
+            result_id != program.result_ids[index]
+            or type(values) is not list
+            or len(values) != program.slot_count
+        ):
+            raise OpenFHEQueryRunnerError("Route A decrypted result identity changed")
+        vector = tuple(values)
+        if any(type(value) is not int or not 0 <= value < view.modulus for value in vector):
+            raise OpenFHEQueryRunnerError("Route A decrypted result is outside Z_t")
+        decrypted_by_id[result_id] = vector
+    returned_shares = {
+        (route.component_id, route.output_block_id): decrypted_by_id[route.result_id]
+        for route in view.result_routes
+    }
+    reconstructed = reconstruct_output(
+        view.output_plan,
+        returned_shares,
+        modulus=view.modulus,
+    )
+    if (
+        type(expected_output) is not tuple
+        or any(type(value) is not int for value in expected_output)
+        or reconstructed != tuple(value % view.modulus for value in expected_output)
+    ):
+        raise OpenFHEQueryRunnerError("Route A producer output differs from the oracle")
+
+    serialized = result["serialized_objects"]
+    expected_subjects = _route_a_expected_serialized_subjects(request)
+    if type(serialized) is not list or len(serialized) != len(expected_subjects):
+        raise OpenFHEQueryRunnerError("Route A serialized-object cardinality changed")
+    try:
+        root_status = object_root.lstat()
+        directory_descriptor = os.open(
+            object_root,
+            os.O_RDONLY
+            | os.O_NOFOLLOW
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_CLOEXEC", 0),
+        )
+    except OSError as error:
+        raise OpenFHEQueryRunnerError("Route A object root is unavailable") from error
+    try:
+        if not stat.S_ISDIR(root_status.st_mode) or stat.S_ISLNK(root_status.st_mode):
+            raise OpenFHEQueryRunnerError("Route A object root is not a direct directory")
+        receipts: list[OpenFHESerializedObjectReceipt] = []
+        for index, (item, expected_subject) in enumerate(
+            zip(serialized, expected_subjects, strict=True)
+        ):
+            if type(item) is not dict or set(item) != {
+                "byte_count",
+                "category",
+                "relative_path",
+                "sha256",
+                "subject_id",
+            }:
+                raise OpenFHEQueryRunnerError("Route A serialized-object keys are not exact")
+            relative_path = f"object-{index:06d}.bin"
+            byte_count = _strict_nonnegative(
+                item["byte_count"], field="Route A serialized byte_count"
+            )
+            digest = _sha256(item["sha256"], field="Route A serialized SHA-256")
+            if (
+                (item["category"], item["subject_id"]) != expected_subject
+                or item["relative_path"] != relative_path
+                or byte_count <= 0
+            ):
+                raise OpenFHEQueryRunnerError("Route A serialized-object identity changed")
+            frame_receipt = _read_exact_member(
+                directory_descriptor,
+                relative_path,
+                byte_count=byte_count,
+                sha256=digest,
+                key_frame_validator=(
+                    Day1BCombinedEvaluationKeyFrameStreamValidator(
+                        expected_rotation_key_inventory_bytes=(
+                            key_material_receipt.rotation_segment_byte_count
+                        ),
+                        expected_eval_mult_key_bytes=(
+                            key_material_receipt.eval_mult_segment_byte_count
+                        ),
+                    )
+                    if index == 3
+                    else None
+                ),
+            )
+            if index == 0 and digest != key_material_receipt.crypto_context_serialization_sha256:
+                raise OpenFHEQueryRunnerError("Route A retained CryptoContext digest changed")
+            if index == 2 and digest != key_material_receipt.public_key_sha256:
+                raise OpenFHEQueryRunnerError("Route A retained public-key digest changed")
+            if index == 3 and (
+                digest != key_material_receipt.combined_frame_sha256 or frame_receipt is None
+            ):
+                raise OpenFHEQueryRunnerError("Route A retained D1BKEY01 frame changed")
+            receipts.append(
+                OpenFHESerializedObjectReceipt(
+                    category=item["category"],
+                    subject_id=item["subject_id"],
+                    relative_path=relative_path,
+                    byte_count=byte_count,
+                    sha256=digest,
+                )
+            )
+        if set(os.listdir(directory_descriptor)) != {receipt.relative_path for receipt in receipts}:
+            raise OpenFHEQueryRunnerError("Route A object root has missing or extra members")
+    finally:
+        os.close(directory_descriptor)
+    return VerifiedRouteAOpenFHEProducerResult(
+        request_sha256=request_sha256,
+        cloud_program_operation_inventory=tuple(
+            (key, observed_cloud[key]) for key in _ROUTE_A_CLOUD_OPERATION_KEYS
+        ),
+        lifecycle_operation_inventory=tuple(
+            (key, observed_lifecycle[key]) for key in _ROUTE_A_LIFECYCLE_OPERATION_KEYS
+        ),
+        decrypted_results=tuple(
+            (result_id, decrypted_by_id[result_id]) for result_id in program.result_ids
+        ),
+        reconstructed_output=reconstructed,
+        key_material_receipt=key_material_receipt,
+        serialized_objects=tuple(receipts),
+        second_batch_row_zero=True,
+        publication_authority=False,
+    )
+
+
+def verify_route_a_ordinary_openfhe_producer_result(
+    bundle: OrdinaryExecutionBundle,
+    prepared: PreparedOrdinaryQuery,
+    *,
+    request_bytes: bytes,
+    result_path: Path,
+    object_root: Path,
+    expected_output: tuple[int, ...],
+) -> VerifiedRouteAOpenFHEProducerResult:
+    return _verify_route_a_openfhe_producer_result(
+        _ordinary_query_view(bundle, prepared),
+        request_bytes=request_bytes,
+        result_path=result_path,
+        object_root=object_root,
+        expected_output=expected_output,
+    )
+
+
+def verify_route_a_strong_openfhe_producer_result(
+    bundle: StrongExecutionBundle,
+    prepared: PreparedStrongQuery,
+    *,
+    request_bytes: bytes,
+    result_path: Path,
+    object_root: Path,
+    expected_output: tuple[int, ...],
+) -> VerifiedRouteAOpenFHEProducerResult:
+    return _verify_route_a_openfhe_producer_result(
+        _strong_query_view(bundle, prepared),
+        request_bytes=request_bytes,
+        result_path=result_path,
+        object_root=object_root,
+        expected_output=expected_output,
+    )
+
+
+def _verify_route_a_openfhe_replay_result(
+    view: _PreparedOpenFHEQueryView,
+    *,
+    request_bytes: bytes,
+    package_manifest_sha256: str,
+    result_path: Path,
+    object_root: Path,
+    expected_output: tuple[int, ...],
+) -> VerifiedRouteAOpenFHEReplayResult:
+    package_manifest_sha256 = _sha256(
+        package_manifest_sha256,
+        field="Route A package manifest SHA-256",
+    )
+    raw = _read_bounded_exact_file(
+        result_path,
+        maximum=_RESULT_BYTES_MAXIMUM,
+        field="Route A OpenFHE replay result",
+    )
+    result = _decode_json(raw, field="Route A OpenFHE replay result")
+    if raw != _canonical_bytes(result):
+        raise OpenFHEQueryRunnerError("Route A replay result is not canonical JSON")
+    if set(result) != {
+        "bindings",
+        "cloud_program_operation_inventory",
+        "decrypted_results",
+        "lifecycle_operation_inventory",
+        "mode",
+        "openfhe",
+        "package_manifest_sha256",
+        "publication_authority",
+        "request_sha256",
+        "schema_version",
+        "second_batch_row_zero",
+        "serialized_objects",
+        "status",
+    }:
+        raise OpenFHEQueryRunnerError("Route A replay result keys are not exact")
+    request = _decode_json(request_bytes, field="Route A OpenFHE replay request")
+    request_sha256 = hashlib.sha256(request_bytes).hexdigest()
+    if (
+        result["schema_version"] != ROUTE_A_OPENFHE_REPLAY_RESULT_SCHEMA
+        or result["status"] != "pass"
+        or result["mode"] != "replay"
+        or result["request_sha256"] != request_sha256
+        or result["package_manifest_sha256"] != package_manifest_sha256
+        or result["bindings"] != request["bindings"]
+        or result["openfhe"] != request["openfhe"]
+        or result["publication_authority"] is not False
+        or result["second_batch_row_zero"] is not True
+    ):
+        raise OpenFHEQueryRunnerError("Route A replay result binding/status is not exact")
+    expected_counts = _expected_operation_counts(view.cloud_plan.program)
+    cloud_inventory = result["cloud_program_operation_inventory"]
+    if type(cloud_inventory) is not dict or set(cloud_inventory) != set(
+        _ROUTE_A_CLOUD_OPERATION_KEYS
+    ):
+        raise OpenFHEQueryRunnerError("Route A replay Cloud inventory is not exact")
+    observed_cloud = {
+        key: _strict_nonnegative(cloud_inventory[key], field=f"Route A replay {key}")
+        for key in _ROUTE_A_CLOUD_OPERATION_KEYS
+    }
+    if observed_cloud != {key: expected_counts[key] for key in _ROUTE_A_CLOUD_OPERATION_KEYS}:
+        raise OpenFHEQueryRunnerError("Route A replay Cloud inventory changed")
+    lifecycle = result["lifecycle_operation_inventory"]
+    if type(lifecycle) is not dict or set(lifecycle) != set(_ROUTE_A_LIFECYCLE_OPERATION_KEYS):
+        raise OpenFHEQueryRunnerError("Route A replay lifecycle inventory is not exact")
+    observed_lifecycle = {
+        key: _strict_nonnegative(lifecycle[key], field=f"Route A replay lifecycle {key}")
+        for key in _ROUTE_A_LIFECYCLE_OPERATION_KEYS
+    }
+    expected_lifecycle = {key: 0 for key in _ROUTE_A_LIFECYCLE_OPERATION_KEYS}
+    expected_lifecycle.update(
+        {
+            "automorphism_key_deserialize_count": 1,
+            "crypto_context_deserialize_count": 1,
+            "decrypt_count": expected_counts["decrypt"],
+            "eval_mult_key_deserialize_count": 1,
+            "input_ciphertext_deserialize_count": expected_counts["encrypt"],
+            "public_key_deserialize_count": 1,
+            "secret_key_deserialize_count": 1,
+        }
+    )
+    if observed_lifecycle != expected_lifecycle:
+        raise OpenFHEQueryRunnerError("Route A replay lifecycle inventory changed")
+
+    program = view.cloud_plan.program
+    decrypted = result["decrypted_results"]
+    if type(decrypted) is not list or len(decrypted) != len(program.result_ids):
+        raise OpenFHEQueryRunnerError("Route A replay decrypted cardinality changed")
+    decrypted_by_id: dict[str, tuple[int, ...]] = {}
+    for index, item in enumerate(decrypted):
+        if type(item) is not dict or set(item) != {"result_id", "values"}:
+            raise OpenFHEQueryRunnerError("Route A replay decrypted keys are not exact")
+        result_id = item["result_id"]
+        values = item["values"]
+        if (
+            result_id != program.result_ids[index]
+            or type(values) is not list
+            or len(values) != program.slot_count
+        ):
+            raise OpenFHEQueryRunnerError("Route A replay decrypted identity changed")
+        vector = tuple(values)
+        if any(type(value) is not int or not 0 <= value < view.modulus for value in vector):
+            raise OpenFHEQueryRunnerError("Route A replay decrypted value is outside Z_t")
+        decrypted_by_id[result_id] = vector
+    reconstructed = reconstruct_output(
+        view.output_plan,
+        {
+            (route.component_id, route.output_block_id): decrypted_by_id[route.result_id]
+            for route in view.result_routes
+        },
+        modulus=view.modulus,
+    )
+    if (
+        type(expected_output) is not tuple
+        or any(type(value) is not int for value in expected_output)
+        or reconstructed != tuple(value % view.modulus for value in expected_output)
+    ):
+        raise OpenFHEQueryRunnerError("Route A replay output differs from the oracle")
+
+    serialized = result["serialized_objects"]
+    expected_subjects = tuple(
+        ("query-result-ciphertexts", result_id) for result_id in program.result_ids
+    )
+    if type(serialized) is not list or len(serialized) != len(expected_subjects):
+        raise OpenFHEQueryRunnerError("Route A replay object cardinality changed")
+    try:
+        root_status = object_root.lstat()
+        directory_descriptor = os.open(
+            object_root,
+            os.O_RDONLY
+            | os.O_NOFOLLOW
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_CLOEXEC", 0),
+        )
+    except OSError as error:
+        raise OpenFHEQueryRunnerError("Route A replay object root is unavailable") from error
+    try:
+        if not stat.S_ISDIR(root_status.st_mode) or stat.S_ISLNK(root_status.st_mode):
+            raise OpenFHEQueryRunnerError("Route A replay object root is not direct")
+        receipts: list[OpenFHESerializedObjectReceipt] = []
+        for index, (item, expected_subject) in enumerate(
+            zip(serialized, expected_subjects, strict=True)
+        ):
+            relative_path = f"object-{index:06d}.bin"
+            if type(item) is not dict or set(item) != {
+                "byte_count",
+                "category",
+                "relative_path",
+                "sha256",
+                "subject_id",
+            }:
+                raise OpenFHEQueryRunnerError("Route A replay object keys are not exact")
+            byte_count = _strict_nonnegative(
+                item["byte_count"], field="Route A replay object byte_count"
+            )
+            digest = _sha256(item["sha256"], field="Route A replay object SHA-256")
+            if (
+                (item["category"], item["subject_id"]) != expected_subject
+                or item["relative_path"] != relative_path
+                or byte_count <= 0
+            ):
+                raise OpenFHEQueryRunnerError("Route A replay object identity changed")
+            _read_exact_member(
+                directory_descriptor,
+                relative_path,
+                byte_count=byte_count,
+                sha256=digest,
+            )
+            receipts.append(
+                OpenFHESerializedObjectReceipt(
+                    category=item["category"],
+                    subject_id=item["subject_id"],
+                    relative_path=relative_path,
+                    byte_count=byte_count,
+                    sha256=digest,
+                )
+            )
+        if set(os.listdir(directory_descriptor)) != {receipt.relative_path for receipt in receipts}:
+            raise OpenFHEQueryRunnerError("Route A replay object root changed")
+    finally:
+        os.close(directory_descriptor)
+    return VerifiedRouteAOpenFHEReplayResult(
+        request_sha256=request_sha256,
+        package_manifest_sha256=package_manifest_sha256,
+        cloud_program_operation_inventory=tuple(
+            (key, observed_cloud[key]) for key in _ROUTE_A_CLOUD_OPERATION_KEYS
+        ),
+        lifecycle_operation_inventory=tuple(
+            (key, observed_lifecycle[key]) for key in _ROUTE_A_LIFECYCLE_OPERATION_KEYS
+        ),
+        decrypted_results=tuple(
+            (result_id, decrypted_by_id[result_id]) for result_id in program.result_ids
+        ),
+        reconstructed_output=reconstructed,
+        serialized_objects=tuple(receipts),
+        second_batch_row_zero=True,
+        publication_authority=False,
+    )
+
+
+def verify_route_a_ordinary_openfhe_replay_result(
+    bundle: OrdinaryExecutionBundle,
+    prepared: PreparedOrdinaryQuery,
+    *,
+    request_bytes: bytes,
+    package_manifest_sha256: str,
+    result_path: Path,
+    object_root: Path,
+    expected_output: tuple[int, ...],
+) -> VerifiedRouteAOpenFHEReplayResult:
+    return _verify_route_a_openfhe_replay_result(
+        _ordinary_query_view(bundle, prepared),
+        request_bytes=request_bytes,
+        package_manifest_sha256=package_manifest_sha256,
+        result_path=result_path,
+        object_root=object_root,
+        expected_output=expected_output,
+    )
+
+
+def verify_route_a_strong_openfhe_replay_result(
+    bundle: StrongExecutionBundle,
+    prepared: PreparedStrongQuery,
+    *,
+    request_bytes: bytes,
+    package_manifest_sha256: str,
+    result_path: Path,
+    object_root: Path,
+    expected_output: tuple[int, ...],
+) -> VerifiedRouteAOpenFHEReplayResult:
+    return _verify_route_a_openfhe_replay_result(
+        _strong_query_view(bundle, prepared),
+        request_bytes=request_bytes,
+        package_manifest_sha256=package_manifest_sha256,
+        result_path=result_path,
+        object_root=object_root,
+        expected_output=expected_output,
+    )
+
+
 __all__ = (
     "OPENFHE_QUERY_PARAMETER_PROFILE",
     "OPENFHE_QUERY_REQUEST_SCHEMA",
     "OPENFHE_QUERY_RESULT_SCHEMA",
+    "ROUTE_A_OPENFHE_PRODUCER_RESULT_SCHEMA",
+    "ROUTE_A_OPENFHE_REPLAY_RESULT_SCHEMA",
     "OPENFHE_KEY_GENERATION_PLAN_SCHEMA",
     "OPENFHE_KEY_GENERATION_SESSION_SCHEMA",
     "OPENFHE_KEY_MATERIAL_INPUT_BINDING_SCHEMA",
@@ -1291,9 +1835,15 @@ __all__ = (
     "OpenFHEKeyMaterialReceipt",
     "OpenFHESerializedObjectReceipt",
     "VerifiedOpenFHEQueryResult",
+    "VerifiedRouteAOpenFHEProducerResult",
+    "VerifiedRouteAOpenFHEReplayResult",
     "build_ordinary_openfhe_query_request",
     "build_strong_openfhe_query_request",
     "pre_admission_day2_openfhe_key_generation_plan",
     "verify_ordinary_openfhe_query_result",
     "verify_strong_openfhe_query_result",
+    "verify_route_a_ordinary_openfhe_producer_result",
+    "verify_route_a_strong_openfhe_producer_result",
+    "verify_route_a_ordinary_openfhe_replay_result",
+    "verify_route_a_strong_openfhe_replay_result",
 )

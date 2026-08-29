@@ -259,22 +259,87 @@
     "recorded_processes_per_case": 3,
     "replay": {
       "cloud_evaluation": "reexecute-with-exact-retained-ciphertext-and-evaluation-key-bytes",
+      "cloud_program_operation_inventory_rule": "producer-and-replay-must-have-the-same-exact-typed-Cloud-program-operation-inventory-covering-EvalMultNoRelin-Relinearize-EvalRotate-EvalMult-plaintext-EvalAdd-F1M-add-and-return-result-without-lifecycle-operations",
+      "crypto_context": "deserialize-the-exact-retained-producer-CryptoContext-bytes-never-call-MakeContext-or-GenCryptoContext-in-replay",
+      "discarded_warmup_replayed": false,
       "fresh_keypair_generation": false,
+      "lifecycle_operation_inventory": {
+        "ordered_fields": [
+          "context_generation_count",
+          "key_generation_count",
+          "eval_mult_key_generation_count",
+          "automorphism_key_generation_count",
+          "encrypt_count",
+          "crypto_context_deserialize_count",
+          "secret_key_deserialize_count",
+          "public_key_deserialize_count",
+          "eval_mult_key_deserialize_count",
+          "automorphism_key_deserialize_count",
+          "input_ciphertext_deserialize_count",
+          "decrypt_count"
+        ],
+        "producer": {
+          "automorphism_key_deserialize_count": 0,
+          "automorphism_key_generation_count": 1,
+          "context_generation_count": 1,
+          "crypto_context_deserialize_count": 0,
+          "decrypt_count": "exact-result-ciphertext-count",
+          "encrypt_count": "exact-input-ciphertext-count",
+          "eval_mult_key_deserialize_count": 0,
+          "eval_mult_key_generation_count": 1,
+          "input_ciphertext_deserialize_count": 0,
+          "key_generation_count": 1,
+          "public_key_deserialize_count": 0,
+          "secret_key_deserialize_count": 0
+        },
+        "replay": {
+          "automorphism_key_deserialize_count": 1,
+          "automorphism_key_generation_count": 0,
+          "context_generation_count": 0,
+          "crypto_context_deserialize_count": 1,
+          "decrypt_count": "exact-result-ciphertext-count",
+          "encrypt_count": 0,
+          "eval_mult_key_deserialize_count": 1,
+          "eval_mult_key_generation_count": 0,
+          "input_ciphertext_deserialize_count": "exact-input-ciphertext-count",
+          "key_generation_count": 0,
+          "public_key_deserialize_count": 1,
+          "secret_key_deserialize_count": 1
+        }
+      },
       "producer_repetitions_fresh_key_relative_to_each_other": true,
+      "recorded_process_ordinals": [
+        0,
+        1,
+        2
+      ],
+      "request_source": "read-the-exact-canonical-request-from-the-producer-package-no-caller-replacement-request",
       "required_equalities": [
         "exact-package-sha256",
-        "exact-operation-inventory",
+        "exact-cloud-program-operation-inventory",
+        "exact-mode-specific-lifecycle-operation-inventory",
         "valid-ciphertext-output",
         "exact-decrypted-typed-oracle",
         "exact-decrypted-direct-oracle"
       ],
       "retained_test_package": [
+        "canonical-request",
+        "producer-result-receipt",
+        "serialized-crypto-context",
         "disposable-test-secret-key",
         "public-key",
-        "evaluation-keys",
-        "canonical-request",
-        "encrypted-operands",
-        "expected-plaintext-oracle-binding"
+        "one-unchanged-D1BKEY01-evaluation-key-frame",
+        "all-exact-input-ciphertexts",
+        "all-producer-result-ciphertexts",
+        "lane-specific-private-preparation",
+        "consume-once-authorization-receipt",
+        "consumed-SQLite-ledger-snapshot",
+        "typed-plaintext-oracle-binding",
+        "direct-plaintext-oracle-binding",
+        "case-binding",
+        "lane-query-binding-with-recorded-ordinal-0-1-or-2",
+        "structural-comparability-vector",
+        "canonical-manifest-with-build-binding-and-every-member-role-subject-byte-count-relative-path-and-sha256"
       ]
     },
     "repository": "https://github.com/openfheorg/openfhe-development.git",
@@ -547,7 +612,7 @@
     "non_evidence_artifact_contents": {
       "q1-simulator-pre-replay-handoff": "complete-simulator-producer-tree-manifest-and-checksums",
       "q2-simulator-guarded-receipt": "simulator-replay-receipt-guard-receipt-stage-ledger-and-checksums",
-      "q3-native-pre-replay-build-plus-three-retained-packages": "content-addressed-openfhe-build-complete-build-manifest-one-discarded-warmup-receipt-and-three-separately-framed-retained-test-packages-with-checksums",
+      "q3-native-pre-replay-build-plus-three-retained-packages": "one-content-addressed-openfhe-build-package-one-discarded-warmup-receipt-three-separate-canonical-manifest-closed-retained-test-packages-one-stage-ledger-and-one-outer-checksum-inventory;build-and-warmup-are-handoff-level-and-not-copied-into-each-recorded-package",
       "q4-native-guarded-case-bundle": "three-replay-receipts-native-guard-receipt-structural-comparability-vector-stage-ledger-and-checksums",
       "q5-combined-guard-bundle": "exact-q2-and-q4-provider-digests-combined-functional-guard-in-job-stage-timings-authority-false-and-checksums-no-self-referential-API-completedAt-or-final-resource-screen",
       "q6-postrun-resource-admission-record": "read-only-provider-API-final-identities-startedAt-completedAt-and-conclusions-for-q1-through-q5-plus-q6-run-and-job-identity-q6-startedAt-record_observed_utc-frozen-q6-deadline-exact-C_q-6C_q-screen-45-minute-computational-decision-cancellation-ledger-if-applicable-authority-false-no-replayable-capability-and-checksums;it-cannot-contain-or-assert-q6-own-final-completedAt-conclusion-or-55-minute-total-path-decision"
@@ -841,7 +906,8 @@
     ],
     "evaluation_key_rule": "report-one-separate-one-time-inventory-never-fold-it-into-one-strategys-recurring-total",
     "metadata_rule": "for-synthetic-and-SNAP-cells-report-the-exact-byte-count-of-each-canonical-metadata-document-actually-emitted-by-the-simulator-or-transform",
-    "native_openfhe_rule": "for-the-six-OpenFHE-cases-report-the-actual-retained-serialized-byte-count-by-exact-category-from-each-recorded-native-package-labeled-native-measured",
+    "native_openfhe_private_replay_evidence_rule": "serialized-CryptoContext-secret-key-private-ledger-preparation-private-oracles-producer-result-package-manifest-and-checksum-bytes-are-reported-separately-as-private-evidence-transport-overhead-never-as-Cloud-communication-and-never-in-the-nine-category-sum",
+    "native_openfhe_rule": "for-the-six-OpenFHE-cases-report-the-actual-protocol-serialized-byte-count-by-exact-category-from-each-recorded-native-package-labeled-native-measured;count-the-public-key-and-the-full-D1BKEY01-frame-once-in-the-one-time-key-inventory;the-frame-segment-lengths-and-88-byte-header-are-decomposition-only-and-must-not-be-added-again",
     "projection_label": "serialized-byte-upper-bound-projection-not-native-measured",
     "synthetic_and_SNAP_cryptographic_rule": "for-each-exact-cryptographic-object-category-multiply-the-exact-object-multiplicity-by-the-S1-frozen-type-derived-maximum-serialized-byte-formula-for-that-category;sum-only-within-the-same-declared-accounting-view;never-select-or-refit-a-formula-after-formal-output",
     "type_formula_freeze": "the-closed-category-list-formula-input-types-integer-arithmetic-and-formula-blob-path-mode-type-and-Git-blob-enter-the-S1-Behavior-Set-and-qualification-structural-comparability-vector",

@@ -19,6 +19,7 @@ from dynamic_cssc.route_a_strategy import (
     ROUTE_A_STRATEGY_CANDIDATES,
     adapt_route_a_strategy_window,
     advance_route_a_candidate,
+    advance_route_a_candidate_state_only,
     advance_route_a_candidate_timed,
     initialize_route_a_candidate,
 )
@@ -325,6 +326,37 @@ def test_timed_and_compatibility_advance_are_semantically_identical(
     compatible = advance_route_a_candidate(candidate, groups, window)
 
     assert timed.advance == compatible
+
+
+@pytest.mark.parametrize("candidate_id", ROUTE_A_STRATEGY_CANDIDATES)
+def test_state_only_advance_preserves_state_and_cursors_without_query_plan(
+    candidate_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    groups = (_group(0, RouteASetTransition(0, 1, 0, 3, "insert")),)
+    window = _window(RouteASetTransitionReference(0, 0), query_count=1)
+    candidate = initialize_route_a_candidate(candidate_id, {}, rows=256)
+    expected = advance_route_a_candidate(candidate, groups, window)
+
+    def reject_query_plan(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("state-only advancement assembled a query-side plan")
+
+    monkeypatch.setattr(route_a_strategy_module, "output_plan_for", reject_query_plan)
+    monkeypatch.setattr(
+        route_a_strategy_module,
+        "compile_strong_execution",
+        reject_query_plan,
+    )
+
+    observed = advance_route_a_candidate_state_only(candidate, groups, window)
+
+    assert observed.candidate == expected.candidate
+    assert observed.adapted_window == expected.adapted_window
+    assert observed.transition.state == expected.transition.state
+    assert observed.transition.facts.query_count == 0
+    assert observed.transition.output_plan is None
+    if candidate_id == "packed-coo-cloud-segmented-delta/segment-width=128":
+        assert observed.transition.execution_bundle is None
 
 
 @pytest.mark.parametrize("candidate_id", ROUTE_A_STRATEGY_CANDIDATES)

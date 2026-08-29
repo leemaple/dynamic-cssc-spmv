@@ -1,5 +1,6 @@
 #include "openfhe.h"
 #include "ciphertext-ser.h"
+#include "cryptocontext-ser.h"
 #include "key/key-ser.h"
 #include "scheme/bfvrns/bfvrns-ser.h"
 #include "utils/hashutil.h"
@@ -48,6 +49,13 @@ constexpr std::uint32_t kEstimatorKeySwitchCount = 0;
 constexpr std::uint64_t kRequestByteMaximum = 128ULL * 1024ULL * 1024ULL;
 constexpr char kRequestSchema[] = "dynamic-cssc-full-openfhe-query-request-v4";
 constexpr char kResultSchema[] = "dynamic-cssc-full-openfhe-query-result-v4";
+constexpr char kRouteAProducerResultSchema[] =
+    "dynamic-cssc-route-a-openfhe-producer-result-v1";
+constexpr char kRouteAReplayResultSchema[] =
+    "dynamic-cssc-route-a-openfhe-replay-result-v1";
+constexpr char kRouteAPackageManifestSchema[] =
+    "dynamic-cssc-route-a-native-package-manifest-v1";
+constexpr char kRouteAModeArgument[] = "route-a-mode";
 constexpr char kProgramSchema[] = "dynamic-cssc-cloud-program-v1";
 constexpr char kBindingSchema[] = "dynamic-cssc-execution-binding-v1";
 constexpr char kKeyGenerationPlanSchema[] =
@@ -76,6 +84,13 @@ constexpr char kOpenFHECommit[] = "1306d14f8c26bb6150d3e6ad54f28dfe1007689e";
 
 using Allocator = json::Document::AllocatorType;
 using CiphertextMap = std::unordered_map<std::string, Ciphertext<DCRTPoly>>;
+using RunnerArguments = std::unordered_map<std::string, std::string>;
+
+enum class RunnerMode {
+    Legacy,
+    RouteAProducer,
+    RouteAReplay,
+};
 
 struct PrivateCiphertextInput {
     std::string ciphertextId;
@@ -109,6 +124,35 @@ struct OperationCounts {
     std::uint64_t returnResult = 0;
 };
 
+struct LifecycleOperationCounts {
+    std::uint64_t contextGeneration = 0;
+    std::uint64_t keyGeneration = 0;
+    std::uint64_t evalMultKeyGeneration = 0;
+    std::uint64_t automorphismKeyGeneration = 0;
+    std::uint64_t encrypt = 0;
+    std::uint64_t cryptoContextDeserialize = 0;
+    std::uint64_t secretKeyDeserialize = 0;
+    std::uint64_t publicKeyDeserialize = 0;
+    std::uint64_t evalMultKeyDeserialize = 0;
+    std::uint64_t automorphismKeyDeserialize = 0;
+    std::uint64_t inputCiphertextDeserialize = 0;
+    std::uint64_t decrypt = 0;
+};
+
+struct CombinedEvaluationKeySegments {
+    std::string rotationKeys;
+    std::string evalMultKeys;
+};
+
+struct RouteAPackageMember {
+    std::uint64_t byteCount;
+    std::string relativePath;
+    std::string role;
+    std::string sha256;
+    std::string subjectId;
+    std::string bytes;
+};
+
 struct KeyGenerationPlan {
     std::vector<std::int32_t> requiredExactIndices;
     std::string rotationKeyPlanSha256;
@@ -135,6 +179,34 @@ struct KeyMaterialReceipt {
 
 [[noreturn]] void Fail(const std::string& message) {
     throw std::runtime_error(message);
+}
+
+void RequireExactArgumentKeys(
+    const RunnerArguments& args,
+    std::initializer_list<std::string_view> expected) {
+    if (args.size() != expected.size()) {
+        Fail("runner arguments are missing, extra, or duplicated");
+    }
+    for (const auto key : expected) {
+        if (!args.count(std::string(key))) {
+            Fail("runner arguments are missing, extra, or duplicated");
+        }
+    }
+}
+
+RunnerMode SelectRunnerMode(const RunnerArguments& args) {
+    const auto iterator = args.find(kRouteAModeArgument);
+    if (iterator == args.end()) {
+        return RunnerMode::Legacy;
+    }
+    const auto& value = iterator->second;
+    if (value == "producer") {
+        return RunnerMode::RouteAProducer;
+    }
+    if (value == "replay") {
+        return RunnerMode::RouteAReplay;
+    }
+    Fail("route-a-mode must be exactly producer or replay");
 }
 
 int StrictControlDescriptor(const std::string& value, const std::string& field) {
@@ -821,6 +893,71 @@ std::string BuildCombinedEvaluationKeyFrame(
     return frame;
 }
 
+std::uint64_t ReadUint64BigEndian(const std::string& content, std::size_t offset) {
+    if (offset > content.size() || content.size() - offset < 8) {
+        Fail("combined evaluation-key frame ended inside a length field");
+    }
+    std::uint64_t value = 0;
+    for (std::size_t index = 0; index < 8; ++index) {
+        value = (value << 8) |
+                static_cast<unsigned char>(content.at(offset + index));
+    }
+    return value;
+}
+
+CombinedEvaluationKeySegments ParseCombinedEvaluationKeyFrame(
+    const std::string& frame) {
+    if (frame.size() < 88 || frame.compare(0, 8, kCombinedKeyMagic) != 0) {
+        Fail("combined evaluation-key frame magic or minimum size changed");
+    }
+    const auto rotationSize = ReadUint64BigEndian(frame, 8);
+    const auto evalMultSize = ReadUint64BigEndian(frame, 48);
+    if (rotationSize == 0 || evalMultSize == 0 ||
+        rotationSize > std::numeric_limits<std::size_t>::max() ||
+        evalMultSize > std::numeric_limits<std::size_t>::max() ||
+        rotationSize > frame.size() - 88 ||
+        evalMultSize != frame.size() - 88 - rotationSize) {
+        Fail("combined evaluation-key frame segment lengths changed");
+    }
+    const auto rotation = frame.substr(88, static_cast<std::size_t>(rotationSize));
+    const auto evalMult = frame.substr(
+        88 + static_cast<std::size_t>(rotationSize),
+        static_cast<std::size_t>(evalMultSize));
+    if (frame.substr(16, 32) != DigestBytes(HashUtil::HashString(rotation)) ||
+        frame.substr(56, 32) != DigestBytes(HashUtil::HashString(evalMult))) {
+        Fail("combined evaluation-key frame segment digest changed");
+    }
+    return CombinedEvaluationKeySegments{rotation, evalMult};
+}
+
+template <typename Value>
+Value DeserializeOpenFHE(const std::string& content, const std::string& field) {
+    std::stringstream stream(content);
+    Value value;
+    if (!Serial::Deserialize(value, stream, SerType::BINARY) || !value) {
+        Fail(field + " OpenFHE deserialization failed");
+    }
+    return value;
+}
+
+void DeserializeEvalMultKey(
+    const CryptoContext<DCRTPoly>& context,
+    const std::string& content) {
+    std::stringstream stream(content);
+    if (!context->DeserializeEvalMultKey(stream, SerType::BINARY)) {
+        Fail("OpenFHE multiplication-key deserialization failed");
+    }
+}
+
+void DeserializeEvalAutomorphismKey(
+    const CryptoContext<DCRTPoly>& context,
+    const std::string& content) {
+    std::stringstream stream(content);
+    if (!context->DeserializeEvalAutomorphismKey(stream, SerType::BINARY)) {
+        Fail("OpenFHE automorphism-key deserialization failed");
+    }
+}
+
 void WriteNewFile(const fs::path& path, const std::string& content) {
     if (fs::exists(fs::symlink_status(path))) {
         Fail("refusing to replace an existing output path");
@@ -859,6 +996,152 @@ SerializedReceipt WriteSerializedObject(
         HashUtil::HashString(content),
         std::move(subjectId),
     };
+}
+
+void RequireDirectEmptyDirectory(const fs::path& root, const std::string& field) {
+    const auto status = fs::symlink_status(root);
+    if (fs::is_symlink(status) || !fs::is_directory(status) ||
+        fs::directory_iterator(root) != fs::directory_iterator()) {
+        Fail(field + " must be an existing direct empty directory");
+    }
+}
+
+std::vector<RouteAPackageMember> ReadRouteAPackage(const fs::path& packageRoot) {
+    const auto rootStatus = fs::symlink_status(packageRoot);
+    if (fs::is_symlink(rootStatus) || !fs::is_directory(rootStatus)) {
+        Fail("Route A package-dir must be one direct directory");
+    }
+    const auto manifestBytes = ReadFile(
+        packageRoot / "manifest.json", kRequestByteMaximum);
+    json::Document manifest;
+    manifest.Parse<json::kParseValidateEncodingFlag>(
+        manifestBytes.data(), manifestBytes.size());
+    if (manifest.HasParseError() || CanonicalJson(manifest) != manifestBytes) {
+        Fail("Route A package manifest is not canonical UTF-8 JSON");
+    }
+    RequireExactKeys(
+        manifest,
+        {"build_manifest_sha256",
+         "case_binding_sha256",
+         "formal_authority_granted",
+         "lane_binding_sha256",
+         "members",
+         "publication_authority",
+         "schema_version"},
+        "Route A package manifest");
+    for (const auto field : {
+             "build_manifest_sha256", "case_binding_sha256", "lane_binding_sha256"}) {
+        if (!LowerSha256(StringMember(manifest, field, field))) {
+            Fail(std::string(field) + " must be lowercase SHA-256");
+        }
+    }
+    const auto caseBindingSha256 = StringMember(
+        manifest, "case_binding_sha256", "case_binding_sha256");
+    const auto laneBindingSha256 = StringMember(
+        manifest, "lane_binding_sha256", "lane_binding_sha256");
+    RequireFalse(manifest, "formal_authority_granted", "Route A package authority");
+    RequireFalse(manifest, "publication_authority", "Route A package publication authority");
+    RequireString(
+        manifest,
+        "schema_version",
+        kRouteAPackageManifestSchema,
+        "Route A package schema");
+    const auto& members = Member(manifest, "members", "Route A package members");
+    if (!members.IsArray() || members.Empty()) {
+        Fail("Route A package members must be a nonempty array");
+    }
+    std::vector<RouteAPackageMember> parsed;
+    parsed.reserve(members.Size());
+    std::set<std::string> rolesAndSubjects;
+    std::set<std::string> observedNames{"manifest.json"};
+    for (json::SizeType index = 0; index < members.Size(); ++index) {
+        const auto& member = members[index];
+        RequireExactKeys(
+            member,
+            {"byte_count", "relative_path", "role", "sha256", "subject_id"},
+            "Route A package member");
+        std::ostringstream expectedName;
+        expectedName << "member-";
+        expectedName.width(6);
+        expectedName.fill('0');
+        expectedName << index << ".bin";
+        RouteAPackageMember item{
+            UIntMember(member, "byte_count", "Route A package member byte_count"),
+            StringMember(member, "relative_path", "Route A package member path"),
+            StringMember(member, "role", "Route A package member role"),
+            StringMember(member, "sha256", "Route A package member SHA-256"),
+            StringMember(member, "subject_id", "Route A package member subject"),
+            {},
+        };
+        if (item.byteCount == 0 || item.relativePath != expectedName.str() ||
+            !PrintableIdentifier(item.role) || !PrintableIdentifier(item.subjectId) ||
+            !LowerSha256(item.sha256) ||
+            !rolesAndSubjects.insert(item.role + "\n" + item.subjectId).second) {
+            Fail("Route A package member identity is not canonical and unique");
+        }
+        item.bytes = ReadFile(packageRoot / item.relativePath, 2ULL * 1024 * 1024 * 1024);
+        if (item.bytes.size() != item.byteCount ||
+            HashUtil::HashString(item.bytes) != item.sha256) {
+            Fail("Route A package member size or digest changed");
+        }
+        observedNames.insert(item.relativePath);
+        parsed.push_back(std::move(item));
+    }
+    std::set<std::string> actualNames;
+    for (const auto& entry : fs::directory_iterator(packageRoot)) {
+        const auto status = entry.symlink_status();
+        if (fs::is_symlink(status) || !fs::is_regular_file(status)) {
+            Fail("Route A package contains a non-regular member");
+        }
+        actualNames.insert(entry.path().filename().string());
+    }
+    if (actualNames != observedNames) {
+        Fail("Route A package has a missing or extra physical member");
+    }
+    bool caseBindingMatched = false;
+    bool laneBindingMatched = false;
+    for (const auto& member : parsed) {
+        if (member.role == "case-binding") {
+            caseBindingMatched = member.sha256 == caseBindingSha256;
+        }
+        else if (member.role == "lane-binding") {
+            laneBindingMatched = member.sha256 == laneBindingSha256;
+        }
+    }
+    if (!caseBindingMatched || !laneBindingMatched) {
+        Fail("Route A package case or lane manifest binding changed");
+    }
+    return parsed;
+}
+
+const RouteAPackageMember& UniqueRouteAPackageMember(
+    const std::vector<RouteAPackageMember>& members,
+    const std::string& role) {
+    const RouteAPackageMember* found = nullptr;
+    for (const auto& member : members) {
+        if (member.role == role) {
+            if (found != nullptr) {
+                Fail("Route A package repeats one singleton role");
+            }
+            found = &member;
+        }
+    }
+    if (found == nullptr) {
+        Fail("Route A package lacks one required singleton role");
+    }
+    return *found;
+}
+
+const RouteAPackageMember& RouteAPackageMemberBySubject(
+    const std::vector<RouteAPackageMember>& members,
+    const std::string& role,
+    const std::string& subjectId) {
+    for (const auto& member : members) {
+        if (member.role == role && member.subjectId == subjectId) {
+            return member;
+        }
+    }
+    Fail("Route A package lacks one required typed member");
 }
 
 std::string InputCategory(const PrivateCiphertextInput& input) {
@@ -1195,19 +1478,104 @@ KeyMaterialReceipt BuildKeyMaterialReceipt(
     };
 }
 
+json::Value BuildCloudProgramOperationInventory(
+    const OperationCounts& counts,
+    Allocator& allocator) {
+    json::Value inventory(json::kObjectType);
+    AddUInt(inventory, "add_f1m_mask", counts.addF1mMask, allocator);
+    AddUInt(
+        inventory, "eval_add_ciphertext", counts.evalAddCiphertext, allocator);
+    AddUInt(
+        inventory,
+        "eval_mult_plaintext_mask",
+        counts.evalMultPlaintextMask,
+        allocator);
+    AddUInt(inventory, "eval_rotate", counts.evalRotate, allocator);
+    AddUInt(
+        inventory,
+        "multiply_ciphertexts",
+        counts.multiplyCiphertexts,
+        allocator);
+    AddUInt(inventory, "relinearize", counts.relinearize, allocator);
+    AddUInt(inventory, "return_result", counts.returnResult, allocator);
+    return inventory;
+}
+
+json::Value BuildLifecycleOperationInventory(
+    const LifecycleOperationCounts& counts,
+    Allocator& allocator) {
+    json::Value inventory(json::kObjectType);
+    AddUInt(
+        inventory,
+        "automorphism_key_deserialize_count",
+        counts.automorphismKeyDeserialize,
+        allocator);
+    AddUInt(
+        inventory,
+        "automorphism_key_generation_count",
+        counts.automorphismKeyGeneration,
+        allocator);
+    AddUInt(
+        inventory,
+        "context_generation_count",
+        counts.contextGeneration,
+        allocator);
+    AddUInt(
+        inventory,
+        "crypto_context_deserialize_count",
+        counts.cryptoContextDeserialize,
+        allocator);
+    AddUInt(inventory, "decrypt_count", counts.decrypt, allocator);
+    AddUInt(inventory, "encrypt_count", counts.encrypt, allocator);
+    AddUInt(
+        inventory,
+        "eval_mult_key_deserialize_count",
+        counts.evalMultKeyDeserialize,
+        allocator);
+    AddUInt(
+        inventory,
+        "eval_mult_key_generation_count",
+        counts.evalMultKeyGeneration,
+        allocator);
+    AddUInt(
+        inventory,
+        "input_ciphertext_deserialize_count",
+        counts.inputCiphertextDeserialize,
+        allocator);
+    AddUInt(inventory, "key_generation_count", counts.keyGeneration, allocator);
+    AddUInt(
+        inventory,
+        "public_key_deserialize_count",
+        counts.publicKeyDeserialize,
+        allocator);
+    AddUInt(
+        inventory,
+        "secret_key_deserialize_count",
+        counts.secretKeyDeserialize,
+        allocator);
+    return inventory;
+}
+
 std::string BuildResult(
     const json::Document& request,
     const std::string& requestSha256,
     const std::vector<DecryptedResult>& decrypted,
     const OperationCounts& counts,
+    const LifecycleOperationCounts& lifecycleCounts,
     const KeyMaterialReceipt& keyMaterialReceipt,
     const std::vector<SerializedReceipt>& receipts,
-    bool secondBatchRowZero) {
+    bool secondBatchRowZero,
+    bool routeAProducer) {
     json::Document result;
     result.SetObject();
     auto& allocator = result.GetAllocator();
     json::Value bindings(Member(request, "bindings", "bindings"), allocator);
     result.AddMember("bindings", bindings.Move(), allocator);
+    if (routeAProducer) {
+        auto cloudInventory = BuildCloudProgramOperationInventory(counts, allocator);
+        result.AddMember(
+            "cloud_program_operation_inventory", cloudInventory.Move(), allocator);
+    }
 
     json::Value decryptedValues(json::kArrayType);
     for (const auto& item : decrypted) {
@@ -1318,28 +1686,48 @@ std::string BuildResult(
         allocator);
     result.AddMember("key_material_receipt", keyReceipt.Move(), allocator);
 
+    if (routeAProducer) {
+        auto lifecycleInventory = BuildLifecycleOperationInventory(
+            lifecycleCounts, allocator);
+        result.AddMember(
+            "lifecycle_operation_inventory", lifecycleInventory.Move(), allocator);
+        AddString(result, "mode", "producer", allocator);
+    }
+
     json::Value openfhe(Member(request, "openfhe", "openfhe"), allocator);
     result.AddMember("openfhe", openfhe.Move(), allocator);
-    json::Value operationCounts(json::kObjectType);
-    AddUInt(operationCounts, "add_f1m_mask", counts.addF1mMask, allocator);
-    AddUInt(operationCounts, "decrypt", counts.decrypt, allocator);
-    AddUInt(operationCounts, "encrypt", counts.encrypt, allocator);
-    AddUInt(
-        operationCounts, "eval_add_ciphertext", counts.evalAddCiphertext, allocator);
-    AddUInt(
-        operationCounts,
-        "eval_mult_plaintext_mask",
-        counts.evalMultPlaintextMask,
-        allocator);
-    AddUInt(operationCounts, "eval_rotate", counts.evalRotate, allocator);
-    AddUInt(
-        operationCounts, "multiply_ciphertexts", counts.multiplyCiphertexts, allocator);
-    AddUInt(operationCounts, "relinearize", counts.relinearize, allocator);
-    AddUInt(operationCounts, "return_result", counts.returnResult, allocator);
-    result.AddMember("operation_counts", operationCounts.Move(), allocator);
+    if (!routeAProducer) {
+        json::Value operationCounts(json::kObjectType);
+        AddUInt(operationCounts, "add_f1m_mask", counts.addF1mMask, allocator);
+        AddUInt(operationCounts, "decrypt", counts.decrypt, allocator);
+        AddUInt(operationCounts, "encrypt", counts.encrypt, allocator);
+        AddUInt(
+            operationCounts,
+            "eval_add_ciphertext",
+            counts.evalAddCiphertext,
+            allocator);
+        AddUInt(
+            operationCounts,
+            "eval_mult_plaintext_mask",
+            counts.evalMultPlaintextMask,
+            allocator);
+        AddUInt(operationCounts, "eval_rotate", counts.evalRotate, allocator);
+        AddUInt(
+            operationCounts,
+            "multiply_ciphertexts",
+            counts.multiplyCiphertexts,
+            allocator);
+        AddUInt(operationCounts, "relinearize", counts.relinearize, allocator);
+        AddUInt(operationCounts, "return_result", counts.returnResult, allocator);
+        result.AddMember("operation_counts", operationCounts.Move(), allocator);
+    }
     result.AddMember("publication_authority", false, allocator);
     AddString(result, "request_sha256", requestSha256, allocator);
-    AddString(result, "schema_version", kResultSchema, allocator);
+    AddString(
+        result,
+        "schema_version",
+        routeAProducer ? kRouteAProducerResultSchema : kResultSchema,
+        allocator);
     result.AddMember("second_batch_row_zero", secondBatchRowZero, allocator);
 
     json::Value serialized(json::kArrayType);
@@ -1357,16 +1745,9 @@ std::string BuildResult(
     return CanonicalJson(result);
 }
 
-}  // namespace
-
-int main(int argc, char** argv) {
-    try {
-        const auto args = dynamic_cssc::ParseArgs(argc, argv);
-        if (args.size() != 5 || !args.count("request") || !args.count("result") ||
-            !args.count("object-dir") || !args.count("control-write-fd") ||
-            !args.count("control-read-fd")) {
-            Fail("the exact request/result/object/control arguments are required");
-        }
+int RunRouteAProducer(
+    const RunnerArguments& args,
+    bool routeAProducer) {
         const auto controlWriteFd = StrictControlDescriptor(
             args.at("control-write-fd"), "control-write-fd");
         const auto controlReadFd = StrictControlDescriptor(
@@ -1377,11 +1758,7 @@ int main(int argc, char** argv) {
         const fs::path requestPath(args.at("request"));
         const fs::path resultPath(args.at("result"));
         const fs::path objectRoot(args.at("object-dir"));
-        const auto objectStatus = fs::symlink_status(objectRoot);
-        if (fs::is_symlink(objectStatus) || !fs::is_directory(objectStatus) ||
-            fs::directory_iterator(objectRoot) != fs::directory_iterator()) {
-            Fail("object-dir must be an existing direct empty directory");
-        }
+        RequireDirectEmptyDirectory(objectRoot, "object-dir");
         ControlPoint(
             controlWriteFd,
             controlReadFd,
@@ -1451,6 +1828,11 @@ int main(int argc, char** argv) {
         context->EvalMultKeyGen(keyPair.secretKey);
         context->EvalRotateKeyGen(keyPair.secretKey, keyPlan.requiredExactIndices);
         const auto cryptoContextBytes = SerializeOpenFHE(context, "crypto context");
+        const auto secretKeyBytes = routeAProducer
+                                        ? SerializeOpenFHE(
+                                              keyPair.secretKey,
+                                              "secret key")
+                                        : std::string{};
         const auto publicKeyBytes = SerializeOpenFHE(keyPair.publicKey, "public key");
         const auto rotationKeyBytes = SerializeRotationKeyInventory(context);
         const auto evalMultKeyBytes = SerializeEvalMultKeys(context);
@@ -1474,7 +1856,32 @@ int main(int argc, char** argv) {
         CiphertextMap ciphertexts;
         std::set<std::string> identifiers;
         OperationCounts counts;
+        LifecycleOperationCounts lifecycleCounts;
+        lifecycleCounts.contextGeneration = 1;
+        lifecycleCounts.keyGeneration = 1;
+        lifecycleCounts.evalMultKeyGeneration = 1;
+        lifecycleCounts.automorphismKeyGeneration = 1;
         std::vector<SerializedReceipt> receipts;
+        if (routeAProducer) {
+            receipts.push_back(WriteSerializedObject(
+                objectRoot,
+                receipts.size(),
+                "route-a-private-replay-crypto-context",
+                "crypto-context",
+                cryptoContextBytes));
+            receipts.push_back(WriteSerializedObject(
+                objectRoot,
+                receipts.size(),
+                "route-a-private-replay-secret-key",
+                "secret-key",
+                secretKeyBytes));
+            receipts.push_back(WriteSerializedObject(
+                objectRoot,
+                receipts.size(),
+                "one-time-evaluation-key-material",
+                "public-key",
+                publicKeyBytes));
+        }
         receipts.push_back(WriteSerializedObject(
             objectRoot,
             receipts.size(),
@@ -1489,6 +1896,7 @@ int main(int argc, char** argv) {
                 Fail("OpenFHE input encryption/identity failed");
             }
             ++counts.encrypt;
+            ++lifecycleCounts.encrypt;
             receipts.push_back(WriteSerializedObject(
                 objectRoot,
                 receipts.size(),
@@ -1522,6 +1930,7 @@ int main(int argc, char** argv) {
                 Fail("OpenFHE full-query result decryption is invalid");
             }
             ++counts.decrypt;
+            ++lifecycleCounts.decrypt;
             plaintext->SetLength(kBatchSize);
             const auto lanes = plaintext->GetPackedValue();
             if (lanes.size() != kBatchSize) {
@@ -1554,9 +1963,11 @@ int main(int argc, char** argv) {
             requestSha256,
             decrypted,
             counts,
+            lifecycleCounts,
             keyMaterialReceipt,
             receipts,
-            secondBatchRowZero);
+            secondBatchRowZero,
+            routeAProducer);
         WriteNewFile(resultPath, resultBytes);
         ControlPoint(
             controlWriteFd,
@@ -1565,6 +1976,355 @@ int main(int argc, char** argv) {
             kDoneAcknowledgement);
         std::cout << resultPath.string() << '\n';
         return 0;
+}
+
+std::string BuildRouteAReplayResult(
+    const json::Document& request,
+    const std::string& requestSha256,
+    const std::string& packageManifestSha256,
+    const std::vector<DecryptedResult>& decrypted,
+    const OperationCounts& counts,
+    const LifecycleOperationCounts& lifecycleCounts,
+    const std::vector<SerializedReceipt>& receipts,
+    bool secondBatchRowZero) {
+    json::Document result;
+    result.SetObject();
+    auto& allocator = result.GetAllocator();
+    json::Value bindings(Member(request, "bindings", "bindings"), allocator);
+    result.AddMember("bindings", bindings.Move(), allocator);
+    auto cloudInventory = BuildCloudProgramOperationInventory(counts, allocator);
+    result.AddMember(
+        "cloud_program_operation_inventory", cloudInventory.Move(), allocator);
+    json::Value decryptedValues(json::kArrayType);
+    for (const auto& item : decrypted) {
+        json::Value row(json::kObjectType);
+        AddString(row, "result_id", item.resultId, allocator);
+        json::Value values(json::kArrayType);
+        for (const auto value : item.values) {
+            values.PushBack(value, allocator);
+        }
+        row.AddMember("values", values.Move(), allocator);
+        decryptedValues.PushBack(row.Move(), allocator);
+    }
+    result.AddMember("decrypted_results", decryptedValues.Move(), allocator);
+    auto lifecycleInventory = BuildLifecycleOperationInventory(
+        lifecycleCounts, allocator);
+    result.AddMember(
+        "lifecycle_operation_inventory", lifecycleInventory.Move(), allocator);
+    AddString(result, "mode", "replay", allocator);
+    json::Value openfhe(Member(request, "openfhe", "openfhe"), allocator);
+    result.AddMember("openfhe", openfhe.Move(), allocator);
+    AddString(
+        result, "package_manifest_sha256", packageManifestSha256, allocator);
+    result.AddMember("publication_authority", false, allocator);
+    AddString(result, "request_sha256", requestSha256, allocator);
+    AddString(result, "schema_version", kRouteAReplayResultSchema, allocator);
+    result.AddMember("second_batch_row_zero", secondBatchRowZero, allocator);
+    json::Value serialized(json::kArrayType);
+    for (const auto& receipt : receipts) {
+        json::Value item(json::kObjectType);
+        AddUInt(item, "byte_count", receipt.byteCount, allocator);
+        AddString(item, "category", receipt.category, allocator);
+        AddString(item, "relative_path", receipt.relativePath, allocator);
+        AddString(item, "sha256", receipt.sha256, allocator);
+        AddString(item, "subject_id", receipt.subjectId, allocator);
+        serialized.PushBack(item.Move(), allocator);
+    }
+    result.AddMember("serialized_objects", serialized.Move(), allocator);
+    AddString(result, "status", "pass", allocator);
+    return CanonicalJson(result);
+}
+
+int RunLegacyProducer(const RunnerArguments& args) {
+    return RunRouteAProducer(args, false);
+}
+
+int RunRouteAProducer(const RunnerArguments& args) {
+    return RunRouteAProducer(args, true);
+}
+
+int RunRouteAReplay(const RunnerArguments& args) {
+    const auto controlWriteFd = StrictControlDescriptor(
+        args.at("control-write-fd"), "control-write-fd");
+    const auto controlReadFd = StrictControlDescriptor(
+        args.at("control-read-fd"), "control-read-fd");
+    if (controlWriteFd == controlReadFd) {
+        Fail("runtime control descriptors must be distinct");
+    }
+    const fs::path packageRoot(args.at("package-dir"));
+    const fs::path resultPath(args.at("result"));
+    const fs::path objectRoot(args.at("object-dir"));
+    RequireDirectEmptyDirectory(objectRoot, "object-dir");
+    ControlPoint(
+        controlWriteFd,
+        controlReadFd,
+        kReadyRecord,
+        kReadyAcknowledgement);
+
+    const auto packageManifestBytes = ReadFile(
+        packageRoot / "manifest.json", kRequestByteMaximum);
+    const auto packageManifestSha256 = HashUtil::HashString(packageManifestBytes);
+    const auto packageMembers = ReadRouteAPackage(packageRoot);
+    const std::set<std::string> singletonRoles{
+        "authorization-receipt",
+        "canonical-request",
+        "case-binding",
+        "consumed-ledger",
+        "crypto-context",
+        "direct-oracle",
+        "evaluation-key-frame",
+        "lane-binding",
+        "preparation",
+        "producer-result",
+        "public-key",
+        "secret-key",
+        "structural-vector",
+        "typed-oracle",
+    };
+    std::map<std::string, std::size_t> roleCounts;
+    for (const auto& member : packageMembers) {
+        if (!singletonRoles.count(member.role) && member.role != "input-ciphertext" &&
+            member.role != "producer-result-ciphertext") {
+            Fail("Route A package contains an unknown role");
+        }
+        ++roleCounts[member.role];
+    }
+    for (const auto& role : singletonRoles) {
+        if (roleCounts[role] != 1) {
+            Fail("Route A package singleton role cardinality changed");
+        }
+    }
+
+    const auto& requestMember = UniqueRouteAPackageMember(
+        packageMembers, "canonical-request");
+    const auto& contextMember = UniqueRouteAPackageMember(
+        packageMembers, "crypto-context");
+    const auto& secretKeyMember = UniqueRouteAPackageMember(
+        packageMembers, "secret-key");
+    const auto& publicKeyMember = UniqueRouteAPackageMember(
+        packageMembers, "public-key");
+    const auto& evaluationKeyMember = UniqueRouteAPackageMember(
+        packageMembers, "evaluation-key-frame");
+    static_cast<void>(UniqueRouteAPackageMember(packageMembers, "producer-result"));
+
+    const auto& requestBytes = requestMember.bytes;
+    json::Document request;
+    request.Parse<json::kParseValidateEncodingFlag>(
+        requestBytes.data(), requestBytes.size());
+    if (request.HasParseError()) {
+        Fail("Route A package request is not valid UTF-8 JSON");
+    }
+    RequireExactKeys(
+        request,
+        {"bindings",
+         "ciphertext_values",
+         "key_generation_plan",
+         "openfhe",
+         "program",
+         "schema_version"},
+        "request");
+    RequireString(request, "schema_version", kRequestSchema, "request schema");
+    if (CanonicalJson(request) != requestBytes) {
+        Fail("Route A package request must be canonical compact JSON");
+    }
+    const auto& profile = Member(request, "openfhe", "openfhe");
+    ValidateOpenFHEProfile(profile);
+    const auto& program = Member(request, "program", "program");
+    RequireExactKeys(
+        program,
+        {"ciphertext_inputs",
+         "format",
+         "nodes",
+         "plaintext_masks",
+         "result_ids",
+         "rotation_catalog",
+         "slot_count"},
+        "program");
+    RequireString(program, "format", kProgramSchema, "program format");
+    const auto slotCountValue = UIntMember(program, "slot_count", "slot_count");
+    if (slotCountValue == 0 || slotCountValue > kSingleRowSlots) {
+        Fail("slot_count is outside the single-row OpenFHE contract");
+    }
+    const auto slotCount = static_cast<std::uint32_t>(slotCountValue);
+    ValidateBindings(Member(request, "bindings", "bindings"), program);
+    const auto privateInputs = ParsePrivateInputs(
+        Member(request, "ciphertext_values", "ciphertext_values"), slotCount);
+    ValidateProgramInputs(
+        Member(program, "ciphertext_inputs", "ciphertext_inputs"),
+        privateInputs,
+        slotCount);
+    const auto rotations = ParseRotationCatalog(
+        Member(program, "rotation_catalog", "rotation_catalog"), slotCount);
+    static_cast<void>(ParseKeyGenerationPlan(
+        Member(request, "key_generation_plan", "key-generation plan"),
+        Member(request, "bindings", "bindings"),
+        rotations));
+    const auto& nodes = Member(program, "nodes", "nodes");
+    if (!nodes.IsArray()) {
+        Fail("nodes must be an array");
+    }
+
+    CryptoContextImpl<DCRTPoly>::ClearEvalMultKeys();
+    CryptoContextImpl<DCRTPoly>::ClearEvalAutomorphismKeys();
+    CryptoContextFactory<DCRTPoly>::ReleaseAllContexts();
+    auto context = DeserializeOpenFHE<CryptoContext<DCRTPoly>>(
+        contextMember.bytes, "crypto context");
+    auto secretKey = DeserializeOpenFHE<PrivateKey<DCRTPoly>>(
+        secretKeyMember.bytes, "secret key");
+    auto publicKey = DeserializeOpenFHE<PublicKey<DCRTPoly>>(
+        publicKeyMember.bytes, "public key");
+    if (secretKey->GetKeyTag() != publicKey->GetKeyTag()) {
+        Fail("Route A retained public and secret key tags differ");
+    }
+    const auto evaluationKeys = ParseCombinedEvaluationKeyFrame(
+        evaluationKeyMember.bytes);
+    DeserializeEvalMultKey(context, evaluationKeys.evalMultKeys);
+    DeserializeEvalAutomorphismKey(context, evaluationKeys.rotationKeys);
+
+    auto masks = ParsePlaintextMasks(
+        context,
+        Member(program, "plaintext_masks", "plaintext_masks"),
+        slotCount);
+    CiphertextMap ciphertexts;
+    std::set<std::string> identifiers;
+    LifecycleOperationCounts lifecycleCounts;
+    lifecycleCounts.cryptoContextDeserialize = 1;
+    lifecycleCounts.secretKeyDeserialize = 1;
+    lifecycleCounts.publicKeyDeserialize = 1;
+    lifecycleCounts.evalMultKeyDeserialize = 1;
+    lifecycleCounts.automorphismKeyDeserialize = 1;
+    for (const auto& input : privateInputs) {
+        const auto& member = RouteAPackageMemberBySubject(
+            packageMembers, "input-ciphertext", input.ciphertextId);
+        auto ciphertext = DeserializeOpenFHE<Ciphertext<DCRTPoly>>(
+            member.bytes, "input ciphertext");
+        if (ciphertext->GetKeyTag() != publicKey->GetKeyTag() ||
+            !identifiers.insert(input.ciphertextId).second ||
+            !ciphertexts.emplace(input.ciphertextId, ciphertext).second) {
+            Fail("Route A input ciphertext identity or key tag changed");
+        }
+        ++lifecycleCounts.inputCiphertextDeserialize;
+    }
+
+    OperationCounts counts;
+    const auto returned = ExecuteProgram(
+        context,
+        nodes,
+        rotations,
+        masks,
+        ciphertexts,
+        identifiers,
+        counts);
+    const auto expectedResults = ParseResultIds(
+        Member(program, "result_ids", "result_ids"));
+    if (returned != expectedResults) {
+        Fail("Route A replay ReturnResult order differs from result_ids");
+    }
+    bool secondBatchRowZero = true;
+    std::vector<DecryptedResult> decrypted;
+    std::vector<SerializedReceipt> receipts;
+    decrypted.reserve(expectedResults.size());
+    for (const auto& resultId : expectedResults) {
+        static_cast<void>(RouteAPackageMemberBySubject(
+            packageMembers, "producer-result-ciphertext", resultId));
+        const auto ciphertext = ExistingCiphertext(ciphertexts, resultId, "result_id");
+        Plaintext plaintext;
+        const auto status = context->Decrypt(secretKey, ciphertext, &plaintext);
+        if (!status.isValid) {
+            Fail("Route A replay result decryption is invalid");
+        }
+        ++counts.decrypt;
+        ++lifecycleCounts.decrypt;
+        plaintext->SetLength(kBatchSize);
+        const auto lanes = plaintext->GetPackedValue();
+        if (lanes.size() != kBatchSize) {
+            Fail("Route A replay decrypted result has the wrong batch size");
+        }
+        DecryptedResult item{resultId, {}};
+        item.values.reserve(slotCount);
+        for (std::uint32_t lane = 0; lane < kBatchSize; ++lane) {
+            const auto value = Normalize(lanes.at(lane));
+            if (lane < slotCount) {
+                item.values.push_back(value);
+            }
+            else if (value != 0) {
+                secondBatchRowZero = false;
+            }
+        }
+        decrypted.push_back(std::move(item));
+        receipts.push_back(WriteSerializedObject(
+            objectRoot,
+            receipts.size(),
+            "query-result-ciphertexts",
+            resultId,
+            SerializeOpenFHE(ciphertext, "replay result ciphertext")));
+    }
+    if (!secondBatchRowZero) {
+        Fail("Route A replay result escaped the effective single row");
+    }
+    if (roleCounts["input-ciphertext"] != privateInputs.size() ||
+        roleCounts["producer-result-ciphertext"] != expectedResults.size()) {
+        Fail("Route A package ciphertext member cardinality changed");
+    }
+    const auto resultBytes = BuildRouteAReplayResult(
+        request,
+        HashUtil::HashString(requestBytes),
+        packageManifestSha256,
+        decrypted,
+        counts,
+        lifecycleCounts,
+        receipts,
+        secondBatchRowZero);
+    WriteNewFile(resultPath, resultBytes);
+    ControlPoint(
+        controlWriteFd,
+        controlReadFd,
+        kDoneRecord,
+        kDoneAcknowledgement);
+    std::cout << resultPath.string() << '\n';
+    return 0;
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    try {
+        const auto args = dynamic_cssc::ParseArgs(argc, argv);
+        const auto mode = SelectRunnerMode(args);
+        if (mode == RunnerMode::Legacy) {
+            RequireExactArgumentKeys(
+                args,
+                {"request",
+                 "result",
+                 "object-dir",
+                 "control-write-fd",
+                 "control-read-fd"});
+            return RunLegacyProducer(args);
+        }
+        if (mode == RunnerMode::RouteAProducer) {
+            RequireExactArgumentKeys(
+                args,
+                {"route-a-mode",
+                 "request",
+                 "result",
+                 "object-dir",
+                 "control-write-fd",
+                 "control-read-fd"});
+            return RunRouteAProducer(args);
+        }
+        if (mode == RunnerMode::RouteAReplay) {
+            RequireExactArgumentKeys(
+                args,
+                {"route-a-mode",
+                 "package-dir",
+                 "result",
+                 "object-dir",
+                 "control-write-fd",
+                 "control-read-fd"});
+            static_cast<void>(args.at("package-dir"));
+            return RunRouteAReplay(args);
+        }
+        Fail("runner mode dispatch is not closed");
     }
     catch (const std::exception& exception) {
         std::cerr << "openfhe_query_runner failed: " << exception.what() << '\n';

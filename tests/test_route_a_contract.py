@@ -100,3 +100,49 @@ def test_simulator_lane_and_query_id_match_known_canonical_digests() -> None:
 
     assert lane.sha256 == "beb89b705ec3b5efc14ccaefde3cef00e62a1d45c120f03c82e0e434cfcf96a7"
     assert query.query_id == "8556daa27eb8980faf081a23700dfdb63e9c92fcf8142d876351f49682e97ada"
+
+
+def test_openfhe_lanes_close_warmup_and_three_recorded_process_namespaces() -> None:
+    common = {
+        "shard_identity_sha256": "b" * 64,
+        "strategy_candidate_id": "packed-coo-cloud-segmented-delta/segment-width=128",
+        "rho": Fraction(1),
+        "unit_attempt_ordinal": 0,
+    }
+    warmup = RouteAEvaluationLane.openfhe_warmup(**common)
+    recorded = tuple(
+        RouteAEvaluationLane.openfhe_recorded(
+            **common,
+            process_ordinal=ordinal,
+        )
+        for ordinal in range(3)
+    )
+
+    assert warmup.to_document()["execution_process_role"] == "openfhe-warmup"
+    assert warmup.to_document()["process_ordinal_or_null"] == 0
+    assert tuple(lane.to_document()["process_ordinal_or_null"] for lane in recorded) == (
+        0,
+        1,
+        2,
+    )
+    assert len({warmup.sha256, *(lane.sha256 for lane in recorded)}) == 4
+    lane_query_ids = {
+        warmup.query_identity(0).query_id,
+        *(lane.query_identity(0).query_id for lane in recorded),
+    }
+    assert len(lane_query_ids) == 4
+    with pytest.raises(ValueError, match="closed identity"):
+        RouteAEvaluationLane.openfhe_recorded(**common, process_ordinal=3)
+
+
+@pytest.mark.parametrize("ordinal", [True, False])
+def test_openfhe_recorded_lane_rejects_boolean_ordinal(ordinal: bool) -> None:
+    with pytest.raises(ValueError, match="closed identity"):
+        RouteAEvaluationLane(
+            shard_identity_sha256="b" * 64,
+            strategy_candidate_id="padding-reuse",
+            rho=Fraction(1),
+            unit_attempt_ordinal=0,
+            execution_process_role="openfhe-recorded",
+            process_ordinal_or_null=ordinal,
+        )

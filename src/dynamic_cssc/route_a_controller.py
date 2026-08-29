@@ -51,7 +51,7 @@ _QUALIFICATION_JOB_NAMES = (
 _Q6_ARTIFACT_NAME = "q6-postrun-resource-admission-record"
 _Q6_RECORD_SCHEMA = "dynamic-cssc-route-a-q6-postrun-resource-admission-v1"
 _PLAN_SCHEMA = "dynamic-cssc-route-a-publication-plan-v3"
-_PLAN_SHA256 = "14fe871e801be61ec49ea4c5f152502a62b06cbeb63d32f3e66319ba1f4f4743"
+_PLAN_SHA256 = "5895fde4760ee6651b1fe34da35d14892e2f84e482ad8d2bd45caa8afc49d17b"
 _MAX_OBSERVATION_AGE = timedelta(seconds=30)
 _COMPUTATIONAL_LIMIT = timedelta(minutes=45)
 _Q6_JOB_LIMIT = timedelta(minutes=5)
