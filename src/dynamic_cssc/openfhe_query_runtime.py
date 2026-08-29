@@ -29,7 +29,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 from dynamic_cssc.day2_openfhe_key_plan import (
     ClaimedDay2OpenFHEKeyPlan,
@@ -82,6 +82,7 @@ _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SOURCE_PATHS = (
     "config/params_manifest.json",
     "cpp/CMakeLists.txt",
+    "cpp/include/args.hpp",
     "cpp/openfhe_query_runner.cpp",
     "scripts/bootstrap_openfhe.sh",
     "scripts/build_cpp.sh",
@@ -233,9 +234,7 @@ class OpenFHERunnerBuildIdentity:
             "compiler_version": self.compiler_version,
             "linkage_inspection_format": self.linkage_inspection_format,
             "linked_libraries": [item.to_document() for item in self.linked_libraries],
-            "linked_system_library_load_names": list(
-                self.linked_system_library_load_names
-            ),
+            "linked_system_library_load_names": list(self.linked_system_library_load_names),
             "runner_byte_count": self.runner_byte_count,
             "runner_binary_format": self.runner_binary_format,
             "runner_binary_id": self.runner_binary_id,
@@ -327,16 +326,11 @@ class OpenFHEQueryRuntimeReceipt:
                 "runtime execution kind differs from its lifecycle authorization"
             )
         if self.day2_key_plan_authorization is not None and (
-            type(self.day2_key_plan_authorization)
-            is not Day2OpenFHEKeyPlanReceipt
+            type(self.day2_key_plan_authorization) is not Day2OpenFHEKeyPlanReceipt
         ):
-            raise OpenFHEQueryRuntimeError(
-                "runtime Day 2 key-plan authorization is not exact"
-            )
+            raise OpenFHEQueryRuntimeError("runtime Day 2 key-plan authorization is not exact")
         return {
-            "anchored_day2_key_plan_verified": (
-                self.day2_key_plan_authorization is not None
-            ),
+            "anchored_day2_key_plan_verified": (self.day2_key_plan_authorization is not None),
             "authorization": self.authorization.to_document(),
             "cpu_affinity": None if self.cpu_affinity is None else list(self.cpu_affinity),
             "elapsed_ns": self.elapsed_ns,
@@ -358,9 +352,7 @@ class OpenFHEQueryRuntimeReceipt:
                 if self.runtime_mapping_admission is None
                 else self.runtime_mapping_admission.to_document()
             ),
-            "runtime_state_continuity_verified": (
-                self.runtime_mapping_admission is not None
-            ),
+            "runtime_state_continuity_verified": (self.runtime_mapping_admission is not None),
             "day2_key_plan_authorization": (
                 None
                 if self.day2_key_plan_authorization is None
@@ -393,7 +385,7 @@ class ExecutedOpenFHEQuery:
 
 
 @dataclass(frozen=True, slots=True)
-class _ProcessObservation:
+class OpenFHEProcessObservation:
     elapsed_ns: int
     peak_resident_memory_bytes: int
     peak_scratch_bytes: int
@@ -581,9 +573,7 @@ def _compiler_identity(
     try:
         after = compiler.lstat()
     except OSError as error:
-        raise OpenFHEQueryRuntimeError(
-            "C++ compiler changed after identity probes"
-        ) from error
+        raise OpenFHEQueryRuntimeError("C++ compiler changed after identity probes") from error
     if _stable_status_tuple(after) != _stable_status_tuple(status):
         raise OpenFHEQueryRuntimeError("C++ compiler changed during identity probes")
     try:
@@ -635,9 +625,7 @@ def _binary_metadata(
             (readelf, "-d", str(path)),
             field=f"binary dynamic section {path.name}",
         )
-        build_ids = tuple(
-            item.lower() for item in re.findall(r"Build ID:\s*([0-9A-Fa-f]+)", notes)
-        )
+        build_ids = tuple(item.lower() for item in re.findall(r"Build ID:\s*([0-9A-Fa-f]+)", notes))
         if len(build_ids) != 1:
             raise OpenFHEQueryRuntimeError("ELF binary does not have one exact build ID")
         sonames = tuple(re.findall(r"\(SONAME\).*\[([^]]+)\]", dynamic))
@@ -666,17 +654,12 @@ def _binary_metadata(
             (otool, "-L", str(path)),
             field=f"Mach-O dependencies {path.name}",
         )
-        linked_lines = tuple(
-            line.strip() for line in linked_output.splitlines() if line.strip()
-        )
+        linked_lines = tuple(line.strip() for line in linked_output.splitlines() if line.strip())
         if not linked_lines or not linked_lines[0].endswith(":"):
             raise OpenFHEQueryRuntimeError("Mach-O dependency identity is malformed")
         needed = tuple(
             sorted(
-                {
-                    line.split(" (compatibility version ", 1)[0].strip()
-                    for line in linked_lines[1:]
-                }
+                {line.split(" (compatibility version ", 1)[0].strip() for line in linked_lines[1:]}
             )
         )
         id_output = _linkage_tool_output(
@@ -886,8 +869,7 @@ def _linked_library_identity(
         )
     linked_libraries = tuple(identities)
     if not any(
-        "openfhe" in f"{item.load_name} {item.resolved_path}".lower()
-        for item in linked_libraries
+        "openfhe" in f"{item.load_name} {item.resolved_path}".lower() for item in linked_libraries
     ):
         raise OpenFHEQueryRuntimeError("runner is not linked to a file-backed OpenFHE library")
     return inspection_format, linked_libraries, system_load_names
@@ -981,9 +963,7 @@ def _capture_build_provenance(
     try:
         cmake_after = cmake.lstat()
     except OSError as error:
-        raise OpenFHEQueryRuntimeError(
-            "CMake executable changed after identity probe"
-        ) from error
+        raise OpenFHEQueryRuntimeError("CMake executable changed after identity probe") from error
     if _stable_status_tuple(cmake_after) != _stable_status_tuple(cmake_status):
         raise OpenFHEQueryRuntimeError("CMake executable changed during identity probe")
     cmake_version = cmake_version_output.splitlines()[0]
@@ -1065,9 +1045,7 @@ def _capture_build_provenance(
         or package_version != version
         or dirty
     ):
-        raise OpenFHEQueryRuntimeError(
-            "OpenFHE repository/version/commit/cleanliness changed"
-        )
+        raise OpenFHEQueryRuntimeError("OpenFHE repository/version/commit/cleanliness changed")
     return OpenFHEBuildProvenance(
         cmake_path=str(cmake),
         cmake_sha256=hashlib.sha256(cmake_content).hexdigest(),
@@ -1320,9 +1298,7 @@ def _terminate_and_reap_process(process: subprocess.Popen[bytes]) -> None:
     except ChildProcessError:
         return
     except OSError as error:
-        raise OpenFHEQueryRuntimeError(
-            "terminated OpenFHE child could not be reaped"
-        ) from error
+        raise OpenFHEQueryRuntimeError("terminated OpenFHE child could not be reaped") from error
     process.returncode = os.waitstatus_to_exitcode(status)
 
 
@@ -1414,9 +1390,7 @@ def _await_control_record(
                 "OpenFHE runtime control record could not be read"
             ) from error
         if not chunk:
-            raise OpenFHEQueryRuntimeError(
-                "OpenFHE runner ended before its runtime control record"
-            )
+            raise OpenFHEQueryRuntimeError("OpenFHE runner ended before its runtime control record")
         received.extend(chunk)
     if bytes(received) != expected:
         raise OpenFHEQueryRuntimeError("OpenFHE runtime control record changed")
@@ -1433,9 +1407,7 @@ def _write_control_acknowledgement(descriptor: int, acknowledgement: bytes) -> N
                 "OpenFHE runtime acknowledgement could not be written"
             ) from error
         if written <= 0:  # pragma: no cover - operating-system contract
-            raise OpenFHEQueryRuntimeError(
-                "OpenFHE runtime acknowledgement made no progress"
-            )
+            raise OpenFHEQueryRuntimeError("OpenFHE runtime acknowledgement made no progress")
         view = view[written:]
 
 
@@ -1575,18 +1547,27 @@ def _wait4_handshaken_process(
     return return_code, usage, peak_scratch, mapping_admission
 
 
-def _run_process(
+def run_controlled_openfhe_process(
     runner: Path,
     *,
     repository_root: Path,
     scratch_root: Path,
-    request_path: Path,
+    request_path: Path | None,
+    package_root: Path | None = None,
+    route_a_mode: Literal["producer", "replay"] | None = None,
     result_path: Path,
     object_root: Path,
     timeout_seconds: int,
     scratch_limit_bytes: int,
     runner_identity: OpenFHERunnerBuildIdentity | None = None,
-) -> _ProcessObservation:
+) -> OpenFHEProcessObservation:
+    if (
+        (route_a_mode is None and (request_path is None or package_root is not None))
+        or (route_a_mode == "producer" and (request_path is None or package_root is not None))
+        or (route_a_mode == "replay" and (request_path is not None or package_root is None))
+        or route_a_mode not in {None, "producer", "replay"}
+    ):
+        raise OpenFHEQueryRuntimeError("OpenFHE process input mode is not closed")
     stdout_path = scratch_root / "stdout.bin"
     stderr_path = scratch_root / "stderr.bin"
     stdout_fd: int | None = None
@@ -1609,15 +1590,22 @@ def _run_process(
             os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
             0o600,
         )
-        command = [
-            str(runner),
-            "--request",
-            str(request_path),
-            "--result",
-            str(result_path),
-            "--object-dir",
-            str(object_root),
-        ]
+        command = [str(runner)]
+        if route_a_mode is not None:
+            command.extend(("--route-a-mode", route_a_mode))
+        if request_path is not None:
+            command.extend(("--request", str(request_path)))
+        else:
+            assert package_root is not None
+            command.extend(("--package-dir", str(package_root)))
+        command.extend(
+            (
+                "--result",
+                str(result_path),
+                "--object-dir",
+                str(object_root),
+            )
+        )
         passed_descriptors: tuple[int, ...] = ()
         if runner_identity is not None:
             if type(runner_identity) is not OpenFHERunnerBuildIdentity:
@@ -1711,7 +1699,7 @@ def _run_process(
     expected_stdout = f"{result_path}\n".encode()
     if stdout != expected_stdout or stderr:
         raise OpenFHEQueryRuntimeError("OpenFHE runner stdout/stderr contract changed")
-    return _ProcessObservation(
+    return OpenFHEProcessObservation(
         elapsed_ns=elapsed_ns,
         peak_resident_memory_bytes=_rss_bytes(usage),
         peak_scratch_bytes=peak_scratch,
@@ -1752,6 +1740,11 @@ def _payloads(
     return tuple(payloads)
 
 
+# Backward-compatible private test seam; production Route A callers use the
+# explicit public name above.
+_run_process = run_controlled_openfhe_process
+
+
 def _cpu_affinity() -> tuple[int, ...] | None:
     getter = getattr(os, "sched_getaffinity", None)
     if getter is None:
@@ -1789,9 +1782,7 @@ def _execute_authorized_openfhe_query(
     if execution_kind not in {"ordinary", "strong"}:
         raise OpenFHEQueryRuntimeError("runtime execution kind is not closed")
     if day2_key_plan_claim is not None and not callable(day2_key_plan_claim):
-        raise OpenFHEQueryRuntimeError(
-            "runtime Day 2 key-plan claim must be callable or absent"
-        )
+        raise OpenFHEQueryRuntimeError("runtime Day 2 key-plan claim must be callable or absent")
     if (
         type(timeout_seconds) is not int
         or timeout_seconds <= 0
@@ -1945,9 +1936,7 @@ def _execute_ordinary_openfhe_query_adapter(
     if day2_key_plan_capability is not None and (
         type(day2_key_plan_capability) is not Day2OpenFHEKeyPlanCapability
     ):
-        raise TypeError(
-            "anchored ordinary runtime requires one exact Day 2 plan capability"
-        )
+        raise TypeError("anchored ordinary runtime requires one exact Day 2 plan capability")
     active_key_generation_plan = key_generation_plan
 
     def request_builder(
@@ -2000,9 +1989,7 @@ def _execute_ordinary_openfhe_query_adapter(
     return _execute_authorized_openfhe_query(
         execution_kind="ordinary",
         request_builder=request_builder,
-        day2_key_plan_claim=(
-            None if day2_key_plan_capability is None else claim_key_plan
-        ),
+        day2_key_plan_claim=(None if day2_key_plan_capability is None else claim_key_plan),
         authorize_and_claim=authorize_and_claim,
         result_verifier=result_verifier,
         repository_root=repository_root,
@@ -2100,9 +2087,7 @@ def _execute_strong_openfhe_query_adapter(
     if day2_key_plan_capability is not None and (
         type(day2_key_plan_capability) is not Day2OpenFHEKeyPlanCapability
     ):
-        raise TypeError(
-            "anchored strong runtime requires one exact Day 2 plan capability"
-        )
+        raise TypeError("anchored strong runtime requires one exact Day 2 plan capability")
     active_key_generation_plan = key_generation_plan
 
     def request_builder(
@@ -2155,9 +2140,7 @@ def _execute_strong_openfhe_query_adapter(
     return _execute_authorized_openfhe_query(
         execution_kind="strong",
         request_builder=request_builder,
-        day2_key_plan_claim=(
-            None if day2_key_plan_capability is None else claim_key_plan
-        ),
+        day2_key_plan_claim=(None if day2_key_plan_capability is None else claim_key_plan),
         authorize_and_claim=authorize_and_claim,
         result_verifier=result_verifier,
         repository_root=repository_root,
@@ -2241,6 +2224,7 @@ __all__ = (
     "OpenFHEBuildProvenance",
     "OpenFHEQueryRuntimeError",
     "OpenFHEQueryRuntimeReceipt",
+    "OpenFHEProcessObservation",
     "OpenFHELinkedLibraryIdentity",
     "OpenFHERunnerBuildIdentity",
     "OpenFHESerializedPayload",
@@ -2249,4 +2233,5 @@ __all__ = (
     "execute_authorized_strong_openfhe_query",
     "execute_day2_anchored_openfhe_query",
     "execute_day2_anchored_strong_openfhe_query",
+    "run_controlled_openfhe_process",
 )

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+import dynamic_cssc.route_a_evaluation as evaluation_module
 from dynamic_cssc.mask_ledger import PreparedF1MCommitmentError
 from dynamic_cssc.ordinary_query_lifecycle import OrdinaryQueryLifecycleError
 from dynamic_cssc.route_a_artifacts import (
@@ -39,6 +40,33 @@ from dynamic_cssc.route_a_strategy import ROUTE_A_STRATEGY_CANDIDATES
 from dynamic_cssc.route_a_workloads import generate_route_a_formal_trace
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_direct_oracle_mismatch_fails_before_output_digests_are_retained(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_direct_spmv = evaluation_module.direct_spmv
+
+    def mismatched_direct_spmv(*args: object, **kwargs: object) -> tuple[int, ...]:
+        output = real_direct_spmv(*args, **kwargs)  # type: ignore[arg-type]
+        return ((output[0] + 1) % 65_537, *output[1:])
+
+    monkeypatch.setattr(evaluation_module, "direct_spmv", mismatched_direct_spmv)
+    with pytest.raises(RouteAEvaluationError, match="typed query output differs"):
+        evaluate_route_a_synthetic_cell(
+            generate_route_a_formal_trace(scale="S", formal_seed=20260822),
+            strategy_candidate_id="padding-reuse",
+            rho=Fraction(1, 100),
+            shard_identity_sha256=hashlib.sha256(
+                b"route-a-direct-oracle-mismatch"
+            ).hexdigest(),
+            unit_attempt_ordinal=0,
+            machine_plan_bytes=(
+                REPOSITORY_ROOT / "config/route-a-publication-plan.json"
+            ).read_bytes(),
+            scratch_directory=tmp_path,
+        )
 
 
 def _repack_private_handoff_with_extra_commitment(

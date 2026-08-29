@@ -335,3 +335,137 @@ amendment authorizes only the bounded code correction and review cycle. Source
 acquisition, qualification, formal execution, evidence installation, claim
 release, and any replayable authority remain forbidden until the registered
 Stage-2 and downstream gates close.
+
+### 5.4 Qualification stop-loss and provider-transport amendment
+
+The exact `02a88bf5e729954b4c80c111f578be043a036bb9` material-gate review exposed a
+real four-key q5 vocabulary defect and missing stop-loss branch evidence. The
+first successor, `e8d4783db179bc01bf059ddcac22a8b22b41051e`, closed that bounded
+packet. ZCode GLM-5.3 Max returned **PASS; P0=0, P1=0, P2=6**, and Fable 5
+returned **PASS; P0=0, P1=0, P2=0** for the five claimed closures. A broader
+ChatGPT Pro review nevertheless returned **BLOCK; P0=1, P1=3, P2=3**: API and
+cancel redirects were not separated from artifact redirects, q5 could be
+accepted after an earlier prefix failure, and the cancellation record used a
+workflow-run `completedAt` field that GitHub does not provide. Exact-head CI
+`33243560733`, PRE-S1 `33243567501`, and PR CI `33243579066` were therefore
+cancelled as non-authorizing invalid-candidate diagnostics.
+
+This narrow amendment rejects every metadata GET and cancellation POST
+redirect, permits only a three-hop tokenless HTTPS q6-artifact redirect, requires
+all q1--q5 jobs to be completed and successful before q5 acceptance, and
+separates controller-clock timestamps from provider `run.updated_at` and final
+conclusion. It neither changes the scientific contribution/C1--C4 vector nor
+the threat model, matrix, cost thresholds, evidence authority, or permanent
+non-claims. The bounded novelty review is therefore rebound without a broad
+search to this exact Stage-1 document packet:
+
+- machine plan SHA-256:
+  `b5d561bb5579976e4a9b5cc976ecaf2a6b7bbc9318ef43689f870522e68c8f0a`;
+  1170 lines;
+- preregistration SHA-256:
+  `bdc4ae8e231cdb45b07be543f29cdb02cd330315c4b85364625b4231f8400d62`;
+  1503 lines;
+- novelty-review SHA-256:
+  `6af839029bbec127f4b5ad6e8c48877d614c45e16924245a9b079c5f08a58fe0`;
+  316 lines; and
+- unchanged claim-ledger SHA-256:
+  `44bc11b2401bdb94c3b7a4d9c063178ec50527f4f4b8136d1706b1e2f15a47ec`;
+  129 lines.
+
+The registered role versions advance to acquisition v4, analyzer v4,
+control-registration v5, formal v5, and qualification v7 because every role
+contains the amended Stage-1 documents and source-conformance record. Local
+evidence before the successor commit is 45 focused controller/stop-loss tests
+passing, 105 broader controller/lineage/CLI/workflow tests passing, Ruff,
+`compileall`, JSON parsing, exact hash-chain checks, and `git diff --check` all
+passing. These are implementation evidence only. A new exact successor still
+requires independent Pro/ZCode/Fable review plus its own CI and PRE-S1; nothing
+in this section authorizes qualification, source acquisition, formal execution,
+artifact installation, empirical claims, or submission.
+
+### 5.5 Runtime-plan parity and provider-clock amendment
+
+The unpushed `8b278e94cdf55fef126d3d8b09551b0fc1eb5477` successor was reviewed as one
+exact attachment by all three external reviewers. ZCode GLM-5.3 Max returned
+**PASS; P0=0, P1=0, P2=3**, but missed an executable stale plan digest. Fable 5
+returned **AMEND; P0=0, P1=1, P2=3** and demonstrated that the mismatch caused
+23 failures plus 26 errors across the affected focused files. ChatGPT Pro
+returned **AMEND; P0=0, P1=3, P2=3**. Its three blocking findings were: the
+same stale `ROUTE_A_MACHINE_PLAN_SHA256`; a provider-derived q1 deadline being
+compared with and subtracted from the controller clock despite the frozen
+no-cross-clock rule; and a post-cancel provider observation being checked
+against a controller timestamp captured before the HTTP reads finished. The
+candidate was never pushed and no workflow was dispatched from it.
+
+The amended successor closes the three findings without widening the scientific
+experiment. Both runtime plan constants now equal the retained plan bytes, and a
+single regression requires equality among the file digest, controller constant,
+and result-contract constant. Live stop-loss schema v3 obtains provider-clock
+“now” only from mandatory HTTPS `Date` response headers on the sequential run
+and jobs metadata reads. It compares provider q1 time only with that provider
+clock, maps at most a same-provider-clock remaining duration onto a local
+fail-safe deadline after a bound read failure, emits no cross-clock detection
+lag, and retains the raw provider threshold and controller detection values
+separately. Cancellation failure and terminal-read decisions now use local
+timestamps captured after the corresponding I/O; a read completing outside the
+ten-minute window is charged and fails closed. Tests cover provider clock
+offsets of -31, -5, 0, +5, and +31 seconds, delayed successful terminal reads,
+post-deadline terminal reads, failed cancellation I/O, missing/nonmonotone
+provider `Date` headers, stale dates that cannot extend the local fail-safe,
+and exactly-once cancellation.
+
+The amended Stage-1 packet is:
+
+- machine plan SHA-256:
+  `ce09c1c9c82032ba8439188ce20d4cd8d6310a386efbe2d436595fd779b7268c`;
+  1171 lines;
+- preregistration SHA-256:
+  `6b53a73c6973a4be53d195f5d9407e7e023ae3a5617bce57b4a40a7033a32f79`;
+  1518 lines;
+- novelty-review SHA-256:
+  `6030bec34d194aeaa59b813b06c34c9f5a901ef0e1fa8bafadf1b1079a080ba5`;
+  319 lines; and
+- unchanged claim-ledger SHA-256:
+  `44bc11b2401bdb94c3b7a4d9c063178ec50527f4f4b8136d1706b1e2f15a47ec`;
+  129 lines.
+
+All five registered roles advance exactly once relative to `8b278e9`:
+acquisition v5, analyzer v5, control-registration v6, formal v6, and
+qualification v8. Local lightweight evidence is 132 distinct controller,
+stop-loss, GitHub-provider, plan-parity, lineage, CLI, and workflow checks
+passing, with Ruff, `compileall`, JSON parsing, Stage-1 hash-chain equality, and
+`git diff --check` also passing. These checks are non-authorizing. The new exact
+commit still requires the same-packet Pro/ZCode/Fable terminal review,
+exact-head CI, and PRE-S1 before any qualification dispatch.
+
+### 5.6 Earliest-only fail-safe wait amendment
+
+ChatGPT Pro's terminal review of exact unpushed commit
+`3e0ac9335f9d020d0465fb605a76599e0f9b4db7` returned **AMEND; P0=0,
+P1=1, P2=3**. It independently closed all three findings from Section 5.5,
+then found one narrower control-plane defect: after a later successful but stale
+provider read, the watcher checked the already-frozen local fail-safe deadline
+but computed its next sleep only from the provider-clock remainder. With a
+15-second polling interval, a five-second local remainder and a twenty-second
+stale provider remainder could therefore sleep ten seconds beyond the immutable
+local boundary. This could delay Route C enforcement, although the terminal
+provider-timestamp check still prevented a false GO.
+
+The successor adds a deterministic red regression for that exact ordering. The
+unfixed implementation requests cancellation at `00:45:10` instead of the
+frozen `00:45:00` boundary. The production wait now takes the minimum of the
+poll interval, provider-threshold remainder, and local-fail-safe remainder.
+Both subtractions stay within one clock domain: provider minus provider and
+controller minus controller. The new regression and the prior stale-Date
+regression pass; Pro's four requested controller files pass **96 tests**, the
+broader controller/GitHub/results/CLI/workflow/postrun set passes **112 tests**,
+and the independent lineage file passes **27 tests**, for **139 distinct
+lightweight tests** in the recorded local packet. Ruff passes on both changed
+Python files. No OpenFHE, S/M-scale, source acquisition, qualification workflow,
+formal unit, artifact installation, or authority-producing action ran.
+
+The scientific contribution, C1--C4 vector, threat model, matrix, seed/order,
+45/55/60-minute and 12-hour gates, Stage-1 document bytes and hashes, role
+schemas, and all authority-false boundaries are unchanged. The exact successor
+still requires narrow same-commit external review, exact-head CI, and PRE-S1;
+this amendment itself authorizes no publication execution.

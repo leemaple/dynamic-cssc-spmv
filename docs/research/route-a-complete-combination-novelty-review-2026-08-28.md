@@ -13,8 +13,8 @@
 - Route A 审计稿：
   [`publication-preregistration-route-a.md`](../paper/publication-preregistration-route-a.md)
 - Route A 最终候选 SHA-256：
-  `f860f9580802b713f7a5417d10448f38e24eb779dfb5b3dceb8b9bc4a7f12cad`
-- Route A 最终候选行数：`1446`
+  `6b53a73c6973a4be53d195f5d9407e7e023ae3a5617bce57b4a40a7033a32f79`
+- Route A 最终候选行数：`1518`
 - 起点边界报告 SHA-256：
   `0984b0c7f537c40cff852b3662f5f866c37f4eed227b286e4db89f428fed8925`
 - 起点 `references.bib` SHA-256：
@@ -29,6 +29,9 @@
 状态、字节权威、查询向量、冻结顺序和证明义务；逐字复核 §1.1 与 §2.1--§2.5 后，
 冻结贡献句以及 C1--C4 组合向量均未改变。因此重新绑定上述候选字节，不重开宽泛
 文献检索；任何贡献句或 C1--C4 漂移仍会使本 PASS 失效。
+后续时钟域澄清仅把 provider 阈值、controller 观察值和同域时延的证据边界写实，
+不改变贡献句、C1--C4、威胁模型、数据源、策略或实验矩阵，因此同样只重绑候选
+字节而不重开文献检索。
 
 基准 Stage-1 提交后的首次实现前阅读发现，payload-free tick 与 query-bearing
 Publication Window 的切分可被解释成两种行为。本次窄澄清只固定同一逻辑时间、
@@ -59,6 +62,22 @@ admission boundary、保留 exact preparation/consumed-ledger bytes 供只读 re
 非声明；45/55/60 分钟和 12 小时门槛也未放宽。因此本次仍只重新绑定精确候选字节
 并复核 novelty-bearing 段落，无需重开一手来源检索；任何上述元素漂移仍立即使本
 PASS 失效。
+
+本次 native q3/q4 material-gate 窄修订只把已由 producer 生成但此前未作为
+retained object 保存的 exact serialized CryptoContext 加入私有 replay package，
+并把相同的 Cloud-program 操作清单与 producer/replay 各自不同的 lifecycle 操作
+清单分开。它没有改变贡献句、C1--C4、动态 CSSC 机制、查询重组、RowMap 重构、
+F1-M mask 作用域、角色/威胁模型、数据源、比较候选或论文声明；CryptoContext、
+secret key、ledger 与 oracle bytes 仍是证据传输开销而非新增 Cloud 协议机制。
+因此对 §1.1、§2.1--§2.5 的本地逐字复核支持仅重新绑定精确候选字节，不重开
+一手来源检索；任何 novelty-bearing 漂移仍会使本 PASS 失效。
+
+本次资格控制器窄修订仅关闭两类证据控制缺陷：q1--q5 串行前缀必须全部成功，
+以及取消记录不得虚构 workflow-run `completedAt` 或混减 provider/controller 两个
+时钟；同时把 API/POST 重定向与 q6 artifact 的 tokenless bounded redirect 规则写成
+冻结行为。逐字复核贡献句、C1--C4、角色/威胁模型、数据源、实验矩阵、成本门槛、
+比较候选与永久非声明后均无改变。因此 bounded complete-combination PASS 仅重新绑定
+上述 1503 行候选，不重开宽泛检索；任何 novelty-bearing 漂移仍使本 PASS 失效。
 
 ## 2. 本次判定的“完整组合”
 

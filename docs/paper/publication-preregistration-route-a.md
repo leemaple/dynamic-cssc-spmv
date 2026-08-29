@@ -419,7 +419,7 @@ its one-second deadline; no boundary may split an accepted-event group.
 
 The canonical machine plan is
 `config/route-a-publication-plan.json`, whose exact retained-file SHA-256 is
-`14fe871e801be61ec49ea4c5f152502a62b06cbeb63d32f3e66319ba1f4f4743`.
+`ce09c1c9c82032ba8439188ce20d4cd8d6310a386efbe2d436595fd779b7268c`.
 The file is reviewed together with this document. The runner must reject any
 plan whose retained bytes do not match that digest; changing the file requires
 a new preregistration review and digest.
@@ -955,22 +955,62 @@ all retained canonical input bytes before native execution.
 
 One OpenFHE case is one producer/replay/guard shard. Its producer job runs one
 discarded warm-up process followed by three recorded fresh-key processes; the
-producer uploads exactly one one-day NON-EVIDENCE handoff containing the build,
-manifest, warm-up receipt, and all three separately framed retained packages.
+producer uploads exactly one one-day NON-EVIDENCE handoff containing one
+content-addressed build package, one discarded warm-up receipt, three separate
+canonical-manifest-closed retained packages, one stage ledger, and one outer
+checksum inventory. The build and warm-up receipt are handoff-level objects and
+are not copied into each recorded package.
 The dependent replay job independently downloads and rehashes that handoff and
 re-executes/verifies all three recorded packages before one guard admits exactly
 one case artifact. Producer
 repetitions use fresh disposable keypairs relative to one another. Each retained
-test package contains its disposable test secret/public/evaluation keys,
-canonical request, encrypted operands, and expected plaintext-oracle binding.
-Replay generates no new keypair; it runs the deterministic Cloud-evaluation
-path on those exact retained ciphertext and evaluation-key bytes. It requires
-exact package identity and operation inventory, a valid output ciphertext, and
-exact decrypted equality to both oracles. Output-ciphertext byte equality is not
-an acceptance predicate; package/input byte identity and decrypted semantic
-equality are. Thus the 25-minute specific gate is per complete case shard, not
-per child process; 60 minutes remains only a universal absolute ceiling that
-the tighter gate can never reach.
+test package contains exactly: the canonical request; producer result receipt;
+exact serialized producer CryptoContext; disposable secret and public keys;
+one unchanged `D1BKEY01` evaluation-key frame; every input and producer-result
+ciphertext; lane-specific private preparation; consume-once authorization
+receipt; consumed SQLite ledger snapshot; typed and direct oracle bindings;
+case binding; lane/query binding with recorded ordinal 0, 1, or 2; structural
+comparability vector; and one canonical manifest binding the build and every
+member's role, subject, byte count, relative path, and SHA-256. Replay generates no new context or
+keypair: it must not call `MakeContext`, `GenCryptoContext`, `KeyGen`,
+`EvalMultKeyGen`, `EvalRotateKeyGen`, or `Encrypt`. It clears process-local
+OpenFHE context/evaluation-key caches and deserializes the exact retained
+CryptoContext, disposable secret/public keys, the single retained evaluation-
+key frame, and every input ciphertext before running the deterministic Cloud-
+evaluation path. The discarded warm-up is not replayed; only recorded process
+ordinals 0, 1, and 2 have retained packages and independent q4 replays. Replay
+reads its canonical request only from that package and accepts no caller-
+supplied replacement request, key, or ciphertext.
+
+The operation contract is split into two orthogonal inventories. The exact
+typed Cloud-program inventory is identical in q3 and q4 and covers
+`EvalMultNoRelin`, relinearization, rotations, plaintext multiplication,
+ciphertext addition, F1-M addition, and result return. The exact lifecycle
+inventory is mode-specific: every producer reports one context generation, one
+key generation, one multiplication-key generation, one automorphism-key
+generation, one encryption per input ciphertext, zero deserializations, and one
+decryption per result; every replay reports zero context/key/evaluation-key
+generation and zero encryption, one context/secret/public/multiplication-key/
+automorphism-key deserialization, one deserialization per exact input
+ciphertext, and one decryption per result. A Route-A-specific verifier derives
+both expected inventories from the package and typed DAG; the legacy Day 1B v4
+verifier remains unchanged.
+
+Replay requires exact package identity, both exact inventories, a valid output
+ciphertext, and exact decrypted equality to both oracles. Output-ciphertext byte
+equality is not an acceptance predicate; package/input byte identity and
+decrypted semantic equality are. Thus the 25-minute specific gate is per
+complete case shard, not per child process; 60 minutes remains only a universal
+absolute ceiling that the tighter gate can never reach.
+
+The stored evaluation-key object is exactly one unchanged `D1BKEY01` frame.
+Its rotation and multiplication-key segment sizes and 88-byte header are
+decomposition fields, not additional transmitted objects. The public key and
+full frame are counted once in the one-time protocol key inventory. Serialized
+CryptoContext, secret-key, private ledger/preparation/oracle, producer-result,
+package-manifest, and checksum bytes are reported separately as private replay-
+evidence transport overhead; they are not Cloud communication and do not enter
+the nine-category communication sum.
 Every recorded repetition must:
 
 - decrypt exactly to the typed and direct plaintext oracles;
@@ -1110,9 +1150,41 @@ the combined-guard job's `completedAt`. This wall clock includes every dependent
 job's queue gap, setup, handoff, build, replay, and guard. At the exact threshold,
 if the combined guard is not successful, the controller requests cancellation
 of only that exact run, records controller detection, provider API acknowledgement,
-and provider completion lag separately, dispatches nothing further, and selects
-C. The scale, matrix, order, or threshold is not changed
+the later controller decision, and the provider's exact terminal update field
+separately, dispatches nothing further, and selects C. The scale, matrix, order,
+or threshold is not changed
 after observing qualification.
+
+The cancellation record never invents a provider `completedAt` for the workflow
+run. GitHub's exact terminal provider field is retained as
+`provider_terminal_updated_utc`, alongside the exact final conclusion when one
+is observed. `controller_detection_utc`, `cancel_request_utc`,
+`provider_api_ack_utc`, and `watch_decided_utc` are controller-clock readings.
+Only request-to-ack lag and ack-to-watch-decision lag are derived, using that
+single controller clock, as nonnegative elapsed seconds rounded upward to a
+whole second. Each run and jobs metadata GET must carry an HTTPS `Date` response
+header. The two sequential provider dates may remain equal but the jobs-response
+date may not precede the run-response date; that second date is the only live
+provider-clock “now” compared with provider job timestamps. The watcher derives
+only the same-provider-clock remaining duration from that value to the
+`q1.startedAt + 45 minutes` threshold. If a later provider read fails after exact
+binding, each remaining-duration mapping may only tighten the earliest local
+fail-safe deadline and can never extend it, so a stale or failed later read
+cannot postpone cancellation. No absolute provider timestamp is subtracted from
+an absolute controller timestamp. The provider-derived threshold and controller
+detection time are retained as separate raw values and no duration is derived
+between them. The
+terminal 45-minute decision is recomputed solely from GitHub provider
+`startedAt` and `completedAt` values. A missing or nonmonotone provider `Date`,
+or a missing terminal observation within the frozen ten-minute local window,
+fails closed. Before exact run binding this returns no authority and does not
+cancel an unverified target; after binding it follows the last same-provider
+remaining-duration fail-safe and selects Route C.
+GitHub metadata GETs and the cancellation POST reject every redirect. Only the
+q6 artifact GET may follow at most three redirects: its initial URL must share
+the configured API origin, every destination must be safe HTTPS without
+userinfo or a fragment, and every redirected request is stripped of the bearer
+token, including a same-origin hop.
 
 The combined-guard artifact deliberately contains no self-referential final
 `completedAt`, `C_q`, or resource verdict. Only after job 5 is terminal does the

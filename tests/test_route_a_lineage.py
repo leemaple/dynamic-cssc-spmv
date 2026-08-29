@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -99,7 +100,7 @@ def _repository(tmp_path: Path) -> tuple[Path, str]:
         json.dumps(
             {
                 "roles": roles,
-                "schema_version": "dynamic-cssc-route-a-behavior-set-registry-v2",
+                "schema_version": "dynamic-cssc-route-a-behavior-set-registry-v3",
                 "stage1_documents": {
                     "config/route-a-publication-plan.json": hashlib.sha256(plan_bytes).hexdigest()
                 },
@@ -110,6 +111,123 @@ def _repository(tmp_path: Path) -> tuple[Path, str]:
         + "\n",
     )
     return repository, _commit(repository, "S1")
+
+
+def test_current_head_registry_is_capturable_for_qualification() -> None:
+    head = _git(REPOSITORY_ROOT, "rev-parse", "HEAD")
+
+    inventory = capture_route_a_behavior_inventory(
+        REPOSITORY_ROOT,
+        head,
+        "qualification",
+    )
+
+    assert inventory.document["source_git_sha"] == head
+    assert inventory.document["role"] == "qualification"
+    assert inventory.sha256 == hashlib.sha256(inventory.document_bytes).hexdigest()
+
+
+def test_route_a_registered_validation_tests_are_frozen() -> None:
+    registry = json.loads(
+        (REPOSITORY_ROOT / "config/route-a-behavior-sets.json").read_text(
+            encoding="ascii"
+        )
+    )
+    qualification = set(registry["roles"]["qualification"]["paths"])
+    route_a_tests = {
+        path.relative_to(REPOSITORY_ROOT).as_posix()
+        for path in (REPOSITORY_ROOT / "tests").glob("test_route_a_*.py")
+    }
+    route_a_tests.add("tests/test_run_route_a_native_qualification.py")
+    proof_boundary_tests = {
+        "tests/test_cloud_execution_plan.py",
+        "tests/test_cssc.py",
+        "tests/test_ordinary_query_lifecycle.py",
+        "tests/test_output_plan.py",
+        "tests/test_plaintext_oracle.py",
+        "tests/test_query_compiler.py",
+        "tests/test_strong_execution_bundle.py",
+        "tests/test_strong_output_plan.py",
+        "tests/test_strong_packed_coo_state.py",
+        "tests/test_strong_packed_coo_witness_contract.py",
+    }
+    assert route_a_tests | proof_boundary_tests <= qualification
+    control = set(registry["roles"]["control-registration"]["paths"])
+    assert {
+        "tests/test_route_a_controller.py",
+        "tests/test_route_a_controller_github.py",
+        "tests/test_route_a_lineage.py",
+        "tests/test_route_a_live_stop_loss.py",
+    } <= control
+
+
+@pytest.mark.parametrize("role", ROUTE_A_BEHAVIOR_ROLES)
+def test_route_a_behavior_set_closes_dynamic_cssc_imports(role: str) -> None:
+    registry = json.loads(
+        (REPOSITORY_ROOT / "config/route-a-behavior-sets.json").read_text(
+            encoding="ascii"
+        )
+    )
+    registered = set(registry["roles"][role]["paths"])
+    pending = [path for path in registered if path.endswith(".py")]
+    inspected: set[str] = set()
+
+    def repository_module_path(base: Path) -> str | None:
+        for candidate in (base.with_suffix(".py"), base / "__init__.py"):
+            relative = candidate.as_posix()
+            if (REPOSITORY_ROOT / relative).is_file():
+                return relative
+        return None
+
+    while pending:
+        path = pending.pop()
+        if path in inspected:
+            continue
+        inspected.add(path)
+        tree = ast.parse((REPOSITORY_ROOT / path).read_text(encoding="utf-8"))
+        imported: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "dynamic_cssc" or alias.name.startswith(
+                        "dynamic_cssc."
+                    ):
+                        dependency = repository_module_path(
+                            Path("src") / Path(*alias.name.split("."))
+                        )
+                        if dependency is not None:
+                            imported.add(dependency)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    base = Path(path).parent
+                    for _ in range(node.level - 1):
+                        base = base.parent
+                    if node.module is not None:
+                        dependency = repository_module_path(
+                            base / Path(*node.module.split("."))
+                        )
+                        if dependency is not None:
+                            imported.add(dependency)
+                    else:
+                        for alias in node.names:
+                            dependency = repository_module_path(base / alias.name)
+                            if dependency is not None:
+                                imported.add(dependency)
+                elif node.module == "dynamic_cssc" or (
+                    node.module is not None
+                    and node.module.startswith("dynamic_cssc.")
+                ):
+                    dependency = repository_module_path(
+                        Path("src") / Path(*node.module.split("."))
+                    )
+                    if dependency is not None:
+                        imported.add(dependency)
+        for dependency in imported:
+            assert dependency in registered, (
+                f"{role} Behavior Set omits imported module {dependency} "
+                f"required by {path}"
+            )
+            pending.append(dependency)
 
 
 def _install_s2(repository: Path, s1: str) -> str:

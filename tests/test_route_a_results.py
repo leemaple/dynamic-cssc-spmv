@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from dynamic_cssc.route_a_controller import _PLAN_SHA256 as CONTROLLER_PLAN_SHA256
 from dynamic_cssc.route_a_results import (
     ROUTE_A_CELL_SCHEMA,
     ROUTE_A_MACHINE_PLAN_SHA256,
@@ -22,6 +23,14 @@ from dynamic_cssc.route_a_serialized_bytes import (
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_every_runtime_machine_plan_digest_matches_retained_plan_bytes() -> None:
+    plan_bytes = (REPOSITORY_ROOT / "config/route-a-publication-plan.json").read_bytes()
+    retained_digest = hashlib.sha256(plan_bytes).hexdigest()
+
+    assert retained_digest == ROUTE_A_MACHINE_PLAN_SHA256
+    assert retained_digest == CONTROLLER_PLAN_SHA256
 
 
 def _sha(label: str) -> str:

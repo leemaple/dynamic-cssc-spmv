@@ -129,6 +129,17 @@ def route_a_evidence_stream_root(schema: str, documents: tuple[bytes, ...]) -> s
     return digest.hexdigest()
 
 
+def _output_sha256(values: tuple[int, ...]) -> str:
+    return hashlib.sha256(
+        canonical_route_a_document(
+            {
+                "ordered_modular_outputs": list(values),
+                "schema_version": "dynamic-cssc-route-a-typed-output-v1",
+            }
+        )
+    ).hexdigest()
+
+
 def _seconds(nanoseconds: int) -> str:
     if type(nanoseconds) is not int or nanoseconds < 0:
         raise RouteAEvaluationError("timing observation must be nonnegative nanoseconds")
@@ -192,9 +203,7 @@ class RouteASyntheticCellRun:
         if any(bindings[field] != value for field, value in expected.items()):
             raise RouteAEvaluationError("cell binding root differs from its redacted stream")
         query_count = self.cell.document["counts"]["queries"]
-        recorded_scratch = self.cell.document["measurements"][
-            "scratch_allocated_bytes"
-        ]
+        recorded_scratch = self.cell.document["measurements"]["scratch_allocated_bytes"]
         if (
             any(
                 len(stream) != query_count
@@ -209,8 +218,7 @@ class RouteASyntheticCellRun:
             or type(self.ledger_snapshot_bytes) is not bytes
             or not self.ledger_snapshot_bytes.startswith(b"SQLite format 3\x00")
             or type(self.ledger_snapshot_sha256) is not str
-            or hashlib.sha256(self.ledger_snapshot_bytes).hexdigest()
-            != self.ledger_snapshot_sha256
+            or hashlib.sha256(self.ledger_snapshot_bytes).hexdigest() != self.ledger_snapshot_sha256
             or type(self.scratch_high_water_bytes) is not int
             or self.scratch_high_water_bytes < 0
             or recorded_scratch != self.scratch_high_water_bytes
@@ -225,9 +233,7 @@ class RouteASyntheticCellRun:
                 receipt_document = json.loads(
                     self.consumption_receipt_documents[ordinal].decode("ascii")
                 )
-                query_document = json.loads(
-                    self.query_identity_documents[ordinal].decode("ascii")
-                )
+                query_document = json.loads(self.query_identity_documents[ordinal].decode("ascii"))
             except (UnicodeDecodeError, json.JSONDecodeError) as error:
                 raise RouteAEvaluationError(
                     "Route A replay material is not canonical JSON"
@@ -239,9 +245,7 @@ class RouteASyntheticCellRun:
                 ensure_ascii=True,
                 allow_nan=False,
             ).encode("ascii")
-            query_id = hashlib.sha256(
-                self.query_identity_documents[ordinal]
-            ).hexdigest()
+            query_id = hashlib.sha256(self.query_identity_documents[ordinal]).hexdigest()
             if (
                 type(private_document) is not dict
                 or canonical_private != private_bytes
@@ -437,9 +441,7 @@ def _evaluate_route_a_synthetic_cell(
             raise RouteAEvaluationError("query-bearing window lacks its exact query plan")
         plan = accounting.query_plan
         for offset in range(window.query_count):
-            query_identity = lane.query_identity(
-                window.first_global_query_ordinal_or_null + offset
-            )
+            query_identity = lane.query_identity(window.first_global_query_ordinal_or_null + offset)
             query_identity_documents.append(query_identity.document_bytes)
             if ordinary_bundle is not None:
                 if replay_mode:
@@ -448,9 +450,7 @@ def _evaluate_route_a_synthetic_cell(
                         raise RouteAEvaluationError(
                             "read-only replay preparation stream is truncated"
                         )
-                    preparation_bytes = replay_preparation_documents[
-                        replay_preparation_ordinal
-                    ]
+                    preparation_bytes = replay_preparation_documents[replay_preparation_ordinal]
                     prepared = decode_ordinary_query_preparation_bytes(
                         ordinary_bundle,
                         preparation_bytes,
@@ -492,9 +492,7 @@ def _evaluate_route_a_synthetic_cell(
                         raise RouteAEvaluationError(
                             "read-only replay preparation stream is truncated"
                         )
-                    preparation_bytes = replay_preparation_documents[
-                        replay_preparation_ordinal
-                    ]
+                    preparation_bytes = replay_preparation_documents[replay_preparation_ordinal]
                     prepared = decode_strong_query_preparation_bytes(
                         execution_bundle,
                         preparation_bytes,
@@ -549,14 +547,8 @@ def _evaluate_route_a_synthetic_cell(
                 for operand in prepared.f1m_operands
                 if operand.kind == "random-zero-sum"
             )
-            typed_output_sha256 = hashlib.sha256(
-                canonical_route_a_document(
-                    {
-                        "ordered_modular_outputs": list(typed_output),
-                        "schema_version": "dynamic-cssc-route-a-typed-output-v1",
-                    }
-                )
-            ).hexdigest()
+            typed_output_sha256 = _output_sha256(typed_output)
+            direct_output_sha256 = _output_sha256(direct_output)
             preparation_digest_documents.append(
                 canonical_route_a_document(
                     {
@@ -584,7 +576,7 @@ def _evaluate_route_a_synthetic_cell(
             output_digest_documents.append(
                 canonical_route_a_document(
                     {
-                        "direct_output_sha256": typed_output_sha256,
+                        "direct_output_sha256": direct_output_sha256,
                         "query_id": query_identity.query_id,
                         "schema_version": "dynamic-cssc-route-a-output-digest-v1",
                         "typed_output_sha256": typed_output_sha256,
@@ -653,9 +645,7 @@ def _evaluate_route_a_synthetic_cell(
             "query-query-ciphertexts": metrics.query_ciphertexts,
             "query-result-ciphertexts": metrics.result_ciphertexts,
             "query-f1m-random-mask-ciphertexts": metrics.blinding_mask_ciphertexts,
-            "query-f1m-encrypted-zero-dummy-ciphertexts": (
-                metrics.blinding_dummy_ciphertexts
-            ),
+            "query-f1m-encrypted-zero-dummy-ciphertexts": (metrics.blinding_dummy_ciphertexts),
             "query-version-plan-metadata": len(query_metadata_documents),
             "one-time-evaluation-key-material": int(metrics.queries > 0),
         }
@@ -698,12 +688,8 @@ def _evaluate_route_a_synthetic_cell(
                 "updates": accepted_set_transitions,
                 "windows": metrics.windows,
             },
-            "window_query_counts": [
-                window.query_count for window in window_trace.ordered_windows
-            ],
-            "primitive_counts": {
-                field: getattr(metrics, field) for field in _PRIMITIVE_FIELDS
-            },
+            "window_query_counts": [window.query_count for window in window_trace.ordered_windows],
+            "primitive_counts": {field: getattr(metrics, field) for field in _PRIMITIVE_FIELDS},
             "rotation_inventory": {
                 "measured_counts_by_exact_index": [
                     [index, count] for index, count in sorted(rotations.items())

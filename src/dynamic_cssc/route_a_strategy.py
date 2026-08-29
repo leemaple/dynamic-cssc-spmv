@@ -41,10 +41,12 @@ __all__ = (
     "ROUTE_A_STRATEGY_CANDIDATES",
     "RouteAAdaptedWindow",
     "RouteACandidateAdvance",
+    "RouteACandidateStateAdvance",
     "RouteACandidateTimedAdvance",
     "RouteACandidateState",
     "adapt_route_a_strategy_window",
     "advance_route_a_candidate",
+    "advance_route_a_candidate_state_only",
     "advance_route_a_candidate_timed",
     "initialize_route_a_candidate",
 )
@@ -106,6 +108,35 @@ class RouteACandidateAdvance:
     candidate: RouteACandidateState
     adapted_window: RouteAAdaptedWindow
     transition: RouteATransition
+
+
+@dataclass(frozen=True, slots=True)
+class RouteACandidateStateAdvance:
+    """One exact state advance that deliberately omits query-plan assembly.
+
+    The evidence window remains unchanged and the global query cursor still
+    advances by its exact query count.  Only the query-side plan attached to the
+    returned transition is absent.  This is the narrow terminal-snapshot seam
+    used by Route A native cases; it cannot execute or emit an earlier query.
+    """
+
+    candidate: RouteACandidateState
+    adapted_window: RouteAAdaptedWindow
+    transition: RouteATransition
+    state_transition_nanoseconds: int
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.state_transition_nanoseconds) is not int
+            or self.state_transition_nanoseconds < 0
+            or self.transition.facts.query_count != 0
+            or self.transition.output_plan is not None
+            or (
+                type(self.transition) is StrongTransition
+                and self.transition.execution_bundle is not None
+            )
+        ):
+            raise ValueError("Route A state-only advance retained query-side work")
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,9 +223,7 @@ def initialize_route_a_candidate(
         )
     else:
         strategy = (
-            "PeriodicRepack"
-            if candidate_id == "periodic-repack/windows=1"
-            else "PaddingReuse-CSSC"
+            "PeriodicRepack" if candidate_id == "periodic-repack/windows=1" else "PaddingReuse-CSSC"
         )
         state = initialize_strategy(
             cast(StrategyKind, strategy),
@@ -250,9 +279,7 @@ def _ordinary_version_only_publication(
             query_count=window.query_count,
             ci_full_sync_entries=sum(len(chunk.column_indices) for chunk in base.chunks),
             rebuilt_ciphertexts=len(base.chunks),
-            rebuilt_output_block_ids=tuple(
-                block.output_block_id for block in base.blocks
-            ),
+            rebuilt_output_block_ids=tuple(block.output_block_id for block in base.blocks),
             active_component_ids=(base.component_id,),
         )
     else:
@@ -291,11 +318,7 @@ def _strong_version_only_publication(
         delta=delta,
     )
     decode_strong_state(next_state)
-    bundle = (
-        compile_strong_execution(base, delta)
-        if window.query_count > 0
-        else None
-    )
+    bundle = compile_strong_execution(base, delta) if window.query_count > 0 else None
     component_ids = [base.component_id]
     if delta.segments:
         component_ids.append(STRONG_COMPONENT_ID)
@@ -340,12 +363,12 @@ def _assemble_route_a_query_result(
     raise TypeError("Route A transition has the wrong exact type")
 
 
-def advance_route_a_candidate_timed(
+def _advance_route_a_candidate_state(
     candidate: RouteACandidateState,
     groups: tuple[RouteAAcceptedGroup, ...],
     route_a_window: RouteAPublicationWindow,
-) -> RouteACandidateTimedAdvance:
-    """Advance one window while separating state work from query-plan assembly."""
+) -> RouteACandidateStateAdvance:
+    """Advance state and exact cursors without constructing a query-side plan."""
 
     if type(candidate) is not RouteACandidateState:
         raise TypeError("candidate must be an exact RouteACandidateState")
@@ -359,8 +382,7 @@ def advance_route_a_candidate_timed(
         raise ValueError("Route A window ordinal does not match the candidate cursor")
     if (
         window.query_count > 0
-        and window.first_global_query_ordinal_or_null
-        != candidate.next_global_query_ordinal
+        and window.first_global_query_ordinal_or_null != candidate.next_global_query_ordinal
     ):
         raise ValueError("Route A first query ordinal does not match the candidate cursor")
     if state.version_ordinal != window.version_before:
@@ -396,23 +418,57 @@ def advance_route_a_candidate_timed(
         raise TypeError("Route A candidate contains the wrong state type")
     transition_finished = time.perf_counter_ns()
 
-    assembly_started = time.perf_counter_ns()
-    transition = _assemble_route_a_query_result(transition, window.query_count)
-    assembly_finished = time.perf_counter_ns()
-
     if transition.state.version_ordinal != window.version_after:
         raise AssertionError("Route A strategy transition violated the frozen version rule")
     next_candidate = RouteACandidateState(
         candidate_id=candidate.candidate_id,
         state=transition.state,
         next_window_ordinal=candidate.next_window_ordinal + 1,
-        next_global_query_ordinal=(
-            candidate.next_global_query_ordinal + window.query_count
-        ),
+        next_global_query_ordinal=(candidate.next_global_query_ordinal + window.query_count),
     )
-    return RouteACandidateTimedAdvance(
-        advance=RouteACandidateAdvance(next_candidate, adapted_window, transition),
+    return RouteACandidateStateAdvance(
+        candidate=next_candidate,
+        adapted_window=adapted_window,
+        transition=transition,
         state_transition_nanoseconds=transition_finished - transition_started,
+    )
+
+
+def advance_route_a_candidate_state_only(
+    candidate: RouteACandidateState,
+    groups: tuple[RouteAAcceptedGroup, ...],
+    route_a_window: RouteAPublicationWindow,
+) -> RouteACandidateStateAdvance:
+    """Advance one exact window while intentionally omitting query-plan assembly."""
+
+    return _advance_route_a_candidate_state(candidate, groups, route_a_window)
+
+
+def advance_route_a_candidate_timed(
+    candidate: RouteACandidateState,
+    groups: tuple[RouteAAcceptedGroup, ...],
+    route_a_window: RouteAPublicationWindow,
+) -> RouteACandidateTimedAdvance:
+    """Advance one window while separating state work from query-plan assembly."""
+
+    state_advance = _advance_route_a_candidate_state(
+        candidate,
+        groups,
+        route_a_window,
+    )
+    assembly_started = time.perf_counter_ns()
+    transition = _assemble_route_a_query_result(
+        state_advance.transition,
+        state_advance.adapted_window.route_a_window.query_count,
+    )
+    assembly_finished = time.perf_counter_ns()
+    return RouteACandidateTimedAdvance(
+        advance=RouteACandidateAdvance(
+            state_advance.candidate,
+            state_advance.adapted_window,
+            transition,
+        ),
+        state_transition_nanoseconds=state_advance.state_transition_nanoseconds,
         result_assembly_nanoseconds=assembly_finished - assembly_started,
     )
 
