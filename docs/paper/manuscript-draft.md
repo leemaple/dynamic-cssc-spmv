@@ -11,7 +11,7 @@
 Compressed sparse layouts make homomorphic sparse matrix--vector multiplication
 practical for static patterns, but updates also change value placement, query-
 reorganization metadata, and encrypted-output-to-row mappings. Full
-recompression at each freshness boundary can dominate update cost; auxiliary
+recompression at each freshness boundary requires base-wide work; auxiliary
 components trade publication work for query work and observable structure.
 
 We present an update-aware layer around the published Compressed Sparse Sorted
@@ -24,15 +24,16 @@ the Cloud execute a public page-wide schedule while the client privately merges
 segment leaders. A typed bundle binds the CSSC base, delta, operands, routes,
 and operation graph and fails closed on version or plan substitution.
 
-Our evaluation protocol compares three fixed maintenance mechanisms under the
-same versioned event streams, query schedules, public parameters, and initial
-states. It separates directly measured state-transition costs, exact typed
-operation counts, type-derived serialized-byte bounds, a narrowly registered
-query-linearity projection, and native OpenFHE observations. The frozen matrix
-contains six synthetic shards, four ordered-event shards derived from one SNAP
-source object, and six native OpenFHE cases. Independent replay and terminal
-admission must accept exactly the resulting 17 pre-aggregate artifacts before
-analysis can release any empirical sentence.
+Our frozen evaluation protocol was specified to compare three fixed maintenance
+mechanisms under the same versioned event streams, query schedules, public
+parameters, and initial states. An admitted execution would have separated
+state-transition costs, exact typed operation counts, type-derived
+serialized-byte bounds, a narrowly registered query-linearity projection, and
+native OpenFHE observations. The frozen matrix specified six synthetic shards,
+four ordered-event shards derived from one SNAP source object, and six native
+OpenFHE cases. Independent replay and terminal admission would have had to
+accept exactly the resulting 17 pre-aggregate artifacts before analysis could
+release any empirical sentence.
 
 The sole preregistered, permanently non-admissible qualification did not reach
 its combined guard within the frozen computational deadline. The external
@@ -71,7 +72,7 @@ periodically fold auxiliary state into the base. Their relative merit depends on
 the update/query ratio, freshness deadline, layout history, communication
 bandwidth, and the exact encrypted output path. Evaluating each window from a
 fresh initial layout, selecting with held-out information, or omitting returned
-ciphertexts and masking work can reverse the apparent ranking.
+ciphertexts and masking work can confound a comparison.
 
 This paper therefore asks a narrower, auditable question: how should mutable
 CSSC state be published, queried, reconstructed, and compared without breaking
@@ -129,14 +130,16 @@ not as a new aggregation algorithm or verified author-code behavior; the
 `totalSum` connection is grounded in the HElib SIMD reduction literature
 [@halevi2014algorithms].
 
-The closest methods are not interchangeable experimental baselines:
+The closest methods are not interchangeable experimental baselines.
+
+**Table 1. Closest method families and the boundary of this work.**
 
 | Work | Principal representation or setting | Mutable support? | Relation to this paper |
 |---|---|---:|---|
 | CSSC [@gao2026cssc] | Sparse-coordinate compression with `ColumnIndex`/`RowMap` | No | Direct static substrate; its published layout and reorganization are not our contribution. |
 | Lodia [@yu2025lodia] | Low-diagonal decomposition for batched FHE SpMV | Not described | Establishes earlier sparsity-aware encrypted SpMV; different decomposition and leakage/cost interface. |
 | CipherSkip [@xiong2026cipherskip] | Encrypted values and indices for arbitrary-shape SpGEMM and chained products | No matrix-state publication protocol | Its server-side alignment concerns encrypted intermediate products, not insert/delete/update of a published sparse layout. |
-| SparseE [@wei2026sparsee] | Encrypted-index Scatter--Gather--Apply with a permutation/expansion accelerator | Not established by the public abstract | Establishes an encrypted-index hardware co-design boundary; as of 2026-08-30, no public full text, DOI, or public software repository was located. |
+| SparseE [@wei2026sparsee] | Encrypted-index Scatter--Gather--Apply with a permutation/expansion accelerator | Not established by the public descriptions | Establishes an encrypted-index hardware co-design boundary; as of 2026-08-30, an official program abstract and a BUAA institutional summary were public, but no public full text, DOI, or public software repository was located. |
 | Diagonal Packing [@mutluergil2026diagonal] | Row/column reordering to reduce occupied cyclic diagonals | Not described | HE-aware static compiler optimization; no mutable CSSC publication or reconstruction is described. |
 | Ferguson et al. [@ferguson2025unstructured] | CKKS ciphertext--ciphertext SpMSpM with public sparse metadata | Not described | Demonstrates prior FHE sparsity exploitation under a PPML workload; different operation, scheme, and small square matrices. |
 | D'Agata et al. [@dagata2026gpu] | GPU/FIDESlib CKKS ciphertext--ciphertext SpMSpM with public sparse metadata | Not described | Extends the same static design space to GPU execution; a dynamic SpMV publication protocol is not described. |
@@ -182,14 +185,21 @@ updates also predate this work and delimit any claim about encrypted mutability
 
 ## 3. System and Threat Model
 
-The system has Client A, which owns the mutable matrix; Client B, which owns the
-query and secret key and receives the result; and a semi-honest Cloud evaluator.
-At most one party is corrupted and the Cloud does not collude with either client.
-The model excludes malicious behavior, adaptive corruption, availability,
-side-channel, traffic-analysis, and collusion claims.
+The system has Client A, which owns the mutable matrix, updates, CSSC metadata,
+component `ColumnIndex` arrays and `RowMap`s, the complete `OutputPlan`, and the
+F1-M reservation/sampling ledger; Client B, which owns the query and secret key
+and receives the result; and a semi-honest Cloud evaluator. Client A and Client
+B are both authorized to read the complete `RowMap`-sensitive `OutputPlan`;
+`private` means private from the Cloud, not private between the two clients.
+Client A sends the versioned column metadata and complete plan to Client B,
+samples and encrypts F1-M operands under Client B's public key, and never sends
+the individual mask plaintexts to Client B. At most one party is corrupted and
+the Cloud does not collude with either client. The model excludes malicious
+behavior, adaptive corruption, availability, side-channel, traffic-analysis,
+and collusion claims.
 
 Client B is authorized to learn the versioned global column indices, component
-RowMaps, complete reconstruction plan, and final result. The Cloud is authorized
+`RowMap`s, complete reconstruction plan, and final result. The Cloud is authorized
 to learn public parameters, ciphertext shapes and counts, public page/segment
 shapes, the operation schedule, opaque identifiers, query/version identifiers,
 and plan digests. The interface classifies matrix/query plaintexts, global
@@ -201,10 +211,13 @@ simulation-based notion.
 
 ## 4. Design
 
-Figure 1 shows the protocol boundary. Client A owns publication and constructs
-the version commit; the Cloud receives only the typed public program; Client B
-uses the matching private plan to recover logical coordinates. The diagram is
-an interface summary, not a claim that the listed metadata is
+Figure 1 shows the protocol boundary. Client A owns matrix publication, the
+complete plan and private metadata, constructs the version commit, and prepares
+the encrypted F1-M operands. Client B owns the query and key set, uses the
+version-matched column metadata to gather and encrypt query values, and uses its
+copy of the complete plan to recover logical coordinates. The Cloud receives
+only the typed public program, encrypted operands, and permitted identifiers.
+The diagram is an interface summary, not a claim that the listed metadata is
 cryptographically hidden from every side channel.
 
 ![Figure 1. Version-bound mutable CSSC publication, execution, and private reconstruction.](assets/route-c-protocol-flow.png){width=6.3in}
@@ -301,7 +314,7 @@ For publication version $v$, let
 $$
 \mathcal{P}^{(v)}=
 \left(
-A^{(v)},
+s^{(v)},
 \{C_k^{(v)}\}_{k=1}^{K_v},
 \{CI_k^{(v)}\}_{k=1}^{K_v},
 \{RM_k^{(v)}\}_{k=1}^{K_v},
@@ -309,7 +322,8 @@ O^{(v)},Q^{(v)},B^{(v)}
 \right),
 $$
 
-where $A$ is the logical matrix, $C_k$ are ordered physical components,
+where $s^{(v)}$ is the canonical logical-state identity binding the logical
+matrix $A^{(v)}$, $C_k$ are ordered physical components,
 $CI_k$ and $RM_k$ are their global-column and row mappings, $O$ is the private
 OutputPlan, $Q$ is the prepared-query binding, and $B$ is the immutable typed
 identity and digest bundle. Let $B^{(v,q)}$ be the authoritative binding for
@@ -338,9 +352,10 @@ hosts, or side channels.
 
 #### P2: multi-component reconstruction
 
-Let $A_k^{(v)}$ be component $k$ in its local physical coordinates and $E_k$
-its embedding into the logical matrix domain. The admitted decomposition is
-complete when
+Let $A_k^{(v)}$ be the physical-output-row by global-logical-column matrix
+represented by component $k$, and let $E_k$ embed its declared physical output
+rows into the logical matrix domain. The admitted decomposition is complete
+when
 
 $$
 A^{(v)}=\sum_{k=1}^{K_v}E_k\!\left(A_k^{(v)}\right)\pmod t.
@@ -407,9 +422,11 @@ cloning, compromise, or cross-device guarantee.
 
 #### P4: fixed-segment reconstruction
 
-For a logical row $r$, partition its auxiliary entries in canonical order into
-$J_r$ segments $S_{r,1},\ldots,S_{r,J_r}$ of $c=128$ lanes and pad only the
-final unused suffix with zeros. The seven-stage public reduction places
+For a logical row $r$, partition its auxiliary post-multiplication lane values
+$a_{r,c}x_c$ in canonical entry order into $J_r$ segments
+$S_{r,1},\ldots,S_{r,J_r}$ of $c=128$ lanes, so every populated
+$S_{r,j}[\ell]$ is one such $a_{r,c}x_c$ value, and pad only the final unused
+suffix with zeros. The seven-stage public reduction places
 
 $$
 L_{r,j}=\sum_{\ell=0}^{127}S_{r,j}[\ell]
@@ -445,14 +462,14 @@ passed in run `32581653504`. The witness exercises a 4096-by-8193 fixture,
 global-column anti-aliasing, the 127-of-128 segment boundary, the unused second
 BFV batching row, explicit no-relinearize/relinearize transitions, random and
 dummy F1-M operands, and equality with both typed and direct plaintext oracles.
-Its GitHub Actions artifact-wrapper SHA-256 digest is
-`c5f44b0c9475a66d49b48332e335cb58811cf4eec579ebff631123c4e4711afe`.
+Its GitHub Actions artifact-wrapper SHA-256 digest is recorded in the
+version-bound claim-ledger supplement (`c5f44b0c…4711afe`).
 
 This evidence is deliberately narrow. It does not establish complete candidate
 costs, candidate registration, mixed-circuit parameter safety, security,
 performance, or an end-to-end deployment.
 
-**Table 1. Definition-level obligations and their Route C disposition.**
+**Table 2. Definition-level obligations and their Route C disposition.**
 
 | Obligation | Frozen implementation and review boundary | Claim permitted in this manuscript |
 |---|---|---|
@@ -506,37 +523,41 @@ artifacts, and accept responsibility for every claim and released result.
 
 ## 6. Evaluation Methodology
 
-The experiment is frozen before any formal artifact is inspected. It does not
-train a selector, choose a winner on a tuning prefix, or use a held-out oracle.
-Every strategy owns an independent persistent state and consumes the same
+Sections 6.1--6.6 preserve the frozen counterfactual execution and reporting
+protocol. Because qualification failed, none of the acquisitions, formal cells,
+native cases, measurements, or reports specified below occurred. The protocol
+was frozen before any formal artifact could be inspected. It specified no
+trained selector, winner chosen on a tuning prefix, or held-out oracle. Every
+strategy would have owned an independent persistent state and consumed the same
 ordered event groups, publication boundaries, queries, initial logical matrix,
-and public parameters. The intervention is therefore the maintenance mechanism,
-not the workload history.
+and public parameters. The intended intervention was therefore the maintenance
+mechanism, not the workload history.
 
 ### 6.1 Fixed strategies
 
-The three strategy identities are:
+The three strategy identities were:
 
-1. `periodic-repack/windows=1`, which reconstructs and republishes a complete
+1. `periodic-repack/windows=1`, which would have reconstructed and republished a complete
    static CSSC layout at every Publication Window;
-2. `padding-reuse`, which reuses the lowest-ordinal tombstone, then natural
+2. `padding-reuse`, which would have reused the lowest-ordinal tombstone, then natural
    padding, and otherwise rebuilds the affected fixed horizontal row partition;
    and
-3. `packed-coo-cloud-segmented-delta/segment-width=128`, which keeps a CSSC base
-   and appends overflow into cloud-executable, row-owned 128-lane segments. It
-   never folds online in the registered experiment.
+3. `packed-coo-cloud-segmented-delta/segment-width=128`, which would have kept a
+   CSSC base and appended overflow into cloud-executable, row-owned 128-lane
+   segments. It was not to fold online in the registered experiment.
 
-These candidates are mechanisms to compare, not actions of an online policy.
-A slower strategy, a crossing cost curve, or the absence of a global winner is
-a reportable outcome rather than a failed experiment.
+These candidates were mechanisms specified for comparison, not actions of an
+online policy. A slower strategy, a crossing cost curve, or the absence of a
+global winner would have been a reportable outcome rather than a failed
+experiment.
 
 ### 6.2 Synthetic matrix
 
-The synthetic suite uses a mixed insert/delete/modify workload at two frozen
-scales: S has 256 rows, 8,193 columns, and 512 accepted updates; M has 1,024
-rows, 8,193 columns, and 2,048 accepted updates. The formal seeds are
-`20260822`, `20260823`, and `20260824`, giving six scale--seed shards. Every
-shard evaluates all three strategies at
+The synthetic suite was specified to use a mixed insert/delete/modify workload
+at two frozen scales: S would have had 256 rows, 8,193 columns, and 512 accepted
+updates; M would have had 1,024 rows, 8,193 columns, and 2,048 accepted updates.
+The formal seeds were `20260822`, `20260823`, and `20260824`, defining six
+scale--seed shards. Every shard would have evaluated all three strategies at
 $\rho\in\{0.01,0.1,1,10\}$.
 
 For a reduced fraction $\rho=p/q$ and zero-based accepted-event ordinal $a$,
@@ -554,65 +575,71 @@ $$
 \sum_{a=0}^{N-1}Q_a=\left\lfloor\frac{Np}{q}\right\rfloor
 $$
 
-queries. The $0.01$, $0.1$, and $1$ cells execute directly. The $\rho=10$
-cell is not timed; it is an exact registered transformation of the same
-strategy and shard's $\rho=1$ query-linear count and byte fields. Any event,
-window, state, or non-whitelisted-field mismatch rejects the entire shard.
+queries. The $0.01$, $0.1$, and $1$ cells were specified for direct execution.
+The $\rho=10$ cell would not have been timed; it was registered as an exact
+transformation of the same strategy and shard's $\rho=1$ query-linear count and
+byte fields. Any event, window, state, or non-whitelisted-field mismatch would
+have rejected the entire shard.
 
 ### 6.3 Ordered events from one real source
 
-The sole external object is the SNAP Stack Overflow answer-to-question stream
+The sole external object would have been the SNAP Stack Overflow
+answer-to-question stream
 `sx-stackoverflow-a2q.txt.gz`
 [@snap_stackoverflow_temporal_network; @paranjape_motifs_in_temporal_networks].
-Acquisition records the final URL, response headers, exact compressed length,
-and SHA-256 digest. An independent guard downloads the object again and
-requires identical response-body bytes; the admitted artifact omits the raw
-compressed object.
+The acquisition job was specified to record the final URL, response headers,
+exact compressed length, and SHA-256 digest. An independent guard would have
+downloaded the object again and required identical response-body bytes; an
+admitted artifact would have omitted the raw compressed object.
 
-The first 1,000,000 eligible records freeze the row/column mapping. Source-ID
-hashing defines two deterministic partitions, each with 1,024 rows and 8,193
-columns. After the mapping prefix, each partition consumes 4,096 accepted
-records under two semantics. T1 is cumulative occurrence,
+The first 1,000,000 eligible records were specified to freeze the row/column
+mapping. Source-ID hashing would have defined two deterministic partitions,
+each with 1,024 rows and 8,193 columns. After the mapping prefix, each partition
+would have consumed 4,096 accepted records under two semantics. T1 was defined
+as cumulative occurrence,
 
 $$
 A_{uv}(t)=\min\{7,N_{uv}(t)\},
 $$
 
-whereas T2 retains the most recent $K=1024$ accepted events and performs expiry
-before admission in one indivisible atomic group. The synthetic logical clock
-advances by one second per 128 accepted records. Both partitions and both
-semantics run all three strategies at $\rho\in\{0.1,1\}$, yielding four
-ordered-event shards. They support conclusions about deterministic interactions
+whereas T2 would have retained the most recent $K=1024$ accepted events and
+performed expiry before admission in one indivisible atomic group. The synthetic
+logical clock would have advanced by one second per 128 accepted records. Both
+partitions and both semantics were specified to run all three strategies at
+$\rho\in\{0.1,1\}$, yielding four ordered-event shards. If admitted, those
+shards could only have supported conclusions about deterministic interactions
 within one source, not multi-source or historical wall-clock generalization.
 
 ### 6.4 Native OpenFHE cases
 
-The native matrix contains three strategies at the S and M scales, hence six
-cases. Every case uses seed `20260822`, $\rho=1$, the terminal accepted-event
-prefix (512 for S and 2,048 for M), and the query after the last complete event
-group. Version, component inventory, query vector, `OutputPlan`, typed execution
-plan, and canonical input bytes are fixed together.
+The native matrix was specified to contain three strategies at the S and M
+scales, hence six cases. Every case would have used seed `20260822`, $\rho=1$,
+the terminal accepted-event prefix (512 for S and 2,048 for M), and the query
+after the last complete event group. Version, component inventory, query vector,
+`OutputPlan`, typed execution plan, and canonical input bytes were frozen
+together.
 
-Each case performs one discarded warm-up, three fresh-key producer evaluations,
-and three exact package replays:
+Each case was specified to perform one discarded warm-up, three fresh-key
+producer evaluations, and three exact package replays:
 
 $$
 6\times(1+3+3)=42
 $$
 
-native evaluations in total. The three recorded producers are technical
-repetitions, not independent population samples. We report their raw values,
-median, and range, separately for production and replay. Replay deserializes the
+native evaluations in total. The three producer repetitions specified for
+recording were technical repetitions, not independent population samples. An
+admitted execution would have reported their raw values, median, and range,
+separately for production and replay. Replay was specified to deserialize the
 retained context, secret/public keys, evaluation-key frame, and input
-ciphertexts. Its lifecycle receipt must show zero context generation, zero key
-generation, zero evaluation-key generation, and zero encryption, while its
-cloud-program operation inventory must equal that of the corresponding
-producer package.
+ciphertexts. Its lifecycle receipt would have had to show zero context
+generation, zero key generation, zero evaluation-key generation, and zero
+encryption, while its cloud-program operation inventory would have had to equal
+that of the corresponding producer package.
 
 ### 6.5 Measurements and accounting
 
 For strategy $k$, scale or source unit $s$, and query/update ratio $\rho$, the
-result remains a typed vector rather than a synthetic score:
+result was specified as a typed vector rather than a synthetic score:
 
 $$
 \mathbf{c}_{k,s,\rho}=
@@ -627,22 +654,23 @@ B_{\mathrm{meta}},
 \right).
 $$
 
-Synthetic and ordered-event cells directly measure state-transition,
+Synthetic and ordered-event cells were specified to measure state-transition,
 result-assembly, and independent-replay time, peak RSS, and controlled scratch;
-they exactly count events, windows, queries, typed operations, and object
-multiplicities. Their cryptographic-object bytes are conservative type-derived
-bounds,
+they would have exactly counted events, windows, queries, typed operations, and
+object multiplicities. Their cryptographic-object bytes were specified as
+conservative type-derived bounds,
 
 $$
 \overline{B}_{\mathrm{crypto}}=\sum_j m_jU_j,
 $$
 
-where $m_j$ is the exact multiplicity and $U_j$ is the Stage-1 maximum for type
-$j$. Canonical metadata bytes are measured separately. Native cases instead
-report observed serialized-object bytes, typed-operation inventories, process
-time, RSS, and scratch. Simulator counts are never converted into OpenFHE
-latency, and evidence-replay overhead is never presented as strategy execution
-cost.
+where $m_j$ is the exact multiplicity and $U_j$ is the registration-time,
+pre-execution Stage-1 maximum serialized size frozen for type $j$. Canonical
+metadata bytes would have been measured separately. Native cases instead were
+specified to report observed serialized-object bytes, typed-operation
+inventories, process time, RSS, and scratch. Simulator counts were never to be
+converted into OpenFHE latency, and evidence-replay overhead was never to be
+presented as strategy execution cost.
 
 For the registered $\rho=10$ projection, only query-linear fields change:
 
@@ -651,16 +679,16 @@ n^{(10)}_{q,p}=10n^{(1)}_{q,p},\qquad
 n^{(10)}_{u,p}=n^{(1)}_{u,p}.
 $$
 
-Wall time, RSS, scratch, and native latency are unavailable for this projected
-cell. Protocol-byte transfer time at bandwidth $b$ Mbps is reported only as the
-transparent conversion
+Wall time, RSS, scratch, and native latency would have been unavailable for this
+projected cell. Protocol-byte transfer time at bandwidth $b$ Mbps was specified
+only as the transparent conversion
 
 $$
 T_{\mathrm{net}}(B,b)=\frac{8B}{b\times10^6};
 $$
 
-HTTP/TLS, artifact wrappers, filesystems, and private replay transport remain
-separate evidence-pipeline costs.
+HTTP/TLS, artifact wrappers, filesystems, and private replay transport were to
+remain separate evidence-pipeline costs.
 
 The paired strategy contrast for unit $u$ is
 
@@ -670,19 +698,23 @@ $$
 
 where $C$ is one preregistered field or the full typed cost vector. With only
 two scales, two deterministic source partitions, and three technical native
-repetitions, we report all raw points and mechanism-level decompositions. We do
-not fit scaling exponents, attach population $p$ values or confidence intervals,
-or claim a global winner or Pareto frontier.
+repetitions, an admitted execution would have reported all raw points and
+mechanism-level decompositions. It would not have fitted scaling exponents,
+attached population $p$ values or confidence intervals, or claimed a global
+winner or Pareto frontier.
 
 ### 6.6 Evidence admission and stopping
 
-Before formal execution, one six-job qualification must complete within the
-frozen 45-minute computational path and 55-minute total path, satisfy the
-necessary $6C_q\leq9000\,\mathrm{s}$ planning screen, and survive a fresh
-external-controller reread. Qualification artifacts are permanently
-non-evidence and cannot enter the formal result set.
+Before formal execution, one six-job qualification was required to complete
+within the frozen 45-minute computational path and 55-minute total path, satisfy
+the necessary $6C_q\leq9000\,\mathrm{s}$ planning screen, and survive a fresh
+external-controller reread. Here $C_q$ is the registered per-case native-runtime
+estimate: the sum of provider-API `startedAt`--`completedAt` durations for the
+qualification's native producer job, native replay/guard job, and entire
+combined-guard job. Qualification artifacts were permanently non-evidence and
+could not enter the formal result set.
 
-The formal campaign is serial and admits exactly
+The formal campaign was specified as serial and would have admitted exactly
 
 $$
 1\ \text{acquisition}
@@ -692,14 +724,15 @@ $$
 =17
 $$
 
-pre-aggregate artifacts. Before launching each unit, the controller reserves
-its full remaining worst-case budget. The preregistered 12-hour figure is an
+pre-aggregate artifacts. Before launching each unit, the controller would have
+reserved its full remaining worst-case budget. The preregistered 12-hour figure
+was an
 acceptance threshold, not a guarantee that provider-side cancellation cannot
 overshoot. Across the 17 enumerated units, at most one whole-unit replacement
-is allowed, and only for a provider failure rather than a data-dependent or
-scientific outcome. Terminal admission rejects missing, extra, duplicated,
-wrong-attempt, or wrong-kind objects before aggregation and compatible detached
-analysis.
+would have been allowed, and only for a provider failure rather than a
+data-dependent or scientific outcome. Terminal admission would have rejected
+missing, extra, duplicated, wrong-attempt, or wrong-kind objects before
+aggregation and compatible detached analysis.
 
 ## 7. Evidence Outcome
 
@@ -726,7 +759,7 @@ identities; none is promoted into the absent formal result set.
 
 ![Figure 2. Exact source freeze, one-shot qualification stop, and the resulting Route C evidence boundary.](assets/route-c-evidence-boundary.png){width=6.3in}
 
-**Table 2. What each evidence layer proves and does not prove.**
+**Table 3. What each evidence layer proves and does not prove.**
 
 | Layer | Exact disposition | Supports | Does not support |
 |---|---|---|---|
@@ -734,6 +767,20 @@ identities; none is promoted into the absent formal result set.
 | Registration and S2 | Descriptive archive reinspected; data-only anchor installed at `c7ff6820…` | Exact S1/S2 identity and closed-Behavior-Set compatibility | Qualification GO or a replayable dispatch authority |
 | Qualification | One exact run; q1 completed, q2 was cancelled at the frozen stop, q5 never started | Preregistered Route C decision and fail-closed provenance | Any simulator/native performance estimator or partial formal result |
 | Formal campaign | Not dispatched | The absence of unauthorized execution | Strategy ranking, speedup, ordered-event findings, or native resource claims |
+
+**Table 4. Compact standalone provenance for the Route C stopping outcome.**
+
+| Object or gate | Exact identity | Terminal disposition |
+|---|---|---|
+| Experiment source | S1 `ee58627bb5752c6ac1ee2c5132c6574f9cb66552` | CI run `33258436732` passed: 2,403 tests and 2 expected runner-dependent skips |
+| Real-runner preparation | PRE-S1 run `33259569284` | Passed: 583 tests and pinned OpenFHE 1.5.1 ordinary/strong smokes |
+| Evidence freeze | Registration run `33259894587`; S2 `c7ff6820d9323f1850c1c5c57fd9070db88db120` | Descriptive authority false; S2 CI run `33260167517` passed |
+| One-shot qualification | Run `33261434612` | `cancelled`; q1 completed, q2 stopped at the frozen gate, q3--q6 did not run, and q5 never started |
+| Sole provider object | Artifact ID `9717884587`, digest `sha256:51cbfc2a…2c008` | One-day q1 handoff; permanently non-evidence; no formal artifact exists |
+
+The version-bound `claim-ledger-draft.md` supplement records the full provider
+digest, exact authority states, and the closed claim mapping. It is part of the
+circulation packet rather than an alternative source of empirical results.
 
 ### 7.2 Synthetic and ordered-event costs
 

@@ -9,7 +9,11 @@ numbersections: true
 
 # 阅读提示
 
-本文解释这篇论文“到底想解决什么、核心 idea 是什么、为什么需要这些机制、公式如何连接到实现，以及最后怎样用实验回答问题”。它不是结果论文的替代稿，也不把尚未完成的实验写成结论。
+> **文档身份：** 本文是英文 Route C 论文的中文技术说明 companion，
+> 用于解释 idea、公式、实现与证据边界；它不是与英文稿同等的投稿论文，
+> 也不应作为独立投稿版本引用。
+
+本文解释这篇论文“到底想解决什么、核心 idea 是什么、为什么需要这些机制、公式如何连接到实现，以及最后怎样用实验回答问题”。它不是结果论文的替代稿，也不把未执行的正式实验写成结论。
 
 截至 2026-08-30，项目已经完成 Route A 的工程冻结链，也已经得到一次性资格运行的终局裁决。最终候选 `baefc8cc183816c51ce42573bafde8178173044d` 经 ChatGPT Pro 与 ZCode GLM-5.3 Max 独立终审均无 P0/P1；Fable 5 的 Terminal 调用因 provider 返回 `403 账户余额不足`而只记录为 unavailable，不构成裁决。该候选经 PR #39 合入 tree-identical 的 Experiment Source Snapshot S1 `ee58627bb5752c6ac1ee2c5132c6574f9cb66552`。S1 main CI `33258436732` 与 exact-main PRE-S1 `33259569284` 均成功；前者记录 `2403 passed, 2 skipped`，后者执行固定 OpenFHE 1.5.1 ordinary/strong 两路真实 smoke、`583 passed`、Ruff 全绿且 artifact 数为 0。描述性 registration run `33259894587` 成功后，只增加 registration data anchor，形成 Evidence-Freeze Snapshot S2 `c7ff6820d9323f1850c1c5c57fd9070db88db120`；S2 main CI `33260167517` 也成功。
 
@@ -146,7 +150,7 @@ $$
 
 - [CSSC](https://doi.org/10.1016/j.ins.2026.123180) 已经给出静态 `Value/ColumnIndex/RowMap`、行排序、压缩矩形、查询重排和聚合路径。本文继承的是它的静态 substrate，不把这些写成新贡献。
 - [Lodia](https://eprint.iacr.org/2025/1425) 已经研究 batched FHE SpMV 的 low-diagonal decomposition；[Diagonal Packing / 2DPP](https://arxiv.org/abs/2604.04683) 已经研究用行列重排减少 occupied cyclic diagonals。因而“FHE-aware 稀疏布局或重排”不是本文首次。
-- [CipherSkip](https://eprint.iacr.org/2026/297) 已经对任意形状 SpGEMM 加密 values 和 indices，并利用双方稀疏性；[SparseE](https://63dac.conference-program.com/presentation/?id=RESEARCH2265&sess=sess108) 的 DAC 2026 官方摘要已经公开 encrypted-index Scatter--Gather--Apply 与 permutation/expansion accelerator。因而“首次隐藏 nonzero positions”“首次 encrypted indices”或“首次利用双边稀疏性”都不可主张。SparseE 尚无本次可核验的公开全文、DOI 和软件，不能据摘要反推其完整 leakage 或 update 语义。
+- [CipherSkip](https://eprint.iacr.org/2026/297) 已经对任意形状 SpGEMM 加密 values 和 indices，并利用双方稀疏性；[SparseE](https://63dac.conference-program.com/presentation/?id=RESEARCH2265&sess=sess108) 的 DAC 2026 官方摘要已经公开 encrypted-index Scatter--Gather--Apply 与 permutation/expansion accelerator，北航也已发布项目简介。因而“首次隐藏 nonzero positions”“首次 encrypted indices”或“首次利用双边稀疏性”都不可主张。截至 2026-08-30，SparseE 尚无本次可核验的公开全文、DOI 和公开软件仓库，不能据这些公开简介反推其完整 leakage 或 update 语义。
 - Ferguson et al. 的 [CPU ciphertext--ciphertext SpMSpM](https://doi.org/10.1145/3721146.3721948) 与 D'Agata et al. 的 [GPU/FIDESlib 扩展](https://doi.org/10.1145/3805621.3807642) 已经覆盖 CKKS 下的双边稀疏矩阵乘法。它们使用公开 sparse metadata、小型方阵和不同库/硬件，不能直接拿论文 wall-clock 与本项目 BFVRNS 动态 SpMV 数字比较，但足以排除宽泛的新颖性说法。
 
 这里可守的差异不是一种新的静态 packing，而是：**当矩阵支持集随时间变化时，怎样维护 CSSC 组件，并保证每次查询使用同版本的列元数据、重构计划和返回绑定。** CipherSkip 所称的 server-side dynamic alignment 面向链式乘法中的加密中间结果，并不是 insert/delete/modify 驱动的 publication-state maintenance。
@@ -552,19 +556,21 @@ Cloud 可以执行统一页面调度，但不知道多个 leader 是否属于同
 
 # 三个固定策略：不是在线万能选择器
 
-Route A 不再从十四个候选中训练或挑选 winner，也没有 tuning-selected policy 或 held-out oracle。正式结果只比较三个在 Stage 1 已冻结身份和状态转移语义的策略：
+以下策略、测量口径和正式矩阵是 Route A 冻结但因资格失败而**没有执行**的反事实方案；本节保留它们是为了说明研究设计，不表示已经产生任何测量或报告。
+
+Route A 不再从十四个候选中训练或挑选 winner，也没有 tuning-selected policy 或 held-out oracle。冻结计划只比较三个在 Stage 1 已固定身份和状态转移语义的策略：
 
 1. **PeriodicRepack**：`periodic-repack/windows=1`，每个 Publication Window 都从完整逻辑矩阵重新构造并发布静态 CSSC，是最干净但更新开销最高的基线；
 2. **PaddingReuse-CSSC**：`padding-reuse`，先复用最低序号 tombstone，再复用自然 padding；若都不可用，就重建受影响的固定水平行分区；
 3. **Packed-COO-Cloud-Segmented-Delta**：`packed-coo-cloud-segmented-delta/segment-width=128`，base 仍是 CSSC，溢出被放进 Cloud 可执行的固定 128-lane 行拥有分段，永不在线折叠。
 
-三者消费完全相同的有序事件、Publication Window、查询到达、初始矩阵和公开参数。论文不把任何一个策略写成全局最优，也不允许根据 held-out 结果切换策略。真正的问题是：在两个冻结规模、四个合成查询/更新比、一个真实来源的两种事件语义，以及六个当前源码 OpenFHE case 中，三个固定机制分别付出什么代价。
+三者原本会消费完全相同的有序事件、Publication Window、查询到达、初始矩阵和公开参数。论文不把任何一个策略写成全局最优，也不允许根据 held-out 结果切换策略。冻结问题是：在两个规模、四个合成查询/更新比、一个真实来源的两种事件语义，以及六个当前源码 OpenFHE case 中，三个固定机制本来会分别付出什么代价。
 
 # 成本与测量口径
 
 ## 五类证据必须分开
 
-对策略 $k$、规模 $s$ 和查询/更新比 $\rho$，结果不是一个混合总分，而是带类型标签的成本向量：
+若正式执行被授权，对策略 $k$、规模 $s$ 和查询/更新比 $\rho$，结果本来会是带类型标签的成本向量，而不是一个混合总分：
 
 $$
 \mathbf{c}_{k,s,\rho}
@@ -582,11 +588,11 @@ $$
 
 其中：
 
-- **直接测量**：合成与 SNAP 直接执行 cell 的状态转移时间、结果装配时间、独立 replay 时间、峰值 RSS 和受控 scratch；
-- **精确计数**：事件、窗口、更新、查询、typed primitive 和对象 multiplicity；
-- **上界投影**：合成与 SNAP 的密码对象字节，由精确对象 multiplicity 乘以 S1 冻结的类型级最大序列化公式得到；
+- **计划直接测量**：合成与 SNAP cell 的状态转移时间、结果装配时间、独立 replay 时间、峰值 RSS 和受控 scratch；
+- **计划精确计数**：事件、窗口、更新、查询、typed primitive 和对象 multiplicity；
+- **计划上界投影**：合成与 SNAP 的密码对象字节，由精确对象 multiplicity 乘以 S1 冻结的类型级最大序列化公式得到；
 - **精确缩放**：只允许把 $\rho=1$ 的注册查询线性计数和字节字段变换为 $\rho=10$；
-- **原生实测**：六个 OpenFHE case 的真实 typed-operation inventory、序列化对象字节、进程时间、RSS 和 scratch。
+- **计划原生实测**：六个 OpenFHE case 的 typed-operation inventory、序列化对象字节、进程时间、RSS 和 scratch。
 
 这些类别不会折成一个来源不明的“估计性能”。特别是 simulator 的 primitive count 不是 OpenFHE 延迟，replay 时间是证据开销而不是策略运行成本，native package 的真实字节也不能事后替换 S1 冻结的合成/SNAP 字节上界。
 
@@ -622,7 +628,7 @@ $$
 
 ## OpenFHE 原生 case 不与 simulator 混加
 
-当前源码 OpenFHE 矩阵只有三个策略乘两个规模，共六个 case。每个 case 都执行
+当前源码 OpenFHE 矩阵原计划只有三个策略乘两个规模，共六个 case。每个 case 本来会执行
 
 $$
 1\ \text{discarded warm-up}
@@ -636,7 +642,7 @@ $$
 6\times(1+3+3)=42
 $$
 
-次 native evaluation。三个 producer 是同一固定 case 的技术重复，不是独立总体样本。论文报告三个原始值、其中位数和范围：
+次 native evaluation。三个 producer 被规定为同一固定 case 的技术重复，不是独立总体样本；若得到接纳，论文本来会报告三个原始值、其中位数和范围：
 
 $$
 \widetilde{T}^{\mathrm{native}}_{k,s}
@@ -688,11 +694,11 @@ $$
 \left\lfloor\frac{Np}{q}\right\rfloor.
 $$
 
-$\rho\in\{0.01,0.1,1\}$ 完整执行；$\rho=10$ 只能从同策略、同 shard 的 $\rho=1$ 结果做注册的 query-linearity 变换。任何 event/window/state 不等价、任何试图缩放非白名单字段，都会让该 shard fail closed。
+$\rho\in\{0.01,0.1,1\}$ 原计划完整执行；$\rho=10$ 只能从同策略、同 shard 的 $\rho=1$ 结果做注册的 query-linearity 变换。任何 event/window/state 不等价、任何试图缩放非白名单字段，都会让该 shard fail closed。
 
 ## 单一真实来源：SNAP Stack Overflow A2Q
 
-真实来源只使用一个固定对象：SNAP Stack Overflow `sx-stackoverflow-a2q.txt.gz`。acquisition 先记录最终 URL、响应头、精确压缩字节数与 SHA-256；独立 guard 再下载一次，要求 exact response-body bytes 相同，正式工件不携带原始压缩对象。
+真实来源原计划只使用一个固定对象：SNAP Stack Overflow `sx-stackoverflow-a2q.txt.gz`。acquisition 本来会先记录最终 URL、响应头、精确压缩字节数与 SHA-256；独立 guard 再下载一次并要求 exact response-body bytes 相同，正式工件不携带原始压缩对象。
 
 确定性 transform 使用：
 
@@ -756,7 +762,7 @@ $$
 
 但 $C$ 必须保持为预注册测量字段或成本向量，不允许把 native latency、simulator counts、上界字节和 replay overhead 混成一个没有来源标签的标量。
 
-S/M 只有两个规模，连接线只是视觉辅助；两个真实分区和三个 native producer 也都不是总体随机样本。因此论文报告所有 raw points、median/range 和机制级分解，不拟合 scaling exponent，不给总体 $p$ 值或置信区间，不宣称 global winner、Pareto frontier 或隐私等价。
+S/M 只有两个规模，连接线只是视觉辅助；两个真实分区和三个 native producer 也都不是总体随机样本。因此，若正式矩阵得到接纳，论文原计划报告所有 raw points、median/range 和机制级分解，不拟合 scaling exponent，不给总体 $p$ 值或置信区间，不宣称 global winner、Pareto frontier 或隐私等价。
 
 Route A 会被以下任一事实否证并转为 Route C：
 

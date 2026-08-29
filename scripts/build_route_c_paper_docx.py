@@ -34,6 +34,7 @@ BIB = PAPER / "references.bib"
 
 EN_SHORT = "VERSION-BOUND MUTABLE CSSC SPMV • ROUTE C WORKING MANUSCRIPT"
 ZH_SHORT = "DYNAMIC CSSC SPMV • ROUTE C 技术说明"
+ZH_FONT = "Hiragino Sans GB"
 EN_CORE_TITLE = (
     "Version-Bound Maintenance for Mutable Homomorphic Sparse Matrix–Vector "
     "Multiplication: A Fail-Closed Evaluation Boundary"
@@ -418,12 +419,12 @@ def _configure_numbering(doc: Document) -> None:
 def _format_figures_and_alt_text(doc: Document, *, language: str) -> None:
     descriptions = (
         [
-            "Version-bound protocol flow connecting matrix updates, query reorganization, public Cloud execution, and private Client B reconstruction.",
+            "Version-bound protocol flow: Client A owns matrix publication, metadata, the complete plan, and encrypted masks; Client B owns the query and key set, encrypts the gathered query, and reconstructs; the Cloud executes only the public program and encrypted operands.",
             "Evidence lineage from S1 and S2 through the stopped qualification to the Route C boundary; the formal campaign was not dispatched.",
         ]
         if language == "en"
         else [
-            "版本绑定协议流程：矩阵更新、查询重排、Cloud 公开执行与 Client B 私有重构共同绑定到不可变版本。",
+            "版本绑定协议流程：Client A 拥有矩阵发布、元数据、完整计划和加密掩码；Client B 拥有查询与密钥、加密重排后的查询并完成重构；Cloud 只执行公开程序和密文操作数。",
             "从 S1、S2 到一次性资格停止点的证据链；正式实验没有启动，论文转入 Route C。",
         ]
     )
@@ -506,10 +507,10 @@ def _build_chinese(raw: Path, target: Path) -> None:
     doc.core_properties.keywords = "同态加密；稀疏矩阵向量乘法；可变稀疏矩阵；可复现评估"
     for section in doc.sections:
         _configure_page(section, letter=False)
-        _set_header_footer(section, ZH_SHORT, font="Noto Sans CJK SC")
-    _format_tables(doc, font="Noto Sans CJK SC")
+        _set_header_footer(section, ZH_SHORT, font=ZH_FONT)
+    _format_tables(doc, font=ZH_FONT)
     _format_figures_and_alt_text(doc, language="zh")
-    _apply_font_everywhere(doc, "Noto Sans CJK SC")
+    _apply_font_everywhere(doc, ZH_FONT)
     _remove_empty_trailing_paragraphs(doc)
     doc.save(target)
 
