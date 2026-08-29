@@ -37,7 +37,6 @@ ROOT = Path(__file__).resolve().parents[1]
 PLAN_BYTES = (ROOT / "config/route-a-publication-plan.json").read_bytes()
 SHARD = "1" * 64
 BUILD = "2" * 64
-REQUEST = "3" * 64
 TYPED_ORACLE = "4" * 64
 CONTEXT = "5" * 64
 
@@ -74,6 +73,7 @@ def _runner() -> OpenFHERunnerBuildIdentity:
 
 
 def _key_receipt(ordinal: int) -> OpenFHEKeyMaterialReceipt:
+    request_sha256 = _sha(f"request-{ordinal}")
     return OpenFHEKeyMaterialReceipt(
         combined_frame_byte_count=1,
         combined_frame_sha256=_sha(f"evaluation-key-frame-{ordinal}"),
@@ -86,7 +86,7 @@ def _key_receipt(ordinal: int) -> OpenFHEKeyMaterialReceipt:
         key_generation_plan_sha256="9" * 64,
         key_generation_session_sha256=_sha(f"session-{ordinal}"),
         public_key_sha256=_sha(f"public-key-{ordinal}"),
-        request_sha256=REQUEST,
+        request_sha256=request_sha256,
         required_exact_indices=(),
         rotation_key_plan_sha256="a" * 64,
         rotation_segment_byte_count=1,
@@ -99,8 +99,9 @@ def _execution(
     tmp_path: Path,
     ordinal: int,
 ) -> RouteANativeReplayExecution:
+    request_sha256 = _sha(f"request-{ordinal}")
     members = (
-        _member("canonical-request", REQUEST),
+        _member("canonical-request", request_sha256),
         _member("case-binding", case.case_binding_sha256),
         _member("direct-oracle", case.direct_oracle_sha256),
         _member("structural-vector", case.structural_vector_sha256),
@@ -129,7 +130,7 @@ def _execution(
         members=members,
     )
     producer = VerifiedRouteAOpenFHEProducerResult(
-        request_sha256=REQUEST,
+        request_sha256=request_sha256,
         cloud_program_operation_inventory=(("EvalAdd", 1),),
         lifecycle_operation_inventory=(("key_generation_count", 1),),
         decrypted_results=(),
@@ -140,7 +141,7 @@ def _execution(
         publication_authority=False,
     )
     replay = VerifiedRouteAOpenFHEReplayResult(
-        request_sha256=REQUEST,
+        request_sha256=request_sha256,
         package_manifest_sha256=package.manifest_sha256,
         cloud_program_operation_inventory=producer.cloud_program_operation_inventory,
         lifecycle_operation_inventory=(
@@ -205,6 +206,40 @@ def test_guard_accepts_exact_three_fresh_recorded_replays(
     assert b'"accepted":true' in receipt.receipt_bytes
     assert b'"publication_evidence":false' in receipt.receipt_bytes
     assert b"secret-key-" not in receipt.receipt_bytes
+
+
+def test_guard_rejects_a_reused_lane_request_even_when_each_package_is_consistent(
+    case: RouteANativeCasePlan,
+    tmp_path: Path,
+) -> None:
+    executions = [_execution(case, tmp_path, ordinal) for ordinal in range(3)]
+    first_request = executions[0].producer_result.request_sha256
+    second = executions[1]
+    changed_members = tuple(
+        replace(member, sha256=first_request)
+        if member.role == "canonical-request"
+        else member
+        for member in second.package_before.members
+    )
+    changed_package = replace(second.package_before, members=changed_members)
+    changed_producer = replace(
+        second.producer_result,
+        request_sha256=first_request,
+        key_material_receipt=replace(
+            second.producer_result.key_material_receipt,
+            request_sha256=first_request,
+        ),
+    )
+    executions[1] = replace(
+        second,
+        package_before=changed_package,
+        package_after=changed_package,
+        producer_result=changed_producer,
+        replay_result=replace(second.replay_result, request_sha256=first_request),
+    )
+
+    with pytest.raises(RouteANativeGuardError, match="request identity was reused"):
+        guard_route_a_native_replays(case, tuple(executions))  # type: ignore[arg-type]
 
 
 def test_guard_rejects_reused_secret_key_material(

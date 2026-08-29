@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from fractions import Fraction
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from dynamic_cssc.mask_ledger import SQLiteMaskBindingLedger
+from dynamic_cssc.openfhe_query_runner import build_ordinary_openfhe_query_request
 from dynamic_cssc.ordinary_query_lifecycle import OrdinaryQueryLifecycleError
 from dynamic_cssc.route_a_contract import RouteAEvaluationLane
 from dynamic_cssc.route_a_native_case import (
@@ -92,6 +94,18 @@ def test_every_native_process_gets_a_fresh_query_namespace(
 
     assert len({item.lane.sha256 for item in prepared}) == 4
     assert len({item.query_identity.query_id for item in prepared}) == 4
+    assert len({item.preparation_sha256 for item in prepared}) == 4
+    request_sha256s = {
+        hashlib.sha256(
+            build_ordinary_openfhe_query_request(
+                ordinary_case.execution_bundle,  # type: ignore[arg-type]
+                item.prepared_query,  # type: ignore[arg-type]
+                repository_root=ROOT,
+            )
+        ).hexdigest()
+        for item in prepared
+    }
+    assert len(request_sha256s) == 4
     assert all(
         item.query_identity == item.lane.query_identity(ordinary_case.terminal_global_query_ordinal)
         for item in prepared

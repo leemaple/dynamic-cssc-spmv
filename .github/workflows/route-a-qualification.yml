@@ -1,0 +1,432 @@
+name: Route A one-shot non-admissible qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_s1_git_sha:
+        description: Exact reviewed Route A experiment-source S1 commit
+        required: true
+        type: string
+      expected_s2_git_sha:
+        description: Exact terminal registration-only S2 commit on main
+        required: true
+        type: string
+      expected_compatibility_receipt_sha256:
+        description: Exact ADR-0010 S1-to-S2 compatibility receipt SHA-256
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: route-a-one-shot-non-admissible-qualification
+  cancel-in-progress: false
+
+env:
+  PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}
+  PIP_DISABLE_PIP_VERSION_CHECK: '1'
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  q1:
+    name: qualification-simulator-producer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out detached exact S1
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.expected_s1_git_sha }}
+      - name: Verify workflow dispatch and exact S1 checkout
+        run: |
+          test '${{ github.event_name }}' = workflow_dispatch
+          test '${{ github.ref }}' = refs/heads/main
+          test '${{ github.sha }}' = '${{ inputs.expected_s2_git_sha }}'
+          test "$(git rev-parse HEAD)" = '${{ inputs.expected_s1_git_sha }}'
+          test -z "$(git status --porcelain=v1 --untracked-files=no)"
+      - name: Build hash-locked Python environment
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12.13'
+      - name: Install hash-locked Python dependencies outside S1
+        run: |
+          python -m venv '${{ runner.temp }}/route-a-venv'
+          "$RUNNER_TEMP/route-a-venv/bin/python" -m pip install --require-hashes -r requirements-ci.txt
+          "$RUNNER_TEMP/route-a-venv/bin/python" -m pip install --require-hashes -r requirements-publication.txt
+      - name: Verify exact S1/S2 compatibility in the locked runtime
+        run: |
+          "$RUNNER_TEMP/route-a-venv/bin/python" scripts/verify_route_a_qualification_lineage.py \
+            --repository-root '${{ github.workspace }}' \
+            --s1 '${{ inputs.expected_s1_git_sha }}' \
+            --s2 '${{ inputs.expected_s2_git_sha }}' \
+            --expected-receipt-sha256 '${{ inputs.expected_compatibility_receipt_sha256 }}'
+      - name: Run q1 simulator producer in an owned child
+        run: |
+          install -d -m 700 '${{ runner.temp }}/route-a/q1/scratch'
+          install -d -m 700 '${{ runner.temp }}/route-a/q1/out'
+          "$RUNNER_TEMP/route-a-venv/bin/python" scripts/run_route_a_qualification.py run \
+            --stage q1 \
+            --repository-root '${{ github.workspace }}' \
+            --experiment-source-sha '${{ inputs.expected_s1_git_sha }}' \
+            --workflow-head-sha '${{ inputs.expected_s2_git_sha }}' \
+            --compatibility-receipt-sha256 '${{ inputs.expected_compatibility_receipt_sha256 }}' \
+            --provider-run-id '${{ github.run_id }}' \
+            --provider-run-attempt '${{ github.run_attempt }}' \
+            --scratch-parent '${{ runner.temp }}/route-a/q1/scratch' \
+            --output-directory '${{ runner.temp }}/route-a/q1/out/artifact'
+      - name: Upload exact q1 private handoff
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: q1-simulator-pre-replay-handoff
+          path: ${{ runner.temp }}/route-a/q1/out/artifact/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  q2:
+    name: qualification-simulator-independent-replay-and-guard
+    needs: q1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out detached exact S1
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.expected_s1_git_sha }}
+      - name: Verify workflow dispatch and exact S1 checkout
+        run: |
+          test '${{ github.ref }}' = refs/heads/main
+          test '${{ github.sha }}' = '${{ inputs.expected_s2_git_sha }}'
+          test "$(git rev-parse HEAD)" = '${{ inputs.expected_s1_git_sha }}'
+          test -z "$(git status --porcelain=v1 --untracked-files=no)"
+      - name: Build hash-locked Python environment
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12.13'
+      - name: Install hash-locked Python dependencies outside S1
+        run: |
+          python -m venv '${{ runner.temp }}/route-a-venv'
+          "$RUNNER_TEMP/route-a-venv/bin/python" -m pip install --require-hashes -r requirements-ci.txt
+          "$RUNNER_TEMP/route-a-venv/bin/python" -m pip install --require-hashes -r requirements-publication.txt
+      - name: Verify exact S1/S2 compatibility in the locked runtime
+        run: |
+          "$RUNNER_TEMP/route-a-venv/bin/python" scripts/verify_route_a_qualification_lineage.py \
+            --repository-root '${{ github.workspace }}' \
+            --s1 '${{ inputs.expected_s1_git_sha }}' \
+            --s2 '${{ inputs.expected_s2_git_sha }}' \
+            --expected-receipt-sha256 '${{ inputs.expected_compatibility_receipt_sha256 }}'
+      - name: Download exact q1 provider artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: q1-simulator-pre-replay-handoff
+          path: ${{ runner.temp }}/route-a/q2/q1
+      - name: Run q2 independent simulator replay and guard
+        run: |
+          install -d -m 700 '${{ runner.temp }}/route-a/q2/scratch'
+          install -d -m 700 '${{ runner.temp }}/route-a/q2/out'
+          "$RUNNER_TEMP/route-a-venv/bin/python" scripts/run_route_a_qualification.py run \
+            --stage q2 \
+            --repository-root '${{ github.workspace }}' \
+            --experiment-source-sha '${{ inputs.expected_s1_git_sha }}' \
+            --workflow-head-sha '${{ inputs.expected_s2_git_sha }}' \
+            --compatibility-receipt-sha256 '${{ inputs.expected_compatibility_receipt_sha256 }}' \
+            --provider-run-id '${{ github.run_id }}' \
+            --provider-run-attempt '${{ github.run_attempt }}' \
+            --scratch-parent '${{ runner.temp }}/route-a/q2/scratch' \
+            --output-directory '${{ runner.temp }}/route-a/q2/out/artifact' \
+            --producer-artifact-directory '${{ runner.temp }}/route-a/q2/q1'
+      - name: Upload exact q2 guarded result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: q2-simulator-guarded-receipt
+          path: ${{ runner.temp }}/route-a/q2/out/artifact/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  q3:
+    name: qualification-native-case-shaped-producer
+    needs: q2
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      BUILD_JOBS: '2'
+      OMP_NUM_THREADS: '2'
+    outputs:
+      manifest_sha256: ${{ steps.native.outputs.manifest_sha256 }}
+    steps:
+      - name: Check out detached exact S1
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.expected_s1_git_sha }}
+      - name: Verify workflow dispatch and exact S1 checkout
+        run: |
+          test '${{ github.ref }}' = refs/heads/main
+          test '${{ github.sha }}' = '${{ inputs.expected_s2_git_sha }}'
+          test "$(git rev-parse HEAD)" = '${{ inputs.expected_s1_git_sha }}'
+          test -z "$(git status --porcelain=v1 --untracked-files=no)"
+      - name: Build hash-locked Python environment
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12.13'
+      - name: Install Python and native build dependencies
+        run: |
+          python -m venv '${{ runner.temp }}/route-a-venv'
+          "$RUNNER_TEMP/route-a-venv/bin/python" -m pip install --require-hashes -r requirements-ci.txt
+          "$RUNNER_TEMP/route-a-venv/bin/python" -m pip install --require-hashes -r requirements-publication.txt
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libomp-dev
+      - name: Verify exact S1/S2 compatibility in the locked runtime
+        run: |
+          "$RUNNER_TEMP/route-a-venv/bin/python" scripts/verify_route_a_qualification_lineage.py \
+            --repository-root '${{ github.workspace }}' \
+            --s1 '${{ inputs.expected_s1_git_sha }}' \
+            --s2 '${{ inputs.expected_s2_git_sha }}' \
+            --expected-receipt-sha256 '${{ inputs.expected_compatibility_receipt_sha256 }}'
+      - name: Build pinned OpenFHE and the exact query runner
+        run: |
+          scripts/bootstrap_openfhe.sh
+          scripts/build_cpp.sh
+      - name: Run one discarded warm-up and three fresh-key native producers
+        id: native
+        run: |
+          install -d -m 700 '${{ runner.temp }}/route-a/q3/scratch'
+          install -d -m 700 '${{ runner.temp }}/route-a/q3/out'
+          "$RUNNER_TEMP/route-a-venv/bin/python" scripts/run_route_a_native_qualification.py \
+            --stage q3 \
+            --repository-root '${{ github.workspace }}' \
+            --experiment-source-sha '${{ inputs.expected_s1_git_sha }}' \
+            --workflow-head-sha '${{ inputs.expected_s2_git_sha }}' \
+            --compatibility-receipt-sha256 '${{ inputs.expected_compatibility_receipt_sha256 }}' \
+            --provider-run-id '${{ github.run_id }}' \
+            --provider-run-attempt '${{ github.run_attempt }}' \
+            --scratch-parent '${{ runner.temp }}/route-a/q3/scratch' \
+            --output-directory '${{ runner.temp }}/route-a/q3/out/artifact' \
+            > '${{ runner.temp }}/route-a/q3/receipt.json'
+          Q3_MANIFEST="$("$RUNNER_TEMP/route-a-venv/bin/python" -c \
+            'import json,sys; print(json.load(open(sys.argv[1]))["manifest_sha256"])' \
+            '${{ runner.temp }}/route-a/q3/receipt.json')"
+          [[ "$Q3_MANIFEST" =~ ^[0-9a-f]{64}$ ]]
+          echo "manifest_sha256=$Q3_MANIFEST" >> "$GITHUB_OUTPUT"
+      - name: Upload exact q3 build and three retained packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: q3-native-pre-replay-build-plus-three-retained-packages
+          path: ${{ runner.temp }}/route-a/q3/out/artifact/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  q4:
+    name: qualification-native-independent-replay-and-guard
+    needs: q3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      OMP_NUM_THREADS: '2'
+    steps:
+      - name: Check out detached exact S1
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.expected_s1_git_sha }}
+      - name: Verify workflow dispatch and exact S1 checkout
+        run: |
+          test '${{ github.ref }}' = refs/heads/main
+          test '${{ github.sha }}' = '${{ inputs.expected_s2_git_sha }}'
+          test "$(git rev-parse HEAD)" = '${{ inputs.expected_s1_git_sha }}'
+          test -z "$(git status --porcelain=v1 --untracked-files=no)"
+      - name: Build hash-locked Python environment
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12.13'
+      - name: Install hash-locked Python dependencies outside S1
+        run: |
+          python -m venv '${{ runner.temp }}/route-a-venv'
+          "$RUNNER_TEMP/route-a-venv/bin/python" -m pip install --require-hashes -r requirements-ci.txt
+          "$RUNNER_TEMP/route-a-venv/bin/python" -m pip install --require-hashes -r requirements-publication.txt
+      - name: Verify exact S1/S2 compatibility in the locked runtime
+        run: |
+          "$RUNNER_TEMP/route-a-venv/bin/python" scripts/verify_route_a_qualification_lineage.py \
+            --repository-root '${{ github.workspace }}' \
+            --s1 '${{ inputs.expected_s1_git_sha }}' \
+            --s2 '${{ inputs.expected_s2_git_sha }}' \
+            --expected-receipt-sha256 '${{ inputs.expected_compatibility_receipt_sha256 }}'
+      - name: Download exact q3 provider artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: q3-native-pre-replay-build-plus-three-retained-packages
+          path: ${{ runner.temp }}/route-a/q4/q3
+      - name: Replay all three exact packages and guard the native case
+        run: |
+          install -d -m 700 '${{ runner.temp }}/route-a/q4/scratch'
+          install -d -m 700 '${{ runner.temp }}/route-a/q4/out'
+          "$RUNNER_TEMP/route-a-venv/bin/python" scripts/run_route_a_native_qualification.py \
+            --stage q4 \
+            --repository-root '${{ github.workspace }}' \
+            --experiment-source-sha '${{ inputs.expected_s1_git_sha }}' \
+            --workflow-head-sha '${{ inputs.expected_s2_git_sha }}' \
+            --compatibility-receipt-sha256 '${{ inputs.expected_compatibility_receipt_sha256 }}' \
+            --provider-run-id '${{ github.run_id }}' \
+            --provider-run-attempt '${{ github.run_attempt }}' \
+            --scratch-parent '${{ runner.temp }}/route-a/q4/scratch' \
+            --output-directory '${{ runner.temp }}/route-a/q4/out/artifact' \
+            --q3-artifact-directory '${{ runner.temp }}/route-a/q4/q3' \
+            --expected-q3-manifest-sha256 '${{ needs.q3.outputs.manifest_sha256 }}'
+      - name: Upload exact q4 native guarded result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: q4-native-guarded-case-bundle
+          path: ${{ runner.temp }}/route-a/q4/out/artifact/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  q5:
+    name: qualification-combined-guard
+    needs: q4
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out detached exact S1
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.expected_s1_git_sha }}
+      - name: Verify workflow dispatch and exact S1 checkout
+        run: |
+          test '${{ github.ref }}' = refs/heads/main
+          test '${{ github.sha }}' = '${{ inputs.expected_s2_git_sha }}'
+          test "$(git rev-parse HEAD)" = '${{ inputs.expected_s1_git_sha }}'
+          test -z "$(git status --porcelain=v1 --untracked-files=no)"
+      - name: Build hash-locked Python environment
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12.13'
+      - name: Install hash-locked Python dependencies outside S1
+        run: |
+          python -m venv '${{ runner.temp }}/route-a-venv'
+          "$RUNNER_TEMP/route-a-venv/bin/python" -m pip install --require-hashes -r requirements-ci.txt
+          "$RUNNER_TEMP/route-a-venv/bin/python" -m pip install --require-hashes -r requirements-publication.txt
+      - name: Verify exact S1/S2 compatibility in the locked runtime
+        run: |
+          "$RUNNER_TEMP/route-a-venv/bin/python" scripts/verify_route_a_qualification_lineage.py \
+            --repository-root '${{ github.workspace }}' \
+            --s1 '${{ inputs.expected_s1_git_sha }}' \
+            --s2 '${{ inputs.expected_s2_git_sha }}' \
+            --expected-receipt-sha256 '${{ inputs.expected_compatibility_receipt_sha256 }}'
+      - name: Read q2/q4 provider metadata and exact wrapper bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          install -d -m 700 '${{ runner.temp }}/route-a/q5/provider'
+          gh api '/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100' \
+            > '${{ runner.temp }}/route-a/q5/provider/artifacts.json'
+          Q2_ID="$(jq -er '.artifacts | map(select(.name == "q2-simulator-guarded-receipt")) | if length == 1 then .[0].id else error("q2 identity") end' '${{ runner.temp }}/route-a/q5/provider/artifacts.json')"
+          Q4_ID="$(jq -er '.artifacts | map(select(.name == "q4-native-guarded-case-bundle")) | if length == 1 then .[0].id else error("q4 identity") end' '${{ runner.temp }}/route-a/q5/provider/artifacts.json')"
+          gh api "/repos/${{ github.repository }}/actions/artifacts/$Q2_ID/zip" \
+            > '${{ runner.temp }}/route-a/q5/provider/q2.zip'
+          gh api "/repos/${{ github.repository }}/actions/artifacts/$Q4_ID/zip" \
+            > '${{ runner.temp }}/route-a/q5/provider/q4.zip'
+      - name: Run q5 combined functional and structural guard
+        run: |
+          install -d -m 700 '${{ runner.temp }}/route-a/q5/scratch'
+          install -d -m 700 '${{ runner.temp }}/route-a/q5/out'
+          "$RUNNER_TEMP/route-a-venv/bin/python" scripts/run_route_a_combined_guard.py \
+            --repository-root '${{ github.workspace }}' \
+            --experiment-source-sha '${{ inputs.expected_s1_git_sha }}' \
+            --workflow-head-sha '${{ inputs.expected_s2_git_sha }}' \
+            --compatibility-receipt-sha256 '${{ inputs.expected_compatibility_receipt_sha256 }}' \
+            --provider-run-id '${{ github.run_id }}' \
+            --provider-run-attempt '${{ github.run_attempt }}' \
+            --provider-artifacts-json '${{ runner.temp }}/route-a/q5/provider/artifacts.json' \
+            --q2-wrapper '${{ runner.temp }}/route-a/q5/provider/q2.zip' \
+            --q4-wrapper '${{ runner.temp }}/route-a/q5/provider/q4.zip' \
+            --scratch-parent '${{ runner.temp }}/route-a/q5/scratch' \
+            --output-directory '${{ runner.temp }}/route-a/q5/out/artifact'
+      - name: Upload exact q5 combined guard
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: q5-combined-guard-bundle
+          path: ${{ runner.temp }}/route-a/q5/out/artifact/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  q6:
+    name: qualification-postrun-resource-admission
+    needs: q5
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out detached exact S1
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.expected_s1_git_sha }}
+      - name: Verify workflow dispatch and exact S1 checkout
+        run: |
+          test '${{ github.ref }}' = refs/heads/main
+          test '${{ github.sha }}' = '${{ inputs.expected_s2_git_sha }}'
+          test "$(git rev-parse HEAD)" = '${{ inputs.expected_s1_git_sha }}'
+          test -z "$(git status --porcelain=v1 --untracked-files=no)"
+      - name: Build hash-locked Python environment
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12.13'
+      - name: Install hash-locked Python dependencies outside S1
+        run: |
+          python -m venv '${{ runner.temp }}/route-a-venv'
+          "$RUNNER_TEMP/route-a-venv/bin/python" -m pip install --require-hashes -r requirements-ci.txt
+          "$RUNNER_TEMP/route-a-venv/bin/python" -m pip install --require-hashes -r requirements-publication.txt
+      - name: Verify exact S1/S2 compatibility in the locked runtime
+        run: |
+          "$RUNNER_TEMP/route-a-venv/bin/python" scripts/verify_route_a_qualification_lineage.py \
+            --repository-root '${{ github.workspace }}' \
+            --s1 '${{ inputs.expected_s1_git_sha }}' \
+            --s2 '${{ inputs.expected_s2_git_sha }}' \
+            --expected-receipt-sha256 '${{ inputs.expected_compatibility_receipt_sha256 }}'
+      - name: Read final q1-q5 and live q6 provider state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          install -d -m 700 '${{ runner.temp }}/route-a/q6/provider'
+          gh api '/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}' \
+            > '${{ runner.temp }}/route-a/q6/provider/run.json'
+          gh api '/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs?per_page=100' \
+            > '${{ runner.temp }}/route-a/q6/provider/jobs.json'
+          gh api '/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?per_page=100' \
+            > '${{ runner.temp }}/route-a/q6/provider/artifacts.json'
+      - name: Produce authority-false q6 postrun record
+        run: |
+          install -d -m 700 '${{ runner.temp }}/route-a/q6/out'
+          "$RUNNER_TEMP/route-a-venv/bin/python" scripts/run_route_a_postrun_admission.py \
+            --repository-root '${{ github.workspace }}' \
+            --experiment-source-sha '${{ inputs.expected_s1_git_sha }}' \
+            --expected-s2-git-sha '${{ inputs.expected_s2_git_sha }}' \
+            --expected-head-branch main \
+            --expected-run-id '${{ github.run_id }}' \
+            --expected-run-attempt '${{ github.run_attempt }}' \
+            --run-json '${{ runner.temp }}/route-a/q6/provider/run.json' \
+            --jobs-json '${{ runner.temp }}/route-a/q6/provider/jobs.json' \
+            --artifacts-json '${{ runner.temp }}/route-a/q6/provider/artifacts.json' \
+            --output-directory '${{ runner.temp }}/route-a/q6/out/artifact'
+      - name: Upload exact q6 postrun admission record
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: q6-postrun-resource-admission-record
+          path: ${{ runner.temp }}/route-a/q6/out/artifact/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0

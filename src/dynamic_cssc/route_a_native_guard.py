@@ -53,7 +53,6 @@ _FRESH_ROLES = (
     "producer-result-ciphertext",
 )
 _COMMON_ROLES = (
-    "canonical-request",
     "case-binding",
     "direct-oracle",
     "structural-vector",
@@ -175,6 +174,7 @@ def guard_route_a_native_replays(
     fresh_roots: dict[str, list[str]] = {role: [] for role in _FRESH_ROLES}
     package_manifests: list[str] = []
     lane_bindings: list[str] = []
+    request_sha256s: list[str] = []
     resource_rows: list[dict[str, int]] = []
 
     for process_ordinal, execution in zip(expected_ordinals, executions, strict=True):
@@ -205,9 +205,9 @@ def guard_route_a_native_replays(
             or package.case_binding_sha256 != case.case_binding_sha256
             or package.build_manifest_sha256 != first_package.build_manifest_sha256
             or replay.package_manifest_sha256 != package.manifest_sha256
-            or producer.request_sha256 != first_producer.request_sha256
             or _singleton_digest(package, "canonical-request") != producer.request_sha256
             or replay.request_sha256 != producer.request_sha256
+            or producer.key_material_receipt.request_sha256 != producer.request_sha256
             or producer.cloud_program_operation_inventory != cloud_inventory
             or replay.cloud_program_operation_inventory != cloud_inventory
             or producer.lifecycle_operation_inventory != producer_lifecycle
@@ -252,6 +252,7 @@ def guard_route_a_native_replays(
             raise RouteANativeGuardError("native replay package or common binding changed")
         package_manifests.append(package.manifest_sha256)
         lane_bindings.append(package.lane_binding_sha256)
+        request_sha256s.append(producer.request_sha256)
         for role in _FRESH_ROLES:
             fresh_roots[role].append(_role_root(package, role))
         resource_rows.append(
@@ -263,8 +264,12 @@ def guard_route_a_native_replays(
             }
         )
 
-    if len(set(package_manifests)) != 3 or len(set(lane_bindings)) != 3:
-        raise RouteANativeGuardError("native recorded package/lane identity was reused")
+    if (
+        len(set(package_manifests)) != 3
+        or len(set(lane_bindings)) != 3
+        or len(set(request_sha256s)) != 3
+    ):
+        raise RouteANativeGuardError("native recorded package/lane/request identity was reused")
     if any(len(set(values)) != 3 for values in fresh_roots.values()):
         raise RouteANativeGuardError("native disposable cryptographic material was reused")
     coverage = dict(case.mechanism_coverage)

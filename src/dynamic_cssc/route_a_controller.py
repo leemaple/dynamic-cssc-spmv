@@ -395,7 +395,7 @@ class GitHubActionsQualificationProvider:
             or any(type(job) is not dict for job in raw_jobs)
         ):
             raise RouteAControllerError("GitHub qualification job list is incomplete")
-        jobs = tuple(
+        parsed_jobs = tuple(
             RouteAJobSnapshot(
                 database_id=_provider_integer(job.get("id"), "job.id"),
                 name=_provider_string(job.get("name"), "job.name"),
@@ -406,6 +406,15 @@ class GitHubActionsQualificationProvider:
             )
             for job in raw_jobs
         )
+        jobs_by_name = {job.name: job for job in parsed_jobs}
+        if (
+            len(jobs_by_name) != len(parsed_jobs)
+            or set(jobs_by_name) != set(_QUALIFICATION_JOB_NAMES)
+        ):
+            raise RouteAControllerError(
+                "GitHub qualification job identity set is missing, extra, or duplicated"
+            )
+        jobs = tuple(jobs_by_name[name] for name in _QUALIFICATION_JOB_NAMES)
 
         raw_artifacts = artifacts_document.get("artifacts")
         if (
@@ -735,11 +744,19 @@ def _decode_q6_archive(archive_bytes: bytes) -> dict[str, object]:
     try:
         with zipfile.ZipFile(io.BytesIO(archive_bytes), "r") as archive:
             members = archive.infolist()
-            if [member.filename for member in members] != [_Q6_RECORD_NAME, _CHECKSUMS_NAME]:
+            names = [member.filename for member in members]
+            if (
+                archive.comment
+                or len(names) != 2
+                or len(names) != len(set(names))
+                or set(names) != {_Q6_RECORD_NAME, _CHECKSUMS_NAME}
+            ):
                 raise RouteAControllerError("q6 artifact archive has missing or extra members")
             if any(
                 member.is_dir()
                 or member.flag_bits & 0x1
+                or member.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}
+                or stat.S_IFMT(member.external_attr >> 16) not in {0, stat.S_IFREG}
                 or member.file_size <= 0
                 or member.file_size > _MAX_Q6_RECORD_BYTES
                 for member in members

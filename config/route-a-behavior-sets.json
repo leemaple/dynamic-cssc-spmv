@@ -115,6 +115,7 @@
     },
     "qualification": {
       "paths": [
+        ".github/workflows/route-a-qualification.yml",
         "config/route-a-behavior-sets.json",
         "config/route-a-publication-plan.json",
         "cpp/CMakeLists.txt",
@@ -128,7 +129,11 @@
         "schemas/route-a-strategy-cell-v2.schema.json",
         "scripts/bootstrap_openfhe.sh",
         "scripts/build_cpp.sh",
+        "scripts/run_route_a_combined_guard.py",
+        "scripts/run_route_a_native_qualification.py",
+        "scripts/run_route_a_postrun_admission.py",
         "scripts/run_route_a_qualification.py",
+        "scripts/verify_route_a_qualification_lineage.py",
         "src/dynamic_cssc/cloud_execution_plan.py",
         "src/dynamic_cssc/cssc.py",
         "src/dynamic_cssc/events.py",
@@ -147,10 +152,15 @@
         "src/dynamic_cssc/route_a_evaluation.py",
         "src/dynamic_cssc/route_a_guard.py",
         "src/dynamic_cssc/route_a_lineage.py",
+        "src/dynamic_cssc/route_a_native_build.py",
         "src/dynamic_cssc/route_a_native_case.py",
+        "src/dynamic_cssc/route_a_native_guard.py",
         "src/dynamic_cssc/route_a_native_invocation.py",
         "src/dynamic_cssc/route_a_native_runtime.py",
+        "src/dynamic_cssc/route_a_native_suite.py",
         "src/dynamic_cssc/route_a_openfhe_package.py",
+        "src/dynamic_cssc/route_a_postrun_admission.py",
+        "src/dynamic_cssc/route_a_qualification_guard.py",
         "src/dynamic_cssc/route_a_qualification_runtime.py",
         "src/dynamic_cssc/route_a_replay.py",
         "src/dynamic_cssc/route_a_results.py",
@@ -165,7 +175,7 @@
         "src/dynamic_cssc/strong_execution.py",
         "src/dynamic_cssc/strong_packed_coo.py"
       ],
-      "schema_version": "dynamic-cssc-route-a-qualification-behavior-set-v3"
+      "schema_version": "dynamic-cssc-route-a-qualification-behavior-set-v4"
     }
   },
   "schema_version": "dynamic-cssc-route-a-behavior-set-registry-v3",

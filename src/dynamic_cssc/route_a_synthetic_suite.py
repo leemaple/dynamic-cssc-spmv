@@ -54,6 +54,7 @@ __all__ = (
     "inspect_route_a_synthetic_suite_replay",
     "produce_route_a_synthetic_suite_handoff",
     "replay_and_guard_route_a_synthetic_suite",
+    "route_a_synthetic_shard_identity",
     "route_a_synthetic_suite_stage_names",
 )
 
@@ -317,7 +318,15 @@ class RouteASyntheticSuiteLineage:
         )
 
 
-def _shard_identity(trace: RouteASyntheticTrace, lineage: RouteASyntheticSuiteLineage) -> str:
+def route_a_synthetic_shard_identity(
+    trace: RouteASyntheticTrace,
+    lineage: RouteASyntheticSuiteLineage,
+) -> str:
+    """Derive the one shared simulator/native identity for a synthetic unit."""
+
+    trace = validate_route_a_synthetic_trace(trace)
+    if type(lineage) is not RouteASyntheticSuiteLineage:
+        raise TypeError("lineage must be an exact RouteASyntheticSuiteLineage")
     return hashlib.sha256(
         canonical_route_a_document(
             {
@@ -467,7 +476,7 @@ def produce_route_a_synthetic_suite_handoff(
     ):
         raise RouteASyntheticSuiteError("Route A suite machine plan digest changed")
     _require_empty_scratch(scratch_root)
-    shard_identity = _shard_identity(trace, lineage)
+    shard_identity = route_a_synthetic_shard_identity(trace, lineage)
     stages = _RegisteredStageSequence("q1", stage_observer)
     stages.observe_next()
     members: list[tuple[str, bytes]] = [
@@ -551,7 +560,7 @@ def inspect_route_a_synthetic_suite_handoff(
         or members["source-trace.json"] != trace.event_trace_bytes
     ):
         raise RouteASyntheticSuiteError("Route A producer suite source or lineage changed")
-    shard_identity = _shard_identity(trace, lineage)
+    shard_identity = route_a_synthetic_shard_identity(trace, lineage)
     cell_archives: list[tuple[str, Fraction, bytes]] = []
     rho10_cells: list[RouteACanonicalStrategyCell] = []
     for strategy_ordinal, strategy in enumerate(_STRATEGIES):
@@ -731,7 +740,7 @@ def inspect_route_a_synthetic_suite_replay(
     lineage = RouteASyntheticSuiteLineage.from_bytes(members["lineage.json"])
     if lineage != expected_lineage or members["source-trace.json"] != trace.event_trace_bytes:
         raise RouteASyntheticSuiteError("Route A replay suite source or lineage changed")
-    shard_identity = _shard_identity(trace, lineage)
+    shard_identity = route_a_synthetic_shard_identity(trace, lineage)
     final_cells: list[RouteACanonicalStrategyCell] = []
     replay_receipts: list[bytes] = []
     guard_receipts: list[bytes] = []

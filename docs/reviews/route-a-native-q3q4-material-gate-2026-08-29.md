@@ -1,6 +1,6 @@
 # Route A native q3/q4 material-gate disposition (2026-08-29)
 
-- Review state: `TERMINAL-EXTERNAL-REVIEW-CLOSED-IMPLEMENTATION-IN-PROGRESS`
+- Review state: `Q3-Q6-LOCAL-IMPLEMENTATION-IN-PROGRESS-NO-DISPATCH`
 - Experiment-source base: `5d5c41af2ff8a5a65dd0ea0b4e69296a1c6a7a00`
 - Review packet: `route-a-native-q3q4-review-20260829.zip`
 - Packet SHA-256: `7bdb24b14938097c2e8158032417f81e135831070a93c2589d06145133ed22b7`
@@ -29,8 +29,10 @@ pre/post ledger-byte equality. The current local contract evidence is:
 
 Those facts close the Python-side query-ID, single-use lifecycle, per-recorded-
 lane package, route-specific producer/replay verifier, package reinspection,
-and three-package native guard seams. They do not yet close the full q3/q4
-stage artifact or the qualification workflow.
+and three-package native guard seams. The later local implementation adds the
+q3/q4 stage artifacts and the q5/q6 qualification seams, but exact-head Linux
+CI, PRE-S1, final external review, S1/S2, and the one-shot qualification remain
+unperformed.
 
 ## Reviewer status
 
@@ -82,6 +84,30 @@ from the single already-hashed manifest snapshot, catches deserialization
 exceptions, and binds both Python Route A result verifiers to the exact
 canonical request re-derived from their typed inputs. These follow-up bytes
 still require an exact-head GitHub rerun before the material gate closes.
+
+A later implementation review was run from the local Terminal Claude Code CLI,
+not the AIGoCode web chat. It used exact model `claude-fable-5`, `effort=max`,
+and read-only `permission-mode=plan`. The first pass returned `AMEND`,
+P0=0/P1=2/P2=6. Its two P1s required an externally supplied q3 stage-manifest
+address at q4 ingress and direct orchestration/CLI coverage. The P2s requested
+cross-checks between retained build identity and inventory, exact file modes,
+strict Git source identity, exact receipt shapes, pre-install case rejection,
+and hostile archive/output tests. All eight were implemented and regression
+tested.
+
+The single permitted counter-review closed all eight original findings, then
+found a new P0 in the fixtures and guard: the code required one common
+canonical-request digest across fresh-key lanes. That is impossible for the
+real path because each lane has a distinct query identity, preparation, fresh
+ciphertexts, and canonical request. The corrected invariant is now exact:
+producer and replay request bytes are equal *within* each retained package,
+while the warm-up and three recorded producer requests are pairwise distinct,
+and the three recorded replay requests are pairwise distinct. A real
+preparation/request-construction regression proves four distinct lane, query,
+preparation, and request roots. The targeted result is 20 passing tests; the
+expanded q3/q4 family is 60 passing tests. This closes the counter-review P0
+locally, but it is not an exact-commit PASS until the final candidate is
+committed and re-reviewed.
 
 ### ChatGPT Pro through Ego Lite
 
@@ -214,9 +240,11 @@ and replay verifiers so a mode flag cannot weaken the Day 1B count contract.
 
 ### 7. Fresh-key cross-package guard
 
-For the three recorded packages in one case, the guard requires equal request,
-program, typed-oracle, direct-oracle, case, structural-vector, and operation
-inventories. It requires pairwise distinct disposable secret-key, public-key,
+For the three recorded packages in one case, the guard requires equal typed-
+oracle, direct-oracle, case, structural-vector, and Cloud-program operation
+inventories. For each package, producer request bytes must equal its exact
+replay request bytes. Across the three recorded lanes, canonical request roots
+must be pairwise distinct, as must the disposable secret-key, public-key,
 evaluation-key-frame, encrypted-operand-inventory, and producer-result roots.
 The CryptoContext profile binding must be equal; its serialized bytes are not
 used as a freshness discriminator.
@@ -226,15 +254,18 @@ used as a freshness discriminator.
 The material gate does not pass merely because the candidate decisions above
 are coherent. Before q3/q4 can be called runnable, the implementation must add:
 
-1. rerun pinned OpenFHE PRE-S1 on the final follow-up bytes and close the exact
-   compile/API audit head;
-2. run the four process lanes as one discarded warm-up plus three recorded
-   fresh-key packages and enforce the cross-package guard;
-3. add stage-observed q3/q4 owned-child execution and cleanup;
-4. add tiny non-S/M native producer/replay coverage on the pinned OpenFHE build;
-5. close the native structural-vector and timing whitelist gate; and
-6. close Behavior Set, PRE-S1, workflow, and hash bindings before the one-shot
-   M run.
+1. commit the complete q3–q6 candidate and rerun pinned OpenFHE PRE-S1 on that
+   exact head;
+2. close the exact six-job workflow, Behavior Set, workflow-contract, and
+   stage-artifact tests under exact-head Linux CI;
+3. obtain terminal exact-candidate reviews from ChatGPT Pro, ZCode when
+   available, and one final read-only Fable 5 pass;
+4. freeze S1, produce and independently inspect the descriptive registration,
+   install only the reviewed data anchor as S2, and re-prove S1/S2 compatibility;
+5. dispatch the qualification exactly once from terminal S2 only if every
+   prior gate is green, with the external 45-minute stop-loss; and
+6. let the external live controller—not q6 or this note—make the final fresh
+   55-minute postrun decision.
 
 Until those items and all terminal external-review P0/P1 findings are closed,
 qualification dispatch remains forbidden.

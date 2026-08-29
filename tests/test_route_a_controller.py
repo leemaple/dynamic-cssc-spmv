@@ -89,6 +89,27 @@ def _q6_archive(record: dict[str, object]) -> bytes:
     return output.getvalue()
 
 
+def test_q6_wrapper_member_order_is_not_treated_as_provider_identity() -> None:
+    observation = _successful_observation()
+    with zipfile.ZipFile(io.BytesIO(observation.q6_archive_bytes), "r") as source:
+        record_bytes = source.read("route-a-qualification-postrun.json")
+        checksum_bytes = source.read("checksums.sha256")
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
+        for name, content in (
+            ("checksums.sha256", checksum_bytes),
+            ("route-a-qualification-postrun.json", record_bytes),
+        ):
+            member = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            member.compress_type = zipfile.ZIP_STORED
+            member.external_attr = 0o100600 << 16
+            archive.writestr(member, content)
+
+    assert route_a_controller_module._decode_q6_archive(output.getvalue()) == json.loads(  # noqa: SLF001
+        record_bytes
+    )
+
+
 def _successful_observation() -> RouteAProviderObservation:
     observed_at = datetime(2026, 8, 28, 6, 0, tzinfo=UTC)
     source_sha = "a" * 40

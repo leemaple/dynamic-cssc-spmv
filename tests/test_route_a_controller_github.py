@@ -131,6 +131,22 @@ def test_github_provider_normalizes_only_the_frozen_api_fields(tmp_path: Path) -
     ]
 
 
+def test_github_provider_normalizes_job_presentation_order(tmp_path: Path) -> None:
+    plan_source = Path(__file__).resolve().parents[1] / "config/route-a-publication-plan.json"
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/route-a-publication-plan.json").write_bytes(plan_source.read_bytes())
+    responses = _responses()
+    jobs_url = "https://api.example.test/repos/owner/repository/actions/runs/999/jobs?per_page=100"
+    jobs = json.loads(responses[jobs_url])
+    jobs["jobs"].reverse()
+    responses[jobs_url] = _json_bytes(jobs)
+    provider, _ = _provider(tmp_path, responses)
+
+    observation = provider.read_qualification(999)
+
+    assert [job.database_id for job in observation.jobs] == list(range(100, 106))
+
+
 def test_github_provider_rejects_missing_or_duplicate_q6_artifact(tmp_path: Path) -> None:
     plan_source = Path(__file__).resolve().parents[1] / "config/route-a-publication-plan.json"
     (tmp_path / "config").mkdir()
