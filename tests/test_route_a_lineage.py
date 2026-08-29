@@ -113,18 +113,43 @@ def _repository(tmp_path: Path) -> tuple[Path, str]:
     return repository, _commit(repository, "S1")
 
 
-def test_current_head_registry_is_capturable_for_qualification() -> None:
-    head = _git(REPOSITORY_ROOT, "rev-parse", "HEAD")
+def test_installed_route_a_s1_registry_is_capturable_for_qualification() -> None:
+    anchor_set = json.loads(
+        (REPOSITORY_ROOT / ROUTE_A_REGISTRATION_ANCHOR_PATH).read_text(
+            encoding="ascii"
+        )
+    )
+    [anchor] = anchor_set["anchors"]
+    s1 = anchor["source_git_sha"]
 
     inventory = capture_route_a_behavior_inventory(
         REPOSITORY_ROOT,
-        head,
+        s1,
         "qualification",
     )
 
-    assert inventory.document["source_git_sha"] == head
+    assert inventory.document["source_git_sha"] == s1
     assert inventory.document["role"] == "qualification"
     assert inventory.sha256 == hashlib.sha256(inventory.document_bytes).hexdigest()
+    assert inventory.sha256 == anchor["behavior_inventory_sha256"]["qualification"]
+
+
+def test_current_route_c_head_is_not_relabeled_as_route_a_s1() -> None:
+    anchor_set = json.loads(
+        (REPOSITORY_ROOT / ROUTE_A_REGISTRATION_ANCHOR_PATH).read_text(
+            encoding="ascii"
+        )
+    )
+    [anchor] = anchor_set["anchors"]
+    head = _git(REPOSITORY_ROOT, "rev-parse", "HEAD")
+
+    assert head != anchor["source_git_sha"]
+    with pytest.raises(RouteALineageError, match="Stage-1 document blob is not exact"):
+        capture_route_a_behavior_inventory(
+            REPOSITORY_ROOT,
+            head,
+            "qualification",
+        )
 
 
 def test_route_a_registered_validation_tests_are_frozen() -> None:
