@@ -27,7 +27,7 @@ __all__ = (
 )
 
 ROUTE_A_CELL_SCHEMA = "dynamic-cssc-route-a-strategy-cell-v2"
-ROUTE_A_MACHINE_PLAN_SHA256 = "5895fde4760ee6651b1fe34da35d14892e2f84e482ad8d2bd45caa8afc49d17b"
+ROUTE_A_MACHINE_PLAN_SHA256 = "ce09c1c9c82032ba8439188ce20d4cd8d6310a386efbe2d436595fd779b7268c"
 _RHO10_TRANSFORM_ID = "rho1-to-rho10-exact-query-linearity-v1"
 _RHO10_ENVELOPE_SCHEMA = "dynamic-cssc-route-a-rho10-integrity-envelope-v1"
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")

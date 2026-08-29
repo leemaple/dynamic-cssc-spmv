@@ -94,22 +94,28 @@ The live controller treats q1 through q5 as one exact serial prefix. A q5
 success is insufficient unless every member of that prefix is present,
 completed, and successful; an earlier failure followed by a hostile q5 success
 therefore cancels fail-closed. The authority-false stop-loss record uses schema
-`dynamic-cssc-route-a-live-stop-loss-v2` and separates controller-clock fields
+`dynamic-cssc-route-a-live-stop-loss-v3` and separates controller-clock fields
 (`controller_detection_utc`, `cancel_request_utc`, `provider_api_ack_utc`, and
 `watch_decided_utc`) from GitHub's provider-clock `run.updated_at`, retained as
 `provider_terminal_updated_utc`, and from the exact terminal conclusion. It
 never invents a workflow-run `completedAt` or subtracts timestamps from two
-clocks. Same-clock elapsed values are nonnegative and rounded upward to whole
-seconds; pre-threshold job failure has null detection lag.
+clocks. The live 45-minute decision compares provider q1 time only with the
+nondecreasing HTTPS `Date` headers returned by the sequential run/jobs metadata
+reads. Each bound same-provider-clock remaining duration maps onto an
+earliest-only local fail-safe deadline that later observations may tighten but
+never extend. Same-controller-clock request/ack and ack/decision
+elapsed values are nonnegative and rounded upward to whole seconds; no
+cross-clock detection lag is emitted.
 
 API JSON reads and cancellation POSTs reject every redirect. Only the bounded
 q6 artifact GET may follow at most three safe HTTPS redirects, and every such
 hop is tokenless. Tests cover a failed q4 followed by a hostile q5 success,
 terminal `cancelled`/`failure`/`success` conclusions, provider failure, q1
 identity mutation, the exact ten-minute observation boundary, plan-to-record
-field equivalence, direct authenticated API access, redirect rejection, and
-token stripping. None of these records or transports serializes a positive
-authority bit.
+field equivalence, provider-clock offsets, delayed post-cancel reads, direct
+authenticated API access, HTTPS `Date` parsing, redirect rejection, and token
+stripping. None of these records or transports serializes a positive authority
+bit.
 
 ## Freeze and claim disposition
 

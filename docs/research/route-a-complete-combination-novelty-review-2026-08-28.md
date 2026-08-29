@@ -13,8 +13,8 @@
 - Route A 审计稿：
   [`publication-preregistration-route-a.md`](../paper/publication-preregistration-route-a.md)
 - Route A 最终候选 SHA-256：
-  `bdc4ae8e231cdb45b07be543f29cdb02cd330315c4b85364625b4231f8400d62`
-- Route A 最终候选行数：`1503`
+  `6b53a73c6973a4be53d195f5d9407e7e023ae3a5617bce57b4a40a7033a32f79`
+- Route A 最终候选行数：`1518`
 - 起点边界报告 SHA-256：
   `0984b0c7f537c40cff852b3662f5f866c37f4eed227b286e4db89f428fed8925`
 - 起点 `references.bib` SHA-256：
@@ -29,6 +29,9 @@
 状态、字节权威、查询向量、冻结顺序和证明义务；逐字复核 §1.1 与 §2.1--§2.5 后，
 冻结贡献句以及 C1--C4 组合向量均未改变。因此重新绑定上述候选字节，不重开宽泛
 文献检索；任何贡献句或 C1--C4 漂移仍会使本 PASS 失效。
+后续时钟域澄清仅把 provider 阈值、controller 观察值和同域时延的证据边界写实，
+不改变贡献句、C1--C4、威胁模型、数据源、策略或实验矩阵，因此同样只重绑候选
+字节而不重开文献检索。
 
 基准 Stage-1 提交后的首次实现前阅读发现，payload-free tick 与 query-bearing
 Publication Window 的切分可被解释成两种行为。本次窄澄清只固定同一逻辑时间、

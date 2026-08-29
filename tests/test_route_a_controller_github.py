@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from email.message import Message
 from pathlib import Path
 from urllib.request import Request
@@ -40,7 +41,7 @@ class _MemoryHttpReader:
         headers: dict[str, str],
         maximum_bytes: int,
         redirect_policy: str,
-    ) -> bytes:
+    ) -> controller_module._HttpGetResponse:
         assert headers["Authorization"] == "Bearer secret-token"
         assert headers["Accept"] == "application/vnd.github+json"
         self.requests.append((url, maximum_bytes, redirect_policy))
@@ -50,7 +51,10 @@ class _MemoryHttpReader:
             raise OSError(f"unexpected URL: {url}") from error
         if len(content) > maximum_bytes:
             raise OSError("response too large")
-        return content
+        return controller_module._HttpGetResponse(
+            content=content,
+            provider_date=datetime(2026, 8, 29, tzinfo=UTC),
+        )
 
     def post(self, url: str, *, headers: dict[str, str], maximum_bytes: int) -> bytes:
         assert headers["Authorization"] == "Bearer secret-token"
@@ -240,6 +244,80 @@ def test_urllib_api_redirect_is_rejected_before_forwarding_authority() -> None:
         )
 
 
+def test_urllib_reader_returns_the_https_provider_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Response:
+        status = 200
+
+        def __init__(self) -> None:
+            self.headers = Message()
+            self.headers["Date"] = "Sat, 29 Aug 2026 00:45:00 GMT"
+            self.headers["Content-Length"] = "2"
+
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, maximum_bytes: int) -> bytes:
+            assert maximum_bytes == 3
+            return b"{}"
+
+    class _Opener:
+        def open(self, request: Request, *, timeout: int) -> _Response:
+            assert timeout == 30
+            assert request.method == "GET"
+            return _Response()
+
+    monkeypatch.setattr(controller_module, "build_opener", lambda _handler: _Opener())
+
+    result = controller_module._UrllibHttpReader().get(
+        "https://api.github.com/repos/owner/repository/actions/runs/999",
+        headers={"Authorization": "Bearer secret-token"},
+        maximum_bytes=2,
+        redirect_policy="reject",
+    )
+
+    assert result.content == b"{}"
+    assert result.provider_date == datetime(2026, 8, 29, 0, 45, tzinfo=UTC)
+
+
+def test_urllib_reader_preserves_a_missing_provider_date_for_the_caller_to_reject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Response:
+        status = 200
+
+        def __init__(self) -> None:
+            self.headers = Message()
+
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _maximum_bytes: int) -> bytes:
+            return b"{}"
+
+    class _Opener:
+        def open(self, _request: Request, *, timeout: int) -> _Response:
+            assert timeout == 30
+            return _Response()
+
+    monkeypatch.setattr(controller_module, "build_opener", lambda _handler: _Opener())
+
+    response = controller_module._UrllibHttpReader().get(
+        "https://api.github.com/repos/owner/repository/actions/runs/999",
+        headers={"Authorization": "Bearer secret-token"},
+        maximum_bytes=2,
+        redirect_policy="reject",
+    )
+
+    assert response.content == b"{}"
+    assert response.provider_date is None
+
+
 def test_urllib_reader_posts_exact_empty_cancel_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -343,6 +421,84 @@ def test_github_provider_normalizes_live_state_and_posts_exact_cancel_endpoint(
             64 * 1024,
         )
     ]
+
+
+def test_github_provider_rejects_backward_live_provider_dates(tmp_path: Path) -> None:
+    class _BackwardDateReader(_MemoryHttpReader):
+        def get(
+            self,
+            url: str,
+            *,
+            headers: dict[str, str],
+            maximum_bytes: int,
+            redirect_policy: str,
+        ) -> controller_module._HttpGetResponse:
+            response = super().get(
+                url,
+                headers=headers,
+                maximum_bytes=maximum_bytes,
+                redirect_policy=redirect_policy,
+            )
+            if "/jobs?" in url:
+                return controller_module._HttpGetResponse(
+                    content=response.content,
+                    provider_date=response.provider_date - timedelta(seconds=1),
+                )
+            return response
+
+    plan_source = Path(__file__).resolve().parents[1] / "config/route-a-publication-plan.json"
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/route-a-publication-plan.json").write_bytes(plan_source.read_bytes())
+    reader = _BackwardDateReader(_responses())
+    provider = GitHubActionsQualificationProvider(
+        repository_root=tmp_path,
+        repository_slug="owner/repository",
+        token="secret-token",
+        api_url="https://api.example.test",
+        http_reader=reader,
+    )
+
+    with pytest.raises(RouteAControllerError, match="moved backwards"):
+        provider.read_live_qualification(999)
+
+
+def test_github_provider_rejects_a_missing_live_provider_date(tmp_path: Path) -> None:
+    class _MissingDateReader(_MemoryHttpReader):
+        def get(
+            self,
+            url: str,
+            *,
+            headers: dict[str, str],
+            maximum_bytes: int,
+            redirect_policy: str,
+        ) -> controller_module._HttpGetResponse:
+            response = super().get(
+                url,
+                headers=headers,
+                maximum_bytes=maximum_bytes,
+                redirect_policy=redirect_policy,
+            )
+            if "/jobs?" in url:
+                return controller_module._HttpGetResponse(
+                    content=response.content,
+                    provider_date=None,
+                )
+            return response
+
+    plan_source = Path(__file__).resolve().parents[1] / "config/route-a-publication-plan.json"
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/route-a-publication-plan.json").write_bytes(plan_source.read_bytes())
+    reader = _MissingDateReader(_responses())
+    provider = GitHubActionsQualificationProvider(
+        repository_root=tmp_path,
+        repository_slug="owner/repository",
+        token="secret-token",
+        api_url="https://api.example.test",
+        http_reader=reader,
+    )
+
+    with pytest.raises(RouteAControllerError, match="lacks a provider Date"):
+        provider.read_live_qualification(999)
 
 
 def test_github_provider_rejects_duplicate_qualification_artifact(tmp_path: Path) -> None:

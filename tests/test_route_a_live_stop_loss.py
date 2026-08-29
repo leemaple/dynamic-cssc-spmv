@@ -47,11 +47,13 @@ class _Provider:
         *,
         clock: _Clock,
         fail_cancel: bool = False,
+        read_delay: timedelta = timedelta(0),
         repeat_last_observation: bool = False,
     ) -> None:
         self.observations = observations
         self.clock = clock
         self.fail_cancel = fail_cancel
+        self.read_delay = read_delay
         self.repeat_last_observation = repeat_last_observation
         self.cancelled: list[int] = []
         self.last_observation: RouteALiveQualificationObservation | None = None
@@ -63,6 +65,7 @@ class _Provider:
                 return replace(
                     self.last_observation,
                     observed_at=self.clock.current,
+                    provider_observed_at=self.clock.current,
                     run=replace(
                         self.last_observation.run,
                         updated_at=self.clock.current,
@@ -72,6 +75,16 @@ class _Provider:
         observation = self.observations.pop(0)
         if isinstance(observation, Exception):
             raise observation
+        if self.read_delay:
+            self.clock.current += self.read_delay
+            observation = replace(
+                observation,
+                observed_at=self.clock.current,
+                provider_observed_at=max(
+                    observation.provider_observed_at,
+                    self.clock.current,
+                ),
+            )
         self.last_observation = observation
         return observation
 
@@ -140,6 +153,7 @@ def _observation(
     )
     return RouteALiveQualificationObservation(
         observed_at=observed_at,
+        provider_observed_at=observed_at,
         run=RouteALiveRunSnapshot(
             database_id=999,
             event="workflow_dispatch",
@@ -164,6 +178,35 @@ def _request() -> RouteAQualificationRequest:
     )
 
 
+def _shift_provider_timestamps(
+    observation: RouteALiveQualificationObservation,
+    offset: timedelta,
+) -> RouteALiveQualificationObservation:
+    """Shift only GitHub-owned timestamps, leaving the controller clock untouched."""
+
+    return replace(
+        observation,
+        provider_observed_at=observation.provider_observed_at + offset,
+        run=replace(
+            observation.run,
+            created_at=observation.run.created_at + offset,
+            updated_at=observation.run.updated_at + offset,
+        ),
+        jobs=tuple(
+            replace(
+                job,
+                started_at=(
+                    None if job.started_at is None else job.started_at + offset
+                ),
+                completed_at=(
+                    None if job.completed_at is None else job.completed_at + offset
+                ),
+            )
+            for job in observation.jobs
+        ),
+    )
+
+
 def _assert_non_authorizing_document(document: dict[str, object]) -> None:
     assert set(document) == {
         "ack_to_watch_decision_seconds",
@@ -172,7 +215,6 @@ def _assert_non_authorizing_document(document: dict[str, object]) -> None:
         "cancel_request_utc",
         "controller_detection_utc",
         "decision",
-        "detection_lag_seconds",
         "final_conclusion",
         "formal_execution_authorized",
         "head_sha",
@@ -189,7 +231,7 @@ def _assert_non_authorizing_document(document: dict[str, object]) -> None:
     }
     assert document["authority"] is False
     assert document["formal_execution_authorized"] is False
-    assert document["schema_version"] == "dynamic-cssc-route-a-live-stop-loss-v2"
+    assert document["schema_version"] == "dynamic-cssc-route-a-live-stop-loss-v3"
 
 
 def _frozen_cancellation_ledger_fields() -> set[str]:
@@ -225,6 +267,83 @@ def test_live_stop_loss_does_not_cancel_q5_success_at_or_before_threshold(
     assert result.threshold_at == BASE + timedelta(minutes=45)
     assert provider.cancelled == []
     _assert_non_authorizing_document(result.document)
+
+
+@pytest.mark.parametrize("provider_offset_seconds", [-31, -5, 0, 5, 31])
+def test_live_stop_loss_uses_only_provider_clock_for_the_45_minute_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+    provider_offset_seconds: int,
+) -> None:
+    controller_clock = _Clock(BASE + timedelta(minutes=44, seconds=50))
+    provider_offset = timedelta(seconds=provider_offset_seconds)
+    provider = _Provider(
+        [
+            _shift_provider_timestamps(
+                _observation(controller_clock.current),
+                provider_offset,
+            ),
+            _shift_provider_timestamps(
+                _observation(
+                    BASE + timedelta(minutes=44, seconds=55),
+                    q5_completed_at=BASE + timedelta(minutes=44, seconds=55),
+                ),
+                provider_offset,
+            ),
+        ],
+        clock=controller_clock,
+    )
+    monkeypatch.setattr(controller_module, "_utc_now", controller_clock)
+
+    result = watch_route_a_qualification(
+        provider,
+        _request(),
+        poll_interval_seconds=5,
+        wait=controller_clock.wait,
+    )
+
+    assert result.decision == "combined-guard-success-before-threshold"
+    assert result.q1_started_at == BASE + provider_offset
+    assert result.q5_completed_at == BASE + timedelta(minutes=44, seconds=55) + (
+        provider_offset
+    )
+    assert provider.cancelled == []
+
+
+def test_live_stop_loss_never_extends_the_local_fail_safe_for_a_stale_provider_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_at = BASE + timedelta(minutes=44, seconds=55)
+    stale = _observation(BASE + timedelta(minutes=45))
+    stale = replace(
+        stale,
+        provider_observed_at=first_at,
+        run=replace(stale.run, updated_at=first_at),
+    )
+    terminal_at = BASE + timedelta(minutes=45, seconds=1)
+    provider = _Provider(
+        [
+            _observation(first_at),
+            stale,
+            _observation(
+                terminal_at,
+                q5_completed_at=terminal_at,
+                terminal_cancelled=True,
+            ),
+        ],
+        clock=_Clock(first_at),
+    )
+    monkeypatch.setattr(controller_module, "_utc_now", provider.clock)
+
+    result = watch_route_a_qualification(
+        provider,
+        _request(),
+        poll_interval_seconds=5,
+        wait=provider.clock.wait,
+    )
+
+    assert result.decision == "route-c-cancelled"
+    assert result.cancellation_requested_at == BASE + timedelta(minutes=45)
+    assert provider.cancelled == [999]
 
 
 def test_live_stop_loss_accepts_jobs_as_the_serial_dag_is_instantiated(
@@ -310,7 +429,6 @@ def test_live_stop_loss_cancels_exactly_once_at_threshold_and_records_terminal_s
     assert result.provider_terminal_updated_at == BASE + timedelta(minutes=45, seconds=1)
     _assert_non_authorizing_document(result.document)
     assert result.document["final_conclusion"] == "cancelled"
-    assert result.document["detection_lag_seconds"] == 0
     assert result.document["request_to_ack_seconds"] == 1
     assert result.document["ack_to_watch_decision_seconds"] == 0
     assert _frozen_cancellation_ledger_fields() == {
@@ -321,11 +439,75 @@ def test_live_stop_loss_cancels_exactly_once_at_threshold_and_records_terminal_s
         "watch_decided_utc",
         "provider_terminal_updated_utc",
         "final_conclusion",
-        "detection_lag_seconds",
         "request_to_ack_seconds",
         "ack_to_watch_decision_seconds",
     }
     assert _frozen_cancellation_ledger_fields() <= set(result.document)
+
+
+def test_live_stop_loss_uses_post_read_time_for_delayed_terminal_observation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _Clock(BASE + timedelta(minutes=45))
+    terminal = _observation(
+        BASE + timedelta(minutes=45, seconds=1),
+        q5_completed_at=BASE + timedelta(minutes=45, seconds=1),
+        terminal_cancelled=True,
+    )
+    provider = _Provider(
+        [_observation(clock.current), terminal],
+        clock=clock,
+        read_delay=timedelta(milliseconds=1),
+    )
+    monkeypatch.setattr(controller_module, "_utc_now", clock)
+
+    result = watch_route_a_qualification(provider, _request(), wait=clock.wait)
+
+    assert result.decision == "route-c-cancelled"
+    assert provider.cancelled == [999]
+    assert result.watch_decided_at == clock.current
+    assert result.watch_decided_at > result.cancellation_acknowledged_at
+    assert result.document["ack_to_watch_decision_seconds"] == 1
+
+
+def test_live_stop_loss_charges_a_terminal_read_that_finishes_after_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _SlowTerminalProvider(_Provider):
+        def read_live_qualification(
+            self,
+            run_id: int,
+        ) -> RouteALiveQualificationObservation:
+            observation = super().read_live_qualification(run_id)
+            if self.cancelled:
+                self.clock.current += timedelta(minutes=10, seconds=1)
+                observation = replace(
+                    observation,
+                    observed_at=self.clock.current,
+                    provider_observed_at=self.clock.current,
+                )
+            return observation
+
+    clock = _Clock(BASE + timedelta(minutes=45))
+    terminal = _observation(
+        BASE + timedelta(minutes=45, seconds=1),
+        q5_completed_at=BASE + timedelta(minutes=45, seconds=1),
+        terminal_cancelled=True,
+    )
+    provider = _SlowTerminalProvider(
+        [_observation(clock.current), terminal],
+        clock=clock,
+    )
+    monkeypatch.setattr(controller_module, "_utc_now", clock)
+
+    result = watch_route_a_qualification(provider, _request(), wait=clock.wait)
+
+    assert result.decision == "route-c-cancel-completion-unobserved"
+    assert result.cancellation_error == (
+        "provider-terminal-state-not-observed-within-ten-minutes"
+    )
+    assert provider.cancelled == [999]
+    assert result.watch_decided_at == BASE + timedelta(minutes=55, seconds=2)
 
 
 @pytest.mark.parametrize("terminal_conclusion", ["cancelled", "failure", "success"])
@@ -497,6 +679,27 @@ def test_live_stop_loss_records_cancel_api_failure_as_route_c(
 
     assert result.decision == "route-c-cancel-request-failed"
     assert result.cancellation_error == "provider-cancel-request-failed"
+    assert provider.cancelled == [999]
+
+
+def test_live_stop_loss_records_the_post_call_time_of_a_failed_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _DelayedCancelFailure(_Provider):
+        def cancel_qualification(self, run_id: int) -> None:
+            self.cancelled.append(run_id)
+            self.clock.current += timedelta(seconds=2)
+            raise OSError("cancel failed after I/O")
+
+    clock = _Clock(BASE + timedelta(minutes=45))
+    provider = _DelayedCancelFailure([_observation(clock.current)], clock=clock)
+    monkeypatch.setattr(controller_module, "_utc_now", clock)
+
+    result = watch_route_a_qualification(provider, _request(), wait=clock.wait)
+
+    assert result.decision == "route-c-cancel-request-failed"
+    assert result.cancellation_requested_at == BASE + timedelta(minutes=45)
+    assert result.watch_decided_at == BASE + timedelta(minutes=45, seconds=2)
     assert provider.cancelled == [999]
 
 

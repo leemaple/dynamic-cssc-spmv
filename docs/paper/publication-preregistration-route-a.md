@@ -419,7 +419,7 @@ its one-second deadline; no boundary may split an accepted-event group.
 
 The canonical machine plan is
 `config/route-a-publication-plan.json`, whose exact retained-file SHA-256 is
-`b5d561bb5579976e4a9b5cc976ecaf2a6b7bbc9318ef43689f870522e68c8f0a`.
+`ce09c1c9c82032ba8439188ce20d4cd8d6310a386efbe2d436595fd779b7268c`.
 The file is reviewed together with this document. The runner must reject any
 plan whose retained bytes do not match that digest; changing the file requires
 a new preregistration review and digest.
@@ -1160,11 +1160,26 @@ run. GitHub's exact terminal provider field is retained as
 `provider_terminal_updated_utc`, alongside the exact final conclusion when one
 is observed. `controller_detection_utc`, `cancel_request_utc`,
 `provider_api_ack_utc`, and `watch_decided_utc` are controller-clock readings.
-Detection lag, request-to-ack lag, and ack-to-watch-decision lag are the
-corresponding nonnegative elapsed seconds rounded upward to a whole second; a
-pre-threshold job failure has null detection lag. No calculation subtracts a
-provider timestamp from a controller timestamp. A missing terminal observation
-within the frozen ten-minute window remains an authority-false Route C record.
+Only request-to-ack lag and ack-to-watch-decision lag are derived, using that
+single controller clock, as nonnegative elapsed seconds rounded upward to a
+whole second. Each run and jobs metadata GET must carry an HTTPS `Date` response
+header. The two sequential provider dates may remain equal but the jobs-response
+date may not precede the run-response date; that second date is the only live
+provider-clock “now” compared with provider job timestamps. The watcher derives
+only the same-provider-clock remaining duration from that value to the
+`q1.startedAt + 45 minutes` threshold. If a later provider read fails after exact
+binding, each remaining-duration mapping may only tighten the earliest local
+fail-safe deadline and can never extend it, so a stale or failed later read
+cannot postpone cancellation. No absolute provider timestamp is subtracted from
+an absolute controller timestamp. The provider-derived threshold and controller
+detection time are retained as separate raw values and no duration is derived
+between them. The
+terminal 45-minute decision is recomputed solely from GitHub provider
+`startedAt` and `completedAt` values. A missing or nonmonotone provider `Date`,
+or a missing terminal observation within the frozen ten-minute local window,
+fails closed. Before exact run binding this returns no authority and does not
+cancel an unverified target; after binding it follows the last same-provider
+remaining-duration fail-safe and selects Route C.
 GitHub metadata GETs and the cancellation POST reject every redirect. Only the
 q6 artifact GET may follow at most three redirects: its initial URL must share
 the configured API origin, every destination must be safe HTTPS without

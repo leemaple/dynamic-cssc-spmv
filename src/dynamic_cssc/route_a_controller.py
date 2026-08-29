@@ -23,6 +23,7 @@ import zipfile
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Literal, Protocol
 from urllib.error import HTTPError, URLError
@@ -69,7 +70,7 @@ _QUALIFICATION_ARTIFACT_NAMES = (
 _Q6_ARTIFACT_NAME = "q6-postrun-resource-admission-record"
 _Q6_RECORD_SCHEMA = "dynamic-cssc-route-a-q6-postrun-resource-admission-v1"
 _PLAN_SCHEMA = "dynamic-cssc-route-a-publication-plan-v3"
-_PLAN_SHA256 = "b5d561bb5579976e4a9b5cc976ecaf2a6b7bbc9318ef43689f870522e68c8f0a"
+_PLAN_SHA256 = "ce09c1c9c82032ba8439188ce20d4cd8d6310a386efbe2d436595fd779b7268c"
 _MAX_OBSERVATION_AGE = timedelta(seconds=30)
 _COMPUTATIONAL_LIMIT = timedelta(minutes=45)
 _Q6_JOB_LIMIT = timedelta(minutes=5)
@@ -156,6 +157,7 @@ class RouteALiveJobSnapshot:
 @dataclass(frozen=True, slots=True)
 class RouteALiveQualificationObservation:
     observed_at: datetime
+    provider_observed_at: datetime
     run: RouteALiveRunSnapshot
     jobs: tuple[RouteALiveJobSnapshot, ...]
 
@@ -207,13 +209,6 @@ class RouteAQualificationWatchResult:
                 raise RouteAControllerError("live stop-loss timestamps are not monotonic")
             return math.ceil(seconds)
 
-        detection_lag = (
-            None
-            if self.threshold_at is None
-            or self.cancellation_requested_at is None
-            or self.controller_observed_at < self.threshold_at
-            else elapsed_seconds(self.threshold_at, self.controller_observed_at)
-        )
         return {
             "ack_to_watch_decision_seconds": elapsed_seconds(
                 self.cancellation_acknowledged_at,
@@ -224,7 +219,6 @@ class RouteAQualificationWatchResult:
             "cancel_request_utc": stamp(self.cancellation_requested_at),
             "controller_detection_utc": stamp(self.controller_observed_at),
             "decision": self.decision,
-            "detection_lag_seconds": detection_lag,
             "final_conclusion": self.provider_terminal_conclusion,
             "formal_execution_authorized": False,
             "head_sha": self.head_sha,
@@ -238,7 +232,7 @@ class RouteAQualificationWatchResult:
             ),
             "run_attempt": self.run_attempt,
             "run_id": self.run_id,
-            "schema_version": "dynamic-cssc-route-a-live-stop-loss-v2",
+            "schema_version": "dynamic-cssc-route-a-live-stop-loss-v3",
             "threshold_utc": stamp(self.threshold_at),
             "watch_decided_utc": stamp(self.watch_decided_at),
         }
@@ -285,6 +279,12 @@ class _LiveQualificationProvider(Protocol):
     def cancel_qualification(self, run_id: int) -> None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class _HttpGetResponse:
+    content: bytes
+    provider_date: datetime | None
+
+
 class _HttpReader(Protocol):
     def get(
         self,
@@ -293,7 +293,7 @@ class _HttpReader(Protocol):
         headers: dict[str, str],
         maximum_bytes: int,
         redirect_policy: _RedirectPolicy,
-    ) -> bytes: ...
+    ) -> _HttpGetResponse: ...
 
     def post(
         self,
@@ -367,13 +367,24 @@ class _UrllibHttpReader:
         headers: dict[str, str],
         maximum_bytes: int,
         redirect_policy: _RedirectPolicy,
-    ) -> bytes:
+    ) -> _HttpGetResponse:
         request = Request(url, headers=headers, method="GET")
         try:
             opener = build_opener(_HttpsTokenStrippingRedirectHandler(redirect_policy))
             with opener.open(request, timeout=30) as response:  # noqa: S310 - HTTPS gated
                 if response.status != 200:
                     raise OSError(f"GitHub API returned HTTP {response.status}")
+                raw_provider_date = response.headers.get("Date")
+                if raw_provider_date is None:
+                    provider_date = None
+                else:
+                    try:
+                        provider_date = parsedate_to_datetime(raw_provider_date)
+                    except (TypeError, ValueError) as error:
+                        raise OSError("GitHub API returned an invalid Date header") from error
+                    if provider_date.tzinfo is None:
+                        raise OSError("GitHub API returned a naive Date header")
+                    provider_date = provider_date.astimezone(UTC)
                 declared = response.headers.get("Content-Length")
                 if declared is not None:
                     try:
@@ -387,7 +398,7 @@ class _UrllibHttpReader:
             raise OSError(f"GitHub API request failed: {error}") from error
         if len(content) > maximum_bytes:
             raise OSError("GitHub API response exceeds its closed byte bound")
-        return content
+        return _HttpGetResponse(content=content, provider_date=provider_date)
 
     def post(
         self,
@@ -616,7 +627,7 @@ class GitHubActionsQualificationProvider:
         maximum_bytes: int,
         *,
         allow_artifact_redirect: bool = False,
-    ) -> bytes:
+    ) -> _HttpGetResponse:
         if path_or_url.startswith("https://"):
             try:
                 target = urlsplit(path_or_url)
@@ -670,13 +681,22 @@ class GitHubActionsQualificationProvider:
         if type(run_id) is not int or run_id <= 0:
             raise RouteAControllerError("qualification run ID must be a positive strict integer")
         base = f"/repos/{self._repository_slug}/actions/runs/{run_id}"
+        run_response = self._get(base, _MAX_PROVIDER_RUN_BYTES)
         run_document = _provider_json(
-            self._get(base, _MAX_PROVIDER_RUN_BYTES), "GitHub live qualification run"
+            run_response.content, "GitHub live qualification run"
+        )
+        jobs_response = self._get(
+            f"{base}/jobs?per_page=100",
+            _MAX_PROVIDER_LIST_BYTES,
         )
         jobs_document = _provider_json(
-            self._get(f"{base}/jobs?per_page=100", _MAX_PROVIDER_LIST_BYTES),
+            jobs_response.content,
             "GitHub live qualification jobs",
         )
+        if run_response.provider_date is None or jobs_response.provider_date is None:
+            raise RouteAControllerError("GitHub live metadata lacks a provider Date header")
+        if jobs_response.provider_date < run_response.provider_date:
+            raise RouteAControllerError("GitHub provider Date headers moved backwards")
         raw_jobs = jobs_document.get("jobs")
         if (
             type(raw_jobs) is not list
@@ -706,6 +726,7 @@ class GitHubActionsQualificationProvider:
             )
         return RouteALiveQualificationObservation(
             observed_at=_utc_now(),
+            provider_observed_at=jobs_response.provider_date,
             run=RouteALiveRunSnapshot(
                 database_id=_provider_integer(run_document.get("id"), "run.id"),
                 event=_provider_string(run_document.get("event"), "run.event"),
@@ -739,14 +760,21 @@ class GitHubActionsQualificationProvider:
             raise RouteAControllerError("qualification run ID must be a positive strict integer")
         base = f"/repos/{self._repository_slug}/actions/runs/{run_id}"
         run_document = _provider_json(
-            self._get(base, _MAX_PROVIDER_RUN_BYTES), "GitHub qualification run"
+            self._get(base, _MAX_PROVIDER_RUN_BYTES).content,
+            "GitHub qualification run",
         )
         jobs_document = _provider_json(
-            self._get(f"{base}/jobs?per_page=100", _MAX_PROVIDER_LIST_BYTES),
+            self._get(
+                f"{base}/jobs?per_page=100",
+                _MAX_PROVIDER_LIST_BYTES,
+            ).content,
             "GitHub qualification jobs",
         )
         artifacts_document = _provider_json(
-            self._get(f"{base}/artifacts?per_page=100", _MAX_PROVIDER_LIST_BYTES),
+            self._get(
+                f"{base}/artifacts?per_page=100",
+                _MAX_PROVIDER_LIST_BYTES,
+            ).content,
             "GitHub qualification artifacts",
         )
         run_database_id = _provider_integer(run_document.get("id"), "run.id")
@@ -831,7 +859,7 @@ class GitHubActionsQualificationProvider:
             download_url,
             _MAX_Q6_ARCHIVE_BYTES,
             allow_artifact_redirect=True,
-        )
+        ).content
 
         return RouteAProviderObservation(
             observed_at=_utc_now(),
@@ -901,8 +929,12 @@ def _validate_live_observation(
 ) -> tuple[RouteALiveRunSnapshot, tuple[RouteALiveJobSnapshot, ...]]:
     if type(observation) is not RouteALiveQualificationObservation:
         raise RouteAControllerError("live qualification provider returned the wrong type")
-    provider_observed_at = _require_utc(observation.observed_at, "live provider observation")
-    age = controller_observed_at - provider_observed_at
+    local_observed_at = _require_utc(observation.observed_at, "live local observation")
+    provider_observed_at = _require_utc(
+        observation.provider_observed_at,
+        "live provider Date observation",
+    )
+    age = controller_observed_at - local_observed_at
     if age < timedelta(0) or age > _MAX_OBSERVATION_AGE:
         raise RouteAControllerError("live qualification provider observation is stale")
     run = observation.run
@@ -968,6 +1000,7 @@ def _validate_live_observation(
             or (job.status == "completed")
             is not (completed_at is not None and type(job.conclusion) is str)
             or (started_at is not None and started_at < created_at)
+            or (started_at is not None and started_at > provider_observed_at)
             or (completed_at is not None and completed_at > provider_observed_at)
             or (
                 previous is not None
@@ -1036,6 +1069,7 @@ def watch_route_a_qualification(
         raise RouteAControllerError("live stop-loss polling configuration is invalid")
     frozen_q1_started_at: datetime | None = None
     threshold_at: datetime | None = None
+    local_fail_safe_deadline: datetime | None = None
     last_q5_completed_at: datetime | None = None
 
     while True:
@@ -1047,11 +1081,17 @@ def watch_route_a_qualification(
                 raise RouteAControllerError(
                     "live qualification provider observation failed before exact binding"
                 ) from error
-            if controller_now < threshold_at:
+            if (
+                local_fail_safe_deadline is not None
+                and controller_now < local_fail_safe_deadline
+            ):
                 wait(
                     min(
                         float(poll_interval_seconds),
-                        max(0.0, (threshold_at - controller_now).total_seconds()),
+                        max(
+                            0.0,
+                            (local_fail_safe_deadline - controller_now).total_seconds(),
+                        ),
                     )
                 )
                 continue
@@ -1061,6 +1101,10 @@ def watch_route_a_qualification(
                 observation,
                 request_identity,
                 controller_now,
+            )
+            provider_now = _require_utc(
+                observation.provider_observed_at,
+                "live provider Date observation",
             )
             jobs_by_name = {job.name: job for job in jobs}
             q1 = jobs_by_name.get(_QUALIFICATION_JOB_NAMES[0])
@@ -1075,6 +1119,17 @@ def watch_route_a_qualification(
                     raise RouteAControllerError("q1 live startedAt changed after it was frozen")
             elif frozen_q1_started_at is not None:
                 raise RouteAControllerError("q1 live startedAt disappeared after it was frozen")
+            if threshold_at is not None:
+                provider_remaining = max(
+                    timedelta(0),
+                    threshold_at - provider_now,
+                )
+                candidate_fail_safe_deadline = controller_now + provider_remaining
+                if (
+                    local_fail_safe_deadline is None
+                    or candidate_fail_safe_deadline < local_fail_safe_deadline
+                ):
+                    local_fail_safe_deadline = candidate_fail_safe_deadline
 
             q5_success = (
                 q5 is not None
@@ -1128,15 +1183,18 @@ def watch_route_a_qualification(
                     provider_terminal_updated_at=run.updated_at,
                     provider_terminal_conclusion=run.conclusion,
                 )
-            if not failed_job_observed and (
-                threshold_at is None or controller_now < threshold_at
-            ):
+            before_provider_threshold = threshold_at is None or provider_now < threshold_at
+            before_local_fail_safe = (
+                local_fail_safe_deadline is None
+                or controller_now < local_fail_safe_deadline
+            )
+            if not failed_job_observed and before_provider_threshold and before_local_fail_safe:
                 remaining = (
                     float(poll_interval_seconds)
                     if threshold_at is None
                     else min(
                         float(poll_interval_seconds),
-                        max(0.0, (threshold_at - controller_now).total_seconds()),
+                        max(0.0, (threshold_at - provider_now).total_seconds()),
                     )
                 )
                 wait(remaining)
@@ -1146,6 +1204,10 @@ def watch_route_a_qualification(
         try:
             provider.cancel_qualification(request_identity.run_id)
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            cancellation_failed_at = _require_utc(
+                _utc_now(),
+                "failed cancellation decision",
+            )
             return _watch_result(
                 decision="route-c-cancel-request-failed",
                 request=request_identity,
@@ -1154,6 +1216,7 @@ def watch_route_a_qualification(
                 controller_observed_at=controller_now,
                 q5_completed_at=last_q5_completed_at,
                 cancellation_requested_at=cancellation_requested_at,
+                watch_decided_at=cancellation_failed_at,
                 cancellation_error="provider-cancel-request-failed",
             )
         cancellation_acknowledged_at = _require_utc(
@@ -1164,8 +1227,11 @@ def watch_route_a_qualification(
             cancellation_acknowledged_at + _CANCELLATION_OBSERVATION_LIMIT
         )
         while True:
-            terminal_now = _require_utc(_utc_now(), "cancellation terminal observation")
-            if terminal_now > terminal_observation_deadline:
+            terminal_before_read = _require_utc(
+                _utc_now(),
+                "cancellation terminal observation start",
+            )
+            if terminal_before_read > terminal_observation_deadline:
                 return _watch_result(
                     decision="route-c-cancel-completion-unobserved",
                     request=request_identity,
@@ -1175,7 +1241,7 @@ def watch_route_a_qualification(
                     q5_completed_at=last_q5_completed_at,
                     cancellation_requested_at=cancellation_requested_at,
                     cancellation_acknowledged_at=cancellation_acknowledged_at,
-                    watch_decided_at=terminal_now,
+                    watch_decided_at=terminal_before_read,
                     cancellation_error="provider-terminal-state-not-observed-within-ten-minutes",
                 )
             try:
@@ -1183,6 +1249,15 @@ def watch_route_a_qualification(
                     request_identity.run_id
                 )
             except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                terminal_after_read = _require_utc(
+                    _utc_now(),
+                    "failed terminal observation decision",
+                )
+                terminal_error = (
+                    "provider-terminal-state-not-observed-within-ten-minutes"
+                    if terminal_after_read > terminal_observation_deadline
+                    else "provider-terminal-read-failed"
+                )
                 return _watch_result(
                     decision="route-c-cancel-completion-unobserved",
                     request=request_identity,
@@ -1192,13 +1267,32 @@ def watch_route_a_qualification(
                     q5_completed_at=last_q5_completed_at,
                     cancellation_requested_at=cancellation_requested_at,
                     cancellation_acknowledged_at=cancellation_acknowledged_at,
-                    watch_decided_at=terminal_now,
-                    cancellation_error="provider-terminal-read-failed",
+                    watch_decided_at=terminal_after_read,
+                    cancellation_error=terminal_error,
+                )
+            terminal_after_read = _require_utc(
+                _utc_now(),
+                "cancellation terminal observation finish",
+            )
+            if terminal_after_read > terminal_observation_deadline:
+                return _watch_result(
+                    decision="route-c-cancel-completion-unobserved",
+                    request=request_identity,
+                    q1_started_at=frozen_q1_started_at,
+                    threshold_at=threshold_at,
+                    controller_observed_at=cancellation_requested_at,
+                    q5_completed_at=last_q5_completed_at,
+                    cancellation_requested_at=cancellation_requested_at,
+                    cancellation_acknowledged_at=cancellation_acknowledged_at,
+                    watch_decided_at=terminal_after_read,
+                    cancellation_error=(
+                        "provider-terminal-state-not-observed-within-ten-minutes"
+                    ),
                 )
             terminal_run, terminal_jobs = _validate_live_observation(
                 terminal_observation,
                 request_identity,
-                terminal_now,
+                terminal_after_read,
             )
             terminal_jobs_by_name = {job.name: job for job in terminal_jobs}
             terminal_q1 = terminal_jobs_by_name.get(_QUALIFICATION_JOB_NAMES[0])
@@ -1219,11 +1313,11 @@ def watch_route_a_qualification(
                     cancellation_acknowledged_at=cancellation_acknowledged_at,
                     provider_terminal_updated_at=terminal_run.updated_at,
                     provider_terminal_conclusion=terminal_run.conclusion,
-                    watch_decided_at=terminal_now,
+                    watch_decided_at=terminal_after_read,
                 )
             remaining = max(
                 0.0,
-                (terminal_observation_deadline - terminal_now).total_seconds(),
+                (terminal_observation_deadline - terminal_after_read).total_seconds(),
             )
             if remaining == 0.0:
                 return _watch_result(
@@ -1235,7 +1329,7 @@ def watch_route_a_qualification(
                     q5_completed_at=last_q5_completed_at,
                     cancellation_requested_at=cancellation_requested_at,
                     cancellation_acknowledged_at=cancellation_acknowledged_at,
-                    watch_decided_at=terminal_now,
+                    watch_decided_at=terminal_after_read,
                     cancellation_error=(
                         "provider-terminal-state-not-observed-within-ten-minutes"
                     ),
@@ -1246,7 +1340,6 @@ def watch_route_a_qualification(
 def _validate_run(
     run: RouteARunSnapshot,
     request: _QualificationRequestIdentity,
-    observed_at: datetime,
 ) -> None:
     if type(run) is not RouteARunSnapshot:
         raise RouteAControllerError("qualification run snapshot type is invalid")
@@ -1268,7 +1361,6 @@ def _validate_run(
         or type(run.conclusion) is not str
         or run.conclusion != "success"
         or created_at > updated_at
-        or updated_at > observed_at
     ):
         raise RouteAControllerError("qualification run identity is not the exact terminal success")
 
@@ -1570,12 +1662,12 @@ def authorize_route_a_qualification(
     if type(observation) is not RouteAProviderObservation:
         raise RouteAControllerError("qualification provider returned the wrong snapshot type")
     controller_observed_at = _require_utc(_utc_now(), "controller observation")
-    provider_observed_at = _require_utc(observation.observed_at, "provider observation")
-    age = controller_observed_at - provider_observed_at
+    local_observed_at = _require_utc(observation.observed_at, "local provider-read observation")
+    age = controller_observed_at - local_observed_at
     if age < timedelta(0) or age > _MAX_OBSERVATION_AGE:
         raise RouteAControllerError("qualification provider observation is stale")
     plan_sha256 = _validate_frozen_plan(observation.plan_bytes)
-    _validate_run(observation.run, request_identity, provider_observed_at)
+    _validate_run(observation.run, request_identity)
     jobs = _validate_jobs(observation.jobs)
     if observation.run.created_at > jobs[0].started_at:
         raise RouteAControllerError("qualification first job predates its run")
@@ -1593,7 +1685,7 @@ def authorize_route_a_qualification(
         plan_sha256=plan_sha256,
         provider_run_updated_at=observation.run.updated_at,
         controller_observed_at=controller_observed_at,
-        expires_at=provider_observed_at + _MAX_OBSERVATION_AGE,
+        expires_at=local_observed_at + _MAX_OBSERVATION_AGE,
         q6_artifact_id=observation.q6_artifact.database_id,
         q6_artifact_digest=observation.q6_artifact.digest,
     )

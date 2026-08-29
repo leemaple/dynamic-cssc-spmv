@@ -382,3 +382,58 @@ passing. These are implementation evidence only. A new exact successor still
 requires independent Pro/ZCode/Fable review plus its own CI and PRE-S1; nothing
 in this section authorizes qualification, source acquisition, formal execution,
 artifact installation, empirical claims, or submission.
+
+### 5.5 Runtime-plan parity and provider-clock amendment
+
+The unpushed `8b278e94cdf55fef126d3d8b09551b0fc1eb5477` successor was reviewed as one
+exact attachment by all three external reviewers. ZCode GLM-5.3 Max returned
+**PASS; P0=0, P1=0, P2=3**, but missed an executable stale plan digest. Fable 5
+returned **AMEND; P0=0, P1=1, P2=3** and demonstrated that the mismatch caused
+23 failures plus 26 errors across the affected focused files. ChatGPT Pro
+returned **AMEND; P0=0, P1=3, P2=3**. Its three blocking findings were: the
+same stale `ROUTE_A_MACHINE_PLAN_SHA256`; a provider-derived q1 deadline being
+compared with and subtracted from the controller clock despite the frozen
+no-cross-clock rule; and a post-cancel provider observation being checked
+against a controller timestamp captured before the HTTP reads finished. The
+candidate was never pushed and no workflow was dispatched from it.
+
+The amended successor closes the three findings without widening the scientific
+experiment. Both runtime plan constants now equal the retained plan bytes, and a
+single regression requires equality among the file digest, controller constant,
+and result-contract constant. Live stop-loss schema v3 obtains provider-clock
+“now” only from mandatory HTTPS `Date` response headers on the sequential run
+and jobs metadata reads. It compares provider q1 time only with that provider
+clock, maps at most a same-provider-clock remaining duration onto a local
+fail-safe deadline after a bound read failure, emits no cross-clock detection
+lag, and retains the raw provider threshold and controller detection values
+separately. Cancellation failure and terminal-read decisions now use local
+timestamps captured after the corresponding I/O; a read completing outside the
+ten-minute window is charged and fails closed. Tests cover provider clock
+offsets of -31, -5, 0, +5, and +31 seconds, delayed successful terminal reads,
+post-deadline terminal reads, failed cancellation I/O, missing/nonmonotone
+provider `Date` headers, stale dates that cannot extend the local fail-safe,
+and exactly-once cancellation.
+
+The amended Stage-1 packet is:
+
+- machine plan SHA-256:
+  `ce09c1c9c82032ba8439188ce20d4cd8d6310a386efbe2d436595fd779b7268c`;
+  1171 lines;
+- preregistration SHA-256:
+  `6b53a73c6973a4be53d195f5d9407e7e023ae3a5617bce57b4a40a7033a32f79`;
+  1518 lines;
+- novelty-review SHA-256:
+  `6030bec34d194aeaa59b813b06c34c9f5a901ef0e1fa8bafadf1b1079a080ba5`;
+  319 lines; and
+- unchanged claim-ledger SHA-256:
+  `44bc11b2401bdb94c3b7a4d9c063178ec50527f4f4b8136d1706b1e2f15a47ec`;
+  129 lines.
+
+All five registered roles advance exactly once relative to `8b278e9`:
+acquisition v5, analyzer v5, control-registration v6, formal v6, and
+qualification v8. Local lightweight evidence is 132 distinct controller,
+stop-loss, GitHub-provider, plan-parity, lineage, CLI, and workflow checks
+passing, with Ruff, `compileall`, JSON parsing, Stage-1 hash-chain equality, and
+`git diff --check` also passing. These checks are non-authorizing. The new exact
+commit still requires the same-packet Pro/ZCode/Fable terminal review,
+exact-head CI, and PRE-S1 before any qualification dispatch.
