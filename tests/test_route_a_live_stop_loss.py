@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -164,25 +166,36 @@ def _request() -> RouteAQualificationRequest:
 
 def _assert_non_authorizing_document(document: dict[str, object]) -> None:
     assert set(document) == {
+        "ack_to_watch_decision_seconds",
         "authority",
-        "cancellation_acknowledged_utc",
         "cancellation_error_or_null",
-        "cancellation_requested_utc",
-        "controller_observed_utc",
+        "cancel_request_utc",
+        "controller_detection_utc",
         "decision",
+        "detection_lag_seconds",
+        "final_conclusion",
         "formal_execution_authorized",
         "head_sha",
+        "provider_api_ack_utc",
         "provider_terminal_updated_utc",
         "q1_started_utc",
         "q5_completed_utc",
+        "request_to_ack_seconds",
         "run_attempt",
         "run_id",
         "schema_version",
         "threshold_utc",
+        "watch_decided_utc",
     }
     assert document["authority"] is False
     assert document["formal_execution_authorized"] is False
-    assert document["schema_version"] == "dynamic-cssc-route-a-live-stop-loss-v1"
+    assert document["schema_version"] == "dynamic-cssc-route-a-live-stop-loss-v2"
+
+
+def _frozen_cancellation_ledger_fields() -> set[str]:
+    plan_path = Path(__file__).resolve().parents[1] / "config/route-a-publication-plan.json"
+    plan = json.loads(plan_path.read_bytes())
+    return set(plan["formal_budget"]["cancellation_ledger_fields"].split("-"))
 
 
 def test_live_stop_loss_does_not_cancel_q5_success_at_or_before_threshold(
@@ -295,6 +308,51 @@ def test_live_stop_loss_cancels_exactly_once_at_threshold_and_records_terminal_s
     assert result.cancellation_requested_at == BASE + timedelta(minutes=45)
     assert result.cancellation_acknowledged_at == BASE + timedelta(minutes=45, seconds=1)
     assert result.provider_terminal_updated_at == BASE + timedelta(minutes=45, seconds=1)
+    _assert_non_authorizing_document(result.document)
+    assert result.document["final_conclusion"] == "cancelled"
+    assert result.document["detection_lag_seconds"] == 0
+    assert result.document["request_to_ack_seconds"] == 1
+    assert result.document["ack_to_watch_decision_seconds"] == 0
+    assert _frozen_cancellation_ledger_fields() == {
+        "threshold_utc",
+        "controller_detection_utc",
+        "cancel_request_utc",
+        "provider_api_ack_utc",
+        "watch_decided_utc",
+        "provider_terminal_updated_utc",
+        "final_conclusion",
+        "detection_lag_seconds",
+        "request_to_ack_seconds",
+        "ack_to_watch_decision_seconds",
+    }
+    assert _frozen_cancellation_ledger_fields() <= set(result.document)
+
+
+@pytest.mark.parametrize("terminal_conclusion", ["cancelled", "failure", "success"])
+def test_live_stop_loss_preserves_each_exact_provider_terminal_conclusion(
+    monkeypatch: pytest.MonkeyPatch,
+    terminal_conclusion: str,
+) -> None:
+    clock = _Clock(BASE + timedelta(minutes=45))
+    terminal = _observation(
+        clock.current + timedelta(seconds=1),
+        q5_completed_at=clock.current + timedelta(seconds=1),
+        terminal_cancelled=True,
+    )
+    terminal = replace(
+        terminal,
+        run=replace(terminal.run, conclusion=terminal_conclusion),
+    )
+    provider = _Provider([_observation(clock.current), terminal], clock=clock)
+    monkeypatch.setattr(controller_module, "_utc_now", clock)
+
+    result = watch_route_a_qualification(provider, _request(), wait=clock.wait)
+
+    assert result.decision == "route-c-cancelled"
+    assert result.document["final_conclusion"] == terminal_conclusion
+    assert result.document["provider_terminal_updated_utc"] == (
+        "2026-08-29T00:45:01Z"
+    )
     _assert_non_authorizing_document(result.document)
 
 
@@ -482,7 +540,9 @@ def test_live_stop_loss_bounds_terminal_observation_after_cancel(
     assert result.cancellation_error == (
         "provider-terminal-state-not-observed-within-ten-minutes"
     )
-    assert result.controller_observed_at == BASE + timedelta(minutes=55, seconds=1)
+    assert result.controller_observed_at == BASE + timedelta(minutes=45)
+    assert result.watch_decided_at == BASE + timedelta(minutes=55, seconds=1)
+    assert result.document["ack_to_watch_decision_seconds"] == 600
     assert provider.cancelled == [999]
     _assert_non_authorizing_document(result.document)
 
@@ -569,6 +629,35 @@ def test_live_stop_loss_cancels_immediately_after_a_bound_job_fails(
     assert result.decision == "route-c-cancelled"
     assert result.cancellation_requested_at == BASE + timedelta(minutes=25)
     assert provider.cancelled == [999]
+
+
+def test_live_stop_loss_never_accepts_q5_success_after_a_prefix_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _Clock(BASE + timedelta(minutes=25))
+    hostile = _observation(clock.current, q5_completed_at=clock.current)
+    hostile_jobs = list(hostile.jobs)
+    hostile_jobs[3] = replace(hostile_jobs[3], conclusion="failure")
+    hostile = replace(hostile, jobs=tuple(hostile_jobs))
+    terminal_at = clock.current + timedelta(seconds=1)
+    provider = _Provider(
+        [
+            hostile,
+            _observation(
+                terminal_at,
+                q5_completed_at=terminal_at,
+                terminal_cancelled=True,
+            ),
+        ],
+        clock=clock,
+    )
+    monkeypatch.setattr(controller_module, "_utc_now", clock)
+
+    result = watch_route_a_qualification(provider, _request(), wait=clock.wait)
+
+    assert result.decision == "route-c-cancelled"
+    assert provider.cancelled == [999]
+    _assert_non_authorizing_document(result.document)
 
 
 def test_live_stop_loss_uses_cumulative_q1_to_q5_wall_clock(

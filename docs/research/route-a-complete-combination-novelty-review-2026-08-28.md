@@ -13,8 +13,8 @@
 - Route A 审计稿：
   [`publication-preregistration-route-a.md`](../paper/publication-preregistration-route-a.md)
 - Route A 最终候选 SHA-256：
-  `232cd9d9599b56ffa62f108dcf1bf268e59031c8206fb0ebcf1e9a742ddfc5d7`
-- Route A 最终候选行数：`1486`
+  `bdc4ae8e231cdb45b07be543f29cdb02cd330315c4b85364625b4231f8400d62`
+- Route A 最终候选行数：`1503`
 - 起点边界报告 SHA-256：
   `0984b0c7f537c40cff852b3662f5f866c37f4eed227b286e4db89f428fed8925`
 - 起点 `references.bib` SHA-256：
@@ -68,6 +68,13 @@ F1-M mask 作用域、角色/威胁模型、数据源、比较候选或论文声
 secret key、ledger 与 oracle bytes 仍是证据传输开销而非新增 Cloud 协议机制。
 因此对 §1.1、§2.1--§2.5 的本地逐字复核支持仅重新绑定精确候选字节，不重开
 一手来源检索；任何 novelty-bearing 漂移仍会使本 PASS 失效。
+
+本次资格控制器窄修订仅关闭两类证据控制缺陷：q1--q5 串行前缀必须全部成功，
+以及取消记录不得虚构 workflow-run `completedAt` 或混减 provider/controller 两个
+时钟；同时把 API/POST 重定向与 q6 artifact 的 tokenless bounded redirect 规则写成
+冻结行为。逐字复核贡献句、C1--C4、角色/威胁模型、数据源、实验矩阵、成本门槛、
+比较候选与永久非声明后均无改变。因此 bounded complete-combination PASS 仅重新绑定
+上述 1503 行候选，不重开宽泛检索；任何 novelty-bearing 漂移仍使本 PASS 失效。
 
 ## 2. 本次判定的“完整组合”
 

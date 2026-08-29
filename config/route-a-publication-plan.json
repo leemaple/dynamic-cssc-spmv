@@ -117,8 +117,8 @@
       "sha256_scope": "exact-canonical-document-bytes"
     },
     "unit_runner_seconds_clock": "sum-of-provider-API-startedAt-to-completedAt-durations-for-every-job-in-the-unit-count-each-job-once",
-    "cancellation_ledger_fields": "threshold_utc-controller_observed_utc-cancel_request_utc-provider_api_ack_utc-run_completedAt-final_conclusion-detection_lag_seconds-request_to_ack_seconds-ack_to_completion_seconds",
-    "on_threshold": "request-cancellation-of-the-exact-active-route-a-run-at-the-threshold-dispatch-nothing-further-retain-and-report-controller-detection-lag-separately-from-provider-request-ack-and-completion-lag-select-route-c",
+    "cancellation_ledger_fields": "threshold_utc-controller_detection_utc-cancel_request_utc-provider_api_ack_utc-watch_decided_utc-provider_terminal_updated_utc-final_conclusion-detection_lag_seconds-request_to_ack_seconds-ack_to_watch_decision_seconds",
+    "on_threshold": "request-cancellation-of-the-exact-active-route-a-run-at-the-threshold-dispatch-nothing-further-record-controller-detection-cancel-request-local-provider-API-ack-local-watch-decision-local-the-exact-terminal-GitHub-run.updated_at-and-final-conclusion-if-observed;compute-detection-request-to-ack-and-ack-to-watch-decision-as-nonnegative-whole-seconds-rounded-up-never-subtract-the-provider-clock-from-the-controller-clock-select-route-c",
     "openfhe_runner_hours": "2.5",
     "ordered_event_runner_hours": "3.0",
     "provider_retry_runner_hours": "1.0",
@@ -569,6 +569,7 @@
       "production_program_path_frozen_at_S1": "scripts/control_route_a_publication.py",
       "module_interface_path_frozen_at_S1": "src/dynamic_cssc/route_a_controller.py",
       "provider": "GitHub-Actions-API-not-browser-UI",
+      "provider_transport_redirect_policy": "metadata-GET-and-cancellation-POST-reject-every-redirect;only-the-q6-artifact-GET-may-follow-at-most-three-HTTPS-redirects-and-every-redirected-request-is-tokenless;the-initial-artifact-download-URL-must-share-the-exact-configured-API-origin",
       "required_run_fields": [
         "databaseId",
         "event",
@@ -683,7 +684,7 @@
       "strategy": "packed-coo-cloud-segmented-delta/segment-width=128"
     },
     "postrun_admission_timing": "q6-runs-only-after-q5-terminal-success-has-provider-job-timeout-minutes=5-and-a-wall-clock-deadline-of-q5-completedAt-plus-10-minutes-including-queue-and-handoff-and-is-outside-C_q-and-the-45-minute-computational-critical-path;q6-records-only-q1-through-q5-final-API-state-and-q6-own-identity-startedAt-observation-time-and-deadline-never-q6-own-final-completedAt-or-conclusion;after-q6-is-terminal-an-external-live-controller-reads-q6-own-provider-completedAt-and-conclusion-and-requires-q1-startedAt-through-q6.completedAt-at-most-55-minutes;any-q6-non-success-timeout-provider-failure-missed-wall-clock-deadline-or-external-verification-failure-cancels-only-the-exact-run-selects-route-c-and-cannot-be-rerun;formal-dispatch-remains-forbidden-until-that-controller-also-re-reads-the-q6-record-and-provider-API-state-and-returns-a-nonserialized-ephemeral-capability",
-    "threshold_action": "at-45-minutes-if-the-combined-guard-has-not-completed-success-request-cancellation-of-only-the-exact-qualification-run-record-controller-detection-lag-and-provider-ack/completion-lag-separately-and-select-route-c",
+    "threshold_action": "at-45-minutes-if-the-entire-q1-through-q5-prefix-has-not-completed-success-request-cancellation-of-only-the-exact-qualification-run-record-controller-detection-cancel-request-local-provider-API-ack-local-watch-decision-local-provider-run.updated_at-and-final-conclusion-with-no-cross-clock-subtraction-and-select-route-c",
     "status": "permanently-non-admissible",
     "workload": "mixed-insert-delete-modify"
   },

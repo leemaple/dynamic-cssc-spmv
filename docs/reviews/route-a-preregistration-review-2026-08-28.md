@@ -335,3 +335,50 @@ amendment authorizes only the bounded code correction and review cycle. Source
 acquisition, qualification, formal execution, evidence installation, claim
 release, and any replayable authority remain forbidden until the registered
 Stage-2 and downstream gates close.
+
+### 5.4 Qualification stop-loss and provider-transport amendment
+
+The exact `02a88bf5e729954b4c80c111f578be043a036bb9` material-gate review exposed a
+real four-key q5 vocabulary defect and missing stop-loss branch evidence. The
+first successor, `e8d4783db179bc01bf059ddcac22a8b22b41051e`, closed that bounded
+packet. ZCode GLM-5.3 Max returned **PASS; P0=0, P1=0, P2=6**, and Fable 5
+returned **PASS; P0=0, P1=0, P2=0** for the five claimed closures. A broader
+ChatGPT Pro review nevertheless returned **BLOCK; P0=1, P1=3, P2=3**: API and
+cancel redirects were not separated from artifact redirects, q5 could be
+accepted after an earlier prefix failure, and the cancellation record used a
+workflow-run `completedAt` field that GitHub does not provide. Exact-head CI
+`33243560733`, PRE-S1 `33243567501`, and PR CI `33243579066` were therefore
+cancelled as non-authorizing invalid-candidate diagnostics.
+
+This narrow amendment rejects every metadata GET and cancellation POST
+redirect, permits only a three-hop tokenless HTTPS q6-artifact redirect, requires
+all q1--q5 jobs to be completed and successful before q5 acceptance, and
+separates controller-clock timestamps from provider `run.updated_at` and final
+conclusion. It neither changes the scientific contribution/C1--C4 vector nor
+the threat model, matrix, cost thresholds, evidence authority, or permanent
+non-claims. The bounded novelty review is therefore rebound without a broad
+search to this exact Stage-1 document packet:
+
+- machine plan SHA-256:
+  `b5d561bb5579976e4a9b5cc976ecaf2a6b7bbc9318ef43689f870522e68c8f0a`;
+  1170 lines;
+- preregistration SHA-256:
+  `bdc4ae8e231cdb45b07be543f29cdb02cd330315c4b85364625b4231f8400d62`;
+  1503 lines;
+- novelty-review SHA-256:
+  `6af839029bbec127f4b5ad6e8c48877d614c45e16924245a9b079c5f08a58fe0`;
+  316 lines; and
+- unchanged claim-ledger SHA-256:
+  `44bc11b2401bdb94c3b7a4d9c063178ec50527f4f4b8136d1706b1e2f15a47ec`;
+  129 lines.
+
+The registered role versions advance to acquisition v4, analyzer v4,
+control-registration v5, formal v5, and qualification v7 because every role
+contains the amended Stage-1 documents and source-conformance record. Local
+evidence before the successor commit is 45 focused controller/stop-loss tests
+passing, 105 broader controller/lineage/CLI/workflow tests passing, Ruff,
+`compileall`, JSON parsing, exact hash-chain checks, and `git diff --check` all
+passing. These are implementation evidence only. A new exact successor still
+requires independent Pro/ZCode/Fable review plus its own CI and PRE-S1; nothing
+in this section authorizes qualification, source acquisition, formal execution,
+artifact installation, empirical claims, or submission.

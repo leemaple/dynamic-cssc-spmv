@@ -88,6 +88,29 @@ witness, OutputPlan, whole-query, OpenFHE runner, native case and native guard
 tests cover 127/128/129 entries, multiple row-owned segments, tombstone/padding,
 overlap, and direct-oracle equality.
 
+## Qualification control record
+
+The live controller treats q1 through q5 as one exact serial prefix. A q5
+success is insufficient unless every member of that prefix is present,
+completed, and successful; an earlier failure followed by a hostile q5 success
+therefore cancels fail-closed. The authority-false stop-loss record uses schema
+`dynamic-cssc-route-a-live-stop-loss-v2` and separates controller-clock fields
+(`controller_detection_utc`, `cancel_request_utc`, `provider_api_ack_utc`, and
+`watch_decided_utc`) from GitHub's provider-clock `run.updated_at`, retained as
+`provider_terminal_updated_utc`, and from the exact terminal conclusion. It
+never invents a workflow-run `completedAt` or subtracts timestamps from two
+clocks. Same-clock elapsed values are nonnegative and rounded upward to whole
+seconds; pre-threshold job failure has null detection lag.
+
+API JSON reads and cancellation POSTs reject every redirect. Only the bounded
+q6 artifact GET may follow at most three safe HTTPS redirects, and every such
+hop is tokenless. Tests cover a failed q4 followed by a hostile q5 success,
+terminal `cancelled`/`failure`/`success` conclusions, provider failure, q1
+identity mutation, the exact ten-minute observation boundary, plan-to-record
+field equivalence, direct authenticated API access, redirect rejection, and
+token stripping. None of these records or transports serializes a positive
+authority bit.
+
 ## Freeze and claim disposition
 
 The S1 inventory must include this record, the proof document, all imported

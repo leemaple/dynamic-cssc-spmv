@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import stat
@@ -68,7 +69,7 @@ _QUALIFICATION_ARTIFACT_NAMES = (
 _Q6_ARTIFACT_NAME = "q6-postrun-resource-admission-record"
 _Q6_RECORD_SCHEMA = "dynamic-cssc-route-a-q6-postrun-resource-admission-v1"
 _PLAN_SCHEMA = "dynamic-cssc-route-a-publication-plan-v3"
-_PLAN_SHA256 = "5895fde4760ee6651b1fe34da35d14892e2f84e482ad8d2bd45caa8afc49d17b"
+_PLAN_SHA256 = "b5d561bb5579976e4a9b5cc976ecaf2a6b7bbc9318ef43689f870522e68c8f0a"
 _MAX_OBSERVATION_AGE = timedelta(seconds=30)
 _COMPUTATIONAL_LIMIT = timedelta(minutes=45)
 _Q6_JOB_LIMIT = timedelta(minutes=5)
@@ -86,6 +87,10 @@ _MAX_PROVIDER_LIST_BYTES = 4 * 1024 * 1024
 _MAX_FROZEN_PLAN_BYTES = 2 * 1024 * 1024
 _MAX_PROVIDER_CANCEL_BYTES = 64 * 1024
 _CANCELLATION_OBSERVATION_LIMIT = timedelta(minutes=10)
+_MAX_PROVIDER_REDIRECT_URL_BYTES = 8 * 1024
+_MAX_ARTIFACT_REDIRECTS = 3
+
+_RedirectPolicy = Literal["reject", "artifact-download"]
 
 
 class RouteAControllerError(RuntimeError):
@@ -178,6 +183,8 @@ class RouteAQualificationWatchResult:
     cancellation_requested_at: datetime | None
     cancellation_acknowledged_at: datetime | None
     provider_terminal_updated_at: datetime | None
+    provider_terminal_conclusion: str | None
+    watch_decided_at: datetime
     cancellation_error: str | None
 
     @property
@@ -189,22 +196,51 @@ class RouteAQualificationWatchResult:
                 else value.astimezone(UTC).isoformat().replace("+00:00", "Z")
             )
 
+        def elapsed_seconds(
+            start: datetime | None,
+            end: datetime | None,
+        ) -> int | None:
+            if start is None or end is None:
+                return None
+            seconds = (end - start).total_seconds()
+            if seconds < 0:
+                raise RouteAControllerError("live stop-loss timestamps are not monotonic")
+            return math.ceil(seconds)
+
+        detection_lag = (
+            None
+            if self.threshold_at is None
+            or self.cancellation_requested_at is None
+            or self.controller_observed_at < self.threshold_at
+            else elapsed_seconds(self.threshold_at, self.controller_observed_at)
+        )
         return {
+            "ack_to_watch_decision_seconds": elapsed_seconds(
+                self.cancellation_acknowledged_at,
+                self.watch_decided_at,
+            ),
             "authority": False,
-            "cancellation_acknowledged_utc": stamp(self.cancellation_acknowledged_at),
             "cancellation_error_or_null": self.cancellation_error,
-            "cancellation_requested_utc": stamp(self.cancellation_requested_at),
-            "controller_observed_utc": stamp(self.controller_observed_at),
+            "cancel_request_utc": stamp(self.cancellation_requested_at),
+            "controller_detection_utc": stamp(self.controller_observed_at),
             "decision": self.decision,
+            "detection_lag_seconds": detection_lag,
+            "final_conclusion": self.provider_terminal_conclusion,
             "formal_execution_authorized": False,
             "head_sha": self.head_sha,
+            "provider_api_ack_utc": stamp(self.cancellation_acknowledged_at),
             "provider_terminal_updated_utc": stamp(self.provider_terminal_updated_at),
             "q1_started_utc": stamp(self.q1_started_at),
             "q5_completed_utc": stamp(self.q5_completed_at),
+            "request_to_ack_seconds": elapsed_seconds(
+                self.cancellation_requested_at,
+                self.cancellation_acknowledged_at,
+            ),
             "run_attempt": self.run_attempt,
             "run_id": self.run_id,
-            "schema_version": "dynamic-cssc-route-a-live-stop-loss-v1",
+            "schema_version": "dynamic-cssc-route-a-live-stop-loss-v2",
             "threshold_utc": stamp(self.threshold_at),
+            "watch_decided_utc": stamp(self.watch_decided_at),
         }
 
 
@@ -256,6 +292,7 @@ class _HttpReader(Protocol):
         *,
         headers: dict[str, str],
         maximum_bytes: int,
+        redirect_policy: _RedirectPolicy,
     ) -> bytes: ...
 
     def post(
@@ -268,7 +305,15 @@ class _HttpReader(Protocol):
 
 
 class _HttpsTokenStrippingRedirectHandler(HTTPRedirectHandler):
-    """Allow HTTPS redirects without forwarding bearer authority cross-origin."""
+    """Reject API redirects or follow a bounded tokenless artifact redirect."""
+
+    def __init__(self, policy: _RedirectPolicy) -> None:
+        super().__init__()
+        if policy not in ("reject", "artifact-download"):
+            raise ValueError("redirect policy is not closed")
+        self.policy = policy
+        self.max_redirections = _MAX_ARTIFACT_REDIRECTS
+        self.max_repeats = _MAX_ARTIFACT_REDIRECTS
 
     def redirect_request(  # type: ignore[no-untyped-def]
         self,
@@ -279,18 +324,26 @@ class _HttpsTokenStrippingRedirectHandler(HTTPRedirectHandler):
         headers,
         new_url,
     ):
+        if self.policy == "reject":
+            raise RouteAControllerError("GitHub API redirects are forbidden")
+        if request.get_method() != "GET":
+            raise RouteAControllerError("only artifact GET may follow a redirect")
+        if type(new_url) is not str or len(new_url.encode("utf-8")) > (
+            _MAX_PROVIDER_REDIRECT_URL_BYTES
+        ):
+            raise RouteAControllerError("GitHub artifact redirect URL is invalid")
         try:
-            source = urlsplit(request.full_url)
             destination = urlsplit(new_url)
         except (TypeError, ValueError) as error:
-            raise RouteAControllerError("GitHub API redirect URL is invalid") from error
+            raise RouteAControllerError("GitHub artifact redirect URL is invalid") from error
         if (
             destination.scheme != "https"
             or not destination.netloc
+            or destination.fragment
             or destination.username is not None
             or destination.password is not None
         ):
-            raise RouteAControllerError("GitHub API redirect is not one safe HTTPS URL")
+            raise RouteAControllerError("GitHub artifact redirect is not one safe HTTPS URL")
         redirected = super().redirect_request(
             request,
             file_pointer,
@@ -299,13 +352,7 @@ class _HttpsTokenStrippingRedirectHandler(HTTPRedirectHandler):
             headers,
             new_url,
         )
-        if redirected is not None and (
-            source.scheme,
-            source.netloc,
-        ) != (
-            destination.scheme,
-            destination.netloc,
-        ):
+        if redirected is not None:
             redirected.remove_header("Authorization")
         return redirected
 
@@ -319,10 +366,11 @@ class _UrllibHttpReader:
         *,
         headers: dict[str, str],
         maximum_bytes: int,
+        redirect_policy: _RedirectPolicy,
     ) -> bytes:
         request = Request(url, headers=headers, method="GET")
         try:
-            opener = build_opener(_HttpsTokenStrippingRedirectHandler())
+            opener = build_opener(_HttpsTokenStrippingRedirectHandler(redirect_policy))
             with opener.open(request, timeout=30) as response:  # noqa: S310 - HTTPS gated
                 if response.status != 200:
                     raise OSError(f"GitHub API returned HTTP {response.status}")
@@ -350,7 +398,7 @@ class _UrllibHttpReader:
     ) -> bytes:
         request = Request(url, data=b"", headers=headers, method="POST")
         try:
-            opener = build_opener(_HttpsTokenStrippingRedirectHandler())
+            opener = build_opener(_HttpsTokenStrippingRedirectHandler("reject"))
             with opener.open(request, timeout=30) as response:  # noqa: S310 - HTTPS gated
                 if response.status != 202:
                     raise OSError(f"GitHub API returned HTTP {response.status}")
@@ -562,7 +610,13 @@ class GitHubActionsQualificationProvider:
         }
         self._http_reader = http_reader if http_reader is not None else _UrllibHttpReader()
 
-    def _get(self, path_or_url: str, maximum_bytes: int) -> bytes:
+    def _get(
+        self,
+        path_or_url: str,
+        maximum_bytes: int,
+        *,
+        allow_artifact_redirect: bool = False,
+    ) -> bytes:
         if path_or_url.startswith("https://"):
             try:
                 target = urlsplit(path_or_url)
@@ -589,6 +643,9 @@ class GitHubActionsQualificationProvider:
                 url,
                 headers=dict(self._headers),
                 maximum_bytes=maximum_bytes,
+                redirect_policy=(
+                    "artifact-download" if allow_artifact_redirect else "reject"
+                ),
             )
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as error:
             raise RouteAControllerError("GitHub provider request failed") from error
@@ -770,7 +827,11 @@ class GitHubActionsQualificationProvider:
         download_url = _provider_string(
             q6.get("archive_download_url"), "artifact.archive_download_url"
         )
-        archive_bytes = self._get(download_url, _MAX_Q6_ARCHIVE_BYTES)
+        archive_bytes = self._get(
+            download_url,
+            _MAX_Q6_ARCHIVE_BYTES,
+            allow_artifact_redirect=True,
+        )
 
         return RouteAProviderObservation(
             observed_at=_utc_now(),
@@ -934,8 +995,11 @@ def _watch_result(
     cancellation_requested_at: datetime | None = None,
     cancellation_acknowledged_at: datetime | None = None,
     provider_terminal_updated_at: datetime | None = None,
+    provider_terminal_conclusion: str | None = None,
+    watch_decided_at: datetime | None = None,
     cancellation_error: str | None = None,
 ) -> RouteAQualificationWatchResult:
+    decided_at = controller_observed_at if watch_decided_at is None else watch_decided_at
     return RouteAQualificationWatchResult(
         decision=decision,
         run_id=request.run_id,
@@ -948,6 +1012,8 @@ def _watch_result(
         cancellation_requested_at=cancellation_requested_at,
         cancellation_acknowledged_at=cancellation_acknowledged_at,
         provider_terminal_updated_at=provider_terminal_updated_at,
+        provider_terminal_conclusion=provider_terminal_conclusion,
+        watch_decided_at=decided_at,
         cancellation_error=cancellation_error,
     )
 
@@ -1016,7 +1082,23 @@ def watch_route_a_qualification(
                 and q5.conclusion == "success"
                 and q5.completed_at is not None
             )
-            if q5_success and threshold_at is not None and q5.completed_at <= threshold_at:
+            prefix_success = all(
+                job is not None
+                and job.status == "completed"
+                and job.conclusion == "success"
+                for job in (
+                    jobs_by_name.get(name) for name in _QUALIFICATION_JOB_NAMES[:5]
+                )
+            )
+            failed_job_observed = any(
+                job.status == "completed" and job.conclusion != "success" for job in jobs
+            )
+            if (
+                q5_success
+                and prefix_success
+                and threshold_at is not None
+                and q5.completed_at <= threshold_at
+            ):
                 return _watch_result(
                     decision="combined-guard-success-before-threshold",
                     request=request_identity,
@@ -1026,6 +1108,9 @@ def watch_route_a_qualification(
                     q5_completed_at=q5.completed_at,
                     provider_terminal_updated_at=(
                         run.updated_at if run.status == "completed" else None
+                    ),
+                    provider_terminal_conclusion=(
+                        run.conclusion if run.status == "completed" else None
                     ),
                 )
             if run.status == "completed":
@@ -1041,10 +1126,8 @@ def watch_route_a_qualification(
                     controller_observed_at=controller_now,
                     q5_completed_at=last_q5_completed_at,
                     provider_terminal_updated_at=run.updated_at,
+                    provider_terminal_conclusion=run.conclusion,
                 )
-            failed_job_observed = any(
-                job.status == "completed" and job.conclusion != "success" for job in jobs
-            )
             if not failed_job_observed and (
                 threshold_at is None or controller_now < threshold_at
             ):
@@ -1088,10 +1171,11 @@ def watch_route_a_qualification(
                     request=request_identity,
                     q1_started_at=frozen_q1_started_at,
                     threshold_at=threshold_at,
-                    controller_observed_at=terminal_now,
+                    controller_observed_at=cancellation_requested_at,
                     q5_completed_at=last_q5_completed_at,
                     cancellation_requested_at=cancellation_requested_at,
                     cancellation_acknowledged_at=cancellation_acknowledged_at,
+                    watch_decided_at=terminal_now,
                     cancellation_error="provider-terminal-state-not-observed-within-ten-minutes",
                 )
             try:
@@ -1104,10 +1188,11 @@ def watch_route_a_qualification(
                     request=request_identity,
                     q1_started_at=frozen_q1_started_at,
                     threshold_at=threshold_at,
-                    controller_observed_at=terminal_now,
+                    controller_observed_at=cancellation_requested_at,
                     q5_completed_at=last_q5_completed_at,
                     cancellation_requested_at=cancellation_requested_at,
                     cancellation_acknowledged_at=cancellation_acknowledged_at,
+                    watch_decided_at=terminal_now,
                     cancellation_error="provider-terminal-read-failed",
                 )
             terminal_run, terminal_jobs = _validate_live_observation(
@@ -1126,13 +1211,15 @@ def watch_route_a_qualification(
                     request=request_identity,
                     q1_started_at=frozen_q1_started_at,
                     threshold_at=threshold_at,
-                    controller_observed_at=terminal_now,
+                    controller_observed_at=cancellation_requested_at,
                     q5_completed_at=(
                         None if terminal_q5 is None else terminal_q5.completed_at
                     ),
                     cancellation_requested_at=cancellation_requested_at,
                     cancellation_acknowledged_at=cancellation_acknowledged_at,
                     provider_terminal_updated_at=terminal_run.updated_at,
+                    provider_terminal_conclusion=terminal_run.conclusion,
+                    watch_decided_at=terminal_now,
                 )
             remaining = max(
                 0.0,
@@ -1144,10 +1231,11 @@ def watch_route_a_qualification(
                     request=request_identity,
                     q1_started_at=frozen_q1_started_at,
                     threshold_at=threshold_at,
-                    controller_observed_at=terminal_now,
+                    controller_observed_at=cancellation_requested_at,
                     q5_completed_at=last_q5_completed_at,
                     cancellation_requested_at=cancellation_requested_at,
                     cancellation_acknowledged_at=cancellation_acknowledged_at,
+                    watch_decided_at=terminal_now,
                     cancellation_error=(
                         "provider-terminal-state-not-observed-within-ten-minutes"
                     ),

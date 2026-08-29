@@ -30,13 +30,20 @@ def _json_bytes(value: object) -> bytes:
 class _MemoryHttpReader:
     def __init__(self, responses: dict[str, bytes]) -> None:
         self.responses = responses
-        self.requests: list[tuple[str, int]] = []
+        self.requests: list[tuple[str, int, str]] = []
         self.posts: list[tuple[str, int]] = []
 
-    def get(self, url: str, *, headers: dict[str, str], maximum_bytes: int) -> bytes:
+    def get(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        maximum_bytes: int,
+        redirect_policy: str,
+    ) -> bytes:
         assert headers["Authorization"] == "Bearer secret-token"
         assert headers["Accept"] == "application/vnd.github+json"
-        self.requests.append((url, maximum_bytes))
+        self.requests.append((url, maximum_bytes, redirect_policy))
         try:
             content = self.responses[url]
         except KeyError as error:  # pragma: no cover - fixture route is exact
@@ -133,13 +140,15 @@ def _responses() -> dict[str, bytes]:
     }
 
 
-def test_urllib_redirect_strips_token_at_a_foreign_https_origin() -> None:
+def test_urllib_artifact_redirect_strips_token_at_a_foreign_https_origin() -> None:
     request = Request(
         "https://api.github.com/repos/owner/repository/actions/artifacts/77/zip",
         headers={"Authorization": "Bearer secret-token"},
     )
     redirect_headers = Message()
-    redirected = controller_module._HttpsTokenStrippingRedirectHandler().redirect_request(
+    redirected = controller_module._HttpsTokenStrippingRedirectHandler(
+        "artifact-download"
+    ).redirect_request(
         request,
         None,
         302,
@@ -153,14 +162,16 @@ def test_urllib_redirect_strips_token_at_a_foreign_https_origin() -> None:
     assert redirected.get_header("Authorization") is None
 
 
-def test_urllib_redirect_rejects_a_non_https_destination() -> None:
+def test_urllib_artifact_redirect_rejects_a_non_https_destination() -> None:
     request = Request(
         "https://api.github.com/repos/owner/repository/actions/artifacts/77/zip",
         headers={"Authorization": "Bearer secret-token"},
     )
 
     with pytest.raises(controller_module.RouteAControllerError, match="redirect"):
-        controller_module._HttpsTokenStrippingRedirectHandler().redirect_request(
+        controller_module._HttpsTokenStrippingRedirectHandler(
+            "artifact-download"
+        ).redirect_request(
             request,
             None,
             302,
@@ -170,12 +181,14 @@ def test_urllib_redirect_rejects_a_non_https_destination() -> None:
         )
 
 
-def test_urllib_redirect_preserves_token_only_at_the_same_https_origin() -> None:
+def test_urllib_artifact_redirect_strips_token_at_the_same_https_origin() -> None:
     request = Request(
         "https://api.github.com/repos/owner/repository/actions/runs/999",
         headers={"Authorization": "Bearer secret-token"},
     )
-    redirected = controller_module._HttpsTokenStrippingRedirectHandler().redirect_request(
+    redirected = controller_module._HttpsTokenStrippingRedirectHandler(
+        "artifact-download"
+    ).redirect_request(
         request,
         None,
         302,
@@ -185,7 +198,46 @@ def test_urllib_redirect_preserves_token_only_at_the_same_https_origin() -> None
     )
 
     assert redirected is not None
-    assert redirected.get_header("Authorization") == "Bearer secret-token"
+    assert redirected.get_header("Authorization") is None
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        "https://user:password@objects.githubusercontent.com/artifact.zip",
+        "https://objects.githubusercontent.com/artifact.zip#fragment",
+        "https://objects.githubusercontent.com/" + "x" * (8 * 1024),
+    ],
+)
+def test_urllib_artifact_redirect_rejects_an_unsafe_destination(
+    destination: str,
+) -> None:
+    request = Request(
+        "https://api.github.com/repos/owner/repository/actions/artifacts/77/zip",
+        headers={"Authorization": "Bearer secret-token"},
+    )
+
+    with pytest.raises(controller_module.RouteAControllerError, match="redirect"):
+        controller_module._HttpsTokenStrippingRedirectHandler(
+            "artifact-download"
+        ).redirect_request(request, None, 302, "Found", Message(), destination)
+
+
+def test_urllib_api_redirect_is_rejected_before_forwarding_authority() -> None:
+    request = Request(
+        "https://api.github.com/repos/owner/repository/actions/runs/999",
+        headers={"Authorization": "Bearer secret-token"},
+    )
+
+    with pytest.raises(controller_module.RouteAControllerError, match="forbidden"):
+        controller_module._HttpsTokenStrippingRedirectHandler("reject").redirect_request(
+            request,
+            None,
+            302,
+            "Found",
+            Message(),
+            "https://api.github.com/repositories/123/actions/runs/999",
+        )
 
 
 def test_urllib_reader_posts_exact_empty_cancel_request(
@@ -215,6 +267,7 @@ def test_urllib_reader_posts_exact_empty_cancel_request(
 
     def build_opener(handler: object) -> _Opener:
         assert isinstance(handler, controller_module._HttpsTokenStrippingRedirectHandler)
+        assert handler.policy == "reject"
         return _Opener()
 
     monkeypatch.setattr(controller_module, "build_opener", build_opener)
@@ -240,11 +293,17 @@ def test_github_provider_normalizes_only_the_frozen_api_fields(tmp_path: Path) -
     assert observation.q6_artifact.database_id == 77
     assert observation.q6_archive_bytes == b"archive-bytes"
     assert observation.plan_bytes == plan_source.read_bytes()
-    assert [maximum for _, maximum in reader.requests] == [
+    assert [maximum for _, maximum, _ in reader.requests] == [
         2 * 1024 * 1024,
         4 * 1024 * 1024,
         4 * 1024 * 1024,
         2 * 1024 * 1024,
+    ]
+    assert [policy for _, _, policy in reader.requests] == [
+        "reject",
+        "reject",
+        "reject",
+        "artifact-download",
     ]
 
 
@@ -326,7 +385,10 @@ def test_github_provider_never_forwards_its_token_to_a_foreign_archive_origin(
     with pytest.raises(RouteAControllerError, match="foreign HTTPS origin"):
         provider.read_qualification(999)
 
-    assert all("attacker.example" not in url for url, _maximum in reader.requests)
+    assert all(
+        "attacker.example" not in url
+        for url, _maximum, _policy in reader.requests
+    )
 
 
 @pytest.mark.parametrize(

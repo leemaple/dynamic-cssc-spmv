@@ -419,7 +419,7 @@ its one-second deadline; no boundary may split an accepted-event group.
 
 The canonical machine plan is
 `config/route-a-publication-plan.json`, whose exact retained-file SHA-256 is
-`5895fde4760ee6651b1fe34da35d14892e2f84e482ad8d2bd45caa8afc49d17b`.
+`b5d561bb5579976e4a9b5cc976ecaf2a6b7bbc9318ef43689f870522e68c8f0a`.
 The file is reviewed together with this document. The runner must reject any
 plan whose retained bytes do not match that digest; changing the file requires
 a new preregistration review and digest.
@@ -1150,9 +1150,26 @@ the combined-guard job's `completedAt`. This wall clock includes every dependent
 job's queue gap, setup, handoff, build, replay, and guard. At the exact threshold,
 if the combined guard is not successful, the controller requests cancellation
 of only that exact run, records controller detection, provider API acknowledgement,
-and provider completion lag separately, dispatches nothing further, and selects
-C. The scale, matrix, order, or threshold is not changed
+the later controller decision, and the provider's exact terminal update field
+separately, dispatches nothing further, and selects C. The scale, matrix, order,
+or threshold is not changed
 after observing qualification.
+
+The cancellation record never invents a provider `completedAt` for the workflow
+run. GitHub's exact terminal provider field is retained as
+`provider_terminal_updated_utc`, alongside the exact final conclusion when one
+is observed. `controller_detection_utc`, `cancel_request_utc`,
+`provider_api_ack_utc`, and `watch_decided_utc` are controller-clock readings.
+Detection lag, request-to-ack lag, and ack-to-watch-decision lag are the
+corresponding nonnegative elapsed seconds rounded upward to a whole second; a
+pre-threshold job failure has null detection lag. No calculation subtracts a
+provider timestamp from a controller timestamp. A missing terminal observation
+within the frozen ten-minute window remains an authority-false Route C record.
+GitHub metadata GETs and the cancellation POST reject every redirect. Only the
+q6 artifact GET may follow at most three redirects: its initial URL must share
+the configured API origin, every destination must be safe HTTPS without
+userinfo or a fragment, and every redirected request is stripped of the bearer
+token, including a same-origin hop.
 
 The combined-guard artifact deliberately contains no self-referential final
 `completedAt`, `C_q`, or resource verdict. Only after job 5 is terminal does the
