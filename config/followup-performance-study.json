@@ -1,0 +1,313 @@
+{
+  "schema_version": "dynamic-cssc-followup-performance-study-v1",
+  "study_id": "dynamic-cssc-followup-performance-2026-08-30",
+  "state": "stage1-preregistration-draft-non-authorizing",
+  "authority": {
+    "formal_execution_authorized": false,
+    "qualification_dispatch_authorized": false,
+    "stage1_may_change_behavior_source": false,
+    "stage1_required_object_paths": [
+      "config/followup-performance-study.json",
+      "docs/paper/followup-performance-preregistration.md",
+      "docs/paper/followup-performance-claim-ledger.md",
+      "docs/research/followup-performance-novelty-inheritance-review-2026-08-30.md",
+      "config/followup-performance-stage1-manifest.json"
+    ],
+    "pre_experiment_control_workflows": [
+      "exact-head-linux-ci",
+      "pre-s1-hash-locked-linux-openfhe-and-resource-validation",
+      "descriptive-registration",
+      "terminal-data-only-source-anchor",
+      "independent-source-and-contract-review"
+    ],
+    "control_workflow_rule": "these-authority-false-prerequisite-control-workflows-are-neither-qualification-nor-formal-experiment-dispatches-and-consume-no-experiment-dispatch-capability",
+    "stage2_required_before_qualification_dispatch": [
+      "exact-stage1-parent-and-bounded-implementation-diff-review",
+      "closed-role-aware-behavior-sets",
+      "exact-head-linux-ci",
+      "pre-s1-hash-locked-linux-openfhe-and-resource-validation",
+      "followup-study-plan-json-schema-and-exact-field-validator",
+      "followup-outer-envelope-schema-and-predecessor-rejection-tests",
+      "descriptive-registration",
+      "terminal-data-only-source-anchor",
+      "independent-review-with-no-unresolved-P0-or-P1"
+    ],
+    "qualification_dispatch_capability": {
+      "type": "dynamic-cssc-followup-performance-qualification-dispatch-capability-v1",
+      "minted_by": "external-live-controller-only-after-a-fresh-read-of-every-stage2-required-prerequisite-and-provider-terminal-state",
+      "serialization": "never-serialized-never-uploaded-never-written-to-a-registration-anchor",
+      "binding": "exact-study-id-stage1-plan-hash-experiment-source-S1-evidence-freeze-S2-qualification-seed-20260901-workload-rho-set-attempt-ordinal-1",
+      "single_use_transition": "atomically-consumed-only-by-dispatch-of-the-sole-exact-qualification-run",
+      "cannot_authorize": "formal-acquisition-formal-shard-terminal-aggregate-analysis-control-workflow-or-any-predecessor-lineage-run"
+    },
+    "formal_dispatch_capability": {
+      "type": "dynamic-cssc-followup-performance-formal-dispatch-capability-v1",
+      "minted_by": "external-live-controller-only-after-the-sole-qualification-q1-through-q6-all-succeed-within-the-frozen-45-and-55-minute-gates-and-a-fresh-provider-and-resource-reread-passes",
+      "serialization": "never-serialized-never-uploaded-never-written-to-a-registration-anchor",
+      "binding": "exact-study-id-stage1-plan-hash-experiment-source-S1-evidence-freeze-S2-successful-qualification-run-id-attempt-and-complete-formal-matrix",
+      "single_use_transition": "atomically-consumed-only-to-open-the-strictly-serial-seventeen-unit-formal-campaign-controller",
+      "cannot_authorize": "qualification-rerun-control-workflow-predecessor-lineage-run-or-a-second-formal-campaign"
+    },
+    "authority_state_machine": [
+      "stage1-draft-to-immutable-stage1-mints-no-capability",
+      "immutable-stage1-plus-reviewed-stage2-S1-successful-control-workflows-data-only-S2-and-zero-unresolved-P0-P1-permits-the-live-controller-to-mint-one-qualification-capability",
+      "atomic-consumption-of-that-exact-capability-permits-one-and-only-one-qualification-dispatch",
+      "any-qualification-non-success-transitions-terminally-to-followup-NO-GO-with-no-formal-capability",
+      "qualification-q1-through-q6-success-plus-fresh-resource-provider-reread-permits-the-live-controller-to-mint-one-distinct-formal-capability",
+      "atomic-consumption-of-that-exact-formal-capability-permits-one-strictly-serial-formal-campaign",
+      "formal-terminal-admission-or-formal-NO-GO-closes-the-followup-lineage"
+    ],
+    "cross_type_and_predecessor_rejection": "qualification-and-formal-capabilities-are-noninterchangeable;wrong-type-replayed-already-consumed-wrong-study-wrong-S1-S2-wrong-attempt-and-every-predecessor-capability-must-reject-before-provider-dispatch"
+  },
+  "closed_predecessor": {
+    "lineage": "route-a-2026-08",
+    "qualification_run_id": 33261434612,
+    "qualification_head_sha": "c7ff6820d9323f1850c1c5c57fd9070db88db120",
+    "qualification_event": "workflow_dispatch",
+    "qualification_run_attempt": 1,
+    "qualification_started_at_utc": "2026-08-29T15:52:41Z",
+    "qualification_updated_at_utc": "2026-08-29T16:38:03Z",
+    "frozen_q1_through_q5_deadline_utc": "2026-08-29T16:37:45Z",
+    "q1_job_id": 99123955873,
+    "q1_job_started_at_utc": "2026-08-29T15:52:45Z",
+    "q1_job_completed_at_utc": "2026-08-29T16:34:30Z",
+    "q1_job_conclusion": "success",
+    "q2_job_id": 99128929460,
+    "q2_job_started_at_utc": "2026-08-29T16:34:33Z",
+    "q2_job_completed_at_utc": "2026-08-29T16:38:02Z",
+    "q2_job_conclusion": "cancelled",
+    "q3_through_q6_provider_state": "zero-step-cancelled-job-nodes-created-after-exact-run-cancellation-no-computation-or-guard-executed",
+    "outcome": "terminal-no-go-q1-success-q2-not-successful-at-frozen-45-minute-threshold-q3-through-q6-zero-step-cancelled-no-formal-dispatch",
+    "only_provider_artifact_id": 9717884587,
+    "only_provider_artifact_name": "q1-simulator-pre-replay-handoff",
+    "only_provider_artifact_size_in_bytes": 621877534,
+    "only_provider_artifact_digest": "sha256:51cbfc2a5473c0fe78d6d169cc2c4a7278ac39d7472ff37e5642e190b7e2c008",
+    "only_provider_artifact_expires_at_utc": "2026-08-30T16:34:22Z",
+    "only_provider_artifact_authority": "permanently-non-evidence",
+    "rerun_permitted_in_predecessor_lineage": false,
+    "reinterpretation_permitted": false
+  },
+  "frozen_ancestry": {
+    "predecessor_experiment_source_S1": "ee58627bb5752c6ac1ee2c5132c6574f9cb66552",
+    "predecessor_evidence_freeze_S2": "c7ff6820d9323f1850c1c5c57fd9070db88db120",
+    "predecessor_plan_path": "config/route-a-publication-plan.json",
+    "predecessor_plan_sha256": "ce09c1c9c82032ba8439188ce20d4cd8d6310a386efbe2d436595fd779b7268c",
+    "predecessor_preregistration_path": "docs/paper/publication-preregistration-route-a.md",
+    "predecessor_preregistration_sha256": "6b53a73c6973a4be53d195f5d9407e7e023ae3a5617bce57b4a40a7033a32f79",
+    "predecessor_claim_ledger_path": "docs/paper/claim-ledger-draft.md",
+    "predecessor_claim_ledger_sha256": "b9253345d9fc1b77ea7345e194aafe917f2103e8f4f09988282837fda1e33dc7",
+    "bounded_novelty_review_path": "docs/research/route-a-complete-combination-novelty-review-2026-08-28.md",
+    "bounded_novelty_review_sha256": "6030bec34d194aeaa59b813b06c34c9f5a901ef0e1fa8bafadf1b1079a080ba5",
+    "followup_novelty_inheritance_review_path": "docs/research/followup-performance-novelty-inheritance-review-2026-08-30.md"
+  },
+  "outcome_informed_repair": {
+    "diagnosis_path": "docs/reviews/route-a-followup-performance-diagnosis-2026-08-30.md",
+    "diagnosis_sha256_at_merged_main": "405024f027c493a91eb38046874aedc8cb6cd06f6fdc5bb2d87f067b0288ff24",
+    "implementation_commit": "e204bb90fcfce0b2e9f3082fc2849c2de41e3b4b",
+    "hardening_commit": "5b5d1468bfe3cac324819747388a2c897101f2bb",
+    "main_merge_commit": "4f328afc079b328c31f2e0790cb65cdf96fcc1d7",
+    "merged_tree": "ab48bd66a2a8ae99da17c6cd960b71fffffb71bc",
+    "implementation_to_hardening_diff_sha256": "f8294786bc9703a3046f462ccb50d738f429f72cd3c64e4c56016177102c1204",
+    "pull_request": 42,
+    "main_ci_run_id": 33277015441,
+    "main_ci_conclusion": "success",
+    "main_ci_unit_result": "2416-passed-2-expected-runner-dependent-skips",
+    "main_ci_r0_artifact_id": 9722079150,
+    "main_ci_r0_artifact_digest": "sha256:a25a1f33ad47e54ce757b5084fa21896e48615991160546a730f876bc9127a12",
+    "trigger": "the-closed-predecessor-q1-stage-ledger-and-non-evidence-payload-revealed-repeated-query-lifecycle-validation-as-the-dominant-operational-bottleneck",
+    "allowed_interpretation": "the-repair-is-an-outcome-informed-engineering-change-and-the-new-study-is-a-separate-follow-up-not-a-rerun-or-continuation-of-the-predecessor-confirmatory-lineage",
+    "forbidden_interpretation": "neither-old-partial-timing-nor-local-after-repair-diagnostics-may-enter-performance-estimation-speedup-ranking-or-paper-result-tables"
+  },
+  "scientific_contract": {
+    "inheritance_rule": "every-outcome-bearing-inner-scientific-resource-and-admission-semantic-of-the-predecessor-plan-is-preserved-except-the-five-enumerated-follow-up-seed-replacements;the-predecessor-authority-lineage-and-plan-schema-identity-are-ancestry-only-and-are-superseded-by-the-explicit-followup-control-and-identity-layer",
+    "baseline_materialization_algorithm": "parse-the-exact-predecessor-plan-as-finite-duplicate-free-JSON-apply-the-five-registered-value-changes-in-listed-order-then-serialize-as-ASCII-JSON-with-lexicographically-sorted-object-keys-compact-comma-colon-separators-allow_nan_false-and-one-terminal-LF",
+    "materialized_predecessor_baseline_sha256": "0d307169356a50cc75f6ad7ba1c018321c0693e185cde7f5f2e7fef472da8e0e",
+    "baseline_digest_role": "comparison-baseline-for-semantic-delta-validation-not-an-executable-plan-authority-lineage-or-outer-evidence-namespace",
+    "base_top_level_disposition": {
+      "authority": "ancestry-only-nonoperative-superseded-by-followup-authority",
+      "cryptographic_roles": "inherit-exact",
+      "encrypted_update_contract": "inherit-exact",
+      "evidence": "inherit-exact-counts-order-admission-and-retention-semantics-with-one-new-outer-followup-envelope-around-each-object",
+      "f1m": "inherit-exact",
+      "formal_budget": "inherit-exact-times-reservations-clocks-order-retry-and-cancellation-semantics;route-a-words-inside-descriptive-strings-are-legacy-labels-not-provider-selectors",
+      "functional_proof_obligations": "inherit-exact-including-shared-proof-and-source-conformance-paths",
+      "lineage": "ancestry-template-only-nonoperative-superseded-by-followup-lineage",
+      "matrix": "inherit-exact",
+      "openfhe": "inherit-exact-except-registered-snapshot-formal-seed",
+      "ordered_event": "inherit-exact-including-inner-schema-identities-and-reserved-column-namespace",
+      "plaintext_context_cells": "inherit-exact-except-registered-first-cell-seed",
+      "qualification": "inherit-exact-scientific-resource-timing-and-dag-semantics-except-seed;predecessor-controller-role-and-paths-are-nonoperative-and-superseded-by-followup-controller",
+      "query_schedule": "inherit-exact-including-inner-schema-identities",
+      "query_vector": "inherit-exact-except-registered-seed;inner-domain-and-document-schema-identities-remain-exact",
+      "rho10_projection": "inherit-exact-including-inner-schema-and-transform-identities",
+      "runner": "inherit-exact",
+      "schema_version": "ancestry-only-predecessor-plan-identity-superseded-by-this-followup-plan-schema-version",
+      "serialized_byte_accounting": "inherit-exact",
+      "strategies": "inherit-exact",
+      "synthetic": "inherit-exact-except-registered-formal-seeds"
+    },
+    "registered_value_changes": [
+      {
+        "json_path": "/qualification/seed",
+        "predecessor": 20260821,
+        "followup": 20260901
+      },
+      {
+        "json_path": "/synthetic/seeds",
+        "predecessor": [
+          20260822,
+          20260823,
+          20260824
+        ],
+        "followup": [
+          20260902,
+          20260903,
+          20260904
+        ]
+      },
+      {
+        "json_path": "/openfhe/snapshot/formal_seed",
+        "predecessor": 20260822,
+        "followup": 20260902
+      },
+      {
+        "json_path": "/plaintext_context_cells/0/seed",
+        "predecessor": 20260822,
+        "followup": 20260902
+      },
+      {
+        "json_path": "/query_vector/seed",
+        "predecessor": 2026082302,
+        "followup": 2026090202
+      }
+    ],
+    "seed_selection_rule": "the-consecutive-date-coded-integers-were-fixed-in-this-stage1-document-before-any-generator-or-evaluator-was-run-with-them;none-may-be-substituted-after-observation",
+    "registered_seed_observation_embargo": {
+      "stage2_rule": "registered-qualification-formal-snapshot-and-query-vector-seed-values-may-be-parsed-compared-and-hash-bound-only-as-opaque-scalars;no-stage2-test-fixture-smoke-registration-or-review-may-pass-one-to-a-workload-generator-query-vector-generator-snapshot-builder-strategy-evaluator-or-native-evaluator",
+      "test_seed_rule": "every-stage2-executable-test-or-smoke-uses-explicit-sentinel-seeds-disjoint-from-20260901-20260902-20260903-20260904-and-2026090202-and-must-not-retain-any-derived-study-trace-vector-snapshot-or-cell",
+      "qualification_first_observation": "qualification-seed-20260901-and-global-query-vector-seed-2026090202-may-first-enter-their-respective-workload-and-query-vector-generators-only-inside-the-sole-authorized-followup-qualification-run-because-that-run-executes-query-bearing-cells",
+      "formal_first_observation": "formal-workload-snapshot-and-plaintext-context-seeds-20260902-20260903-and-20260904-may-first-enter-any-generator-builder-or-evaluator-only-inside-their-exact-authorized-formal-units-after-qualification-GO",
+      "query_vector_seed_reuse_after_go": "after-qualification-GO-the-same-frozen-global-seed-value-2026090202-may-reenter-the-query-vector-generator-only-for-each-exact-authorized-formal-domain;domain-specific-vector-bytes-are-generated-and-bound-per-shard-and-the-qualification-vector-bytes-must-not-be-substituted-into-a-different-formal-domain",
+      "violation_effect": "terminally-invalidate-this-study-id-with-no-seed-substitution-no-qualification-and-no-formal-dispatch"
+    },
+    "successor_study_rule": "if-this-followup-qualification-or-formal-campaign-closes-NO-GO-no-third-study-with-the-same-estimand-and-resource-threshold-may-be-preregistered-run-or-used-to-support-this-paper;any-future-scientifically-independent-study-must-enumerate-the-complete-prior-NO-GO-chain-disclose-every-outcome-informed-delta-and-establish-an-independent-question-rather-than-tuning-to-pass-the-gate"
+  },
+  "followup_control_and_identity": {
+    "outer_namespace_root": "dynamic-cssc-followup-performance-v1",
+    "study_plan_schema_path_frozen_at_stage2_S1": "schemas/followup-performance-study-v1.schema.json",
+    "outer_envelope_schema_version": "dynamic-cssc-followup-performance-evidence-envelope-v1",
+    "outer_envelope_required_fields": [
+      "schema_version",
+      "study_id",
+      "stage1_commit_sha",
+      "stage1_plan_sha256",
+      "materialized_predecessor_baseline_sha256",
+      "experiment_source_S1_sha",
+      "evidence_freeze_S2_sha",
+      "unit_kind",
+      "unit_identity_sha256",
+      "unit_attempt_ordinal",
+      "inner_role",
+      "inner_sha256",
+      "authority"
+    ],
+    "inner_payload_rule": "all-inherited-inner-scientific-schema-identifiers-reserved-column-identities-canonical-byte-domains-and-source-paths-remain-byte-exact-after-only-the-five-seed-replacements;an-inner-route-a-token-is-a-legacy-scientific-schema-label-and-never-authority",
+    "outer_identity_rule": "every-new-workflow-artifact-registration-anchor-behavior-set-provider-run-record-controller-record-and-capability-uses-the-outer-namespace-root-and-binds-the-exact-envelope;predecessor-objects-lack-that-envelope-and-must-reject-before-inner-decoding-or-execution",
+    "artifact_name_prefix": "followup-performance-v1-",
+    "controller_role_id": "followup-performance-live-dispatch-controller-v1",
+    "controller_program_path_frozen_at_stage2_S1": "scripts/control_followup_performance.py",
+    "controller_module_path_frozen_at_stage2_S1": "src/dynamic_cssc/followup_performance_controller.py",
+    "authority_precedence": "only-this-followup-authority-followup-lineage-and-a-fresh-external-controller-decision-are-operative;no-authority-lineage-schema-or-controller-identity-inside-the-predecessor-baseline-can-mint-or-delegate-followup-authority",
+    "followup_lineage": {
+      "stage1": "immutable-preregistration-plan-claim-ledger-novelty-inheritance-review-and-detached-file-manifest-before-any-study-seed-execution",
+      "stage2_S1": "clean-experiment-source-containing-only-the-reviewed-stage1-descendant-bounded-followup-identity-plumbing-sentinel-seed-tests-outer-envelope-schema-workflows-behavior-sets-controller-and-analyzer",
+      "stage2_S2": "exact-stage2-S1-plus-only-a-reviewed-data-only-registration-anchor-and-compatibility-receipt",
+      "stage3": "compatible-detached-analysis-source-whose-analyzer-behavior-blobs-equal-stage2-S1",
+      "source_rule": "qualification-acquisition-and-every-formal-producer-replay-and-guard-execute-only-from-detached-exact-stage2-S1;control-dispatches-from-exact-stage2-S2;analysis-runs-only-from-compatible-stage3"
+    }
+  },
+  "qualification": {
+    "attempts": 1,
+    "rerun_permitted": false,
+    "scale": "M",
+    "seed": 20260901,
+    "workload": "mixed-insert-delete-modify",
+    "rho_values": [
+      "1/100",
+      "1/10",
+      "1",
+      "10"
+    ],
+    "q1_through_q5_critical_path_minutes": "45.00",
+    "q1_through_q6_total_path_minutes": "55.00",
+    "thresholds_relaxed_from_predecessor": false,
+    "artifact_authority": "permanently-non-evidence",
+    "success_effect": "permits-the-external-live-controller-to-consider-one-nonserialized-followup-formal-dispatch-capability-only-after-all-new-S1-S2-and-resource-checks-pass",
+    "non_success_effect": "terminal-followup-no-go-no-rerun-no-formal-dispatch-and-no-performance-result"
+  },
+  "formal_campaign": {
+    "dispatch_order": "inherit-exact-predecessor-strictly-serial-order",
+    "synthetic_scales": [
+      "S",
+      "M"
+    ],
+    "synthetic_seeds": [
+      20260902,
+      20260903,
+      20260904
+    ],
+    "synthetic_full_execution_rhos": [
+      "1/100",
+      "1/10",
+      "1"
+    ],
+    "synthetic_exact_rescale_rho": "10",
+    "ordered_event_source_and_matrix": "inherit-exact-predecessor-SNAP-a2q-two-partition-T1-T2-matrix",
+    "native_cases": "inherit-exact-predecessor-six-case-S-and-M-three-strategy-matrix",
+    "total_acceptance_runner_hours": "12.00",
+    "per_unit_and_segment_budgets": "inherit-exact-predecessor-without-relaxation",
+    "provider_retry": "inherit-exact-predecessor-one-whole-unit-replacement-across-the-seventeen-enumerated-eligible-units-only"
+  },
+  "analysis_and_claims": {
+    "primary_output": "bounded-scale-descriptive-cost-characterization-of-three-fixed-maintenance-mechanisms-under-identical-causal-streams",
+    "report_all_raw_native_repetitions": true,
+    "inferential_confidence_intervals": false,
+    "p_values": false,
+    "performance_superiority_claim": false,
+    "universal_best_strategy_claim": false,
+    "before_after_repair_speedup_claim": false,
+    "security_theorem_claim": false,
+    "allowed_measurement_labels": [
+      "directly-measured",
+      "exactly-counted",
+      "upper-bound-projected",
+      "exactly-rescaled",
+      "native-measured"
+    ],
+    "qualification_outcome_rules": {
+      "go": "requires-exact-S1-S2-the-sole-run-identity-successful-q1-through-q6-records-and-guards-provider-startedAt-completedAt-values-both-frozen-deadline-checks-and-the-external-controller-qualification-GO-calculation-record;it-does-not-require-a-formal-capability-to-be-minted",
+      "no_go": "requires-exact-S1-S2-the-sole-run-identity-provider-terminal-state-for-every-executed-prefix-job-explicit-pending-skipped-zero-step-or-absent-state-for-every-unexecuted-downstream-job-the-applicable-controller-observation-cancel-or-failure-record-and-proof-that-no-formal-capability-was-minted;it-never-requires-a-guard-that-the-frozen-DAG-correctly-did-not-execute"
+    },
+    "formal_outcome_rule": "qualification-GO-remains-factual-if-the-post-GO-fresh-provider-or-resource-reread-fails-if-no-formal-capability-is-minted-or-if-a-later-formal-unit-or-terminal-admission-fails;the-separate-formal-outcome-record-covers-both-pre-campaign-and-in-campaign-NO-GO-and-leaves-all-empirical-FU-E1-through-FU-E4-claims-on-HOLD",
+    "release_condition": "only-independently-replayed-guarded-terminally-admitted-followup-artifacts-may-support-an-empirical-performance-or-result-sentence;design-implementation-provenance-and-factual-GO-NO-GO-chronology-follow-their-separate-ledger-rules"
+  },
+  "stage2_implementation_boundary": {
+    "permitted_changes": [
+      "implement-the-new-seed-domain-and-exact-followup-plan-binding",
+      "create-the-closed-followup-study-plan-json-schema-and-exact-field-semantic-delta-validator",
+      "create-new-followup-only-outer-envelope-schema-workflows-controller-identities-artifact-names-and-registration-anchors-without-renaming-or-mutating-inherited-inner-scientific-schemas",
+      "create-closed-followup-role-aware-behavior-sets-and-tests",
+      "update-identity-fixtures-with-only-disjoint-sentinel-seeds-while-treating-every-registered-study-seed-as-an-opaque-never-executed-scalar",
+      "add-fail-closed-rejection-of-every-predecessor-run-artifact-capability-and-anchor"
+    ],
+    "forbidden_changes_after_stage1": [
+      "strategy-semantics",
+      "query-lifecycle-performance-optimization",
+      "runner-image-dependency-build-cache-parallelism-setup-handoff-topology-or-time-accounting-change",
+      "matrix-shape-or-rho-set",
+      "qualification-or-formal-budget-relaxation",
+      "estimand-or-claim-expansion",
+      "outcome-triggered-seed-workload-snapshot-or-source-substitution"
+    ]
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "schema_version": "dynamic-cssc-followup-performance-stage1-manifest-v1",
+  "study_id": "dynamic-cssc-followup-performance-2026-08-30",
+  "state": "stage1-detached-file-manifest-non-authorizing",
+  "base_commit": "4f328afc079b328c31f2e0790cb65cdf96fcc1d7",
+  "base_tree": "ab48bd66a2a8ae99da17c6cd960b71fffffb71bc",
+  "entry_order": "ascending-binary-UTF8-relative-path",
+  "file_sha256_scope": "exact-file-bytes",
+  "object_set_digest_algorithm": "SHA256-of-ASCII-canonical-JSON-of-the-objects-array-with-lexicographically-sorted-object-keys-compact-comma-colon-separators-allow_nan_false-and-one-terminal-LF",
+  "object_set_sha256": "e79c174adde762f515a1be69c56c83867b1b3ffa254ff6b356795d19a7f4b8f3",
+  "self_reference_rule": "this-detached-manifest-does-not-list-or-hash-itself;the-immutable-stage1-Git-tree-and-external-review-packet-bind-this-manifest-file",
+  "authority": false,
+  "objects": [
+    {
+      "path": "config/followup-performance-study.json",
+      "role": "machine-plan-and-control-overlay",
+      "sha256": "a4600fbcbf630ab3a11e5004511f6b449645021ea2553243ddda80ed69f3484c",
+      "byte_count": 21683,
+      "line_count": 313
+    },
+    {
+      "path": "docs/paper/followup-performance-claim-ledger.md",
+      "role": "claim-release-and-failure-boundary",
+      "sha256": "02cd27744d5cb2bbcdc91ad1c8ecdba82c5ee566b0a22a97dc1617e6c5ff28fc",
+      "byte_count": 5588,
+      "line_count": 60
+    },
+    {
+      "path": "docs/paper/followup-performance-preregistration.md",
+      "role": "human-readable-preregistration",
+      "sha256": "306bf17e1391ca181ed9f3ac2d81387f0eed6dfa9c6cc96413dea495b7162734",
+      "byte_count": 17245,
+      "line_count": 299
+    },
+    {
+      "path": "docs/research/followup-performance-novelty-inheritance-review-2026-08-30.md",
+      "role": "bounded-novelty-inheritance-review",
+      "sha256": "0fc36653cce4913c12474421da31a07068b143a53487e11a1c182514af75060c",
+      "byte_count": 4658,
+      "line_count": 95
+    }
+  ]
+}
