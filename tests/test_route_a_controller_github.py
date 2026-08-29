@@ -10,6 +10,15 @@ from dynamic_cssc.route_a_controller import (
     RouteAControllerError,
 )
 
+ARTIFACT_NAMES = (
+    "q1-simulator-pre-replay-handoff",
+    "q2-simulator-guarded-receipt",
+    "q3-native-pre-replay-build-plus-three-retained-packages",
+    "q4-native-guarded-case-bundle",
+    "q5-combined-guard-bundle",
+    "q6-postrun-resource-admission-record",
+)
+
 
 def _json_bytes(value: object) -> bytes:
     return json.dumps(value, separators=(",", ":"), sort_keys=True).encode("ascii")
@@ -19,6 +28,7 @@ class _MemoryHttpReader:
     def __init__(self, responses: dict[str, bytes]) -> None:
         self.responses = responses
         self.requests: list[tuple[str, int]] = []
+        self.posts: list[tuple[str, int]] = []
 
     def get(self, url: str, *, headers: dict[str, str], maximum_bytes: int) -> bytes:
         assert headers["Authorization"] == "Bearer secret-token"
@@ -31,6 +41,12 @@ class _MemoryHttpReader:
         if len(content) > maximum_bytes:
             raise OSError("response too large")
         return content
+
+    def post(self, url: str, *, headers: dict[str, str], maximum_bytes: int) -> bytes:
+        assert headers["Authorization"] == "Bearer secret-token"
+        assert headers["Accept"] == "application/vnd.github+json"
+        self.posts.append((url, maximum_bytes))
+        return b""
 
 
 def _provider(
@@ -93,16 +109,21 @@ def _responses() -> dict[str, bytes]:
             {
                 "artifacts": [
                     {
-                        "archive_download_url": archive_url,
-                        "digest": "sha256:" + "b" * 64,
+                        "archive_download_url": (
+                            archive_url
+                            if name == "q6-postrun-resource-admission-record"
+                            else f"https://api.example.test/artifacts/{72 + index}/zip"
+                        ),
+                        "digest": "sha256:" + f"{index + 1:x}" * 64,
                         "expired": False,
-                        "id": 77,
-                        "name": "q6-postrun-resource-admission-record",
+                        "id": 72 + index,
+                        "name": name,
                         "size_in_bytes": 13,
-                        "workflow_run": {"head_sha": "a" * 40},
+                        "workflow_run": {"head_sha": "a" * 40, "id": 999},
                     }
+                    for index, name in enumerate(ARTIFACT_NAMES)
                 ],
-                "total_count": 1,
+                "total_count": 6,
             }
         ),
         archive_url: b"archive-bytes",
@@ -147,7 +168,29 @@ def test_github_provider_normalizes_job_presentation_order(tmp_path: Path) -> No
     assert [job.database_id for job in observation.jobs] == list(range(100, 106))
 
 
-def test_github_provider_rejects_missing_or_duplicate_q6_artifact(tmp_path: Path) -> None:
+def test_github_provider_normalizes_live_state_and_posts_exact_cancel_endpoint(
+    tmp_path: Path,
+) -> None:
+    plan_source = Path(__file__).resolve().parents[1] / "config/route-a-publication-plan.json"
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/route-a-publication-plan.json").write_bytes(plan_source.read_bytes())
+    provider, reader = _provider(tmp_path, _responses())
+
+    observation = provider.read_live_qualification(999)
+    provider.cancel_qualification(999)
+
+    assert observation.run.database_id == 999
+    assert observation.run.status == "completed"
+    assert len(observation.jobs) == 6
+    assert reader.posts == [
+        (
+            "https://api.example.test/repos/owner/repository/actions/runs/999/cancel",
+            64 * 1024,
+        )
+    ]
+
+
+def test_github_provider_rejects_duplicate_qualification_artifact(tmp_path: Path) -> None:
     plan_source = Path(__file__).resolve().parents[1] / "config/route-a-publication-plan.json"
     (tmp_path / "config").mkdir()
     (tmp_path / "config/route-a-publication-plan.json").write_bytes(plan_source.read_bytes())
@@ -155,14 +198,102 @@ def test_github_provider_rejects_missing_or_duplicate_q6_artifact(tmp_path: Path
     artifact_url = (
         "https://api.example.test/repos/owner/repository/actions/runs/999/artifacts?per_page=100"
     )
-    artifact = json.loads(responses[artifact_url])["artifacts"][0]
-    responses[artifact_url] = _json_bytes(
-        {"artifacts": [artifact, dict(artifact, id=78)], "total_count": 2}
+    document = json.loads(responses[artifact_url])
+    document["artifacts"][0] = dict(
+        document["artifacts"][1],
+        id=document["artifacts"][0]["id"],
     )
+    responses[artifact_url] = _json_bytes(document)
     provider, _ = _provider(tmp_path, responses)
 
-    with pytest.raises(RouteAControllerError, match="q6 artifact"):
+    with pytest.raises(RouteAControllerError, match="artifact identity"):
         provider.read_qualification(999)
+
+
+def test_github_provider_never_forwards_its_token_to_a_foreign_archive_origin(
+    tmp_path: Path,
+) -> None:
+    plan_source = Path(__file__).resolve().parents[1] / "config/route-a-publication-plan.json"
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/route-a-publication-plan.json").write_bytes(plan_source.read_bytes())
+    responses = _responses()
+    artifact_url = (
+        "https://api.example.test/repos/owner/repository/actions/runs/999/artifacts?per_page=100"
+    )
+    document = json.loads(responses[artifact_url])
+    document["artifacts"][-1]["archive_download_url"] = (
+        "https://attacker.example/artifact.zip"
+    )
+    responses[artifact_url] = _json_bytes(document)
+    provider, reader = _provider(tmp_path, responses)
+
+    with pytest.raises(RouteAControllerError, match="foreign HTTPS origin"):
+        provider.read_qualification(999)
+
+    assert all("attacker.example" not in url for url, _maximum in reader.requests)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda artifact: artifact.update(expired=True), "provider binding"),
+        (
+            lambda artifact: artifact.update(digest="sha256:not-a-digest"),
+            "provider binding",
+        ),
+        (
+            lambda artifact: artifact["workflow_run"].update(id=1000),
+            "provider binding",
+        ),
+        (
+            lambda artifact: artifact["workflow_run"].update(head_sha="b" * 40),
+            "provider binding",
+        ),
+    ],
+)
+def test_github_provider_rejects_invalid_member_of_six_artifact_set(
+    tmp_path: Path,
+    mutation: object,
+    message: str,
+) -> None:
+    plan_source = Path(__file__).resolve().parents[1] / "config/route-a-publication-plan.json"
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/route-a-publication-plan.json").write_bytes(plan_source.read_bytes())
+    responses = _responses()
+    artifact_url = (
+        "https://api.example.test/repos/owner/repository/actions/runs/999/artifacts?per_page=100"
+    )
+    document = json.loads(responses[artifact_url])
+    mutation(document["artifacts"][0])  # type: ignore[operator]
+    responses[artifact_url] = _json_bytes(document)
+    provider, _ = _provider(tmp_path, responses)
+
+    with pytest.raises(RouteAControllerError, match=message):
+        provider.read_qualification(999)
+
+
+def test_github_provider_rejects_missing_or_seventh_artifact(tmp_path: Path) -> None:
+    plan_source = Path(__file__).resolve().parents[1] / "config/route-a-publication-plan.json"
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config/route-a-publication-plan.json").write_bytes(plan_source.read_bytes())
+    artifact_url = (
+        "https://api.example.test/repos/owner/repository/actions/runs/999/artifacts?per_page=100"
+    )
+    for extra in (False, True):
+        responses = _responses()
+        document = json.loads(responses[artifact_url])
+        if extra:
+            document["artifacts"].append(
+                dict(document["artifacts"][0], id=9999, name="unexpected")
+            )
+        else:
+            document["artifacts"].pop(0)
+        document["total_count"] = len(document["artifacts"])
+        responses[artifact_url] = _json_bytes(document)
+        provider, _ = _provider(tmp_path, responses)
+
+        with pytest.raises(RouteAControllerError, match="six-object set"):
+            provider.read_qualification(999)
 
 
 @pytest.mark.parametrize("run_id", [0, -1, True, "999"])

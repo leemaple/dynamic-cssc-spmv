@@ -262,7 +262,10 @@ def _validate_prefix_artifacts(
     document: dict[str, object],
     *,
     expected_head_sha: str,
+    expected_run_id: int,
 ) -> None:
+    if type(expected_run_id) is not int or expected_run_id <= 0:
+        raise RouteAPostrunAdmissionError("q6 expected provider run ID is invalid")
     rows = document.get("artifacts")
     if (
         type(rows) is not list
@@ -289,6 +292,7 @@ def _validate_prefix_artifacts(
             or row["size_in_bytes"] <= 0
             or row.get("expired") is not False
             or type(workflow_run) is not dict
+            or workflow_run.get("id") != expected_run_id
             or workflow_run.get("head_sha") != expected_head_sha
         ):
             raise RouteAPostrunAdmissionError("q6 prefix artifact identity is invalid")
@@ -410,6 +414,7 @@ def produce_route_a_postrun_admission(
             field="q6 provider artifacts",
         ),
         expected_head_sha=expected_s2_git_sha,
+        expected_run_id=expected_run_id,
     )
     q1, _q2, q3, q4, q5, q6 = jobs
     assert q5.completed_at is not None

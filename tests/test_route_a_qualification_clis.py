@@ -7,9 +7,70 @@ from types import SimpleNamespace
 
 import pytest
 
+import scripts.control_route_a_publication as controller_cli
 import scripts.run_route_a_combined_guard as q5_cli
 import scripts.run_route_a_postrun_admission as q6_cli
 import scripts.verify_route_a_qualification_lineage as lineage_cli
+
+
+def test_external_controller_cli_wires_the_exact_stop_loss_without_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    observed: dict[str, object] = {}
+
+    def provider(**kwargs: object) -> SimpleNamespace:
+        observed["provider"] = kwargs
+        return SimpleNamespace()
+
+    def watch(
+        _provider: object,
+        request: object,
+        *,
+        poll_interval_seconds: int,
+    ) -> SimpleNamespace:
+        observed["request"] = request
+        observed["poll_interval_seconds"] = poll_interval_seconds
+        return SimpleNamespace(
+            decision="combined-guard-success-before-threshold",
+            document={
+                "decision": "combined-guard-success-before-threshold",
+                "formal_execution_authorized": False,
+            },
+        )
+
+    monkeypatch.setenv("GITHUB_TOKEN", "secret-token")
+    monkeypatch.setattr(controller_cli, "GitHubActionsQualificationProvider", provider)
+    monkeypatch.setattr(controller_cli, "watch_route_a_qualification", watch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "control_route_a_publication.py",
+            "--repository-root",
+            str(tmp_path.resolve()),
+            "--repository",
+            "owner/repository",
+            "--run-id",
+            "41",
+            "--expected-s2",
+            "2" * 40,
+            "--watch-stop-loss",
+            "--poll-interval-seconds",
+            "7",
+        ],
+    )
+
+    assert controller_cli.main() == 0
+    request = observed["request"]
+    assert request.run_id == 41  # type: ignore[attr-defined]
+    assert request.expected_s2_git_sha == "2" * 40  # type: ignore[attr-defined]
+    assert observed["poll_interval_seconds"] == 7
+    assert json.loads(capsys.readouterr().out) == {
+        "decision": "combined-guard-success-before-threshold",
+        "formal_execution_authorized": False,
+    }
 
 
 def test_q5_cli_passes_exact_provider_wrapper_inputs(

@@ -425,6 +425,7 @@ def test_retained_build_rejects_dirty_install_target(
         (zipfile.ZIP_DEFLATED, (1980, 1, 1, 0, 0, 0), 0o100400),
         (zipfile.ZIP_STORED, (1980, 1, 2, 0, 0, 0), 0o100400),
         (zipfile.ZIP_STORED, (1980, 1, 1, 0, 0, 0), 0o120777),
+        (zipfile.ZIP_STORED, (1980, 1, 1, 0, 0, 0), 0o104755),
     ),
 )
 def test_retained_build_rejects_noncanonical_zip_member_metadata(
@@ -460,6 +461,41 @@ def test_retained_build_rejects_duplicate_archive_member_names(tmp_path: Path) -
             info.create_system = 3
             info.external_attr = 0o100400 << 16
             target.writestr(info, content)
+
+    with pytest.raises(RouteANativeBuildError, match="identity is not unique"):
+        inspect_route_a_native_build(archive)
+
+
+def test_retained_build_rejects_excess_member_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = (tmp_path / "too-many-members.zip").resolve()
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as target:
+        for name in ("build/one", "build/two"):
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_STORED
+            info.create_system = 3
+            info.external_attr = 0o100400 << 16
+            target.writestr(info, b"x")
+    monkeypatch.setattr(build_module, "_MAX_ARCHIVE_MEMBERS", 1)
+
+    with pytest.raises(RouteANativeBuildError, match="identity is not unique"):
+        inspect_route_a_native_build(archive)
+
+
+def test_retained_build_rejects_excess_cumulative_declared_size(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = (tmp_path / "too-large-declared-total.zip").resolve()
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as target:
+        info = zipfile.ZipInfo("build/member", date_time=(1980, 1, 1, 0, 0, 0))
+        info.compress_type = zipfile.ZIP_STORED
+        info.create_system = 3
+        info.external_attr = 0o100400 << 16
+        target.writestr(info, b"xx")
+    monkeypatch.setattr(build_module, "_MAX_DECLARED_UNCOMPRESSED_BYTES", 1)
 
     with pytest.raises(RouteANativeBuildError, match="identity is not unique"):
         inspect_route_a_native_build(archive)

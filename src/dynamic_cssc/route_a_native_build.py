@@ -42,6 +42,8 @@ _ARCHIVE_MEMBER_PREFIXES = frozenset({"_openfhe", "build", "retained-build"})
 _SOURCE_BUNDLE = "retained-build/openfhe-source.bundle"
 _MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
 _MAX_MEMBER_BYTES = 512 * 1024 * 1024
+_MAX_ARCHIVE_MEMBERS = 4096
+_MAX_DECLARED_UNCOMPRESSED_BYTES = _MAX_ARCHIVE_BYTES
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _LOWER_GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 _FIXED_METADATA_PATHS = (
@@ -351,7 +353,13 @@ def _read_archive(archive_path: Path) -> tuple[dict[str, bytes], dict[str, int]]
     try:
         with zipfile.ZipFile(archive_path, "r") as archive:
             infos = archive.infolist()
-            if archive.comment or len({item.filename for item in infos}) != len(infos):
+            if (
+                archive.comment
+                or not infos
+                or len(infos) > _MAX_ARCHIVE_MEMBERS
+                or len({item.filename for item in infos}) != len(infos)
+                or sum(item.file_size for item in infos) > _MAX_DECLARED_UNCOMPRESSED_BYTES
+            ):
                 raise RouteANativeBuildError("retained build archive identity is not unique")
             contents: dict[str, bytes] = {}
             modes: dict[str, int] = {}
@@ -361,7 +369,10 @@ def _read_archive(archive_path: Path) -> tuple[dict[str, bytes], dict[str, int]]
                     info.is_dir()
                     or info.flag_bits & 0x1
                     or info.compress_type != zipfile.ZIP_STORED
+                    or info.compress_size != info.file_size
+                    or info.create_system != 3
                     or not stat.S_ISREG(mode)
+                    or stat.S_IMODE(mode) & 0o7000
                     or info.file_size <= 0
                     or info.file_size > _MAX_MEMBER_BYTES
                     or info.date_time != (1980, 1, 1, 0, 0, 0)

@@ -62,17 +62,31 @@ def _provider_json(
                 "id": identifier,
                 "name": name,
                 "size_in_bytes": size,
-                "workflow_run": {"head_sha": lineage.workflow_head_sha},
+                "workflow_run": {
+                    "head_sha": lineage.workflow_head_sha,
+                    "id": lineage.provider_run_id,
+                },
             }
         )
     return json.dumps({"artifacts": rows, "total_count": 2}).encode()
 
 
-def _fake_case(trace: object, strategy: str, shard: str) -> SimpleNamespace:
+def _fake_case(
+    trace: object,
+    strategy: str,
+    shard: str,
+    *,
+    nonempty_auxiliary_segment: bool = True,
+) -> SimpleNamespace:
     structural = canonical_route_a_document(
         {
             "ciphertext_input_multiplicities_by_role": {"input": 2},
             "execution_kind": "strong" if "packed-coo" in strategy else "ordinary",
+                "mechanism_coverage": {
+                    "actual_overlap_contributor_group": True,
+                    "f1m_random_mask_path": True,
+                    "nonempty_auxiliary_segment": nonempty_auxiliary_segment,
+            },
             "ordered_operation_types": ["EvalMult"],
             "result_ciphertext_count": 1,
             "schema_version": "dynamic-cssc-route-a-native-structural-vector-v1",
@@ -100,6 +114,8 @@ def _fake_case(trace: object, strategy: str, shard: str) -> SimpleNamespace:
 def _patch_q5_inputs(
     monkeypatch: pytest.MonkeyPatch,
     lineage: RouteASyntheticSuiteLineage,
+    *,
+    probe_nonempty_auxiliary_segment: bool = True,
 ) -> tuple[SimpleNamespace, str]:
     trace = generate_route_a_qualification_trace(scale="M", qualification_seed=20260821)
     shard = route_a_synthetic_shard_identity(trace, lineage)
@@ -107,6 +123,7 @@ def _patch_q5_inputs(
         trace,
         "packed-coo-cloud-segmented-delta/segment-width=128",
         shard,
+        nonempty_auxiliary_segment=probe_nonempty_auxiliary_segment,
     )
 
     def compile_case(
@@ -116,7 +133,12 @@ def _patch_q5_inputs(
         shard_identity_sha256: str,
         **_kwargs: object,
     ) -> SimpleNamespace:
-        return _fake_case(trace, strategy_candidate_id, shard_identity_sha256)
+        return _fake_case(
+            trace,
+            strategy_candidate_id,
+            shard_identity_sha256,
+            nonempty_auxiliary_segment=probe_nonempty_auxiliary_segment,
+        )
 
     monkeypatch.setattr(guard_module, "compile_route_a_terminal_native_case", compile_case)
     monkeypatch.setattr(
@@ -206,6 +228,9 @@ def test_q5_closes_provider_wrappers_functional_guard_and_six_formal_vectors(
     formal = json.loads(inspection.formal_structural_vectors_bytes)
     assert len(formal["cases"]) == 6
     assert formal["componentwise_relations_are_runtime_theorems"] is False
+    combined_guard = json.loads(inspection.combined_guard_bytes)
+    assert "completedAt" not in combined_guard
+    assert "conclusion" not in combined_guard
     assert not tuple(scratch.iterdir())
 
 
@@ -224,6 +249,30 @@ def test_q5_rejects_provider_digest_that_differs_from_downloaded_wrapper(
         guard_module._provider_bindings(  # noqa: SLF001
             json.dumps(provider).encode(),
             expected_head_sha=lineage.workflow_head_sha,
+            expected_run_id=lineage.provider_run_id,
+            wrapper_paths={
+                "q2-simulator-guarded-receipt": q2_path,
+                "q4-native-guarded-case-bundle": q4_path,
+            },
+        )
+
+
+def test_q5_rejects_provider_artifact_from_another_run(
+    tmp_path: Path,
+    lineage: RouteASyntheticSuiteLineage,
+) -> None:
+    q2_path = (tmp_path / "q2.zip").resolve()
+    q4_path = (tmp_path / "q4.zip").resolve()
+    q2 = _wrapper(q2_path, {"a": b"q2"})
+    q4 = _wrapper(q4_path, {"a": b"q4"})
+    provider = json.loads(_provider_json(lineage=lineage, q2=q2, q4=q4))
+    provider["artifacts"][0]["workflow_run"]["id"] = lineage.provider_run_id + 1
+
+    with pytest.raises(RouteACombinedGuardError, match="differs from wrapper"):
+        guard_module._provider_bindings(  # noqa: SLF001
+            json.dumps(provider).encode(),
+            expected_head_sha=lineage.workflow_head_sha,
+            expected_run_id=lineage.provider_run_id,
             wrapper_paths={
                 "q2-simulator-guarded-receipt": q2_path,
                 "q4-native-guarded-case-bundle": q4_path,
@@ -241,6 +290,105 @@ def test_q5_rejects_traversal_before_extracting_any_member(tmp_path: Path) -> No
 
     assert not output.exists()
     assert not (tmp_path / "escape").exists()
+
+
+def test_q5_mechanism_screen_rejects_a_formal_class_absent_from_probe() -> None:
+    formal = canonical_route_a_document(
+        {
+            "cases": [
+                {
+                    "structural_vector": {
+                        "mechanism_coverage": {
+                            "actual_overlap_contributor_group": True,
+                            "f1m_random_mask_path": True,
+                            "nonempty_auxiliary_segment": True,
+                        }
+                    }
+                }
+            ],
+            "schema_version": "dynamic-cssc-route-a-structural-comparability-set-v1",
+        }
+    )
+    probe = canonical_route_a_document(
+        {
+            "case": {
+                "structural_vector": {
+                    "mechanism_coverage": {
+                        "actual_overlap_contributor_group": True,
+                        "f1m_random_mask_path": True,
+                        "nonempty_auxiliary_segment": False,
+                    }
+                }
+            },
+            "schema_version": "dynamic-cssc-route-a-probe-structural-record-v1",
+        }
+    )
+
+    missing = guard_module._mechanism_classes(formal) - guard_module._mechanism_classes(  # noqa: SLF001
+        probe
+    )
+
+    assert missing == {"nonempty_auxiliary_segment"}
+
+
+def test_q5_producer_rejects_a_formal_mechanism_absent_from_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    lineage: RouteASyntheticSuiteLineage,
+) -> None:
+    repository = (tmp_path / "repo").resolve()
+    scratch = (tmp_path / "scratch").resolve()
+    output = (tmp_path / "out/q5").resolve()
+    repository.mkdir()
+    scratch.mkdir()
+    output.parent.mkdir()
+    (repository / "config").mkdir()
+    (repository / "config/route-a-publication-plan.json").write_bytes(PLAN_BYTES)
+    q2_wrapper = (tmp_path / "q2.zip").resolve()
+    q4_wrapper = (tmp_path / "q4.zip").resolve()
+    q2 = _wrapper(q2_wrapper, {"payload.bin": b"q2"})
+    q4 = _wrapper(q4_wrapper, {"payload.bin": b"q4"})
+    provider_path = (tmp_path / "artifacts.json").resolve()
+    provider_path.write_bytes(_provider_json(lineage=lineage, q2=q2, q4=q4))
+    _patch_q5_inputs(
+        monkeypatch,
+        lineage,
+        probe_nonempty_auxiliary_segment=False,
+    )
+    formal = canonical_route_a_document(
+        {
+            "cases": [
+                {
+                    "structural_vector": {
+                        "mechanism_coverage": {
+                            "actual_overlap_contributor_group": True,
+                            "f1m_random_mask_path": True,
+                            "nonempty_auxiliary_segment": True,
+                        },
+                        "ordered_operation_types": ["EvalMult"],
+                    }
+                }
+            ],
+            "schema_version": (
+                "dynamic-cssc-route-a-structural-comparability-set-v1"
+            ),
+        }
+    )
+    monkeypatch.setattr(guard_module, "_formal_structural_set", lambda _plan: formal)
+
+    with pytest.raises(RouteACombinedGuardError, match="mechanism class is absent"):
+        produce_route_a_combined_guard(
+            repository_root=repository,
+            lineage=lineage,
+            provider_artifacts_json_path=provider_path,
+            q2_wrapper_path=q2_wrapper,
+            q4_wrapper_path=q4_wrapper,
+            scratch_parent=scratch,
+            output_directory=output,
+        )
+
+    assert not output.exists()
+    assert not tuple(scratch.iterdir())
 
 
 def test_q5_inspector_recomputes_formal_vectors_after_self_rehash(

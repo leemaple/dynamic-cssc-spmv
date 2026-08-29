@@ -32,6 +32,12 @@ def _workflow() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
+def _run_blocks(workflow: str) -> tuple[str, ...]:
+    return tuple(
+        re.findall(r"(?ms)^        run: \|\n(.*?)(?=^      - name:|\Z)", workflow)
+    )
+
+
 def test_route_a_qualification_is_manual_one_shot_and_read_only() -> None:
     workflow = _workflow()
     assert re.search(r"(?m)^on:\n  workflow_dispatch:\n", workflow)
@@ -76,10 +82,34 @@ def test_every_job_executes_from_detached_s1_and_rechecks_s1_s2() -> None:
     assert workflow.count("fetch-depth: 0") == 6
     assert workflow.count("persist-credentials: false") == 6
     assert workflow.count("scripts/verify_route_a_qualification_lineage.py") == 6
-    assert workflow.count("test '${{ github.sha }}' = '${{ inputs.expected_s2_git_sha }}'") == 6
+    assert workflow.count('test "$GITHUB_SHA" = "$ROUTE_A_EXPECTED_S2"') == 6
     assert workflow.count("python-version: '3.12.13'") == 6
     assert workflow.count("--require-hashes -r requirements-ci.txt") == 6
     assert workflow.count("--require-hashes -r requirements-publication.txt") == 6
+
+
+def test_dispatch_inputs_are_env_bound_and_validated_before_every_checkout() -> None:
+    workflow = _workflow()
+    blocks = _run_blocks(workflow)
+    assert blocks
+    assert all("${{ inputs." not in block for block in blocks)
+    assert workflow.count("Validate closed dispatch identities before checkout") == 6
+    assert workflow.count(
+        '[[ "$ROUTE_A_EXPECTED_S1" =~ ^[0-9a-f]{40}$ ]]'
+    ) == 6
+    assert workflow.count(
+        '[[ "$ROUTE_A_EXPECTED_S2" =~ ^[0-9a-f]{40}$ ]]'
+    ) == 6
+    assert workflow.count(
+        '[[ "$ROUTE_A_EXPECTED_COMPATIBILITY" =~ ^[0-9a-f]{64}$ ]]'
+    ) == 6
+    for hostile in (
+        "a" * 39 + ";",
+        "a" * 40 + "\nfalse",
+        "$(touch /tmp/route-a-injection)",
+        "a" * 40 + " || true",
+    ):
+        assert re.fullmatch(r"[0-9a-f]{40}", hostile) is None
 
 
 def test_workflow_uploads_exactly_six_one_day_non_evidence_artifacts() -> None:
@@ -99,8 +129,8 @@ def test_q5_rehashes_provider_wrappers_and_q6_uses_only_live_api_state() -> None
     assert "actions/artifacts/$Q2_ID/zip" in workflow
     assert "actions/artifacts/$Q4_ID/zip" in workflow
     assert "scripts/run_route_a_postrun_admission.py" in workflow
-    assert "actions/runs/${{ github.run_id }}/jobs?per_page=100" in workflow
-    assert "actions/runs/${{ github.run_id }}/artifacts?per_page=100" in workflow
-    assert "--expected-run-attempt '${{ github.run_attempt }}'" in workflow
+    assert "actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" in workflow
+    assert "actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" in workflow
+    assert '--expected-run-attempt "$GITHUB_RUN_ATTEMPT"' in workflow
     assert "run_route_a_formal" not in workflow
     assert "control_route_a_publication.py" not in workflow

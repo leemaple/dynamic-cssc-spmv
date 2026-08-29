@@ -61,6 +61,7 @@ def _process_row(
     ordinal: int,
     lane_digit: str,
     warmup: bool = False,
+    request_sha256: str | None = None,
 ) -> dict[str, object]:
     return {
         "elapsed_ns": 1,
@@ -69,7 +70,7 @@ def _process_row(
         "peak_resident_memory_bytes": 2,
         "peak_scratch_bytes": 3,
         "process_ordinal_or_null": ordinal,
-        "request_sha256": lane_digit * 64,
+        "request_sha256": request_sha256 or lane_digit * 64,
         "runner_build_identity_sha256": "b" * 64,
     }
 
@@ -134,7 +135,7 @@ def _package(root: Path, case: object, ordinal: int) -> None:
     )
     values = (
         ("authorization-receipt", "authorization-receipt", b"authorization"),
-        ("canonical-request", "canonical-request", b"request"),
+        ("canonical-request", "canonical-request", f"request-{ordinal}".encode()),
         ("case-binding", "case-binding", case_binding),
         ("consumed-ledger", "consumed-ledger", b"SQLite format 3\x00ledger"),
         ("crypto-context", "crypto-context", b"context"),
@@ -221,9 +222,21 @@ def test_q3_inspector_closes_build_warmup_and_exact_three_packages(
     )
     process_rows = [
         _process_row(ordinal=0, lane_digit="1", warmup=True),
-        _process_row(ordinal=0, lane_digit="2"),
-        _process_row(ordinal=1, lane_digit="3"),
-        _process_row(ordinal=2, lane_digit="4"),
+        _process_row(
+            ordinal=0,
+            lane_digit="2",
+            request_sha256=hashlib.sha256(b"request-0").hexdigest(),
+        ),
+        _process_row(
+            ordinal=1,
+            lane_digit="3",
+            request_sha256=hashlib.sha256(b"request-1").hexdigest(),
+        ),
+        _process_row(
+            ordinal=2,
+            lane_digit="4",
+            request_sha256=hashlib.sha256(b"request-2").hexdigest(),
+        ),
     ]
     (root / "warmup-receipt.json").write_bytes(
         canonical_route_a_document(
@@ -272,6 +285,74 @@ def test_q3_inspector_closes_build_warmup_and_exact_three_packages(
     truncated.pop("request_sha256")
     warmup_path.write_bytes(canonical_route_a_document(truncated))
     _install_control_files(root, stage="q3", lineage=lineage, case=case)
+    with pytest.raises(RouteANativeQualificationError, match="warm-up receipt"):
+        inspect_route_a_native_qualification_artifact(
+            root,
+            expected_stage="q3",
+            expected_lineage=lineage,
+        )
+
+
+def test_q3_inspector_rejects_self_rehashed_stage_ledger_request_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    lineage: RouteASyntheticSuiteLineage,
+    case: object,
+) -> None:
+    root = (tmp_path / "q3-request-mismatch").resolve()
+    root.mkdir()
+    (root / "build-package.zip").write_bytes(b"build-package")
+    (root / "lineage.json").write_bytes(lineage.document_bytes)
+    (root / "case-binding.json").write_bytes(case.case_binding_bytes)  # type: ignore[attr-defined]
+    (root / "structural-vector.json").write_bytes(  # type: ignore[attr-defined]
+        case.structural_vector_bytes
+    )
+    process_rows = [
+        _process_row(ordinal=0, lane_digit="1", warmup=True),
+        _process_row(ordinal=0, lane_digit="2", request_sha256="6" * 64),
+        _process_row(
+            ordinal=1,
+            lane_digit="3",
+            request_sha256=hashlib.sha256(b"request-1").hexdigest(),
+        ),
+        _process_row(
+            ordinal=2,
+            lane_digit="4",
+            request_sha256=hashlib.sha256(b"request-2").hexdigest(),
+        ),
+    ]
+    (root / "warmup-receipt.json").write_bytes(
+        canonical_route_a_document(
+            {
+                **process_rows[0],
+                "authority_granted": False,
+                "package_retained": False,
+                "publication_evidence": False,
+                "schema_version": "dynamic-cssc-route-a-native-warmup-receipt-v1",
+            }
+        )
+    )
+    (root / "stage-ledger.json").write_bytes(
+        canonical_route_a_document(
+            {
+                "authority_granted": False,
+                "elapsed_ns": 4,
+                "processes": process_rows,
+                "publication_evidence": False,
+                "schema_version": "dynamic-cssc-route-a-native-stage-ledger-v1",
+                "stage": "q3",
+            }
+        )
+    )
+    for ordinal in range(3):
+        _package(root / f"packages/recorded-{ordinal}", case, ordinal)
+    monkeypatch.setattr(
+        suite_module,
+        "inspect_route_a_native_build",
+        lambda path: SimpleNamespace(manifest_sha256=BUILD, archive_path=path),
+    )
+    _install_control_files(root, stage="q3", lineage=lineage, case=case)
+
     with pytest.raises(RouteANativeQualificationError, match="warm-up receipt"):
         inspect_route_a_native_qualification_artifact(
             root,
@@ -363,6 +444,68 @@ def test_q4_inspector_rejects_an_extra_self_rehashed_replay(
     _install_control_files(root, stage="q4", lineage=lineage, case=case)
 
     with pytest.raises(RouteANativeQualificationError, match="replay receipt set"):
+        inspect_route_a_native_qualification_artifact(
+            root,
+            expected_stage="q4",
+            expected_lineage=lineage,
+        )
+
+
+def test_q4_inspector_rejects_a_self_rehashed_request_mismatch(
+    tmp_path: Path,
+    lineage: RouteASyntheticSuiteLineage,
+    case: object,
+) -> None:
+    root = (tmp_path / "q4-mismatched-request").resolve()
+    root.mkdir()
+    (root / "lineage.json").write_bytes(lineage.document_bytes)
+    (root / "case-binding.json").write_bytes(case.case_binding_bytes)  # type: ignore[attr-defined]
+    structural = case.structural_vector_bytes  # type: ignore[attr-defined]
+    (root / "structural-vector.json").write_bytes(structural)
+    package_digests = [str(ordinal) * 64 for ordinal in range(3)]
+    (root / "native-guard.json").write_bytes(
+        canonical_route_a_document(_guard_document(case, structural))
+    )
+    (root / "replays").mkdir()
+    for ordinal in range(3):
+        producer_request = str(ordinal) * 64
+        replay_request = "e" * 64 if ordinal == 1 else producer_request
+        (root / f"replays/recorded-{ordinal}.json").write_bytes(
+            canonical_route_a_document(
+                {
+                    "authority_granted": False,
+                    "cloud_program_operation_inventory": {},
+                    "elapsed_ns": 1,
+                    "lane_sha256": str(ordinal + 6) * 64,
+                    "lifecycle_operation_inventory": {},
+                    "package_manifest_sha256": str(ordinal) * 64,
+                    "peak_resident_memory_bytes": 2,
+                    "peak_scratch_bytes": 3,
+                    "preparation_sha256": "a" * 64,
+                    "producer_request_sha256": producer_request,
+                    "publication_evidence": False,
+                    "reconstructed_output_sha256": "c" * 64,
+                    "replay_request_sha256": replay_request,
+                    "runner_build_identity_sha256": "b" * 64,
+                    "schema_version": "dynamic-cssc-route-a-native-replay-receipt-v1",
+                }
+            )
+        )
+    (root / "stage-ledger.json").write_bytes(
+        canonical_route_a_document(
+            {
+                "authority_granted": False,
+                "elapsed_ns": 4,
+                "package_manifest_sha256s": package_digests,
+                "publication_evidence": False,
+                "schema_version": "dynamic-cssc-route-a-native-stage-ledger-v1",
+                "stage": "q4",
+            }
+        )
+    )
+    _install_control_files(root, stage="q4", lineage=lineage, case=case)
+
+    with pytest.raises(RouteANativeQualificationError, match="replay receipt binding"):
         inspect_route_a_native_qualification_artifact(
             root,
             expected_stage="q4",

@@ -528,6 +528,12 @@ def inspect_route_a_native_qualification_artifact(
             raise RouteANativeQualificationError("q3 warm-up receipt is absent")
         warmup = _canonical_object(warmup_bytes, field="native warm-up receipt")
         processes = stage_ledger.get("processes")
+        package_request_sha256s = [
+            hashlib.sha256(
+                read_route_a_openfhe_package_member(package, role="canonical-request")
+            ).hexdigest()
+            for package in packages
+        ]
         if (
             set(stage_ledger)
             != {
@@ -566,6 +572,8 @@ def inspect_route_a_native_qualification_artifact(
             )
             or len({row["lane_sha256"] for row in processes}) != 4
             or len({row["request_sha256"] for row in processes}) != 4
+            or [row["request_sha256"] for row in processes[1:]]
+            != package_request_sha256s
             or len({row["runner_build_identity_sha256"] for row in processes}) != 1
             or set(warmup) != _WARMUP_FIELDS
             or warmup.get("schema_version") != _WARMUP_SCHEMA

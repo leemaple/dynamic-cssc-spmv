@@ -242,6 +242,54 @@ def test_guard_rejects_a_reused_lane_request_even_when_each_package_is_consisten
         guard_route_a_native_replays(case, tuple(executions))  # type: ignore[arg-type]
 
 
+def test_guard_rejects_a_well_formed_replay_request_mismatch(
+    case: RouteANativeCasePlan,
+    tmp_path: Path,
+) -> None:
+    executions = [_execution(case, tmp_path, ordinal) for ordinal in range(3)]
+    executions[1] = replace(
+        executions[1],
+        replay_result=replace(
+            executions[1].replay_result,
+            request_sha256=_sha("substituted-replay-request"),
+        ),
+    )
+
+    with pytest.raises(RouteANativeGuardError, match="common binding changed"):
+        guard_route_a_native_replays(case, tuple(executions))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "operation",
+    (
+        "automorphism_key_generation_count",
+        "context_generation_count",
+        "encrypt_count",
+        "eval_mult_key_generation_count",
+        "key_generation_count",
+    ),
+)
+def test_guard_rejects_every_nonzero_replay_lifecycle_operation(
+    case: RouteANativeCasePlan,
+    tmp_path: Path,
+    operation: str,
+) -> None:
+    executions = [_execution(case, tmp_path, ordinal) for ordinal in range(3)]
+    for ordinal, execution in enumerate(executions):
+        lifecycle = dict(execution.replay_result.lifecycle_operation_inventory)
+        lifecycle[operation] = 1
+        executions[ordinal] = replace(
+            execution,
+            replay_result=replace(
+                execution.replay_result,
+                lifecycle_operation_inventory=tuple(sorted(lifecycle.items())),
+            ),
+        )
+
+    with pytest.raises(RouteANativeGuardError, match="common binding changed"):
+        guard_route_a_native_replays(case, tuple(executions))  # type: ignore[arg-type]
+
+
 def test_guard_rejects_reused_secret_key_material(
     case: RouteANativeCasePlan,
     tmp_path: Path,

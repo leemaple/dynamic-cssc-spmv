@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Read-only CLI for the Route A live GitHub qualification controller.
+"""CLI for the Route A live GitHub qualification controller.
 
-This Stage-2 seam deliberately consumes and abandons a successful ephemeral
-capability.  Formal dispatch is added only together with the closed acquisition
-workflow so no intermediate commit can turn a verification into publication
-authority.
+The stop-loss mode may cancel only the exact bound qualification run when its
+q1-to-q5 45-minute deadline is missed.  Verify-only mode deliberately consumes
+and abandons a successful ephemeral capability.  Neither mode dispatches formal
+work or emits a replayable authority token.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from dynamic_cssc.route_a_controller import (
     RouteAQualificationRequest,
     abandon_route_a_qualification_capability,
     authorize_route_a_qualification,
+    watch_route_a_qualification,
 )
 
 
@@ -32,7 +33,10 @@ def main() -> int:
     parser.add_argument("--expected-s2", required=True)
     parser.add_argument("--expected-head-branch", default="main", choices=("main",))
     parser.add_argument("--run-attempt", type=int, default=1, choices=(1,))
-    parser.add_argument("--verify-only", action="store_true", required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--verify-only", action="store_true")
+    mode.add_argument("--watch-stop-loss", action="store_true")
+    parser.add_argument("--poll-interval-seconds", type=int, default=15)
     arguments = parser.parse_args()
     token = os.environ.get("GITHUB_TOKEN")
     if token is None:
@@ -50,6 +54,18 @@ def main() -> int:
             repository_slug=arguments.repository,
             token=token,
         )
+        if arguments.watch_stop_loss:
+            result = watch_route_a_qualification(
+                provider,
+                request,
+                poll_interval_seconds=arguments.poll_interval_seconds,
+            )
+            print(json.dumps(result.document, sort_keys=True, separators=(",", ":")))
+            return (
+                0
+                if result.decision == "combined-guard-success-before-threshold"
+                else 2
+            )
         capability = authorize_route_a_qualification(provider, request)
         abandon_route_a_qualification_capability(capability)
     except (OSError, RouteAControllerError, TypeError, ValueError) as error:

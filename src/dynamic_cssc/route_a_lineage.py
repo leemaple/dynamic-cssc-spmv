@@ -49,7 +49,7 @@ ROUTE_A_BEHAVIOR_ROLES = (
 )
 ROUTE_A_REGISTRATION_ANCHOR_PATH = "config/route-a-registration-anchors.json"
 _BEHAVIOR_REGISTRY_PATH = "config/route-a-behavior-sets.json"
-_BEHAVIOR_REGISTRY_SCHEMA = "dynamic-cssc-route-a-behavior-set-registry-v2"
+_BEHAVIOR_REGISTRY_SCHEMA = "dynamic-cssc-route-a-behavior-set-registry-v3"
 _BEHAVIOR_INVENTORY_SCHEMA = "dynamic-cssc-route-a-behavior-inventory-v1"
 _REGISTRATION_EVIDENCE_SCHEMA = "dynamic-cssc-route-a-registration-evidence-v1"
 _REGISTRATION_ANCHOR_SET_SCHEMA = "dynamic-cssc-route-a-registration-anchor-set-v1"
@@ -95,16 +95,33 @@ def _reject_duplicate_pairs(pairs: list[tuple[str, object]]) -> dict[str, object
     return result
 
 
-def _decode_canonical_json(content: bytes, field: str, maximum: int) -> dict[str, object]:
+def _decode_json_object(
+    content: bytes,
+    field: str,
+    maximum: int,
+    *,
+    require_canonical_bytes: bool,
+) -> dict[str, object]:
     if type(content) is not bytes or not content or len(content) > maximum:
         raise RouteALineageError(f"{field} bytes violate the closed bound")
     try:
         decoded = json.loads(content.decode("ascii"), object_pairs_hook=_reject_duplicate_pairs)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise RouteALineageError(f"{field} is not canonical ASCII JSON") from error
-    if type(decoded) is not dict or _canonical_json_bytes(decoded) != content:
+    if type(decoded) is not dict or (
+        require_canonical_bytes and _canonical_json_bytes(decoded) != content
+    ):
         raise RouteALineageError(f"{field} bytes are not canonical")
     return decoded
+
+
+def _decode_canonical_json(content: bytes, field: str, maximum: int) -> dict[str, object]:
+    return _decode_json_object(
+        content,
+        field,
+        maximum,
+        require_canonical_bytes=True,
+    )
 
 
 def _sha256(content: bytes) -> str:
@@ -190,8 +207,14 @@ def _read_git_blob(repository: Path, git_sha: str, path: str) -> _GitBlob:
 
 def _registry(repository: Path, git_sha: str) -> tuple[dict[str, object], str]:
     blob = _read_git_blob(repository, git_sha, _BEHAVIOR_REGISTRY_PATH)
-    document = _decode_canonical_json(
-        blob.content, "Route A Behavior Set registry", _MAX_REGISTRY_BYTES
+    # The registry is itself an exact frozen Git blob.  Its reviewed layout may
+    # be human-readable JSON; semantic canonicality is enforced below by closed
+    # keys and sorted unique paths, while the raw blob SHA binds the exact bytes.
+    document = _decode_json_object(
+        blob.content,
+        "Route A Behavior Set registry",
+        _MAX_REGISTRY_BYTES,
+        require_canonical_bytes=False,
     )
     if (
         set(document) != {"roles", "schema_version", "stage1_documents"}

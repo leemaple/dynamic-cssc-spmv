@@ -63,6 +63,11 @@ _ARTIFACT_NAME = "q5-combined-guard-bundle"
 _Q2_NAME = "q2-simulator-guarded-receipt"
 _Q4_NAME = "q4-native-guarded-case-bundle"
 _STRONG = "packed-coo-cloud-segmented-delta/segment-width=128"
+_NATIVE_MECHANISM_CLASSES = (
+    "actual_overlap_contributor_group",
+    "f1m_random_mask_path",
+    "nonempty_auxiliary_segment",
+)
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _PROVIDER_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _LOWER_GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -249,10 +254,15 @@ def _provider_bindings(
     provider_bytes: bytes,
     *,
     expected_head_sha: str,
+    expected_run_id: int,
     wrapper_paths: dict[str, Path],
 ) -> dict[str, RouteAProviderArtifactBinding]:
-    if _LOWER_GIT_SHA.fullmatch(expected_head_sha) is None:
-        raise RouteACombinedGuardError("q5 expected workflow head is invalid")
+    if (
+        _LOWER_GIT_SHA.fullmatch(expected_head_sha) is None
+        or type(expected_run_id) is not int
+        or expected_run_id <= 0
+    ):
+        raise RouteACombinedGuardError("q5 expected workflow identity is invalid")
     document = _provider_object(provider_bytes)
     rows = document.get("artifacts")
     if (
@@ -284,6 +294,7 @@ def _provider_bindings(
             or row["size_in_bytes"] <= 0
             or row.get("expired") is not False
             or type(workflow_run) is not dict
+            or workflow_run.get("id") != expected_run_id
             or workflow_run.get("head_sha") != expected_head_sha
             or row["size_in_bytes"] != wrapper_size
             or digest != f"sha256:{wrapper_sha256}"
@@ -496,6 +507,28 @@ def _operation_types(structural_record: bytes) -> set[str]:
         ):
             raise RouteACombinedGuardError("structural operation vocabulary is malformed")
         result.update(operations)
+    return result
+
+
+def _mechanism_classes(structural_record: bytes) -> set[str]:
+    record = _canonical_object(structural_record, field="structural comparability record")
+    if record.get("schema_version") == "dynamic-cssc-route-a-probe-structural-record-v1":
+        rows = [record.get("case")]
+    else:
+        rows = record.get("cases")
+    if type(rows) is not list or any(type(row) is not dict for row in rows):
+        raise RouteACombinedGuardError("structural comparability rows are malformed")
+    result: set[str] = set()
+    for row in rows:
+        structural = row.get("structural_vector")
+        mechanisms = structural.get("mechanism_coverage") if type(structural) is dict else None
+        if (
+            type(mechanisms) is not dict
+            or set(mechanisms) != set(_NATIVE_MECHANISM_CLASSES)
+            or any(type(value) is not bool for value in mechanisms.values())
+        ):
+            raise RouteACombinedGuardError("structural mechanism vocabulary is malformed")
+        result.update(name for name, exercised in mechanisms.items() if exercised)
     return result
 
 
@@ -775,10 +808,18 @@ def inspect_route_a_combined_guard_artifact(
         or guard.get("structural_coverage")
         != {
             "componentwise_count_or_byte_relations_are_runtime_theorems": False,
+            "formal_mechanism_classes": sorted(
+                _mechanism_classes(by_name["formal-structural-vectors.json"])
+            ),
+            "formal_mechanism_classes_absent_from_probe_and_pre_s1": [],
             "formal_operation_types_absent_from_probe": [],
             "formal_structural_vectors_sha256": hashlib.sha256(
                 by_name["formal-structural-vectors.json"]
             ).hexdigest(),
+            "pre_s1_machine_readable_mechanism_classes": [],
+            "probe_mechanism_classes": sorted(
+                _mechanism_classes(by_name["probe-structural-vector.json"])
+            ),
             "probe_structural_vector_sha256": hashlib.sha256(
                 by_name["probe-structural-vector.json"]
             ).hexdigest(),
@@ -912,6 +953,7 @@ def produce_route_a_combined_guard(
         provider = _provider_bindings(
             _stable_read(provider_artifacts_json_path, maximum=_MAX_PROVIDER_JSON_BYTES),
             expected_head_sha=lineage.workflow_head_sha,
+            expected_run_id=lineage.provider_run_id,
             wrapper_paths={_Q2_NAME: q2_wrapper_path, _Q4_NAME: q4_wrapper_path},
         )
         q2_root = private / "q2"
@@ -1007,10 +1049,27 @@ def produce_route_a_combined_guard(
             raise RouteACombinedGuardError(
                 "formal native operation type is absent from the qualification probe"
             )
+        formal_mechanisms = sorted(_mechanism_classes(formal_vectors))
+        probe_mechanisms = sorted(_mechanism_classes(probe_record))
+        # PRE-S1 smoke logs carry no exact machine-readable mechanism-class
+        # inventory.  Treating that side as empty is the conservative closed
+        # interpretation; the case-shaped probe must exercise every class.
+        pre_s1_mechanisms: list[str] = []
+        missing_mechanisms = sorted(
+            set(formal_mechanisms) - set(probe_mechanisms) - set(pre_s1_mechanisms)
+        )
+        if missing_mechanisms:
+            raise RouteACombinedGuardError(
+                "formal native mechanism class is absent from the qualification evidence"
+            )
         structural_coverage = {
             "componentwise_count_or_byte_relations_are_runtime_theorems": False,
+            "formal_mechanism_classes": formal_mechanisms,
+            "formal_mechanism_classes_absent_from_probe_and_pre_s1": missing_mechanisms,
             "formal_operation_types_absent_from_probe": missing_operation_types,
             "formal_structural_vectors_sha256": hashlib.sha256(formal_vectors).hexdigest(),
+            "pre_s1_machine_readable_mechanism_classes": pre_s1_mechanisms,
+            "probe_mechanism_classes": probe_mechanisms,
             "probe_structural_vector_sha256": hashlib.sha256(probe_record).hexdigest(),
             "required_native_mechanisms_exercised": True,
         }

@@ -76,7 +76,7 @@ def _provider_files(tmp_path: Path) -> tuple[Path, Path, Path]:
             "id": 300 + ordinal,
             "name": name,
             "size_in_bytes": 100 + ordinal,
-            "workflow_run": {"head_sha": HEAD},
+            "workflow_run": {"head_sha": HEAD, "id": RUN_ID},
         }
         for ordinal, name in enumerate(ARTIFACTS, start=1)
     ]
@@ -155,13 +155,33 @@ def test_q6_rejects_missing_or_extra_prefix_provider_artifact(tmp_path: Path) ->
             "id": 999,
             "name": "unexpected",
             "size_in_bytes": 1,
-            "workflow_run": {"head_sha": HEAD},
+            "workflow_run": {"head_sha": HEAD, "id": RUN_ID},
         }
     )
     artifacts["total_count"] += 1
     artifacts_path.write_text(json.dumps(artifacts))
 
     with pytest.raises(RouteAPostrunAdmissionError, match="artifact set"):
+        produce_route_a_postrun_admission(
+            run_json_path=run,
+            jobs_json_path=jobs,
+            artifacts_json_path=artifacts_path,
+            expected_run_id=RUN_ID,
+            expected_s2_git_sha=HEAD,
+            expected_head_branch="main",
+            expected_run_attempt=1,
+            output_directory=(tmp_path / "q6").resolve(),
+            observed_at=datetime(2026, 8, 29, 0, 15, 10, tzinfo=UTC),
+        )
+
+
+def test_q6_rejects_prefix_provider_artifact_from_another_run(tmp_path: Path) -> None:
+    run, jobs, artifacts_path = _provider_files(tmp_path)
+    artifacts = json.loads(artifacts_path.read_text())
+    artifacts["artifacts"][0]["workflow_run"]["id"] = RUN_ID + 1
+    artifacts_path.write_text(json.dumps(artifacts))
+
+    with pytest.raises(RouteAPostrunAdmissionError, match="prefix artifact identity"):
         produce_route_a_postrun_admission(
             run_json_path=run,
             jobs_json_path=jobs,
