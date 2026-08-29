@@ -22,7 +22,10 @@ from dynamic_cssc.mask_ledger import (
     PreparedF1MCommitmentLedger,
 )
 from dynamic_cssc.output_plan import PreparedMask, prepare_f1m_masks
-from dynamic_cssc.plaintext_oracle import execute_compiled_query, reconstruct_output
+from dynamic_cssc.plaintext_oracle import (
+    _execute_validated_cloud_plan,
+    reconstruct_output,
+)
 from dynamic_cssc.query_compiler import (
     QUERY_PRIVATE_PLAN_FORMAT,
     CompiledQuery,
@@ -99,6 +102,15 @@ class PreparedOrdinaryQuery:
     ledger_commitment_token: str
     query_operands: tuple[PreparedOrdinaryQueryOperand, ...]
     f1m_operands: tuple[PreparedOrdinaryF1MOperand, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class OrdinaryQueryLifecycleResult:
+    """One fully closed producer or replay lifecycle result."""
+
+    prepared: PreparedOrdinaryQuery
+    preparation_bytes: bytes
+    output: tuple[int, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +275,27 @@ def prepare_ordinary_query(
     """Reserve fresh masks and durably commit one exact private query batch."""
 
     _validate_bundle(bundle)
+    prepared = _prepare_ordinary_query_for_validated_bundle(
+        bundle,
+        query_id=query_id,
+        vector=vector,
+        modulus=modulus,
+        ledger=ledger,
+    )
+    _validate_prepared(bundle, prepared)
+    return prepared
+
+
+def _prepare_ordinary_query_for_validated_bundle(
+    bundle: OrdinaryExecutionBundle,
+    *,
+    query_id: str,
+    vector: tuple[int, ...],
+    modulus: int,
+    ledger: PreparedF1MCommitmentLedger,
+) -> PreparedOrdinaryQuery:
+    """Prepare after this module has validated ``bundle`` at the calling seam."""
+
     compiled = bundle.compiled
     dense_vector = _validated_vector(
         vector,
@@ -344,7 +377,6 @@ def prepare_ordinary_query(
         query_operands=query_operands,
         f1m_operands=prepared_f1m,
     )
-    _validate_prepared(bundle, prepared)
     return prepared
 
 
@@ -454,6 +486,14 @@ def canonical_ordinary_query_preparation_payload(
 
     _validate_bundle(bundle)
     _validate_prepared(bundle, prepared)
+    return _canonical_ordinary_query_preparation_payload_for_validated_query(prepared)
+
+
+def _canonical_ordinary_query_preparation_payload_for_validated_query(
+    prepared: PreparedOrdinaryQuery,
+) -> dict[str, object]:
+    """Render a query already validated by this module's deep lifecycle."""
+
     return {
         "bindings": {
             "cloud_program_digest": prepared.cloud_program_digest,
@@ -494,6 +534,14 @@ def canonical_ordinary_query_preparation_bytes(
     return _canonical_bytes(canonical_ordinary_query_preparation_payload(bundle, prepared))
 
 
+def _canonical_ordinary_query_preparation_bytes_for_validated_query(
+    prepared: PreparedOrdinaryQuery,
+) -> bytes:
+    return _canonical_bytes(
+        _canonical_ordinary_query_preparation_payload_for_validated_query(prepared)
+    )
+
+
 def decode_ordinary_query_preparation_bytes(
     bundle: OrdinaryExecutionBundle,
     content: bytes,
@@ -504,6 +552,23 @@ def decode_ordinary_query_preparation_bytes(
     """Decode exact retained private bytes into one bundle-bound replay operand."""
 
     _validate_bundle(bundle)
+    return _decode_ordinary_query_preparation_bytes_for_validated_bundle(
+        bundle,
+        content,
+        expected_query_id=expected_query_id,
+        expected_vector=expected_vector,
+    )
+
+
+def _decode_ordinary_query_preparation_bytes_for_validated_bundle(
+    bundle: OrdinaryExecutionBundle,
+    content: bytes,
+    *,
+    expected_query_id: str,
+    expected_vector: tuple[int, ...],
+) -> PreparedOrdinaryQuery:
+    """Decode after this module has validated ``bundle`` at the calling seam."""
+
     if type(content) is not bytes:
         raise TypeError("ordinary query preparation content must be exact bytes")
     try:
@@ -627,7 +692,10 @@ def decode_ordinary_query_preparation_bytes(
         f1m_operands=tuple(decoded_f1m),
     )
     _validate_prepared(bundle, prepared)
-    if canonical_ordinary_query_preparation_bytes(bundle, prepared) != content:
+    if (
+        _canonical_ordinary_query_preparation_bytes_for_validated_query(prepared)
+        != content
+    ):
         raise OrdinaryQueryLifecycleError(
             "decoded ordinary query preparation does not round-trip exactly"
         )
@@ -644,9 +712,27 @@ def authorize_ordinary_execution(
 
     _validate_bundle(bundle)
     _validate_prepared(bundle, prepared)
-    preparation_sha256 = hashlib.sha256(
-        canonical_ordinary_query_preparation_bytes(bundle, prepared)
-    ).hexdigest()
+    preparation_bytes = _canonical_ordinary_query_preparation_bytes_for_validated_query(
+        prepared
+    )
+    return _authorize_ordinary_execution_for_validated_query(
+        bundle,
+        prepared,
+        preparation_bytes=preparation_bytes,
+        ledger=ledger,
+    )
+
+
+def _authorize_ordinary_execution_for_validated_query(
+    bundle: OrdinaryExecutionBundle,
+    prepared: PreparedOrdinaryQuery,
+    *,
+    preparation_bytes: bytes,
+    ledger: PreparedF1MCommitmentLedger,
+) -> OrdinaryExecutionCapability:
+    """Consume a query already validated and serialized by this module."""
+
+    preparation_sha256 = hashlib.sha256(preparation_bytes).hexdigest()
     try:
         ledger.verify_and_consume_prepared_f1m(
             _prepared_f1m_commitments(prepared.f1m_operands),
@@ -711,10 +797,52 @@ def claim_ordinary_execution(
         raise OrdinaryQueryLifecycleError("ordinary execution capability is not authoritative")
     _validate_bundle(bundle)
     _validate_prepared(bundle, prepared)
+    preparation_bytes = _canonical_ordinary_query_preparation_bytes_for_validated_query(
+        prepared
+    )
+    return _claim_ordinary_execution_for_validated_query(
+        capability,
+        bundle,
+        prepared,
+        preparation_bytes=preparation_bytes,
+        binding=binding,
+        already_claimed=True,
+    )
+
+
+def _claim_ordinary_execution_for_validated_query(
+    capability: OrdinaryExecutionCapability,
+    bundle: OrdinaryExecutionBundle,
+    prepared: PreparedOrdinaryQuery,
+    *,
+    preparation_bytes: bytes,
+    binding: _OrdinaryExecutionAuthorizationBinding | None = None,
+    already_claimed: bool = False,
+) -> OrdinaryExecutionAuthorizationReceipt:
+    """Claim a capability for the exact query validated by this module."""
+
+    if not already_claimed:
+        if type(capability) is not OrdinaryExecutionCapability:
+            raise TypeError("capability must be an exact lifecycle-minted authorization")
+        lock = getattr(capability, "_lock", None)
+        if type(lock) is not type(threading.Lock()):
+            raise OrdinaryQueryLifecycleError(
+                "ordinary execution capability is not authoritative"
+            )
+        with lock:
+            if getattr(capability, "_claimed", None) is not False:
+                raise OrdinaryQueryLifecycleError(
+                    "ordinary execution capability is absent or consumed"
+                )
+            object.__setattr__(capability, "_claimed", True)
+            binding = getattr(capability, "_binding", None)
+        if type(binding) is not _OrdinaryExecutionAuthorizationBinding:
+            raise OrdinaryQueryLifecycleError(
+                "ordinary execution capability is not authoritative"
+            )
+    assert type(binding) is _OrdinaryExecutionAuthorizationBinding
     receipt = binding.receipt
-    expected_preparation_sha256 = hashlib.sha256(
-        canonical_ordinary_query_preparation_bytes(bundle, prepared)
-    ).hexdigest()
+    expected_preparation_sha256 = hashlib.sha256(preparation_bytes).hexdigest()
     if (
         receipt.query_id != prepared.query_id
         or receipt.version_id != prepared.version_id
@@ -743,8 +871,36 @@ def execute_ordinary_plaintext(
         raise OrdinaryQueryLifecycleError(
             "execution modulus must match the prepared ordinary query"
         )
-    authorization = authorize_ordinary_execution(bundle, prepared, ledger=ledger)
-    claim_ordinary_execution(authorization, bundle, prepared)
+    preparation_bytes = _canonical_ordinary_query_preparation_bytes_for_validated_query(
+        prepared
+    )
+    authorization = _authorize_ordinary_execution_for_validated_query(
+        bundle,
+        prepared,
+        preparation_bytes=preparation_bytes,
+        ledger=ledger,
+    )
+    _claim_ordinary_execution_for_validated_query(
+        authorization,
+        bundle,
+        prepared,
+        preparation_bytes=preparation_bytes,
+    )
+    return _execute_ordinary_plaintext_for_validated_query(
+        bundle,
+        prepared,
+        modulus=modulus,
+    )
+
+
+def _execute_ordinary_plaintext_for_validated_query(
+    bundle: OrdinaryExecutionBundle,
+    prepared: PreparedOrdinaryQuery,
+    *,
+    modulus: int,
+) -> tuple[int, ...]:
+    """Execute after bundle, query, modulus, and ledger admission are closed."""
+
     compiled = bundle.compiled
     ciphertext_inputs = {
         spec.value_ciphertext_id: spec.values for spec in compiled.operand_specs
@@ -756,9 +912,8 @@ def execute_ordinary_plaintext(
         {operand.ciphertext_id: operand.values for operand in prepared.f1m_operands}
     )
     try:
-        returned = execute_compiled_query(
-            compiled,
-            expected_f1m_policy="overlap-only",
+        returned = _execute_validated_cloud_plan(
+            compiled.cloud_plan,
             ciphertext_inputs=ciphertext_inputs,
             plaintext_masks={
                 mask.mask_id: mask.values for mask in compiled.cloud_plan.program.plaintext_masks
@@ -778,6 +933,47 @@ def execute_ordinary_plaintext(
         raise OrdinaryQueryLifecycleError("ordinary typed execution failed") from error
 
 
+def execute_ordinary_query_lifecycle(
+    compiled: CompiledQuery,
+    *,
+    query_id: str,
+    vector: tuple[int, ...],
+    modulus: int,
+    ledger: PreparedF1MCommitmentLedger,
+) -> OrdinaryQueryLifecycleResult:
+    """Validate once, prepare, serialize, consume, and execute one ordinary query."""
+
+    bundle = bind_ordinary_execution(compiled)
+    prepared = _prepare_ordinary_query_for_validated_bundle(
+        bundle,
+        query_id=query_id,
+        vector=vector,
+        modulus=modulus,
+        ledger=ledger,
+    )
+    preparation_bytes = _canonical_ordinary_query_preparation_bytes_for_validated_query(
+        prepared
+    )
+    authorization = _authorize_ordinary_execution_for_validated_query(
+        bundle,
+        prepared,
+        preparation_bytes=preparation_bytes,
+        ledger=ledger,
+    )
+    _claim_ordinary_execution_for_validated_query(
+        authorization,
+        bundle,
+        prepared,
+        preparation_bytes=preparation_bytes,
+    )
+    output = _execute_ordinary_plaintext_for_validated_query(
+        bundle,
+        prepared,
+        modulus=modulus,
+    )
+    return OrdinaryQueryLifecycleResult(prepared, preparation_bytes, output)
+
+
 def replay_ordinary_plaintext_read_only(
     bundle: OrdinaryExecutionBundle,
     prepared: PreparedOrdinaryQuery,
@@ -793,6 +989,23 @@ def replay_ordinary_plaintext_read_only(
         raise OrdinaryQueryLifecycleError(
             "replay modulus must match the prepared ordinary query"
         )
+    return _replay_ordinary_plaintext_for_validated_query(
+        bundle,
+        prepared,
+        modulus=modulus,
+        ledger=ledger,
+    )
+
+
+def _replay_ordinary_plaintext_for_validated_query(
+    bundle: OrdinaryExecutionBundle,
+    prepared: PreparedOrdinaryQuery,
+    *,
+    modulus: int,
+    ledger: PreparedF1MCommitmentLedger,
+) -> tuple[int, ...]:
+    """Replay after bundle, query, and modulus have been validated once."""
+
     try:
         ledger.verify_consumed_prepared_f1m(
             _prepared_f1m_commitments(prepared.f1m_operands),
@@ -808,40 +1021,47 @@ def replay_ordinary_plaintext_read_only(
         raise OrdinaryQueryLifecycleError(
             "ordinary read-only replay ledger verification failed"
         ) from error
-    compiled = bundle.compiled
-    ciphertext_inputs = {
-        spec.value_ciphertext_id: spec.values for spec in compiled.operand_specs
-    }
-    ciphertext_inputs.update(
-        {operand.ciphertext_id: operand.values for operand in prepared.query_operands}
-    )
-    ciphertext_inputs.update(
-        {operand.ciphertext_id: operand.values for operand in prepared.f1m_operands}
-    )
     try:
-        returned = execute_compiled_query(
-            compiled,
-            expected_f1m_policy="overlap-only",
-            ciphertext_inputs=ciphertext_inputs,
-            plaintext_masks={
-                mask.mask_id: mask.values
-                for mask in compiled.cloud_plan.program.plaintext_masks
-            },
-            modulus=modulus,
-        )
-        returned_shares = {
-            (route.component_id, route.output_block_id): returned[route.result_id]
-            for route in compiled.result_routes
-        }
-        return reconstruct_output(
-            compiled.output_plan,
-            returned_shares,
+        return _execute_ordinary_plaintext_for_validated_query(
+            bundle,
+            prepared,
             modulus=modulus,
         )
     except (KeyError, TypeError, ValueError) as error:
         raise OrdinaryQueryLifecycleError(
             "ordinary read-only typed replay failed"
         ) from error
+
+
+def replay_ordinary_query_lifecycle(
+    compiled: CompiledQuery,
+    content: bytes,
+    *,
+    expected_query_id: str,
+    expected_vector: tuple[int, ...],
+    modulus: int,
+    ledger: PreparedF1MCommitmentLedger,
+) -> OrdinaryQueryLifecycleResult:
+    """Validate once, decode exact bytes, verify consumption, and replay."""
+
+    bundle = bind_ordinary_execution(compiled)
+    prepared = _decode_ordinary_query_preparation_bytes_for_validated_bundle(
+        bundle,
+        content,
+        expected_query_id=expected_query_id,
+        expected_vector=expected_vector,
+    )
+    if not _is_strict_int(modulus) or modulus != prepared.modulus:
+        raise OrdinaryQueryLifecycleError(
+            "replay modulus must match the prepared ordinary query"
+        )
+    output = _replay_ordinary_plaintext_for_validated_query(
+        bundle,
+        prepared,
+        modulus=modulus,
+        ledger=ledger,
+    )
+    return OrdinaryQueryLifecycleResult(prepared, content, output)
 
 
 __all__ = (
@@ -852,6 +1072,7 @@ __all__ = (
     "OrdinaryExecutionBundle",
     "OrdinaryExecutionCapability",
     "OrdinaryQueryLifecycleError",
+    "OrdinaryQueryLifecycleResult",
     "PreparedOrdinaryF1MOperand",
     "PreparedOrdinaryQuery",
     "PreparedOrdinaryQueryOperand",
@@ -864,6 +1085,8 @@ __all__ = (
     "claim_ordinary_execution",
     "decode_ordinary_query_preparation_bytes",
     "execute_ordinary_plaintext",
+    "execute_ordinary_query_lifecycle",
     "prepare_ordinary_query",
     "replay_ordinary_plaintext_read_only",
+    "replay_ordinary_query_lifecycle",
 )

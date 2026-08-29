@@ -12,7 +12,9 @@ from pathlib import Path
 
 import pytest
 
+import dynamic_cssc.query_compiler as query_compiler_module
 import dynamic_cssc.route_a_evaluation as evaluation_module
+import dynamic_cssc.simulator as simulator_module
 from dynamic_cssc.mask_ledger import PreparedF1MCommitmentError
 from dynamic_cssc.ordinary_query_lifecycle import OrdinaryQueryLifecycleError
 from dynamic_cssc.route_a_artifacts import (
@@ -40,6 +42,92 @@ from dynamic_cssc.route_a_strategy import ROUTE_A_STRATEGY_CANDIDATES
 from dynamic_cssc.route_a_workloads import generate_route_a_formal_trace
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("candidate_id", ROUTE_A_STRATEGY_CANDIDATES)
+def test_synthetic_cell_does_not_recompile_one_query_more_than_twice(
+    candidate_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """One compilation constructs the plan and one independently binds it."""
+
+    compile_query = query_compiler_module.compile_query
+    compile_calls = 0
+
+    def counted_compile_query(*args: object, **kwargs: object) -> object:
+        nonlocal compile_calls
+        compile_calls += 1
+        return compile_query(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(query_compiler_module, "compile_query", counted_compile_query)
+    monkeypatch.setattr(simulator_module, "compile_query", counted_compile_query)
+    trace = generate_route_a_formal_trace(scale="S", formal_seed=20260822)
+    run = evaluate_route_a_synthetic_cell(
+        trace,
+        strategy_candidate_id=candidate_id,
+        rho=Fraction(1, 100),
+        shard_identity_sha256=hashlib.sha256(b"route-a-validation-depth").hexdigest(),
+        unit_attempt_ordinal=0,
+        machine_plan_bytes=(
+            REPOSITORY_ROOT / "config/route-a-publication-plan.json"
+        ).read_bytes(),
+        scratch_directory=tmp_path,
+    )
+
+    queries = run.cell.document["counts"]["queries"]
+    assert compile_calls <= 2 * queries
+
+
+@pytest.mark.parametrize("candidate_id", ROUTE_A_STRATEGY_CANDIDATES)
+def test_synthetic_replay_does_not_recompile_one_query_more_than_twice(
+    candidate_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    trace = generate_route_a_formal_trace(scale="S", formal_seed=20260822)
+    plan_bytes = (REPOSITORY_ROOT / "config/route-a-publication-plan.json").read_bytes()
+    shard_sha256 = hashlib.sha256(b"route-a-replay-validation-depth").hexdigest()
+    producer_scratch = tmp_path / "producer"
+    replay_scratch = tmp_path / "replay"
+    producer_scratch.mkdir()
+    replay_scratch.mkdir()
+    producer = evaluate_route_a_synthetic_cell(
+        trace,
+        strategy_candidate_id=candidate_id,
+        rho=Fraction(1, 100),
+        shard_identity_sha256=shard_sha256,
+        unit_attempt_ordinal=0,
+        machine_plan_bytes=plan_bytes,
+        scratch_directory=producer_scratch,
+    )
+    target = RouteASyntheticCellTarget.for_synthetic_trace(
+        trace,
+        strategy_candidate_id=candidate_id,
+        rho=Fraction(1, 100),
+        shard_identity_sha256=shard_sha256,
+        unit_attempt_ordinal=0,
+    )
+    compile_query = query_compiler_module.compile_query
+    compile_calls = 0
+
+    def counted_compile_query(*args: object, **kwargs: object) -> object:
+        nonlocal compile_calls
+        compile_calls += 1
+        return compile_query(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(query_compiler_module, "compile_query", counted_compile_query)
+    monkeypatch.setattr(simulator_module, "compile_query", counted_compile_query)
+    replay = replay_route_a_synthetic_cell(
+        trace,
+        archive_bytes=produce_route_a_synthetic_cell_archive(producer),
+        expected_target=target,
+        machine_plan_bytes=plan_bytes,
+        scratch_directory=replay_scratch,
+    )
+
+    queries = replay.final_cell.document["counts"]["queries"]
+    assert compile_calls <= 2 * queries
 
 
 def test_direct_oracle_mismatch_fails_before_output_digests_are_retained(

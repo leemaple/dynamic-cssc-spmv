@@ -22,12 +22,8 @@ from pathlib import Path
 from dynamic_cssc.mask_ledger import SQLiteMaskBindingLedger
 from dynamic_cssc.metrics import StrategyMetrics
 from dynamic_cssc.ordinary_query_lifecycle import (
-    bind_ordinary_execution,
-    canonical_ordinary_query_preparation_bytes,
-    decode_ordinary_query_preparation_bytes,
-    execute_ordinary_plaintext,
-    prepare_ordinary_query,
-    replay_ordinary_plaintext_read_only,
+    execute_ordinary_query_lifecycle,
+    replay_ordinary_query_lifecycle,
 )
 from dynamic_cssc.plaintext_oracle import direct_spmv
 from dynamic_cssc.route_a_contract import (
@@ -62,11 +58,8 @@ from dynamic_cssc.simulator import (
 )
 from dynamic_cssc.strategy_state import StrongTransition, Transition
 from dynamic_cssc.strong_execution import (
-    canonical_strong_query_preparation_bytes,
-    decode_strong_query_preparation_bytes,
-    execute_strong_plaintext,
-    prepare_strong_query,
-    replay_strong_plaintext_read_only,
+    execute_strong_query_lifecycle,
+    replay_strong_query_lifecycle,
 )
 
 __all__ = (
@@ -391,11 +384,11 @@ def _evaluate_route_a_synthetic_cell(
         transition = advanced.transition
         if type(transition) is StrongTransition:
             accounting, execution_bundle = account_strong_transition_with_bundle(transition)
-            ordinary_bundle = None
+            ordinary_compiled = None
         elif type(transition) is Transition:
             accounting, compiled = account_transition_with_compiled(transition)
             execution_bundle = None
-            ordinary_bundle = bind_ordinary_execution(compiled) if compiled is not None else None
+            ordinary_compiled = compiled
         else:  # pragma: no cover - Route A candidate union is closed
             raise AssertionError("Route A transition changed exact type")
         metrics.merge(accounting.metrics)
@@ -443,7 +436,7 @@ def _evaluate_route_a_synthetic_cell(
         for offset in range(window.query_count):
             query_identity = lane.query_identity(window.first_global_query_ordinal_or_null + offset)
             query_identity_documents.append(query_identity.document_bytes)
-            if ordinary_bundle is not None:
+            if ordinary_compiled is not None:
                 if replay_mode:
                     assert replay_preparation_documents is not None
                     if replay_preparation_ordinal >= len(replay_preparation_documents):
@@ -451,21 +444,17 @@ def _evaluate_route_a_synthetic_cell(
                             "read-only replay preparation stream is truncated"
                         )
                     preparation_bytes = replay_preparation_documents[replay_preparation_ordinal]
-                    prepared = decode_ordinary_query_preparation_bytes(
-                        ordinary_bundle,
+                    lifecycle = replay_ordinary_query_lifecycle(
+                        ordinary_compiled,
                         preparation_bytes,
                         expected_query_id=query_identity.query_id,
                         expected_vector=vector.values,
-                    )
-                    typed_output = replay_ordinary_plaintext_read_only(
-                        ordinary_bundle,
-                        prepared,
                         modulus=_MODULUS,
                         ledger=ledger,
                     )
                 else:
-                    prepared = prepare_ordinary_query(
-                        ordinary_bundle,
+                    lifecycle = execute_ordinary_query_lifecycle(
+                        ordinary_compiled,
                         query_id=query_identity.query_id,
                         vector=vector.values,
                         modulus=_MODULUS,
@@ -475,16 +464,9 @@ def _evaluate_route_a_synthetic_cell(
                         scratch_high_water,
                         _scratch_bytes(scratch_directory),
                     )
-                    preparation_bytes = canonical_ordinary_query_preparation_bytes(
-                        ordinary_bundle,
-                        prepared,
-                    )
-                    typed_output = execute_ordinary_plaintext(
-                        ordinary_bundle,
-                        prepared,
-                        modulus=_MODULUS,
-                        ledger=ledger,
-                    )
+                prepared = lifecycle.prepared
+                preparation_bytes = lifecycle.preparation_bytes
+                typed_output = lifecycle.output
             elif execution_bundle is not None:
                 if replay_mode:
                     assert replay_preparation_documents is not None
@@ -493,20 +475,16 @@ def _evaluate_route_a_synthetic_cell(
                             "read-only replay preparation stream is truncated"
                         )
                     preparation_bytes = replay_preparation_documents[replay_preparation_ordinal]
-                    prepared = decode_strong_query_preparation_bytes(
+                    lifecycle = replay_strong_query_lifecycle(
                         execution_bundle,
                         preparation_bytes,
                         expected_query_id=query_identity.query_id,
                         expected_vector=vector.values,
-                    )
-                    typed_output = replay_strong_plaintext_read_only(
-                        execution_bundle,
-                        prepared,
                         modulus=_MODULUS,
                         ledger=ledger,
                     )
                 else:
-                    prepared = prepare_strong_query(
+                    lifecycle = execute_strong_query_lifecycle(
                         execution_bundle,
                         query_id=query_identity.query_id,
                         vector=vector.values,
@@ -517,16 +495,9 @@ def _evaluate_route_a_synthetic_cell(
                         scratch_high_water,
                         _scratch_bytes(scratch_directory),
                     )
-                    preparation_bytes = canonical_strong_query_preparation_bytes(
-                        execution_bundle,
-                        prepared,
-                    )
-                    typed_output = execute_strong_plaintext(
-                        execution_bundle,
-                        prepared,
-                        modulus=_MODULUS,
-                        ledger=ledger,
-                    )
+                prepared = lifecycle.prepared
+                preparation_bytes = lifecycle.preparation_bytes
+                typed_output = lifecycle.output
             else:  # pragma: no cover - query plan and bundle are constructed together
                 raise AssertionError("query-bearing transition lacks an execution bundle")
             direct_output = direct_spmv(

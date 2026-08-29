@@ -23,7 +23,10 @@ from dynamic_cssc.output_plan import (
     PreparedMask,
     prepare_f1m_masks,
 )
-from dynamic_cssc.plaintext_oracle import execute_cloud_plan, reconstruct_output
+from dynamic_cssc.plaintext_oracle import (
+    _execute_validated_cloud_plan,
+    reconstruct_output,
+)
 from dynamic_cssc.strong_packed_coo import (
     SegmentedDeltaState,
 )
@@ -134,6 +137,15 @@ class PreparedStrongQuery:
     ledger_commitment_token: str
     query_operands: tuple[PreparedQueryOperand, ...]
     f1m_operands: tuple[PreparedF1MOperand, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class StrongQueryLifecycleResult:
+    """One fully closed producer or replay lifecycle result."""
+
+    prepared: PreparedStrongQuery
+    preparation_bytes: bytes
+    output: tuple[int, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,6 +375,27 @@ def prepare_strong_query(
     """Prepare private global-CI query operands and one bound F1-M operand per result."""
 
     _validate_bundle(bundle)
+    prepared = _prepare_strong_query_for_validated_bundle(
+        bundle,
+        query_id=query_id,
+        vector=vector,
+        modulus=modulus,
+        ledger=ledger,
+    )
+    _validate_prepared(bundle, prepared)
+    return prepared
+
+
+def _prepare_strong_query_for_validated_bundle(
+    bundle: StrongExecutionBundle,
+    *,
+    query_id: str,
+    vector: tuple[int, ...],
+    modulus: int,
+    ledger: PreparedF1MCommitmentLedger,
+) -> PreparedStrongQuery:
+    """Prepare after this module has validated ``bundle`` at the calling seam."""
+
     dense_vector = _validated_vector(vector, length=bundle.base.layout_spec.cols)
     if not _is_strict_int(modulus) or modulus < 2:
         raise StrongExecutionError("modulus must be a strict integer of at least two")
@@ -410,7 +443,7 @@ def prepare_strong_query(
         execution_binding_digest=bundle.execution_binding_digest,
         modulus=modulus,
     )
-    return PreparedStrongQuery(
+    prepared = PreparedStrongQuery(
         query_id=query_id,
         version_id=bundle.base.version_id,
         modulus=modulus,
@@ -423,6 +456,7 @@ def prepare_strong_query(
         query_operands=query_operands,
         f1m_operands=prepared_f1m_operands,
     )
+    return prepared
 
 
 def _prepared_f1m_commitments(
@@ -538,6 +572,14 @@ def canonical_strong_query_preparation_payload(
 
     _validate_bundle(bundle)
     _validate_prepared(bundle, prepared)
+    return _canonical_strong_query_preparation_payload_for_validated_query(prepared)
+
+
+def _canonical_strong_query_preparation_payload_for_validated_query(
+    prepared: PreparedStrongQuery,
+) -> dict[str, object]:
+    """Render a query already validated by this module's deep lifecycle."""
+
     return {
         "bindings": {
             "cloud_program_digest": prepared.cloud_program_digest,
@@ -578,6 +620,14 @@ def canonical_strong_query_preparation_bytes(
     return _canonical_bytes(canonical_strong_query_preparation_payload(bundle, prepared))
 
 
+def _canonical_strong_query_preparation_bytes_for_validated_query(
+    prepared: PreparedStrongQuery,
+) -> bytes:
+    return _canonical_bytes(
+        _canonical_strong_query_preparation_payload_for_validated_query(prepared)
+    )
+
+
 def decode_strong_query_preparation_bytes(
     bundle: StrongExecutionBundle,
     content: bytes,
@@ -588,6 +638,23 @@ def decode_strong_query_preparation_bytes(
     """Decode exact retained private bytes into one bundle-bound replay operand."""
 
     _validate_bundle(bundle)
+    return _decode_strong_query_preparation_bytes_for_validated_bundle(
+        bundle,
+        content,
+        expected_query_id=expected_query_id,
+        expected_vector=expected_vector,
+    )
+
+
+def _decode_strong_query_preparation_bytes_for_validated_bundle(
+    bundle: StrongExecutionBundle,
+    content: bytes,
+    *,
+    expected_query_id: str,
+    expected_vector: tuple[int, ...],
+) -> PreparedStrongQuery:
+    """Decode after this module has validated ``bundle`` at the calling seam."""
+
     if type(content) is not bytes:
         raise TypeError("strong query preparation content must be exact bytes")
     try:
@@ -718,7 +785,7 @@ def decode_strong_query_preparation_bytes(
         f1m_operands=tuple(decoded_f1m),
     )
     _validate_prepared(bundle, prepared)
-    if canonical_strong_query_preparation_bytes(bundle, prepared) != content:
+    if _canonical_strong_query_preparation_bytes_for_validated_query(prepared) != content:
         raise StrongExecutionError(
             "decoded strong query preparation does not round-trip exactly"
         )
@@ -834,6 +901,22 @@ def execute_strong_plaintext(
     if not _is_strict_int(modulus) or modulus < 2 or modulus != prepared.modulus:
         raise StrongExecutionError("execution modulus must match the prepared query modulus")
     _validate_prepared(bundle, prepared)
+    _consume_strong_query_for_validated_bundle(bundle, prepared, ledger=ledger)
+    return _execute_strong_plaintext_for_validated_query(
+        bundle,
+        prepared,
+        modulus=modulus,
+    )
+
+
+def _consume_strong_query_for_validated_bundle(
+    bundle: StrongExecutionBundle,
+    prepared: PreparedStrongQuery,
+    *,
+    ledger: PreparedF1MCommitmentLedger,
+) -> None:
+    """Consume the exact commitment after bundle and query validation."""
+
     ledger.verify_and_consume_prepared_f1m(
         _prepared_f1m_commitments(prepared.f1m_operands),
         commitment_token=prepared.ledger_commitment_token,
@@ -844,6 +927,16 @@ def execute_strong_plaintext(
         execution_binding_digest=bundle.execution_binding_digest,
         modulus=prepared.modulus,
     )
+
+
+def _execute_strong_plaintext_for_validated_query(
+    bundle: StrongExecutionBundle,
+    prepared: PreparedStrongQuery,
+    *,
+    modulus: int,
+) -> tuple[int, ...]:
+    """Execute after bundle, query, modulus, and ledger admission are closed."""
+
     ciphertext_inputs = {
         spec.value_ciphertext_id: spec.values for spec in bundle.value_operand_specs
     }
@@ -853,7 +946,7 @@ def execute_strong_plaintext(
     ciphertext_inputs.update(
         {operand.ciphertext_id: operand.values for operand in prepared.f1m_operands}
     )
-    returned = execute_cloud_plan(
+    returned = _execute_validated_cloud_plan(
         bundle.cloud_plan,
         ciphertext_inputs=ciphertext_inputs,
         plaintext_masks={
@@ -865,6 +958,36 @@ def execute_strong_plaintext(
         route.output_share_id: returned[route.result_id] for route in bundle.result_routes
     }
     return reconstruct_output(bundle.output_plan, returned_shares, modulus=modulus)
+
+
+def execute_strong_query_lifecycle(
+    bundle: StrongExecutionBundle,
+    *,
+    query_id: str,
+    vector: tuple[int, ...],
+    modulus: int,
+    ledger: PreparedF1MCommitmentLedger,
+) -> StrongQueryLifecycleResult:
+    """Validate once, prepare, serialize, consume, and execute one strong query."""
+
+    _validate_bundle(bundle)
+    prepared = _prepare_strong_query_for_validated_bundle(
+        bundle,
+        query_id=query_id,
+        vector=vector,
+        modulus=modulus,
+        ledger=ledger,
+    )
+    preparation_bytes = _canonical_strong_query_preparation_bytes_for_validated_query(
+        prepared
+    )
+    _consume_strong_query_for_validated_bundle(bundle, prepared, ledger=ledger)
+    output = _execute_strong_plaintext_for_validated_query(
+        bundle,
+        prepared,
+        modulus=modulus,
+    )
+    return StrongQueryLifecycleResult(prepared, preparation_bytes, output)
 
 
 def replay_strong_plaintext_read_only(
@@ -880,6 +1003,22 @@ def replay_strong_plaintext_read_only(
     if not _is_strict_int(modulus) or modulus < 2 or modulus != prepared.modulus:
         raise StrongExecutionError("replay modulus must match the prepared query modulus")
     _validate_prepared(bundle, prepared)
+    _verify_strong_query_for_validated_bundle(bundle, prepared, ledger=ledger)
+    return _execute_strong_plaintext_for_validated_query(
+        bundle,
+        prepared,
+        modulus=modulus,
+    )
+
+
+def _verify_strong_query_for_validated_bundle(
+    bundle: StrongExecutionBundle,
+    prepared: PreparedStrongQuery,
+    *,
+    ledger: PreparedF1MCommitmentLedger,
+) -> None:
+    """Verify consumed replay material after bundle and query validation."""
+
     try:
         ledger.verify_consumed_prepared_f1m(
             _prepared_f1m_commitments(prepared.f1m_operands),
@@ -895,25 +1034,32 @@ def replay_strong_plaintext_read_only(
         raise StrongExecutionError(
             "strong read-only replay ledger verification failed"
         ) from error
-    ciphertext_inputs = {
-        spec.value_ciphertext_id: spec.values for spec in bundle.value_operand_specs
-    }
-    ciphertext_inputs.update(
-        {operand.ciphertext_id: operand.values for operand in prepared.query_operands}
+
+
+def replay_strong_query_lifecycle(
+    bundle: StrongExecutionBundle,
+    content: bytes,
+    *,
+    expected_query_id: str,
+    expected_vector: tuple[int, ...],
+    modulus: int,
+    ledger: PreparedF1MCommitmentLedger,
+) -> StrongQueryLifecycleResult:
+    """Validate once, decode exact bytes, verify consumption, and replay."""
+
+    _validate_bundle(bundle)
+    prepared = _decode_strong_query_preparation_bytes_for_validated_bundle(
+        bundle,
+        content,
+        expected_query_id=expected_query_id,
+        expected_vector=expected_vector,
     )
-    ciphertext_inputs.update(
-        {operand.ciphertext_id: operand.values for operand in prepared.f1m_operands}
-    )
-    returned = execute_cloud_plan(
-        bundle.cloud_plan,
-        ciphertext_inputs=ciphertext_inputs,
-        plaintext_masks={
-            mask.mask_id: mask.values for mask in bundle.cloud_plan.program.plaintext_masks
-        },
+    if not _is_strict_int(modulus) or modulus < 2 or modulus != prepared.modulus:
+        raise StrongExecutionError("replay modulus must match the prepared query modulus")
+    _verify_strong_query_for_validated_bundle(bundle, prepared, ledger=ledger)
+    output = _execute_strong_plaintext_for_validated_query(
+        bundle,
+        prepared,
         modulus=modulus,
     )
-    returned_shares = {
-        route.output_share_id: returned[route.result_id]
-        for route in bundle.result_routes
-    }
-    return reconstruct_output(bundle.output_plan, returned_shares, modulus=modulus)
+    return StrongQueryLifecycleResult(prepared, content, output)
