@@ -934,7 +934,8 @@ template <typename Value>
 Value DeserializeOpenFHE(const std::string& content, const std::string& field) {
     std::stringstream stream(content);
     Value value;
-    if (!Serial::Deserialize(value, stream, SerType::BINARY) || !value) {
+    Serial::Deserialize(value, stream, SerType::BINARY);
+    if (!value) {
         Fail(field + " OpenFHE deserialization failed");
     }
     return value;
@@ -1116,7 +1117,7 @@ std::vector<RouteAPackageMember> ReadRouteAPackage(const fs::path& packageRoot) 
 
 const RouteAPackageMember& UniqueRouteAPackageMember(
     const std::vector<RouteAPackageMember>& members,
-    const std::string& role) {
+    std::string_view role) {
     const RouteAPackageMember* found = nullptr;
     for (const auto& member : members) {
         if (member.role == role) {
@@ -1134,7 +1135,7 @@ const RouteAPackageMember& UniqueRouteAPackageMember(
 
 const RouteAPackageMember& RouteAPackageMemberBySubject(
     const std::vector<RouteAPackageMember>& members,
-    const std::string& role,
+    std::string_view role,
     const std::string& subjectId) {
     for (const auto& member : members) {
         if (member.role == role && member.subjectId == subjectId) {

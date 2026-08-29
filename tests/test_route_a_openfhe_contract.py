@@ -73,6 +73,27 @@ def test_route_a_replay_deserializes_exact_objects_without_generation_or_encrypt
         assert required in replay
 
 
+def test_openfhe_151_deserialization_and_member_lookup_compile_contract_is_exact() -> None:
+    source = (ROOT / "cpp/openfhe_query_runner.cpp").read_text()
+    deserialize = _function_body(
+        source,
+        "Value DeserializeOpenFHE(",
+        "void DeserializeEvalMultKey(",
+    )
+    lookup = _function_body(
+        source,
+        "const RouteAPackageMember& UniqueRouteAPackageMember(",
+        "std::string InputCategory(",
+    )
+
+    # OpenFHE 1.5.1's generic Serial::Deserialize overload returns void.
+    assert "Serial::Deserialize(value, stream, SerType::BINARY);" in deserialize
+    assert "!Serial::Deserialize" not in deserialize
+    # Literal roles use a non-owning value so a temporary std::string cannot
+    # trigger GCC's -Wdangling-reference diagnostic on the returned member.
+    assert lookup.count("std::string_view role") == 2
+
+
 def test_route_a_producer_retains_context_keys_and_one_unchanged_day1b_frame() -> None:
     source = (ROOT / "cpp/openfhe_query_runner.cpp").read_text()
     producer = _function_body(source, "int RunRouteAProducer(", "int RunRouteAReplay(")
