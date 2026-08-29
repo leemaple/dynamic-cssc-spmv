@@ -1,11 +1,16 @@
 # Methods and Claim–Evidence Skeleton
 
-> **Paper-writing status.** This is a methods-first skeleton, not a results draft.
-> It permits design and protocol descriptions that are supported by the frozen
-> contract and accepted ADRs. It keeps performance, complete-reference,
-> end-to-end, formal, and security-effectiveness claims on HOLD until the exact
-> gates and artifacts listed below exist and an ADR 0010 compatibility receipt
-> binds the experiment, evidence-freeze, and analysis snapshots.
+> **Paper-writing status (superseded by Route C on 2026-08-30).** This file is a
+> preserved methods/claims design source, not the active manuscript and not a
+> results draft. The active paper is `manuscript-draft.md`. Exact experiment
+> source S1 `ee58627bb5752c6ac1ee2c5132c6574f9cb66552` and evidence freeze S2
+> `c7ff6820d9323f1850c1c5c57fd9070db88db120` closed the engineering lineage,
+> but one-shot qualification run `33261434612` missed its frozen gate: q1
+> completed, q2 was cancelled, q3--q6 did not run, and q5 minted no authority.
+> Therefore performance, complete-reference, end-to-end formal-execution, and
+> security-effectiveness claims described below are **CLOSED for this lineage**,
+> not waiting on a rerun. Only definition-level design, source-conformance, and
+> fail-closed stop-decision statements may be carried into the Route C paper.
 
 ## 1. Scope and source hierarchy
 

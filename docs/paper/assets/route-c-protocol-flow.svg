@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760" role="img" aria-labelledby="title desc">
+  <title id="title">Version-bound mutable CSSC query and reconstruction flow</title>
+  <desc id="desc">Client A commits updates, layout, query metadata, private output plan, and masks to one publication version. The Cloud executes only the public schedule. Client B reconstructs the logical output with the matching private plan.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#3d5366"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="3" stdDeviation="5" flood-color="#182735" flood-opacity="0.14"/>
+    </filter>
+    <style>
+      text { font-family: Arial, sans-serif; }
+      .title { font-size: 30px; font-weight: 700; fill: #18344b; }
+      .subtitle { font-size: 17px; font-weight: 400; fill: #516577; }
+      .lane { font-size: 19px; font-weight: 700; letter-spacing: 0.5px; }
+      .head { font-size: 19px; font-weight: 700; fill: #162d3e; }
+      .body { font-size: 15px; font-weight: 400; fill: #354b5d; }
+      .small { font-size: 13px; font-weight: 400; fill: #52687a; }
+      .tag { font-size: 13px; font-weight: 700; fill: #ffffff; }
+      .arrow { stroke: #3d5366; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1400" height="760" rx="24" fill="#f7fafc"/>
+  <text x="60" y="58" class="title">One immutable version closes the mutable encrypted SpMV path</text>
+  <text x="60" y="88" class="subtitle">State, query reorganization, encrypted execution, reconstruction, and one-time masking are bound before the query is accepted.</text>
+
+  <rect x="42" y="125" width="1316" height="170" rx="20" fill="#eaf3fb"/>
+  <rect x="42" y="310" width="1316" height="170" rx="20" fill="#fff2e6"/>
+  <rect x="42" y="495" width="1316" height="210" rx="20" fill="#eaf7f0"/>
+  <text x="70" y="160" class="lane" fill="#1f6491">CLIENT A · publication and query ownership</text>
+  <text x="70" y="345" class="lane" fill="#a84f12">CLOUD · public schedule only</text>
+  <text x="70" y="530" class="lane" fill="#25734a">CLIENT B · private reconstruction</text>
+
+  <g filter="url(#shadow)">
+    <rect x="78" y="185" width="205" height="78" rx="14" fill="#ffffff" stroke="#8db9d8" stroke-width="2"/>
+    <text x="98" y="215" class="head">Ordered updates</text>
+    <text x="98" y="242" class="body">insert · delete · modify</text>
+
+    <rect x="335" y="174" width="270" height="100" rx="14" fill="#ffffff" stroke="#4e92be" stroke-width="2"/>
+    <text x="357" y="208" class="head">Publication Window</text>
+    <text x="357" y="235" class="body">apply a complete causal window</text>
+    <text x="357" y="258" class="small">commit logical + physical state</text>
+
+    <rect x="655" y="174" width="300" height="100" rx="14" fill="#ffffff" stroke="#4e92be" stroke-width="2"/>
+    <text x="677" y="208" class="head">Versioned query compiler</text>
+    <text x="677" y="235" class="body">global columns → BFV slots</text>
+    <text x="677" y="258" class="small">bind query, plan, and payload digests</text>
+
+    <rect x="1005" y="174" width="310" height="100" rx="14" fill="#173f5f"/>
+    <text x="1027" y="206" class="tag">IMMUTABLE VERSION COMMIT</text>
+    <text x="1027" y="233" class="tag">base · components · ColumnIndex</text>
+    <text x="1027" y="256" class="tag">OutputPlan · masks · operation graph</text>
+  </g>
+
+  <path d="M283 224 H335" class="arrow"/>
+  <path d="M605 224 H655" class="arrow"/>
+  <path d="M955 224 H1005" class="arrow"/>
+
+  <g filter="url(#shadow)">
+    <rect x="335" y="360" width="270" height="86" rx="14" fill="#ffffff" stroke="#df8b4d" stroke-width="2"/>
+    <text x="357" y="393" class="head">Receive typed bundle</text>
+    <text x="357" y="420" class="body">reject version or digest drift</text>
+
+    <rect x="655" y="360" width="300" height="86" rx="14" fill="#ffffff" stroke="#df8b4d" stroke-width="2"/>
+    <text x="677" y="393" class="head">Execute public DAG</text>
+    <text x="677" y="420" class="body">base + fixed-segment components</text>
+
+    <rect x="1005" y="360" width="310" height="86" rx="14" fill="#ffffff" stroke="#df8b4d" stroke-width="2"/>
+    <text x="1027" y="393" class="head">Return encrypted shares</text>
+    <text x="1027" y="420" class="body">shape and contributor IDs only</text>
+  </g>
+  <path d="M470 274 V360" class="arrow"/>
+  <path d="M605 403 H655" class="arrow"/>
+  <path d="M955 403 H1005" class="arrow"/>
+
+  <g filter="url(#shadow)">
+    <rect x="335" y="552" width="270" height="105" rx="14" fill="#ffffff" stroke="#63a980" stroke-width="2"/>
+    <text x="357" y="585" class="head">Verify version binding</text>
+    <text x="357" y="612" class="body">same query and OutputPlan</text>
+    <text x="357" y="636" class="small">fail closed on substitution</text>
+
+    <rect x="655" y="552" width="300" height="105" rx="14" fill="#ffffff" stroke="#63a980" stroke-width="2"/>
+    <text x="677" y="585" class="head">Private OutputPlan</text>
+    <text x="677" y="612" class="body">overlap sum · concatenate · zero</text>
+    <text x="677" y="636" class="small">consume overlap masks once</text>
+
+    <rect x="1005" y="552" width="310" height="105" rx="14" fill="#225f3f"/>
+    <text x="1027" y="588" class="tag">LOGICAL OUTPUT y(v)</text>
+    <text x="1027" y="616" class="tag">decoded only under version v</text>
+    <text x="1027" y="640" class="tag">with persistent no-reuse identity</text>
+  </g>
+  <path d="M1160 446 V512 H470 V552" class="arrow"/>
+  <path d="M605 604 H655" class="arrow"/>
+  <path d="M955 604 H1005" class="arrow"/>
+
+  <rect x="78" y="574" width="205" height="62" rx="31" fill="#d4eadc" stroke="#63a980"/>
+  <text x="107" y="600" class="head">Private metadata</text>
+  <text x="111" y="623" class="small">RowMap · plan · mask plaintexts</text>
+</svg>

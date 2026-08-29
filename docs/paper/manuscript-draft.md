@@ -55,7 +55,7 @@ turn a matrix's support into layout metadata and require a client to align the
 encrypted query with physical value lanes. CSSC addresses the static case by
 sorting rows, packing capacity-fitting rectangles, and retaining the metadata
 needed to recover logical outputs. Its own stated limitation is a static sparse
-pattern.
+pattern [@gao2026cssc].
 
 A mutable matrix cannot be handled by changing values alone. An insertion may
 consume padding, create an overflow component, change a row permutation, or force
@@ -120,7 +120,8 @@ sharing to split an MVM output.
 Our claimed gap is the narrower mutable CSSC publication and reconstruction
 contract; it is not a new static packing or cryptographic primitive.
 
-The CSSC aggregation pseudocode has a non-power-of-two ambiguity. We use a
+Our source audit of CSSC [@gao2026cssc] finds a non-power-of-two ambiguity in
+the printed aggregation pseudocode. We use a
 corrected `totalSum`-compatible stored-power/prefix graph that preserves the
 paper-derived abstract count
 `floor(log2 w) + popcount(w) - 1`. We present this as a compatibility correction,
@@ -133,14 +134,14 @@ The closest methods are not interchangeable experimental baselines:
 | Work | Principal representation or setting | Mutable support? | Relation to this paper |
 |---|---|---:|---|
 | CSSC [@gao2026cssc] | Sparse-coordinate compression with `ColumnIndex`/`RowMap` | No | Direct static substrate; its published layout and reorganization are not our contribution. |
-| Lodia [@yu2025lodia] | Low-diagonal decomposition for batched FHE SpMV | No | Establishes earlier sparsity-aware encrypted SpMV; different decomposition and leakage/cost interface. |
+| Lodia [@yu2025lodia] | Low-diagonal decomposition for batched FHE SpMV | Not described | Establishes earlier sparsity-aware encrypted SpMV; different decomposition and leakage/cost interface. |
 | CipherSkip [@xiong2026cipherskip] | Encrypted values and indices for arbitrary-shape SpGEMM and chained products | No matrix-state publication protocol | Its server-side alignment concerns encrypted intermediate products, not insert/delete/update of a published sparse layout. |
-| SparseE [@wei2026sparsee] | Encrypted-index Scatter--Gather--Apply with a permutation/expansion accelerator | Not established by the public abstract | Establishes an encrypted-index hardware co-design boundary; no public full text, DOI, or comparable software artifact was verified. |
-| Diagonal Packing [@mutluergil2026diagonal] | Row/column reordering to reduce occupied cyclic diagonals | No | HE-aware static compiler optimization; no mutable CSSC publication or reconstruction. |
-| Ferguson et al. [@ferguson2025unstructured] | CKKS ciphertext--ciphertext SpMSpM with public sparse metadata | No | Demonstrates prior FHE sparsity exploitation under a PPML workload; different operation, scheme, and small square matrices. |
-| D'Agata et al. [@dagata2026gpu] | GPU/FIDESlib CKKS ciphertext--ciphertext SpMSpM with public sparse metadata | No | Extends the same static design space to GPU execution; not a dynamic SpMV baseline. |
-| Rhombus [@he2024rhombus] | Plaintext-matrix/encrypted-vector MVM with additive output shares | No | A different two-party PPML protocol; the random-share primitive is prior art, while versioned overlap binding is our narrower integration claim. |
-| Damie et al. [@damie2025secure] | Secret-shared sparse matrix multiplication in MPC | Not this protocol | Shows secure sparse arithmetic outside FHE; incomparable without a common threat and cost model. |
+| SparseE [@wei2026sparsee] | Encrypted-index Scatter--Gather--Apply with a permutation/expansion accelerator | Not established by the public abstract | Establishes an encrypted-index hardware co-design boundary; as of 2026-08-30, no public full text, DOI, or public software repository was located. |
+| Diagonal Packing [@mutluergil2026diagonal] | Row/column reordering to reduce occupied cyclic diagonals | Not described | HE-aware static compiler optimization; no mutable CSSC publication or reconstruction is described. |
+| Ferguson et al. [@ferguson2025unstructured] | CKKS ciphertext--ciphertext SpMSpM with public sparse metadata | Not described | Demonstrates prior FHE sparsity exploitation under a PPML workload; different operation, scheme, and small square matrices. |
+| D'Agata et al. [@dagata2026gpu] | GPU/FIDESlib CKKS ciphertext--ciphertext SpMSpM with public sparse metadata | Not described | Extends the same static design space to GPU execution; a dynamic SpMV publication protocol is not described. |
+| Rhombus [@he2024rhombus] | Plaintext-matrix/encrypted-vector MVM with additive output shares | Not described | A different two-party PPML protocol; the random-share primitive is prior art, while versioned overlap binding is our narrower integration claim. |
+| Damie et al. [@damie2025secure] | Secret-shared sparse matrix multiplication in MPC | Not described | Shows secure sparse arithmetic outside FHE; incomparable without a common threat and cost model. |
 | This work | Version-bound CSSC base plus designated maintenance components; formal evaluation stopped at qualification | Yes | Studies publication, query recompilation, private reconstruction, and causal-cost contracts; claims no static-format, primitive, or comparative-performance novelty. |
 
 ### 2.2 Mutable sparse layouts
@@ -158,9 +159,10 @@ complete cost accounting.
 ### 2.3 Dynamic encrypted data systems and masking
 
 Dynamic SSE, encrypted databases, ShieldDB, and oblivious transaction systems
-already study updates, client state, epochs, padding, and leakage. They do not
-instantiate the same ciphertext--ciphertext CSSC query, but they prevent broad
-claims that batching or versioned updates are new. d-DSE directly shows that
+already study updates, client state, epochs, padding, and leakage
+[@cash2014dynamic; @vo2021shielddb; @crooks2018obladi]. They do not instantiate
+the same ciphertext--ciphertext CSSC query, but they prevent broad claims that
+batching or versioned updates are new. d-DSE directly shows that
 update-volume leakage remains a separate problem and that padding can impose
 large storage and communication costs [@liu2024ddse]. CKKS-Auth Tree uses
 versioned root commitments and timestamps to detect stale or replayed
@@ -171,10 +173,10 @@ checks, or replay rejection in isolation. Fixed segments, dummy work, and
 visible schedules are therefore described through an explicit leakage surface,
 not as a generic update-leakage solution.
 
-Canceling one-time masks also predate this work. We therefore state the exact
-leakage and recipient roles and avoid the terms `simulation-secure` or `prevents
-leakage` without a separate proof [@cash2014dynamic; @vo2021shielddb;
-@crooks2018obladi; @bonawitz2017secureagg]. Authorized homomorphic database
+Canceling one-time masks also predate this work [@bonawitz2017secureagg]. We
+therefore state the exact leakage and recipient roles and avoid the terms
+`simulation-secure` or `prevents leakage` without a separate proof. Authorized
+homomorphic database
 updates also predate this work and delimit any claim about encrypted mutability
 [@parbat2023authorized].
 
@@ -198,6 +200,14 @@ all leakage is prevented or that the implementation realizes a
 simulation-based notion.
 
 ## 4. Design
+
+Figure 1 shows the protocol boundary. Client A owns publication and constructs
+the version commit; the Cloud receives only the typed public program; Client B
+uses the matching private plan to recover logical coordinates. The diagram is
+an interface summary, not a claim that the listed metadata is
+cryptographically hidden from every side channel.
+
+![Figure 1. Version-bound mutable CSSC publication, execution, and private reconstruction.](assets/route-c-protocol-flow.png){width=6.3in}
 
 ### 4.1 Publication Windows
 
@@ -223,9 +233,10 @@ query-plaintext confidentiality.
 
 ### 4.2 Versioned query reorganization
 
-Each CSSC value lane stores an original matrix-column identifier or a padding
-sentinel. Client A sends versioned plaintext column metadata to Client B. Client
-B gathers one aligned vector per encrypted value chunk and encrypts it. The
+Each CSSC value lane is paired with a parallel original matrix-column identifier
+or a padding sentinel. Client A sends versioned plaintext column metadata to
+Client B. Client B gathers one aligned vector per encrypted value chunk and
+encrypts it. The
 matrix column domain is independent of the ciphertext-slot domain; reducing a
 global column identifier modulo the slot count changes the function and is
 forbidden.
@@ -273,6 +284,153 @@ the 4,096-lane effective domain, and is the exact 127-active-plus-one-padding
 boundary covered by the pinned witness. We make no optimality or
 cross-segment-width claim.
 
+### 4.5 Definition-level functional propositions
+
+The following statements are conditional functional propositions about the
+frozen typed interfaces and algorithms. They are not empirical conclusions and
+not a malicious- or simulation-security theorem. The exact-S1
+source-conformance record maps every premise below to the corresponding
+validator, state transition, reconstruction routine, or ledger transition; the
+registered tests exercise legal cases and substitutions but do not replace the
+proof arguments.
+
+#### P1: binding soundness
+
+For publication version $v$, let
+
+$$
+\mathcal{P}^{(v)}=
+\left(
+A^{(v)},
+\{C_k^{(v)}\}_{k=1}^{K_v},
+\{CI_k^{(v)}\}_{k=1}^{K_v},
+\{RM_k^{(v)}\}_{k=1}^{K_v},
+O^{(v)},Q^{(v)},B^{(v)}
+\right),
+$$
+
+where $A$ is the logical matrix, $C_k$ are ordered physical components,
+$CI_k$ and $RM_k$ are their global-column and row mappings, $O$ is the private
+OutputPlan, $Q$ is the prepared-query binding, and $B$ is the immutable typed
+identity and digest bundle. Let $B^{(v,q)}$ be the authoritative binding for
+query $q$. The registered acceptance predicate has the shape
+
+$$
+\operatorname{Accept}(X;B^{(v,q)})=
+\bigwedge_{f\in\mathcal{F}}[X_f=B_f^{(v,q)}]
+\;\land\!
+\bigwedge_{o\in\mathcal{O}}
+[\operatorname{SHA256}(\operatorname{bytes}_X(o))=B_o^{(v,q)}],
+$$
+
+where $\mathcal{F}$ enumerates every typed version, query, component, mapping,
+plan, parameter, and execution identity, and $\mathcal{O}$ enumerates every
+retained canonical byte object. Hence acceptance implies equality for every
+enumerated field and rehashed object. The capability and formal-artifact paths
+are downstream of this conjunction, so a failed conjunct cannot mint them.
+
+The proof is a case analysis over the closed predicate: each field class occurs
+as a necessary conjunct, retained bytes are rehashed inside the private
+admission process, and no earlier branch reaches the issuer. This establishes a
+functional binding property for ordinary inputs and malformed/stale
+substitutions. It says nothing about deliberate SHA-256 collisions, compromised
+hosts, or side channels.
+
+#### P2: multi-component reconstruction
+
+Let $A_k^{(v)}$ be component $k$ in its local physical coordinates and $E_k$
+its embedding into the logical matrix domain. The admitted decomposition is
+complete when
+
+$$
+A^{(v)}=\sum_{k=1}^{K_v}E_k\!\left(A_k^{(v)}\right)\pmod t.
+$$
+
+Assume each component execution decrypts to $A_k^{(v)}x$ in its declared lanes,
+every lane has exactly its declared logical coordinate, the OutputPlan is total,
+and P3 masks cancel. For logical row $r$, the reconstruction operator sums all
+contributors mapped to $r$, places disjoint blocks in logical order, and uses
+zero when the contributor set is empty. Therefore
+
+$$
+R_{O^{(v)}}\!\left(\{A_k^{(v)}x\}_{k=1}^{K_v}\right)_r
+=\sum_{k=1}^{K_v}\left(E_k(A_k^{(v)})x\right)_r.
+$$
+
+By completeness of the admitted decomposition,
+
+$$
+\sum_{k=1}^{K_v}\left(E_k(A_k^{(v)})x\right)_r
+=\left(A^{(v)}x\right)_r\pmod t.
+$$
+
+The equality is coordinatewise: overlap is ordinary addition in
+$\mathbb{Z}_t$, disjoint blocks have disjoint images under the embeddings, and
+an unmaterialized row contributes the additive identity. It holds for any
+admitted number of components under the stated completeness and totality
+premises; the finite tests only check the implementation of those premises.
+
+#### P3: mask cancellation and ledger-scoped no-reuse
+
+For an overlap group $G_r=(k_1,\ldots,k_g)$ in canonical contributor order with
+$g\ge 2$, Client A samples
+
+$$
+m_{r,k_1},\ldots,m_{r,k_{g-1}}
+\overset{\mathrm{u.a.r.}}{\leftarrow}\mathbb{Z}_t,
+\qquad
+m_{r,k_g}=-\sum_{i=1}^{g-1}m_{r,k_i}\pmod t.
+$$
+
+Thus $\sum_{k\in G_r}m_{r,k}=0\pmod t$, and P2 reconstruction removes the
+random operands without changing the logical output coordinate. Groups of size
+zero or one receive no random tuple; an encrypted-zero dummy is a separate
+accounted object.
+
+For no-reuse, the durable state machine is
+
+$$
+\textsf{unseen}\rightarrow\textsf{reserved}
+\rightarrow\textsf{prepared}\rightarrow\textsf{consumed}.
+$$
+
+One transaction reserves every five-field key
+`(query, version, plan digest, component, output block)` before the first random
+sample. A prepared batch additionally binds the private plan, execution binding,
+modulus, operand commitments, and a unique token; verification consumes that
+token atomically. Uniqueness constraints plus exact terminal closure reject a
+duplicate key or token, commitment drift, orphan record, or second consumption.
+The evaluation-lane digest includes the unit-attempt ordinal, so the single
+provider-replacement allowance cannot reuse the same reservation identity. This
+is an invariant of one uncompromised durable SQLite ledger, not a rollback,
+cloning, compromise, or cross-device guarantee.
+
+#### P4: fixed-segment reconstruction
+
+For a logical row $r$, partition its auxiliary entries in canonical order into
+$J_r$ segments $S_{r,1},\ldots,S_{r,J_r}$ of $c=128$ lanes and pad only the
+final unused suffix with zeros. The seven-stage public reduction places
+
+$$
+L_{r,j}=\sum_{\ell=0}^{127}S_{r,j}[\ell]
+$$
+
+in the predetermined leader lane. The private OutputPlan maps every leader back
+to $r$, so Client B obtains
+
+$$
+\sum_{j=1}^{J_r}L_{r,j}
+=\sum_{j=1}^{J_r}\sum_{\ell=0}^{127}S_{r,j}[\ell],
+$$
+
+which is exactly the auxiliary contribution to row $r$; adding the CSSC-base
+contribution and applying P2 gives the direct logical product. The proof is an
+induction on $J_r$: one segment is the fixed reduction identity, and appending a
+row-owned segment adds exactly its leader sum without changing prior leaders.
+The 127/128/129, tombstone, padding, disjoint, and overlap cases are boundary
+tests of this construction, not its general proof and not evidence that 128 is
+an optimal width.
+
 ## 5. Implementation and Evidence
 
 At historical baseline commit `fcb00e0d`, the Python implementation supplied typed persistent states, a common query
@@ -293,6 +451,16 @@ Its GitHub Actions artifact-wrapper SHA-256 digest is
 This evidence is deliberately narrow. It does not establish complete candidate
 costs, candidate registration, mixed-circuit parameter safety, security,
 performance, or an end-to-end deployment.
+
+**Table 1. Definition-level obligations and their Route C disposition.**
+
+| Obligation | Frozen implementation and review boundary | Claim permitted in this manuscript |
+|---|---|---|
+| P1: exact binding | Typed version/query/plan/payload identities, fresh byte rehashing, independent replay, and source-conformance mapping | Conditional binding proposition and fail-closed interface design; no end-to-end admission claim |
+| P2: multi-component reconstruction | Private `OutputPlan`, direct plaintext oracle, overlap/concatenation/implicit-zero checks | Definition-level reconstruction proof under the admitted-plan premises; no formal-run result |
+| P3: F1-M cancellation and no-reuse | Modular cancellation proof plus durable reserve-before-sample SQLite state machine | Cancellation and ledger-local invariant only; no simulation-security, rollback, cloning, or cross-device claim |
+| P4: fixed 128-lane segment path | Seven-stage reduction proof and 127/128/129 boundary tests | Correctness proposition for the frozen segment construction; no optimal-width or performance claim |
+| Evidence release | S1/S2 Behavior Sets, independent guards, terminal controller, and exact object-count contract | Engineering/source conformance and the Route C stop decision only; no strategy-cost evidence |
 
 The Route A engineering line retains those boundaries while adding a closed
 qualification and evidence path. A six-job, permanently non-admissible
@@ -551,6 +719,21 @@ artifact, formal shard, terminal admission record, aggregate, or compatible S3
 analysis exists. The project therefore has zero reportable strategy-cost,
 ordered-event, or native OpenFHE results. CI logs, qualification handoffs,
 partially completed jobs, and local copies are not alternative result sources.
+
+Figure 2 records the evidence boundary rather than a performance curve. Green
+and blue boxes are engineering or workflow observations at their exact source
+identities; none is promoted into the absent formal result set.
+
+![Figure 2. Exact source freeze, one-shot qualification stop, and the resulting Route C evidence boundary.](assets/route-c-evidence-boundary.png){width=6.3in}
+
+**Table 2. What each evidence layer proves and does not prove.**
+
+| Layer | Exact disposition | Supports | Does not support |
+|---|---|---|---|
+| S1 CI and PRE-S1 | Passed at exact S1 `ee58627b…` | Registered tests, source build, and ordinary/strong smoke execution at that identity | Strategy costs, complete-reference coverage, or formal artifact admission |
+| Registration and S2 | Descriptive archive reinspected; data-only anchor installed at `c7ff6820…` | Exact S1/S2 identity and closed-Behavior-Set compatibility | Qualification GO or a replayable dispatch authority |
+| Qualification | One exact run; q1 completed, q2 was cancelled at the frozen stop, q5 never started | Preregistered Route C decision and fail-closed provenance | Any simulator/native performance estimator or partial formal result |
+| Formal campaign | Not dispatched | The absence of unauthorized execution | Strategy ranking, speedup, ordered-event findings, or native resource claims |
 
 ### 7.2 Synthetic and ordered-event costs
 

@@ -1,10 +1,14 @@
 # Claim–Evidence Ledger Draft
 
-> **Rule:** a result sentence may enter the manuscript only after this ledger
-> names the exact experiment (S1), evidence-freeze (S2), and analysis (S3)
-> snapshots, ADR 0010 compatibility receipt, workflow run, artifact digest,
-> validator status, and figure/table generated from that artifact. `HOLD` is an evidence state,
-> not a request to soften wording until it sounds publishable.
+> **Rule:** an empirical result sentence may enter the manuscript only after
+> this ledger names the exact experiment (S1), evidence-freeze (S2), and
+> analysis (S3) snapshots, ADR 0010 compatibility receipt, workflow run,
+> admitted artifact digest, validator status, and figure/table generated from
+> that artifact. A Route C design or stop-decision sentence may instead cite
+> exact S1/S2 source conformance and the exact terminal workflow disposition,
+> but it must remain visibly non-empirical. `HOLD` is an evidence state, not a
+> request to soften wording until it sounds publishable; `CLOSED` means the
+> frozen lineage can never release that claim.
 
 Latest audited merged-source baseline before this WIP: R0 run `32580113632`, artifact ID
 `9477692484`, GitHub Actions outer-wrapper SHA-256
@@ -31,40 +35,66 @@ the preserved historical repository-admission statements below. It does not
 authorize a complete-reference Day 1A result, a performance result, or a
 security claim.
 
-## Route A supersession — 2026-08-28
+## Current Route C lineage — 2026-08-30
 
-The preregistered full-system claim failed its final operational qualification.
-The active paper is now the narrower Route A methods/protocol paper defined by
-`publication-preregistration-route-a.md`. The old 14-candidate selection,
-21-shard Day 1A, full Day 2, three-source/30-unit Day 1B, 15% improvement, and
-R2B/R3/R4 result requirements are **RETIRED FROM ROUTE A**, not merely waiting on
-`HOLD`. Their historical rows below remain only to preserve provenance.
+The final implementation candidate
+`baefc8cc183816c51ce42573bafde8178173044d` was independently reviewed by
+ChatGPT Pro and ZCode GLM-5.3 Max with no unresolved P0/P1. It entered main as
+the tree-identical Experiment Source Snapshot S1
+`ee58627bb5752c6ac1ee2c5132c6574f9cb66552`. Exact-S1 CI run `33258436732`
+passed 2,403 tests with 2 expected runner-dependent skips; exact-main PRE-S1
+run `33259569284` passed 583 tests and both pinned OpenFHE 1.5.1 ordinary and
+strong real-query smokes. Descriptive registration run `33259894587` was
+reinspected with authority false, after which the data-only registration anchor
+formed Evidence-Freeze Snapshot S2
+`c7ff6820d9323f1850c1c5c57fd9070db88db120`; S2 CI run `33260167517` passed.
 
-No current-source Route A empirical claim is yet released. Its active ledger is:
+The only permitted qualification run, `33261434612`, started from exact S2. q1
+completed, q2 independent replay was still running at the frozen 45-minute
+computational deadline, and q3--q6 never executed. The external controller
+cancelled only that exact run. q5 never started, so no guarded qualification
+bundle, q6 record, live dispatch capability, acquisition artifact, formal
+shard, terminal admission, aggregate, or S3 analysis exists. The sole provider
+artifact was one-day `q1-simulator-pre-replay-handoff` ID `9717884587`, 621,877,534
+bytes, provider digest
+`sha256:51cbfc2a5473c0fe78d6d169cc2c4a7278ac39d7472ff37e5642e190b7e2c008`;
+it is permanently NON-EVIDENCE and cannot support a paper result.
 
-| ID | Permitted future wording | Minimum evidence | Current state |
+## Route C terminal disposition
+
+The one-shot qualification selected the preregistered Route C. It may not be
+rerun in this lineage, and the acquisition plus 16-unit formal campaign may not
+be dispatched without the capability that q5/q6 never produced. Earlier
+14-candidate, Day 1A/Day 2/Day 1B, 15%-improvement, R2B/R3/R4, and current Route
+A performance claims are **RETIRED OR CLOSED**, not waiting for a convenient
+rerun. Historical rows below remain only to preserve provenance.
+
+The active Route C ledger is:
+
+| ID | Permitted wording | Minimum evidence | Current state |
 |---|---|---|---|
-| RA-D1 | We present a version-bound protocol for mutable CSSC-based homomorphic SpMV that jointly binds logical matrix state, global-column query reorganization, private `RowMap`-aware multi-component reconstruction, and overlap-scoped canceling masks; we establish its functional correctness properties and characterize bounded-scale costs in a reproducible OpenFHE implementation, without claiming performance superiority. | Final definitions, exact Client A/Client B/Cloud permissions, threat/non-claim boundary, four written definition-level proofs, exact-S1 source-conformance review, current typed implementation, and a pre-implementation commit-bound primary-source novelty matrix for the combined mechanism | HOLD — Route A preregistration under review; `establish` remains HOLD until every proof and source-conformance obligation closes; no `first`/`only` claim |
-| RA-C1 | Acceptance implies exact equality with the authoritative binding for every enumerated typed/canonical-byte field; any mismatch rejects before result-capability or formal-artifact minting. | Definition-level case analysis of the closed acceptance predicate, exact-S1 predicate-to-source conformance review, complete legal/substitution matrix covering every enumerated field class, retained-byte rehash, independent replay receipts, and guards | HOLD — fresh lineage and proof required; deliberate hash-collision resistance is outside the functional claim |
-| RA-C2 | Under a complete embedded component decomposition and total OutputPlan, reconstruction over overlap, disjoint blocks, and implicit zeros equals the direct logical matrix-vector product. | Written proof of component-decomposition completeness, embeddings, OutputPlan totality, and reconstruction equality for any admitted component count; all three exact-S1 OpenFHE paths plus typed/direct plaintext oracles on S and M | HOLD — fresh lineage and proof required |
-| RA-C3 | Client A samples overlap-group masks uniformly for the first `g-1` canonical contributors, sets the last to their modular negative sum, encrypts them without revealing individual mask plaintexts to Client B, and enforces the exact five-field reservation key plus prepared-batch token as reserve-before-sample and single-consumption within one uncompromised durable SQLite ledger. | Written mod-`t` cancellation proof and ledger state-machine invariant; exact role/permission and atomic reservation/commitment/consume tests; `unit_attempt_ordinal`-separated lane/query/reservation identities for the sole provider replacement; encrypted reconstruction and accepted formal artifacts | HOLD — fresh lineage and proof required; rollback/cloning/compromise/cross-device, simulation security, and new-masking-primitive claims excluded |
-| RA-C4 | The `c=128` fixed-segment path reconstructs correctly across 127/128/129 boundaries and tombstone/padding states. | Written proof of leader reduction and private merge for any admitted number of 128-lane segments; exact boundary matrix, direct oracle, exact-S1 strong OpenFHE, replay, and guard | HOLD — fresh lineage and proof required; 127/128/129 are boundary tests, not the proof |
-| RA-E1 | On the pinned Python implementation, the three fixed strategies have the reported bounded synthetic publication/query/count and serialized-byte upper-bound trade-offs over the exact two-scale, four-rho, three-seed matrix. | Six accepted producer/replay shards, all 72 strategy-cells, exact emitted metadata bytes, S1-frozen per-category type-derived maximum-byte formulas, mandatory exact rho=10 query-linear projection with no projected wall time, one aggregate, detached compatible analysis | HOLD — cryptographic bytes are upper-bound projections, not native measurements; no superiority, scaling law, privacy overhead, or population inference |
-| RA-E2 | On the exact SNAP Stack Overflow `a2q` ordered-event object under the registered synthetic logical clock and deterministic two-partition transform, the three fixed strategies have the reported T1/T2 bounded costs and serialized-byte upper-bound projections. | One accepted acquisition/transform artifact without raw source bytes, four accepted ordered-event producer/replay shards, all 24 strategy-cells, exact emitted metadata bytes, S1-frozen per-category type-derived maximum-byte formulas, exact trace/window schemas, and aggregate | HOLD — cryptographic bytes are upper-bound projections, not native measurements; one source only; no cross-dataset or historical-arrival generalization |
-| RA-E3 | The current-source implementations of all three fixed strategy paths decrypt correctly and have the reported pinned OpenFHE wall-time/resource/serialized-byte observations at S and M. | Six exact case artifacts; per case one discarded warm-up and three recorded technical processes; exact OpenFHE/snapshot identities, payload rehash, replay and guard | HOLD — repetitions are not independent samples; historical fixture/PRE-S1 cannot substitute |
+| RC-D1 | We present a version-bound protocol around static CSSC that jointly binds logical matrix state, global-column query reorganization, private `RowMap`-aware reconstruction, and overlap-scoped masking. | Frozen definitions, role/threat boundaries, P1--P4 proof text, bounded novelty matrix, exact-S1 source-conformance record, and exact-S1 tests | RELEASED at design/source-conformance scope only; no `first`, security, end-to-end admission, or performance claim |
+| RC-C1 | Under the frozen acceptance predicate, every enumerated typed/canonical-byte field must match its authoritative binding or the path rejects before authority can be minted. | P1 case analysis, exact-S1 predicate-to-source mapping, retained-byte rehash and substitution negatives | RELEASED as a conditional definition-level proposition; deliberate hash-collision resistance and formal-run acceptance remain outside scope |
+| RC-C2 | Under a complete embedded component decomposition and total OutputPlan, reconstruction over overlap, disjoint blocks, and implicit zeros equals the direct logical matrix-vector product. | P2 proof, exact-S1 component/oracle mapping and registered tests | RELEASED as a definition-level proposition under its stated premises; no accepted formal-run result |
+| RC-C3 | In one uncompromised durable ledger, overlap masks cancel modulo `t`, reservations occur before sampling, and a prepared batch is consumed once under the frozen identity. | P3 cancellation proof, ledger state-machine invariant, exact-S1 mapping and registered negative tests | RELEASED only as cancellation and ledger-local invariants; no simulation security, rollback/cloning, cross-device, or new-primitive claim |
+| RC-C4 | The fixed `c=128` segment construction and private leader merge reconstruct correctly under the frozen segment invariants. | P4 reduction proof, 127/128/129 boundary tests, direct oracle and exact-S1 mapping | RELEASED as a construction-correctness proposition; no optimal-width or performance claim |
+| RC-O1 | The exact one-shot qualification missed its frozen gate, minted no authority, and selected Route C before formal execution. | Exact S2, run `33261434612`, provider terminal job states, q1 artifact metadata, controller cancellation record | RELEASED as workflow provenance and a stop decision only; q1/q2 timing is not a simulator/native estimator or paper performance result |
+| RA-E1 | Any synthetic strategy-cost or serialized-byte comparison from the frozen formal matrix. | Six accepted shards, aggregate and compatible S3 analysis, none of which exists | CLOSED — formal synthetic campaign not dispatched; no wording permitted |
+| RA-E2 | Any SNAP ordered-event strategy-cost conclusion. | Admitted acquisition, four accepted shards, aggregate and compatible S3 analysis, none of which exists | CLOSED — acquisition and ordered-event campaign not dispatched; no wording permitted |
+| RA-E3 | Any current-source OpenFHE strategy latency/resource/serialized-byte result. | Six accepted native artifacts, aggregate and compatible S3 analysis, none of which exists | CLOSED — formal native campaign not dispatched; PRE-S1 smokes cannot substitute |
 
-The two cancelled diagnostics and their timing attribution are permanently
-excluded from RA-E1--RA-E3.
+The two earlier cancelled diagnostics and the sole qualification's q1/q2 timing
+attribution are permanently excluded from RA-E1--RA-E3.
 
 ## Design and attribution claims
 
 | ID | Permitted wording | Minimum evidence | Current state |
 |---|---|---|---|
-| D1 | We implement a version-bound mutable maintenance layer around published static CSSC. | Protocol v2.1b, accepted ADRs, current typed implementation and tests | E1; implemented, not a performance claim |
-| D2 | Each accepted Publication Window binds logical state, components, query metadata, OutputPlan, and prepared queries to one version. | Current state/property tests plus a commit-bound R0 rerun for experiment snapshot S1 and an ADR 0010 S1/S2/S3 compatibility receipt | E1 until rerun; E2 only for the exact audited S1 Behavior Set and admitted artifact |
-| D3 | The OutputPlan distinguishes overlapping coordinates, disjoint blocks, and implicit zeros. | Canonical plan tests, plaintext oracle, Phase 2 fixture | E4 for the frozen fixture |
-| D4 | Overlap-only F1-M uses reserve-before-sample bindings in the stated SQLite ledger model; strong disjoint returns use encrypted-zero dummies. | R0 property contract covers reserve/reject/crash/concurrency; the Phase 2 fixture covers encrypted random/dummy execution while explicitly reporting `persistent_ledger_exercised=false` | Ledger mechanism E1/E2; fixture correctness E4; persistent end-to-end/R4 and all security claims HOLD |
-| D5 | The cloud-segmented strong path uses fixed c=128 pages and private client leader merging. | Phase 2 whole-query artifact plus repository admission | Fixture E4 PASS; candidate registration PASS for exact S1/S2 lineage; performance and security claims HOLD |
+| D1 | We implement a version-bound mutable maintenance layer around published static CSSC. | Protocol v2.1b, accepted ADRs, exact S1, source-conformance record and registered tests | RELEASED as a design/implementation statement at exact S1; not a performance claim |
+| D2 | A Publication Window candidate binds logical state, components, query metadata, OutputPlan, and prepared queries to one version before acceptance. | Exact-S1 state/property tests plus P1 source-conformance mapping | RELEASED as a fail-closed interface and conditional proposition; no S3/end-to-end result exists |
+| D3 | The private OutputPlan distinguishes overlapping coordinates, disjoint blocks, and implicit zeros. | Canonical plan tests, plaintext oracle, P2 source-conformance mapping | RELEASED at definition/source-conformance scope |
+| D4 | Overlap-only F1-M uses reserve-before-sample bindings in the stated SQLite ledger model; strong disjoint returns use encrypted-zero dummies. | P3 proof, exact-S1 ledger/lifecycle tests and source-conformance mapping | RELEASED only at cancellation and ledger-local-invariant scope; all broader security claims remain prohibited |
+| D5 | The strong path uses fixed `c=128` pages and private client leader merging. | P4 proof, exact-S1 boundary/oracle tests and source-conformance mapping | RELEASED as a construction-correctness statement; performance and security claims remain prohibited |
 | A1 | CSSC supplies static layout, ColumnIndex reorganization, RowMap recovery, and aggregation. | Gao et al. primary source and local source audit | E0; cite and do not claim |
 | A2 | The non-power-of-two schedule is our corrected CSSC/HElib-compatible interpretation, not verified author code. | CSSC Algorithm 4 audit and cited HElib totalSum source | E0/E1; use explicit caveat |
 | A3 | We make no first encrypted sparse SpMV/SpMM, encrypted-index or hidden-position, double-ciphertext sparse computation, dynamic encrypted-data, versioned-commitment/freshness/replay, or random output-share/mask claim. | Primary-source gap audit covering CSSC, Lodia, 2DPP, CipherSkip, SparseE, Ferguson/D'Agata, Rhombus, d-DSE, CKKS-Auth Tree, encrypted databases, and secure aggregation | Frozen non-claim; the permitted novelty boundary is only the update-aware CSSC integration stated in D1--D4 |
@@ -106,7 +136,11 @@ excluded from RA-E1--RA-E3.
   source-partition trace; and
 - no primary real-data verdict from LDBC or synthetic workloads.
 
-## Evidence fields to fill for every released result
+## Evidence fields for any future empirical result
+
+No current Route C empirical result satisfies these fields because no formal
+artifact, aggregate, or S3 analysis exists. The template is retained only to
+prevent a future lineage from silently reusing the present qualification.
 
 ```text
 claim_id:
