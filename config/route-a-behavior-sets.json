@@ -83,7 +83,7 @@
         "tests/test_route_a_lineage.py",
         "tests/test_route_a_live_stop_loss.py"
       ],
-      "schema_version": "dynamic-cssc-route-a-control-registration-behavior-set-v3"
+      "schema_version": "dynamic-cssc-route-a-control-registration-behavior-set-v4"
     },
     "formal": {
       "paths": [
@@ -276,7 +276,7 @@
         "tests/test_strong_strategy_state.py",
         "tests/test_strong_whole_query_witness_contract.py"
       ],
-      "schema_version": "dynamic-cssc-route-a-qualification-behavior-set-v5"
+      "schema_version": "dynamic-cssc-route-a-qualification-behavior-set-v6"
     }
   },
   "schema_version": "dynamic-cssc-route-a-behavior-set-registry-v3",

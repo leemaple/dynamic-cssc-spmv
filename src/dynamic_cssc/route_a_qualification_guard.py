@@ -67,6 +67,7 @@ _NATIVE_MECHANISM_CLASSES = (
     "actual_overlap_contributor_group",
     "f1m_random_mask_path",
     "nonempty_auxiliary_segment",
+    "padding_or_tombstone_replacement",
 )
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _PROVIDER_DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")

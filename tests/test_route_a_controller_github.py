@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+from email.message import Message
 from pathlib import Path
+from urllib.request import Request
 
 import pytest
 
+import dynamic_cssc.route_a_controller as controller_module
 from dynamic_cssc.route_a_controller import (
     GitHubActionsQualificationProvider,
     RouteAControllerError,
@@ -128,6 +131,99 @@ def _responses() -> dict[str, bytes]:
         ),
         archive_url: b"archive-bytes",
     }
+
+
+def test_urllib_redirect_strips_token_at_a_foreign_https_origin() -> None:
+    request = Request(
+        "https://api.github.com/repos/owner/repository/actions/artifacts/77/zip",
+        headers={"Authorization": "Bearer secret-token"},
+    )
+    redirect_headers = Message()
+    redirected = controller_module._HttpsTokenStrippingRedirectHandler().redirect_request(
+        request,
+        None,
+        302,
+        "Found",
+        redirect_headers,
+        "https://objects.githubusercontent.com/artifact.zip",
+    )
+
+    assert redirected is not None
+    assert redirected.full_url == "https://objects.githubusercontent.com/artifact.zip"
+    assert redirected.get_header("Authorization") is None
+
+
+def test_urllib_redirect_rejects_a_non_https_destination() -> None:
+    request = Request(
+        "https://api.github.com/repos/owner/repository/actions/artifacts/77/zip",
+        headers={"Authorization": "Bearer secret-token"},
+    )
+
+    with pytest.raises(controller_module.RouteAControllerError, match="redirect"):
+        controller_module._HttpsTokenStrippingRedirectHandler().redirect_request(
+            request,
+            None,
+            302,
+            "Found",
+            Message(),
+            "http://objects.githubusercontent.com/artifact.zip",
+        )
+
+
+def test_urllib_redirect_preserves_token_only_at_the_same_https_origin() -> None:
+    request = Request(
+        "https://api.github.com/repos/owner/repository/actions/runs/999",
+        headers={"Authorization": "Bearer secret-token"},
+    )
+    redirected = controller_module._HttpsTokenStrippingRedirectHandler().redirect_request(
+        request,
+        None,
+        302,
+        "Found",
+        Message(),
+        "https://api.github.com/repositories/123/actions/runs/999",
+    )
+
+    assert redirected is not None
+    assert redirected.get_header("Authorization") == "Bearer secret-token"
+
+
+def test_urllib_reader_posts_exact_empty_cancel_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Response:
+        status = 202
+
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, maximum_bytes: int) -> bytes:
+            assert maximum_bytes == 65
+            return b""
+
+    class _Opener:
+        def open(self, request: Request, *, timeout: int) -> _Response:
+            assert timeout == 30
+            assert request.full_url.endswith("/actions/runs/999/cancel")
+            assert request.method == "POST"
+            assert request.data == b""
+            assert request.get_header("Authorization") == "Bearer secret-token"
+            return _Response()
+
+    def build_opener(handler: object) -> _Opener:
+        assert isinstance(handler, controller_module._HttpsTokenStrippingRedirectHandler)
+        return _Opener()
+
+    monkeypatch.setattr(controller_module, "build_opener", build_opener)
+
+    assert controller_module._UrllibHttpReader().post(
+        "https://api.github.com/repos/owner/repository/actions/runs/999/cancel",
+        headers={"Authorization": "Bearer secret-token"},
+        maximum_bytes=64,
+    ) == b""
 
 
 def test_github_provider_normalizes_only_the_frozen_api_fields(tmp_path: Path) -> None:

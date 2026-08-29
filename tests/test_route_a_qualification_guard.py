@@ -82,10 +82,11 @@ def _fake_case(
         {
             "ciphertext_input_multiplicities_by_role": {"input": 2},
             "execution_kind": "strong" if "packed-coo" in strategy else "ordinary",
-                "mechanism_coverage": {
-                    "actual_overlap_contributor_group": True,
-                    "f1m_random_mask_path": True,
-                    "nonempty_auxiliary_segment": nonempty_auxiliary_segment,
+            "mechanism_coverage": {
+                "actual_overlap_contributor_group": True,
+                "f1m_random_mask_path": True,
+                "nonempty_auxiliary_segment": nonempty_auxiliary_segment,
+                "padding_or_tombstone_replacement": False,
             },
             "ordered_operation_types": ["EvalMult"],
             "result_ciphertext_count": 1,
@@ -302,6 +303,7 @@ def test_q5_mechanism_screen_rejects_a_formal_class_absent_from_probe() -> None:
                             "actual_overlap_contributor_group": True,
                             "f1m_random_mask_path": True,
                             "nonempty_auxiliary_segment": True,
+                            "padding_or_tombstone_replacement": False,
                         }
                     }
                 }
@@ -317,6 +319,7 @@ def test_q5_mechanism_screen_rejects_a_formal_class_absent_from_probe() -> None:
                         "actual_overlap_contributor_group": True,
                         "f1m_random_mask_path": True,
                         "nonempty_auxiliary_segment": False,
+                        "padding_or_tombstone_replacement": False,
                     }
                 }
             },
@@ -364,6 +367,7 @@ def test_q5_producer_rejects_a_formal_mechanism_absent_from_probe(
                             "actual_overlap_contributor_group": True,
                             "f1m_random_mask_path": True,
                             "nonempty_auxiliary_segment": True,
+                            "padding_or_tombstone_replacement": False,
                         },
                         "ordered_operation_types": ["EvalMult"],
                     }

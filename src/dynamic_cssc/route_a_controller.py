@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Literal, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 __all__ = (
     "RouteAArtifactSnapshot",
@@ -267,6 +267,49 @@ class _HttpReader(Protocol):
     ) -> bytes: ...
 
 
+class _HttpsTokenStrippingRedirectHandler(HTTPRedirectHandler):
+    """Allow HTTPS redirects without forwarding bearer authority cross-origin."""
+
+    def redirect_request(  # type: ignore[no-untyped-def]
+        self,
+        request,
+        file_pointer,
+        code,
+        message,
+        headers,
+        new_url,
+    ):
+        try:
+            source = urlsplit(request.full_url)
+            destination = urlsplit(new_url)
+        except (TypeError, ValueError) as error:
+            raise RouteAControllerError("GitHub API redirect URL is invalid") from error
+        if (
+            destination.scheme != "https"
+            or not destination.netloc
+            or destination.username is not None
+            or destination.password is not None
+        ):
+            raise RouteAControllerError("GitHub API redirect is not one safe HTTPS URL")
+        redirected = super().redirect_request(
+            request,
+            file_pointer,
+            code,
+            message,
+            headers,
+            new_url,
+        )
+        if redirected is not None and (
+            source.scheme,
+            source.netloc,
+        ) != (
+            destination.scheme,
+            destination.netloc,
+        ):
+            redirected.remove_header("Authorization")
+        return redirected
+
+
 class _UrllibHttpReader:
     """Small bounded HTTPS adapter kept behind the controller's provider seam."""
 
@@ -279,7 +322,8 @@ class _UrllibHttpReader:
     ) -> bytes:
         request = Request(url, headers=headers, method="GET")
         try:
-            with urlopen(request, timeout=30) as response:  # noqa: S310 - HTTPS is gated below
+            opener = build_opener(_HttpsTokenStrippingRedirectHandler())
+            with opener.open(request, timeout=30) as response:  # noqa: S310 - HTTPS gated
                 if response.status != 200:
                     raise OSError(f"GitHub API returned HTTP {response.status}")
                 declared = response.headers.get("Content-Length")
@@ -306,7 +350,8 @@ class _UrllibHttpReader:
     ) -> bytes:
         request = Request(url, data=b"", headers=headers, method="POST")
         try:
-            with urlopen(request, timeout=30) as response:  # noqa: S310 - HTTPS is gated below
+            opener = build_opener(_HttpsTokenStrippingRedirectHandler())
+            with opener.open(request, timeout=30) as response:  # noqa: S310 - HTTPS gated
                 if response.status != 202:
                     raise OSError(f"GitHub API returned HTTP {response.status}")
                 content = response.read(maximum_bytes + 1)
@@ -1093,6 +1138,20 @@ def watch_route_a_qualification(
                 0.0,
                 (terminal_observation_deadline - terminal_now).total_seconds(),
             )
+            if remaining == 0.0:
+                return _watch_result(
+                    decision="route-c-cancel-completion-unobserved",
+                    request=request_identity,
+                    q1_started_at=frozen_q1_started_at,
+                    threshold_at=threshold_at,
+                    controller_observed_at=terminal_now,
+                    q5_completed_at=last_q5_completed_at,
+                    cancellation_requested_at=cancellation_requested_at,
+                    cancellation_acknowledged_at=cancellation_acknowledged_at,
+                    cancellation_error=(
+                        "provider-terminal-state-not-observed-within-ten-minutes"
+                    ),
+                )
             wait(min(float(poll_interval_seconds), remaining))
 
 

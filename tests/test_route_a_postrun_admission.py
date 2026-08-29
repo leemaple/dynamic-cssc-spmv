@@ -123,6 +123,45 @@ def test_q6_records_only_q1_through_q5_final_state_and_own_start(tmp_path: Path)
     )
 
 
+def test_q6_accepts_all_three_resource_screens_at_exact_equality(tmp_path: Path) -> None:
+    run, jobs_path, artifacts = _provider_files(tmp_path)
+    jobs = json.loads(jobs_path.read_text())
+    exact_bounds = (
+        ("2026-08-29T00:00:00Z", "2026-08-29T00:10:00Z"),
+        ("2026-08-29T00:10:00Z", "2026-08-29T00:20:00Z"),
+        ("2026-08-29T00:20:00Z", "2026-08-29T00:25:00Z"),
+        ("2026-08-29T00:25:00Z", "2026-08-29T00:30:00Z"),
+        ("2026-08-29T00:30:00Z", "2026-08-29T00:45:00Z"),
+        ("2026-08-29T00:45:01Z", None),
+    )
+    for job, (started_at, completed_at) in zip(
+        jobs["jobs"], exact_bounds, strict=True
+    ):
+        job["started_at"] = started_at
+        job["completed_at"] = completed_at
+        job["status"] = "completed" if completed_at is not None else "in_progress"
+        job["conclusion"] = "success" if completed_at is not None else None
+    jobs_path.write_text(json.dumps(jobs))
+
+    inspection = produce_route_a_postrun_admission(
+        run_json_path=run,
+        jobs_json_path=jobs_path,
+        artifacts_json_path=artifacts,
+        expected_run_id=RUN_ID,
+        expected_s2_git_sha=HEAD,
+        expected_head_branch="main",
+        expected_run_attempt=1,
+        output_directory=(tmp_path / "q6-equality").resolve(),
+        observed_at=datetime(2026, 8, 29, 0, 45, 10, tzinfo=UTC),
+    )
+
+    assert inspection.record["qualification_computational_seconds"] == 2700
+    assert inspection.record["native_c_q_seconds"] == 1500
+    assert inspection.record["native_six_c_q_seconds"] == 9000
+    assert inspection.record["computational_45_minute_gate"] == "pass"
+    assert inspection.record["native_planning_screen"] == "pass"
+
+
 def test_q6_rejects_its_own_premature_terminal_projection(tmp_path: Path) -> None:
     run, jobs_path, artifacts = _provider_files(tmp_path)
     jobs = json.loads(jobs_path.read_text())

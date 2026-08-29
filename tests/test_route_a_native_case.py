@@ -6,10 +6,12 @@ from pathlib import Path
 import pytest
 
 import dynamic_cssc.route_a_native_case as native_case_module
+import dynamic_cssc.route_a_qualification_guard as qualification_guard_module
 from dynamic_cssc.route_a_native_case import (
     RouteANativeCaseError,
     compile_route_a_terminal_native_case,
 )
+from dynamic_cssc.route_a_results import canonical_route_a_document
 from dynamic_cssc.route_a_strategy import ROUTE_A_STRATEGY_CANDIDATES
 from dynamic_cssc.route_a_workloads import generate_route_a_formal_trace
 
@@ -62,6 +64,17 @@ def test_terminal_native_case_closes_the_exact_s_case(
     assert binding["bindings"]["retained_canonical_input_root"] == (
         case.retained_canonical_input_root
     )
+    probe_record = canonical_route_a_document(
+        {
+            "case": qualification_guard_module._structural_row(case),  # noqa: SLF001
+            "schema_version": "dynamic-cssc-route-a-probe-structural-record-v1",
+        }
+    )
+    assert qualification_guard_module._mechanism_classes(  # noqa: SLF001
+        probe_record
+    ) == {
+        name for name, exercised in case.mechanism_coverage if exercised
+    }
 
 
 def test_strong_s_terminal_case_exercises_its_required_auxiliary_path() -> None:
