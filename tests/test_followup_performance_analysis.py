@@ -123,11 +123,29 @@ def _aggregate() -> FollowupAggregateInspection:
                 },
             }
         )
+    kinds = (
+        "formal-acquisition",
+        *("formal-native" for _ in range(6)),
+        *("formal-synthetic" for _ in range(6)),
+        *("formal-ordered-event" for _ in range(4)),
+    )
     document = {
         "analysis_authority": False,
+        "formal_artifacts": [
+            {
+                "artifact_name": f"formal-artifact-{ordinal}",
+                "envelope_sha256": f"{ordinal + 100:064x}",
+                "ordinal": ordinal,
+                "unit_attempt_ordinal": 1,
+                "unit_kind": kind,
+            }
+            for ordinal, kind in enumerate(kinds)
+        ],
         "native_cases": native,
         "publication_evidence_admitted": True,
         "simulator_shards": simulator,
+        "terminal_admission_artifact_name": "terminal-admission",
+        "terminal_admission_envelope_sha256": "c" * 64,
     }
     content = _canonical_json_bytes(document)
     return FollowupAggregateInspection(
@@ -185,6 +203,10 @@ def test_analysis_reports_all_raw_native_repetitions_and_bounded_cells(
     assert inspected.envelope.document["authority"] is False
     assert len((output / "simulator-cells.csv").read_text().splitlines()) == 97
     assert len((output / "native-repetitions.csv").read_text().splitlines()) == 37
+    claim_rows = (output / "claim-to-artifact.csv").read_text().splitlines()
+    assert len(claim_rows) == 45
+    assert claim_rows[1].startswith("formal-artifact-7,FU-E1,")
+    assert any(",FU-E4,bounded-descriptive-analysis," in row for row in claim_rows)
 
 
 def test_analysis_rejects_derived_member_drift(tmp_path: Path) -> None:

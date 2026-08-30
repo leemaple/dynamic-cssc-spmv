@@ -19,6 +19,10 @@ on:
         description: Sole successful follow-up qualification run
         required: true
         type: string
+      expected_authority_claim_oid:
+        description: Provider-side one-shot formal-campaign claim object
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -38,10 +42,28 @@ env:
 
 jobs:
   launch:
-    name: formal-launch-binding
+    name: formal-launch-admission
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: write
     steps:
+      - name: Check out exact S2 authority action only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.expected_s2_git_sha }}
+      - name: Bind this sole formal provider run before any formal unit
+        uses: ./.github/actions/followup-provider-authority
+        with:
+          authority-kind: formal
+          expected-claim-oid: ${{ inputs.expected_authority_claim_oid }}
+          expected-s1: ${{ inputs.expected_s1_git_sha }}
+          expected-s2: ${{ inputs.expected_s2_git_sha }}
+          expected-compatibility: ${{ inputs.expected_compatibility_receipt_sha256 }}
+          expected-qualification-run-id: ${{ inputs.expected_qualification_run_id }}
       - name: Validate dispatch and sole qualification binding
         env:
           GH_TOKEN: ${{ github.token }}
@@ -51,6 +73,7 @@ jobs:
           [[ "$FOLLOWUP_EXPECTED_S1" =~ ^[0-9a-f]{40}$ ]]
           [[ "$FOLLOWUP_EXPECTED_S2" =~ ^[0-9a-f]{40}$ ]]
           [[ "$FOLLOWUP_EXPECTED_COMPATIBILITY" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${{ inputs.expected_authority_claim_oid }}" =~ ^[0-9a-f]{40}$ ]]
           [[ "$QUALIFICATION_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           test "$GITHUB_EVENT_NAME" = workflow_dispatch
           test "$GITHUB_REF" = refs/heads/main

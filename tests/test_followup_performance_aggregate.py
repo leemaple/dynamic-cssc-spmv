@@ -199,6 +199,9 @@ def test_aggregate_contains_all_admitted_raw_results_and_no_source_bytes(
     assert inspected.document["publication_evidence_admitted"] is True
     assert inspected.document["analysis_authority"] is False
     assert inspected.document["acquisition"]["raw_source_bytes_included"] is False
+    assert len(inspected.document["formal_artifacts"]) == 17
+    assert inspected.document["formal_artifacts"][0]["artifact_name"] == "artifact-0"
+    assert inspected.document["terminal_admission_artifact_name"] == "terminal"
     assert len(inspected.document["native_cases"]) == 6
     assert len(inspected.document["simulator_shards"]) == 10
     assert sum(

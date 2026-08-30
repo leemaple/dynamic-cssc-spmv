@@ -2,6 +2,8 @@ name: CI and R0 freeze pack
 
 on:
   push:
+    branches:
+      - '**'
   pull_request:
   workflow_dispatch:
 

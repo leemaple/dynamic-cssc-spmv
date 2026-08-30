@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import subprocess
@@ -18,6 +19,8 @@ from dynamic_cssc.followup_performance_lineage import (
     verify_followup_s1_s2_compatibility,
     verify_followup_s1_s2_s3_analysis_compatibility,
 )
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _git(repository: Path, *arguments: str) -> str:
@@ -127,6 +130,59 @@ def test_followup_behavior_inventory_is_exact_git_object_not_worktree(
     after = capture_followup_behavior_inventory(repository, s1, "qualification")
 
     assert before == after
+
+
+def test_formal_behavior_set_closes_python_imports_and_native_build_inputs() -> None:
+    registry = json.loads(
+        (REPOSITORY_ROOT / "config/followup-performance-behavior-sets.json").read_text(
+            encoding="ascii"
+        )
+    )
+    formal_paths = set(registry["roles"]["formal"]["paths"])
+    stack = [
+        Path(path)
+        for path in formal_paths
+        if path.startswith("scripts/") and path.endswith(".py")
+    ]
+    visited: set[Path] = set()
+    while stack:
+        relative = stack.pop()
+        if relative in visited:
+            continue
+        visited.add(relative)
+        tree = ast.parse((REPOSITORY_ROOT / relative).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules = tuple(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module is not None:
+                modules = (node.module,)
+            else:
+                continue
+            for module in modules:
+                imported: Path | None = None
+                if module.startswith("dynamic_cssc."):
+                    imported = Path("src") / Path(module.replace(".", "/")).with_suffix(
+                        ".py"
+                    )
+                elif module.startswith("scripts."):
+                    imported = Path(module.replace(".", "/")).with_suffix(".py")
+                if imported is not None and (REPOSITORY_ROOT / imported).is_file():
+                    assert imported.as_posix() in formal_paths
+                    stack.append(imported)
+
+    native_build_inputs = {
+        "config/params_manifest.json",
+        "cpp/CMakeLists.txt",
+        "cpp/include/args.hpp",
+        "cpp/microbench.cpp",
+        "cpp/openfhe_query_runner.cpp",
+        "cpp/rotation_probe.cpp",
+        "cpp/strong_packed_coo_witness.cpp",
+        "cpp/strong_whole_query_witness.cpp",
+        "scripts/bootstrap_openfhe.sh",
+        "scripts/build_cpp.sh",
+    }
+    assert native_build_inputs <= formal_paths
 
 
 def test_followup_registration_rejects_dirty_or_non_exact_s2_checkout(

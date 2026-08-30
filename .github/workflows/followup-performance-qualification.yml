@@ -15,6 +15,10 @@ on:
         description: Exact follow-up S1-to-S2 compatibility receipt SHA-256
         required: true
         type: string
+      expected_authority_claim_oid:
+        description: Provider-side one-shot qualification claim object
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -37,8 +41,12 @@ jobs:
     name: qualification-simulator-producer
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: write
     outputs:
       artifact_name: ${{ steps.run.outputs.artifact_name }}
+      authority_binding_oid: ${{ steps.authority.outputs.binding_oid }}
     steps:
       - &validate-identities
         name: Validate closed dispatch identities before checkout
@@ -46,6 +54,22 @@ jobs:
           [[ "$FOLLOWUP_EXPECTED_S1" =~ ^[0-9a-f]{40}$ ]]
           [[ "$FOLLOWUP_EXPECTED_S2" =~ ^[0-9a-f]{40}$ ]]
           [[ "$FOLLOWUP_EXPECTED_COMPATIBILITY" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${{ inputs.expected_authority_claim_oid }}" =~ ^[0-9a-f]{40}$ ]]
+      - name: Check out exact S2 authority action only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.expected_s2_git_sha }}
+      - name: Bind this sole provider run before registered-seed execution
+        id: authority
+        uses: ./.github/actions/followup-provider-authority
+        with:
+          authority-kind: qualification
+          expected-claim-oid: ${{ inputs.expected_authority_claim_oid }}
+          expected-s1: ${{ inputs.expected_s1_git_sha }}
+          expected-s2: ${{ inputs.expected_s2_git_sha }}
+          expected-compatibility: ${{ inputs.expected_compatibility_receipt_sha256 }}
       - &checkout-s1
         name: Check out detached exact S1
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683

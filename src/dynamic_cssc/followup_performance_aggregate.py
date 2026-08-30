@@ -183,6 +183,9 @@ def _aggregate_document(
             },
             "analysis_authority": False,
             "formal_artifact_set_sha256": artifact_set.sha256,
+            "formal_artifacts": [
+                record.document() for record in artifact_set.records
+            ],
             "formal_campaign_provider_run_attempt": lineage.provider_run_attempt,
             "formal_campaign_provider_run_id": lineage.provider_run_id,
             "native_cases": native_rows,
@@ -190,6 +193,7 @@ def _aggregate_document(
             "schema_version": _AGGREGATE_SCHEMA,
             "simulator_shards": simulator_rows,
             "study_id": FOLLOWUP_STUDY_ID,
+            "terminal_admission_artifact_name": terminal.artifact_name,
             "terminal_admission_envelope_sha256": terminal.envelope.sha256,
             "terminal_admission_unit_identity_sha256": terminal.unit_identity_sha256,
         }

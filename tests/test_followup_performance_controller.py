@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import pickle
 import threading
 import zipfile
@@ -24,6 +25,7 @@ from dynamic_cssc.followup_performance_controller import (
     FollowupFormalLiveRunSnapshot,
     FollowupJobSnapshot,
     FollowupPrerequisiteObservation,
+    FollowupProviderAuthoritySnapshot,
     FollowupQualificationObservation,
     FollowupRunSnapshot,
     abandon_followup_qualification_capability,
@@ -151,6 +153,52 @@ def _qualification_observation(observed_at: datetime) -> FollowupQualificationOb
         jobs=(),
         artifacts=(),
         q6_provider_archive_bytes=b"placeholder",
+        authority_binding=_authority_binding("qualification", 90),
+    )
+
+
+def _authority_binding(
+    kind: str,
+    run_id: int,
+) -> FollowupProviderAuthoritySnapshot:
+    workflow = (
+        "followup-performance-qualification.yml"
+        if kind == "qualification"
+        else "followup-performance-formal.yml"
+    )
+    document = {
+        "authority": False,
+        "authority_kind": kind,
+        "claim_oid": "b" * 40,
+        "compatibility_receipt_sha256": "c" * 64,
+        "evidence_freeze_S2_sha": "b" * 40,
+        "expected_qualification_run_id_or_null": 90 if kind == "formal" else None,
+        "experiment_source_S1_sha": "a" * 40,
+        "provider_run_attempt": 1,
+        "provider_run_id": run_id,
+        "schema_version": "dynamic-cssc-followup-performance-provider-run-binding-v1",
+        "study_id": "dynamic-cssc-followup-performance-2026-08-30",
+        "workflow_ref": (
+            "leemaple/dynamic-cssc-spmv/.github/workflows/"
+            f"{workflow}@refs/heads/main"
+        ),
+    }
+    return FollowupProviderAuthoritySnapshot(
+        ref_name=(
+            "refs/tags/dynamic-cssc-followup-performance-"
+            f"{kind}-authority-v1"
+        ),
+        target_oid="e" * 40,
+        commit_message=json.dumps(
+            document,
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+        tree_oid="d" * 40,
+        claim_tree_oid="d" * 40,
+        parent_oids=("b" * 40,),
     )
 
 
@@ -454,6 +502,7 @@ def test_formal_watch_cancels_at_the_combined_unit_deadline(
         provider_observed_at=clock.value,
         run=_live_run(clock.value, status="in_progress", conclusion=None),
         jobs=(launch, producer),
+        authority_binding=_authority_binding("formal", 92),
     )
     cancelled_producer = replace(
         producer,
@@ -466,6 +515,7 @@ def test_formal_watch_cancels_at_the_combined_unit_deadline(
         provider_observed_at=clock.value,
         run=_live_run(clock.value, status="completed", conclusion="cancelled"),
         jobs=(launch, cancelled_producer),
+        authority_binding=_authority_binding("formal", 92),
     )
     provider = _FormalLiveProvider([active, terminal])
     request = FollowupFormalAdmissionRequest(
@@ -561,6 +611,7 @@ def test_formal_watch_accepts_only_one_complete_serial_success(
         provider_observed_at=clock.value,
         run=_live_run(clock.value, status="completed", conclusion="success"),
         jobs=tuple(jobs),
+        authority_binding=_authority_binding("formal", 92),
     )
     provider = _FormalLiveProvider([observation])
     request = FollowupFormalAdmissionRequest(

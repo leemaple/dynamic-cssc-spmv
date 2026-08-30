@@ -24,6 +24,7 @@ from dynamic_cssc.followup_performance_controller import (
     FollowupFormalLiveRunSnapshot,
     FollowupJobSnapshot,
     FollowupPrerequisiteObservation,
+    FollowupProviderAuthoritySnapshot,
     FollowupQualificationObservation,
     FollowupRunSnapshot,
     authorize_followup_formal_campaign,
@@ -48,6 +49,12 @@ _CONTROL_KINDS = (
 )
 _QUALIFICATION_WORKFLOW = "followup-performance-qualification.yml"
 _FORMAL_WORKFLOW = "followup-performance-formal.yml"
+_AUTHORITY_REFS = {
+    "qualification": (
+        "refs/tags/dynamic-cssc-followup-performance-qualification-authority-v1"
+    ),
+    "formal": "refs/tags/dynamic-cssc-followup-performance-formal-authority-v1",
+}
 _MAX_JSON_BYTES = 8 * 1024 * 1024
 _MAX_CONTROL_ARCHIVE_BYTES = 32 * 1024 * 1024
 _MAX_Q6_ARCHIVE_BYTES = 32 * 1024 * 1024
@@ -352,6 +359,58 @@ class GitHubFollowupAdapter:
             raise FollowupControllerError("GitHub workflow-run inventory is incomplete")
         return tuple(_integer(row.get("id"), "workflow_run.id") for row in rows)
 
+    def _authority_binding(
+        self,
+        *,
+        kind: str,
+        expected_s2: str,
+    ) -> FollowupProviderAuthoritySnapshot:
+        if kind not in _AUTHORITY_REFS:
+            raise FollowupControllerError("provider authority kind is outside its domain")
+        authority_ref = _AUTHORITY_REFS[kind]
+        ref_path = quote(authority_ref.removeprefix("refs/"), safe="/")
+        ref_document = self._api_json(
+            f"/repos/{self._repository}/git/ref/{ref_path}"
+        )
+        target = ref_document.get("object")
+        if (
+            ref_document.get("ref") != authority_ref
+            or type(target) is not dict
+            or target.get("type") != "commit"
+        ):
+            raise FollowupControllerError("provider authority ref is malformed")
+        target_oid = _string(target.get("sha"), "authority.target.sha")
+        commit = self._api_json(
+            f"/repos/{self._repository}/git/commits/{target_oid}"
+        )
+        claim = self._api_json(
+            f"/repos/{self._repository}/git/commits/{expected_s2}"
+        )
+        tree = commit.get("tree")
+        claim_tree = claim.get("tree")
+        parents = commit.get("parents")
+        if (
+            type(tree) is not dict
+            or type(claim_tree) is not dict
+            or type(parents) is not list
+            or any(type(parent) is not dict for parent in parents)
+        ):
+            raise FollowupControllerError("provider authority commit is malformed")
+        return FollowupProviderAuthoritySnapshot(
+            ref_name=authority_ref,
+            target_oid=target_oid,
+            commit_message=_string(commit.get("message"), "authority.commit.message"),
+            tree_oid=_string(tree.get("sha"), "authority.commit.tree.sha"),
+            claim_tree_oid=_string(
+                claim_tree.get("sha"),
+                "authority.claim.tree.sha",
+            ),
+            parent_oids=tuple(
+                _string(parent.get("sha"), "authority.commit.parent.sha")
+                for parent in parents
+            ),
+        )
+
     def read_prerequisites(
         self,
         run_ids: tuple[int, ...],
@@ -410,6 +469,10 @@ class GitHubFollowupAdapter:
             q6_provider_archive_bytes=self._download_artifact(
                 q6_rows[0],
                 maximum_bytes=_MAX_Q6_ARCHIVE_BYTES,
+            ),
+            authority_binding=self._authority_binding(
+                kind="qualification",
+                expected_s2=run.head_sha,
             ),
         )
 
@@ -511,6 +574,10 @@ class GitHubFollowupAdapter:
                 )
                 for row in rows
             ),
+            authority_binding=self._authority_binding(
+                kind="formal",
+                expected_s2=_string(document.get("head_sha"), "run.head_sha"),
+            ),
         )
 
     def cancel_formal(self, run_id: int) -> None:
@@ -566,6 +633,57 @@ class GitHubFollowupAdapter:
             time.sleep(2)
         raise FollowupControllerError("dispatched workflow run ID was not observed")
 
+    def _claim_authority(
+        self,
+        *,
+        kind: str,
+        workflow: str,
+        expected_s2: str,
+    ) -> str:
+        """Atomically create the durable provider-side predecessor to one run binding."""
+
+        if kind not in _AUTHORITY_REFS:
+            raise FollowupControllerError("provider authority kind is outside its domain")
+        if (
+            type(expected_s2) is not str
+            or len(expected_s2) != 40
+            or any(character not in "0123456789abcdef" for character in expected_s2)
+        ):
+            raise FollowupControllerError("provider authority S2 is not a lowercase Git SHA")
+        if self._workflow_run_ids(workflow):
+            raise FollowupControllerError(
+                "one-shot workflow already has a provider run before authority claim"
+            )
+        authority_ref = _AUTHORITY_REFS[kind]
+        payload = json.dumps(
+            {"ref": authority_ref, "sha": expected_s2},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("ascii")
+        self._gh(
+            "api",
+            "--method",
+            "POST",
+            f"/repos/{self._repository}/git/refs",
+            "--input",
+            "-",
+            maximum_bytes=64 * 1024,
+            input_bytes=payload,
+        )
+        ref_path = quote(authority_ref.removeprefix("refs/"), safe="/")
+        document = self._api_json(
+            f"/repos/{self._repository}/git/ref/{ref_path}"
+        )
+        target = document.get("object")
+        if (
+            document.get("ref") != authority_ref
+            or type(target) is not dict
+            or target.get("type") != "commit"
+            or target.get("sha") != expected_s2
+        ):
+            raise FollowupControllerError("provider authority claim identity changed")
+        return expected_s2
+
     def dispatch_qualification(
         self,
         *,
@@ -573,9 +691,15 @@ class GitHubFollowupAdapter:
         expected_s2_git_sha: str,
         expected_compatibility_receipt_sha256: str,
     ) -> int:
+        claim_oid = self._claim_authority(
+            kind="qualification",
+            workflow=_QUALIFICATION_WORKFLOW,
+            expected_s2=expected_s2_git_sha,
+        )
         return self._post_dispatch(
             workflow=_QUALIFICATION_WORKFLOW,
             inputs={
+                "expected_authority_claim_oid": claim_oid,
                 "expected_compatibility_receipt_sha256": (
                     expected_compatibility_receipt_sha256
                 ),
@@ -593,9 +717,15 @@ class GitHubFollowupAdapter:
         expected_compatibility_receipt_sha256: str,
         qualification_run_id: int,
     ) -> int:
+        claim_oid = self._claim_authority(
+            kind="formal",
+            workflow=_FORMAL_WORKFLOW,
+            expected_s2=expected_s2_git_sha,
+        )
         return self._post_dispatch(
             workflow=_FORMAL_WORKFLOW,
             inputs={
+                "expected_authority_claim_oid": claim_oid,
                 "expected_compatibility_receipt_sha256": (
                     expected_compatibility_receipt_sha256
                 ),

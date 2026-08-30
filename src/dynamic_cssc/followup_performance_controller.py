@@ -76,6 +76,7 @@ __all__ = (
     "FollowupFormalWatchResult",
     "FollowupJobSnapshot",
     "FollowupPrerequisiteObservation",
+    "FollowupProviderAuthoritySnapshot",
     "FollowupPrerequisiteProvider",
     "FollowupQualificationDispatchCapability",
     "FollowupQualificationDispatcher",
@@ -110,6 +111,12 @@ _FORMAL_TERMINAL_JOB = "formal-terminal-admission"
 _FORMAL_AGGREGATE_JOB = "formal-aggregate"
 _FORMAL_LAUNCH_JOB = "formal-launch-admission"
 _FORMAL_TERMINAL_LIMIT = timedelta(minutes=30)
+_PROVIDER_AUTHORITY_REFS = {
+    "qualification": (
+        "refs/tags/dynamic-cssc-followup-performance-qualification-authority-v1"
+    ),
+    "formal": "refs/tags/dynamic-cssc-followup-performance-formal-authority-v1",
+}
 
 _QUALIFICATION_WORKFLOW = ".github/workflows/followup-performance-qualification.yml"
 _FORMAL_WORKFLOW = ".github/workflows/followup-performance-formal.yml"
@@ -215,6 +222,16 @@ class FollowupArtifactSnapshot:
     workflow_run_head_sha: str
 
 
+@dataclass(frozen=True, slots=True)
+class FollowupProviderAuthoritySnapshot:
+    ref_name: str
+    target_oid: str
+    commit_message: str
+    tree_oid: str
+    claim_tree_oid: str
+    parent_oids: tuple[str, ...]
+
+
 FollowupObservedControlKind = FollowupControlKind | Literal["registration"]
 
 
@@ -242,6 +259,7 @@ class FollowupQualificationObservation:
     jobs: tuple[FollowupJobSnapshot, ...]
     artifacts: tuple[FollowupArtifactSnapshot, ...]
     q6_provider_archive_bytes: bytes
+    authority_binding: FollowupProviderAuthoritySnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,6 +321,7 @@ class FollowupFormalLiveObservation:
     provider_observed_at: datetime
     run: FollowupFormalLiveRunSnapshot
     jobs: tuple[FollowupFormalLiveJobSnapshot, ...]
+    authority_binding: FollowupProviderAuthoritySnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -464,6 +483,67 @@ def _seconds(value: timedelta, field: str) -> int:
 
 def _render_time(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _validate_provider_authority_binding(
+    snapshot: FollowupProviderAuthoritySnapshot,
+    *,
+    kind: Literal["qualification", "formal"],
+    expected_s1: str,
+    expected_s2: str,
+    expected_compatibility: str,
+    expected_run_id: int,
+    expected_qualification_run_id: int | None,
+) -> None:
+    """Close the provider CAS witness independently of the workflow that wrote it."""
+
+    if (
+        type(snapshot) is not FollowupProviderAuthoritySnapshot
+        or snapshot.ref_name != _PROVIDER_AUTHORITY_REFS[kind]
+        or _LOWER_GIT_SHA.fullmatch(snapshot.target_oid) is None
+        or _LOWER_GIT_SHA.fullmatch(snapshot.tree_oid) is None
+        or _LOWER_GIT_SHA.fullmatch(snapshot.claim_tree_oid) is None
+        or snapshot.tree_oid != snapshot.claim_tree_oid
+        or snapshot.parent_oids != (expected_s2,)
+        or type(snapshot.commit_message) is not str
+    ):
+        raise FollowupControllerError("provider authority binding topology changed")
+    try:
+        document = json.loads(snapshot.commit_message)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise FollowupControllerError("provider authority binding is not JSON") from error
+    canonical = json.dumps(
+        document,
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    workflow = _QUALIFICATION_WORKFLOW if kind == "qualification" else _FORMAL_WORKFLOW
+    expected = {
+        "authority": False,
+        "authority_kind": kind,
+        "claim_oid": expected_s2,
+        "compatibility_receipt_sha256": expected_compatibility,
+        "evidence_freeze_S2_sha": expected_s2,
+        "expected_qualification_run_id_or_null": expected_qualification_run_id,
+        "experiment_source_S1_sha": expected_s1,
+        "provider_run_attempt": 1,
+        "provider_run_id": expected_run_id,
+        "schema_version": (
+            "dynamic-cssc-followup-performance-provider-run-binding-v1"
+        ),
+        "study_id": FOLLOWUP_STUDY_ID,
+    }
+    if (
+        canonical != snapshot.commit_message
+        or type(document) is not dict
+        or set(document) != {*expected, "workflow_ref"}
+        or any(document.get(field) != value for field, value in expected.items())
+        or type(document.get("workflow_ref")) is not str
+        or not document["workflow_ref"].endswith(f"/{workflow}@refs/heads/main")
+    ):
+        raise FollowupControllerError("provider authority binding content changed")
 
 
 def _freeze_prerequisites(
@@ -1124,6 +1204,15 @@ def _validate_qualification_observation(
         expected_workflow=_QUALIFICATION_WORKFLOW,
         expected_s2=frozen.expected_s2_git_sha,
     )
+    _validate_provider_authority_binding(
+        observation.authority_binding,
+        kind="qualification",
+        expected_s1=frozen.expected_s1_git_sha,
+        expected_s2=frozen.expected_s2_git_sha,
+        expected_compatibility=frozen.expected_compatibility_receipt_sha256,
+        expected_run_id=request.qualification_run_id,
+        expected_qualification_run_id=None,
+    )
     jobs = _validate_qualification_jobs(observation.jobs)
     if (
         observation.run.created_at > jobs[0].started_at
@@ -1358,9 +1447,12 @@ def _validate_formal_live_observation(
     observation: FollowupFormalLiveObservation,
     *,
     run_id: int,
+    expected_s1: str,
     expected_s2: str,
+    expected_compatibility: str,
     controller_now: datetime,
     specs: tuple[FollowupFormalUnitSpec, ...],
+    qualification_run_id: int,
 ) -> dict[str, FollowupFormalLiveJobSnapshot]:
     if type(observation) is not FollowupFormalLiveObservation:
         raise FollowupControllerError("formal provider returned the wrong snapshot type")
@@ -1388,6 +1480,15 @@ def _validate_formal_live_observation(
     updated = _require_utc(run.updated_at, "formal run updatedAt")
     if updated < created:
         raise FollowupControllerError("formal live run timestamps changed")
+    _validate_provider_authority_binding(
+        observation.authority_binding,
+        kind="formal",
+        expected_s1=expected_s1,
+        expected_s2=expected_s2,
+        expected_compatibility=expected_compatibility,
+        expected_run_id=run_id,
+        expected_qualification_run_id=qualification_run_id,
+    )
     expected_names = set(_formal_expected_job_names(specs))
     by_name: dict[str, FollowupFormalLiveJobSnapshot] = {}
     identifiers: set[int] = set()
@@ -1525,6 +1626,14 @@ def _formal_watch_document(
             for job in sorted(observation.jobs, key=lambda value: value.name)
         ],
         "provider_observed_at": _render_time(observation.provider_observed_at),
+        "provider_authority_binding": {
+            "claim_tree_oid": observation.authority_binding.claim_tree_oid,
+            "commit_message": observation.authority_binding.commit_message,
+            "parent_oids": list(observation.authority_binding.parent_oids),
+            "ref_name": observation.authority_binding.ref_name,
+            "target_oid": observation.authority_binding.target_oid,
+            "tree_oid": observation.authority_binding.tree_oid,
+        },
         "publication_evidence_admitted": False,
         "reason": reason,
         "run": {
@@ -1573,9 +1682,12 @@ def watch_followup_formal_campaign(
         by_name = _validate_formal_live_observation(
             observation,
             run_id=formal_run_id,
+            expected_s1=frozen.expected_s1_git_sha,
             expected_s2=frozen.expected_s2_git_sha,
+            expected_compatibility=frozen.expected_compatibility_receipt_sha256,
             controller_now=controller_now,
             specs=specs,
+            qualification_run_id=request.qualification_run_id,
         )
         state, reason, current_unit = _assess_formal_prefix(
             by_name,

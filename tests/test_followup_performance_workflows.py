@@ -14,6 +14,7 @@ QUALIFICATION = WORKFLOWS / "followup-performance-qualification.yml"
 FORMAL = WORKFLOWS / "followup-performance-formal.yml"
 ANALYSIS = WORKFLOWS / "followup-performance-analysis.yml"
 FORMAL_ACTION = ROOT / ".github/actions/followup-formal-unit/action.yml"
+AUTHORITY_ACTION = ROOT / ".github/actions/followup-provider-authority/action.yml"
 CONTROL_WORKFLOWS = (
     WORKFLOWS / "followup-performance-ci.yml",
     WORKFLOWS / "followup-performance-pre-s1.yml",
@@ -47,6 +48,8 @@ def test_followup_qualification_is_manual_read_only_and_exactly_once() -> None:
     assert "schedule:" not in workflow
     assert "actions: read" in workflow
     assert "contents: read" in workflow
+    assert workflow.count("contents: write") == 1
+    assert "expected_authority_claim_oid" in workflow
     assert "cancel-in-progress: false" in workflow
     assert "rerun" not in workflow.lower()
     assert "continue-on-error" not in workflow
@@ -151,6 +154,32 @@ def test_formal_campaign_is_manual_one_shot_and_contains_no_registered_seed_lite
     assert all(value not in workflow + action for value in REGISTERED_VALUES)
     assert "expected_qualification_run_id" in workflow
     assert "followup-performance-qualification.yml" in workflow
+    assert "    name: formal-launch-admission" in workflow
+    assert "formal-launch-binding" not in workflow
+    assert workflow.count("contents: write") == 1
+    assert "expected_authority_claim_oid" in workflow
+
+
+def test_provider_authority_uses_one_exact_compare_and_swap_before_science() -> None:
+    qualification = _text(QUALIFICATION)
+    formal = _text(FORMAL)
+    action = _text(AUTHORITY_ACTION)
+    for token in (
+        "beforeOid:$before",
+        "afterOid:$after",
+        "force:false",
+        "test \"$GITHUB_RUN_ATTEMPT\" = 1",
+        "dynamic-cssc-followup-performance-qualification-authority-v1",
+        "dynamic-cssc-followup-performance-formal-authority-v1",
+        "dynamic-cssc-followup-performance-2026-08-30",
+    ):
+        assert token in action
+    assert qualification.index("Bind this sole provider run") < qualification.index(
+        "Run q1 simulator producer"
+    )
+    assert formal.index("Bind this sole formal provider run") < formal.index(
+        "formal-00-acquisition-producer"
+    )
 
 
 def test_formal_campaign_has_exact_strictly_serial_thirty_four_unit_jobs() -> None:
@@ -200,7 +229,7 @@ def test_formal_campaign_has_exact_strictly_serial_thirty_four_unit_jobs() -> No
 def test_formal_units_share_one_pinned_exact_s1_action_and_terminal_closure() -> None:
     workflow = _text(FORMAL)
     action = _text(FORMAL_ACTION)
-    assert workflow.count(CHECKOUT) == 36
+    assert workflow.count(CHECKOUT) == 37
     assert action.count(SETUP) == 1
     assert action.count(UPLOAD) == 1
     assert action.count(DOWNLOAD) == 2

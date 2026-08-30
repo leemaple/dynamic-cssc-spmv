@@ -45,6 +45,7 @@ _FILES = (
     "SUMMARY.md",
     "analysis-compatibility.json",
     "analysis.json",
+    "claim-to-artifact.csv",
     "native-repetitions.csv",
     "native-summary.csv",
     "simulator-cells.csv",
@@ -292,6 +293,131 @@ def _analysis_rows(
     return simulator_rows, native_rows, native_summaries
 
 
+def _claim_to_artifact_rows(
+    aggregate: FollowupAggregateInspection,
+    compatibility: FollowupCompatibilityReceipt,
+    analysis_bytes: bytes,
+) -> list[dict[str, object]]:
+    """Render the frozen FU-E1--FU-E4 claim-to-artifact relation."""
+
+    document = aggregate.document
+    raw_records = document.get("formal_artifacts")
+    terminal_name = document.get("terminal_admission_artifact_name")
+    terminal_sha256 = document.get("terminal_admission_envelope_sha256")
+    if (
+        type(raw_records) is not list
+        or len(raw_records) != 17
+        or type(terminal_name) is not str
+        or not terminal_name
+        or type(terminal_sha256) is not str
+        or len(terminal_sha256) != 64
+    ):
+        raise FollowupAnalysisError("claim-to-artifact source ledger changed")
+    records = [
+        _object(record, label="claim-to-artifact formal record")
+        for record in raw_records
+    ]
+    expected_kinds = (
+        "formal-acquisition",
+        *("formal-native" for _ in range(6)),
+        *("formal-synthetic" for _ in range(6)),
+        *("formal-ordered-event" for _ in range(4)),
+    )
+    for ordinal, (record, expected_kind) in enumerate(
+        zip(records, expected_kinds, strict=True)
+    ):
+        if (
+            record.get("ordinal") != ordinal
+            or record.get("unit_kind") != expected_kind
+            or record.get("unit_attempt_ordinal") not in {1, 2}
+            or type(record.get("artifact_name")) is not str
+            or type(record.get("envelope_sha256")) is not str
+            or len(record["envelope_sha256"]) != 64
+        ):
+            raise FollowupAnalysisError("claim-to-artifact formal ledger changed")
+
+    rows: list[dict[str, object]] = []
+    claim_kinds = (
+        ("FU-E1", frozenset({"formal-synthetic"})),
+        ("FU-E2", frozenset({"formal-acquisition", "formal-ordered-event"})),
+        ("FU-E3", frozenset({"formal-native"})),
+        (
+            "FU-E4",
+            frozenset(
+                {
+                    "formal-acquisition",
+                    "formal-native",
+                    "formal-ordered-event",
+                    "formal-synthetic",
+                }
+            ),
+        ),
+    )
+    for claim_id, kinds in claim_kinds:
+        for record in records:
+            if record["unit_kind"] not in kinds:
+                continue
+            rows.append(
+                {
+                    "artifact_name_or_member": record["artifact_name"],
+                    "claim_id": claim_id,
+                    "evidence_role": "guarded-formal-unit",
+                    "sha256": record["envelope_sha256"],
+                    "sha256_domain": "outer-envelope",
+                    "unit_kind_or_null": record["unit_kind"],
+                    "unit_ordinal_or_null": record["ordinal"],
+                }
+            )
+        rows.extend(
+            (
+                {
+                    "artifact_name_or_member": terminal_name,
+                    "claim_id": claim_id,
+                    "evidence_role": "terminal-admission",
+                    "sha256": terminal_sha256,
+                    "sha256_domain": "outer-envelope",
+                    "unit_kind_or_null": "formal-terminal-admission",
+                    "unit_ordinal_or_null": None,
+                },
+                {
+                    "artifact_name_or_member": aggregate.artifact_name,
+                    "claim_id": claim_id,
+                    "evidence_role": "formal-aggregate",
+                    "sha256": aggregate.aggregate_sha256,
+                    "sha256_domain": "inner-payload",
+                    "unit_kind_or_null": "formal-aggregate",
+                    "unit_ordinal_or_null": None,
+                },
+            )
+        )
+        if claim_id == "FU-E4":
+            rows.extend(
+                (
+                    {
+                        "artifact_name_or_member": "analysis-compatibility.json",
+                        "claim_id": claim_id,
+                        "evidence_role": "analysis-lineage",
+                        "sha256": hashlib.sha256(
+                            compatibility.document_bytes
+                        ).hexdigest(),
+                        "sha256_domain": "analysis-member",
+                        "unit_kind_or_null": "analysis",
+                        "unit_ordinal_or_null": None,
+                    },
+                    {
+                        "artifact_name_or_member": "analysis.json",
+                        "claim_id": claim_id,
+                        "evidence_role": "bounded-descriptive-analysis",
+                        "sha256": hashlib.sha256(analysis_bytes).hexdigest(),
+                        "sha256_domain": "analysis-member",
+                        "unit_kind_or_null": "analysis",
+                        "unit_ordinal_or_null": None,
+                    },
+                )
+            )
+    return rows
+
+
 def _render(
     aggregate: FollowupAggregateInspection,
     compatibility: FollowupCompatibilityReceipt,
@@ -325,6 +451,11 @@ def _render(
         "universal_best_strategy_claim": False,
     }
     analysis_bytes = _canonical_json_bytes(analysis)
+    claim_rows = _claim_to_artifact_rows(
+        aggregate,
+        compatibility,
+        analysis_bytes,
+    )
     simulator_fields = tuple(simulator[0])
     native_fields = tuple(native[0])
     summary_fields = tuple(summaries[0])
@@ -334,12 +465,15 @@ def _render(
         "repetitions, and six median/range summaries. It is bounded to the frozen "
         "S/M matrix. No p-value, inferential confidence interval, fitted scaling "
         "law, superiority claim, universal ranking, or cross-machine generalization "
-        "is authorized.\n"
+        "is authorized. The claim-to-artifact table binds FU-E1--FU-E4 to the "
+        "guarded formal units, terminal admission, aggregate, and isolated "
+        "analysis members used for each claim.\n"
     ).encode("ascii")
     return {
         "SUMMARY.md": summary,
         "analysis-compatibility.json": compatibility.document_bytes,
         "analysis.json": analysis_bytes,
+        "claim-to-artifact.csv": _csv_bytes(tuple(claim_rows[0]), claim_rows),
         "native-repetitions.csv": _csv_bytes(native_fields, native),
         "native-summary.csv": _csv_bytes(summary_fields, summaries),
         "simulator-cells.csv": _csv_bytes(simulator_fields, simulator),

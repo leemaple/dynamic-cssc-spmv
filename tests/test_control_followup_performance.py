@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import pytest
@@ -77,3 +78,49 @@ def test_github_adapter_rejects_missing_backward_or_redirected_provider_time(
     )
     with pytest.raises(FollowupControllerError, match="redirected"):
         adapter._api_json("/redirect")
+
+
+def test_github_adapter_atomically_creates_the_one_provider_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = GitHubFollowupAdapter(repository="owner/repository")
+    calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+    monkeypatch.setattr(adapter, "_workflow_run_ids", lambda _workflow: ())
+
+    def fake_gh(*arguments: str, **keywords: object) -> bytes:
+        calls.append((arguments, keywords))
+        return b""
+
+    monkeypatch.setattr(adapter, "_gh", fake_gh)
+    monkeypatch.setattr(
+        adapter,
+        "_api_json",
+        lambda _path: {
+            "object": {"sha": "b" * 40, "type": "commit"},
+            "ref": (
+                "refs/tags/"
+                "dynamic-cssc-followup-performance-qualification-authority-v1"
+            ),
+        },
+    )
+
+    assert adapter._claim_authority(
+        kind="qualification",
+        workflow="followup-performance-qualification.yml",
+        expected_s2="b" * 40,
+    ) == "b" * 40
+    assert len(calls) == 1
+    arguments, keywords = calls[0]
+    assert arguments[:4] == (
+        "api",
+        "--method",
+        "POST",
+        "/repos/owner/repository/git/refs",
+    )
+    assert json.loads(keywords["input_bytes"]) == {
+        "ref": (
+            "refs/tags/"
+            "dynamic-cssc-followup-performance-qualification-authority-v1"
+        ),
+        "sha": "b" * 40,
+    }

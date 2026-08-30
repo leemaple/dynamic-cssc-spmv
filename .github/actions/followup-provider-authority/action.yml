@@ -1,0 +1,102 @@
+name: Atomically bind one follow-up provider run
+description: Compare-and-swap one pre-created authority ref before any registered seed executes.
+
+inputs:
+  authority-kind:
+    required: true
+  expected-claim-oid:
+    required: true
+  expected-s1:
+    required: true
+  expected-s2:
+    required: true
+  expected-compatibility:
+    required: true
+  expected-qualification-run-id:
+    required: false
+    default: ''
+
+outputs:
+  binding_oid:
+    value: ${{ steps.bind.outputs.binding_oid }}
+
+runs:
+  using: composite
+  steps:
+    - name: Atomically consume the provider claim for this exact run
+      id: bind
+      shell: bash
+      env:
+        AUTHORITY_KIND: ${{ inputs.authority-kind }}
+        CLAIM_OID: ${{ inputs.expected-claim-oid }}
+        EXPECTED_S1: ${{ inputs.expected-s1 }}
+        EXPECTED_S2: ${{ inputs.expected-s2 }}
+        EXPECTED_COMPATIBILITY: ${{ inputs.expected-compatibility }}
+        EXPECTED_QUALIFICATION_RUN_ID: ${{ inputs.expected-qualification-run-id }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        [[ "$CLAIM_OID" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$EXPECTED_S1" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$EXPECTED_S2" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$EXPECTED_COMPATIBILITY" =~ ^[0-9a-f]{64}$ ]]
+        test "$CLAIM_OID" = "$EXPECTED_S2"
+        test "$GITHUB_EVENT_NAME" = workflow_dispatch
+        test "$GITHUB_REF" = refs/heads/main
+        test "$GITHUB_SHA" = "$EXPECTED_S2"
+        test "$GITHUB_RUN_ATTEMPT" = 1
+        case "$AUTHORITY_KIND" in
+          qualification)
+            test -z "$EXPECTED_QUALIFICATION_RUN_ID"
+            AUTHORITY_REF='refs/tags/dynamic-cssc-followup-performance-qualification-authority-v1'
+            ;;
+          formal)
+            [[ "$EXPECTED_QUALIFICATION_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+            AUTHORITY_REF='refs/tags/dynamic-cssc-followup-performance-formal-authority-v1'
+            ;;
+          *)
+            exit 2
+            ;;
+        esac
+
+        REF_PATH="${AUTHORITY_REF#refs/}"
+        OBSERVED_OID="$(gh api "/repos/$GITHUB_REPOSITORY/git/ref/$REF_PATH" --jq .object.sha)"
+        test "$OBSERVED_OID" = "$CLAIM_OID"
+        TREE_OID="$(gh api "/repos/$GITHUB_REPOSITORY/git/commits/$EXPECTED_S2" --jq .tree.sha)"
+        [[ "$TREE_OID" =~ ^[0-9a-f]{40}$ ]]
+        BINDING_MESSAGE="$(jq -cnS \
+          --arg authority_kind "$AUTHORITY_KIND" \
+          --arg claim_oid "$CLAIM_OID" \
+          --arg compatibility "$EXPECTED_COMPATIBILITY" \
+          --arg qualification_run_id "$EXPECTED_QUALIFICATION_RUN_ID" \
+          --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+          --arg run_id "$GITHUB_RUN_ID" \
+          --arg s1 "$EXPECTED_S1" \
+          --arg s2 "$EXPECTED_S2" \
+          --arg workflow_ref "$GITHUB_WORKFLOW_REF" \
+          '{authority:false,authority_kind:$authority_kind,claim_oid:$claim_oid,compatibility_receipt_sha256:$compatibility,expected_qualification_run_id_or_null:(if $qualification_run_id == "" then null else ($qualification_run_id|tonumber) end),provider_run_attempt:($run_attempt|tonumber),provider_run_id:($run_id|tonumber),schema_version:"dynamic-cssc-followup-performance-provider-run-binding-v1",study_id:"dynamic-cssc-followup-performance-2026-08-30",experiment_source_S1_sha:$s1,evidence_freeze_S2_sha:$s2,workflow_ref:$workflow_ref}')"
+        REQUEST="$RUNNER_TEMP/followup-provider-binding-commit.json"
+        jq -cn \
+          --arg message "$BINDING_MESSAGE" \
+          --arg tree "$TREE_OID" \
+          --arg parent "$CLAIM_OID" \
+          '{message:$message,tree:$tree,parents:[$parent]}' > "$REQUEST"
+        BINDING_OID="$(gh api --method POST \
+          "/repos/$GITHUB_REPOSITORY/git/commits" \
+          --input "$REQUEST" --jq .sha)"
+        [[ "$BINDING_OID" =~ ^[0-9a-f]{40}$ ]]
+        REPOSITORY_ID="$(gh api graphql \
+          -f query='query($owner:String!,$name:String!){repository(owner:$owner,name:$name){id}}' \
+          -f owner="${GITHUB_REPOSITORY%%/*}" \
+          -f name="${GITHUB_REPOSITORY#*/}" \
+          --jq .data.repository.id)"
+        test -n "$REPOSITORY_ID"
+        gh api graphql \
+          -f query='mutation($repositoryId:ID!,$refName:GitRefname!,$before:GitObjectID!,$after:GitObjectID!){updateRefs(input:{repositoryId:$repositoryId,refUpdates:[{name:$refName,beforeOid:$before,afterOid:$after,force:false}]}){clientMutationId}}' \
+          -f repositoryId="$REPOSITORY_ID" \
+          -f refName="$AUTHORITY_REF" \
+          -f before="$CLAIM_OID" \
+          -f after="$BINDING_OID" > /dev/null
+        FINAL_OID="$(gh api "/repos/$GITHUB_REPOSITORY/git/ref/$REF_PATH" --jq .object.sha)"
+        test "$FINAL_OID" = "$BINDING_OID"
+        echo "binding_oid=$BINDING_OID" >> "$GITHUB_OUTPUT"
