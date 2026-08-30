@@ -616,3 +616,83 @@ R0 artifact is ID `9737808767`, name
 It is bound by the provider API to the same run, branch, and head.  This CI and
 both reviews are control evidence only and grant no qualification, formal, or
 publication authority.
+
+## Pre-dispatch capability-expiry failure and reviewed closure
+
+The first external-controller qualification call against historical S1
+`991b3ccac5e65ca084e258d9aa80f335ef4737c4` and data-only S2
+`a1ed468c1fbfa4f14a89f7341daeb184af23466b` failed closed before every
+provider mutation with `follow-up capability expired before dispatch`.  Full
+immutable-archive validation took 47.213 seconds, while the old capability
+lease began at the provider observation time and lasted only 30 seconds.  The
+qualification and formal workflow inventories remained empty.  No claim ref,
+workflow run, evidence root, registered-seed execution, experimental artifact,
+or empirical result was created, so the sole qualification attempt was not
+consumed.
+
+The first repair candidate was
+`f2e3a4986916e48a1a432a98143be75cab969f62`, tree
+`282db44c8beeab1cb3ce90055f948425f70ba97d`, with sole parent exact S2
+`a1ed468c...`.  It moved the lease start until after heavy validation and added
+an inventory-only reread.  ChatGPT Pro returned **AMEND, P0=0, P1=2, P2=0**:
+the adapter retained only the second of two sequential provider dates, and the
+formal reread retained only the qualification run ID rather than its current
+attempt and terminal state.  ZCode's initial PASS relied on the second date
+and missed both counterexamples; that predecessor verdict is superseded.
+
+The exact material successor is
+`1aba6493fc7fffe78e7edcb6979eaee74fe04802`, tree
+`451af29b4d84cdf20ceee67c476f5ccc1c65241b`, immediate parent `f2e3a498...`,
+and historical-S2-to-candidate binary-diff SHA-256
+`6c9119a7e6b7a7bb546b4e04cb177fd9afe3d3054619b0d50b38b80f91dccd9e`.
+Its six-path repair binds a separate provider date and full lightweight run
+snapshot to each inventory endpoint.  Both dates must independently be UTC,
+nonfuture, no more than 30 seconds old, and monotone.  Formal issuance requires
+the final qualification snapshot to equal the already validated attempt-1,
+terminal-success run in every retained field.  Only after these checks does
+the controller capture `issued_at`, recheck both ages, and mint one
+nonserializable capability with `expires_at = issued_at + 30 seconds`.  The
+final reread remains exactly two inventory GETs and redownloads no artifact.
+
+The common 127-line, 7,068-byte review packet has SHA-256
+`a7444fdd54b92778b5b2c0d9073e00d5dd12396b638d2ef65c1d54be1cd7aaec`.
+ChatGPT Pro independently recomputed that packet, inspected the public exact
+candidate, executed 50 isolated in-memory falsification checks, and returned
+**PASS, P0=0, P1=0, P2=1**.  It reproduced rejection of the two predecessor
+counterexamples, same-ID state substitutions, expiry between validation and
+issuance, clock rollback, and malformed HTTP values.  ZCode GLM-5.3 Max in
+Full access mode independently returned **PASS, P0=0, P1=0, P2=1**, reran the
+focused source suites, and reached the same production-path closure.
+
+Both reviewers' sole P2 is defense-in-depth for directly constructed Python
+Protocol snapshots: numeric equality could alias a float or boolean
+`database_id`/`attempt` to an expected integer before dataclass equality.  The
+production GitHub adapter already uses a strict `type(value) is int` decoder
+for both fields, so no production HTTP path to the malformed representation
+was found.  An internal independent review agreed that this is nonblocking P2,
+not a production P0/P1.  Strict snapshot-shape checks and two direct-construction
+regressions remain optional hardening; changing the reviewed material solely
+for that unreachable seam would not increase the present production gate.
+
+Exact-head push CI run
+[`33340603103`](https://github.com/leemaple/dynamic-cssc-spmv/actions/runs/33340603103)
+completed successfully on branch `codex/followup-capability-lease-fix`, exact
+head `1aba6493fc7fffe78e7edcb6979eaee74fe04802`, attempt 1.  P-1, syntax,
+unit tests, predicted-only smoke, R0 creation/upload, and every setup and
+cleanup step succeeded.  The suite recorded **2,653 passed, 2 skipped in
+1,416.82 seconds**; the only skips were the two ordinary/strong cases requiring
+the real OpenFHE query runner that ordinary CI deliberately does not build.
+The sole R0 artifact is ID `9740736189`, name
+`r0-freeze-1aba6493fc7fffe78e7edcb6979eaee74fe04802`, 480 files,
+8,933,106 bytes, provider digest
+`sha256:f9a60698d7b2852c95141b8d9e3f2482a89625297696c866eccb011a10bb4ac1`.
+The provider API binds it to the same run, branch, and exact head.
+
+This record changes no implementation, empty-anchor bytes, scientific plan,
+preregistration, seed, workload, threshold, workflow, or serialized schema.
+It is already a member of the control-registration Behavior Set, so its exact
+bytes will change that role's future inventory digest without another schema
+advance.  This review-record-only successor must receive its own exact-head CI
+and short external fidelity review before it may enter the merge-only PR for a
+replacement S1.  None of the reviews or CI above authorizes qualification,
+formal execution, registered-seed use, analysis, or publication.
