@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import re
 import threading
 import time
@@ -186,6 +187,23 @@ class _DispatchContext:
 
 def _response_json(response: GitHubHttpResponse, *, label: str) -> dict[str, object]:
     return _json_object(response.body, label=label)
+
+
+def _controller_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _render_utc(value: datetime, *, field: str) -> str:
+    if type(value) is not datetime or value.tzinfo is None:
+        raise FollowupCampaignControlError(f"{field} is not timezone-aware")
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _elapsed_ceiling(start: datetime, end: datetime, *, field: str) -> int:
+    seconds = (end - start).total_seconds()
+    if seconds < 0:
+        raise FollowupCampaignControlError(f"{field} moved backwards")
+    return math.ceil(seconds)
 
 
 class GitHubFollowupCampaignProvider:
@@ -2601,6 +2619,7 @@ class _GitHubFormalUnitWatch:
                 ).hexdigest(),
                 "authority": False,
                 "campaign_id": self._campaign_id,
+                "cancellation_ledger": None,
                 "critical_path_seconds": int(
                     (guard_completed - producer_started).total_seconds()
                 ),
@@ -2615,7 +2634,7 @@ class _GitHubFormalUnitWatch:
                 "reservation_minutes": self._reservation_minutes,
                 "run_api_sha256": hashlib.sha256(run_response.body).hexdigest(),
                 "schema_version": (
-                    "dynamic-cssc-followup-performance-watcher-receipt-v2"
+                    "dynamic-cssc-followup-performance-watcher-receipt-v3"
                 ),
                 "unit_attempt_ordinal": self._unit_attempt,
                 "unit_output_envelope_sha256": envelope_sha,
@@ -2646,15 +2665,25 @@ class _GitHubFormalUnitWatch:
         self,
         *,
         run_response: GitHubHttpResponse,
+        run: dict[str, object],
         jobs_response: GitHubHttpResponse,
         jobs: dict[str, _JobProjection],
         cancelled_for_deadline: bool,
+        cancellation_threshold: datetime | None,
+        controller_detection_at: datetime | None,
+        cancellation_requested_at: datetime | None,
+        cancellation_acknowledged_at: datetime | None,
+        watch_decided_at: datetime,
     ) -> FollowupFormalUnitWatchOutcome:
         artifacts_response = self._artifacts()
-        classification = self._provider_failure(
-            jobs,
-            run_bytes=run_response.body,
-            jobs_bytes=jobs_response.body,
+        classification = (
+            None
+            if cancelled_for_deadline
+            else self._provider_failure(
+                jobs,
+                run_bytes=run_response.body,
+                jobs_bytes=jobs_response.body,
+            )
         )
         if classification is None:
             decision = "no-go"
@@ -2671,6 +2700,76 @@ class _GitHubFormalUnitWatch:
             failure_class, failure_bytes = classification
             failure_sha = hashlib.sha256(failure_bytes).hexdigest()
             reason = None
+        if cancellation_requested_at is None:
+            if any(
+                value is not None
+                for value in (
+                    cancellation_threshold,
+                    controller_detection_at,
+                    cancellation_acknowledged_at,
+                )
+            ):
+                raise FollowupCampaignControlError(
+                    "formal cancellation ledger is partially absent"
+                )
+            cancellation_ledger = None
+        else:
+            if (
+                controller_detection_at is None
+                or cancellation_acknowledged_at is None
+            ):
+                raise FollowupCampaignControlError(
+                    "formal cancellation ledger is partially absent"
+                )
+            terminal_updated = _timestamp(
+                run.get("updated_at"),
+                field="formal terminal run updated_at",
+            )
+            final_conclusion = _string(
+                run.get("conclusion"),
+                field="formal terminal run conclusion",
+            )
+            cancellation_ledger = {
+                "ack_to_watch_decision_seconds": _elapsed_ceiling(
+                    cancellation_acknowledged_at,
+                    watch_decided_at,
+                    field="formal cancellation ack-to-decision clock",
+                ),
+                "cancel_request_utc": _render_utc(
+                    cancellation_requested_at,
+                    field="formal cancellation request",
+                ),
+                "controller_detection_utc": _render_utc(
+                    controller_detection_at,
+                    field="formal cancellation detection",
+                ),
+                "final_conclusion": final_conclusion,
+                "provider_api_ack_utc": _render_utc(
+                    cancellation_acknowledged_at,
+                    field="formal cancellation acknowledgement",
+                ),
+                "provider_terminal_updated_utc": _render_utc(
+                    terminal_updated,
+                    field="formal terminal provider update",
+                ),
+                "request_to_ack_seconds": _elapsed_ceiling(
+                    cancellation_requested_at,
+                    cancellation_acknowledged_at,
+                    field="formal cancellation request-to-ack clock",
+                ),
+                "threshold_utc": (
+                    None
+                    if cancellation_threshold is None
+                    else _render_utc(
+                        cancellation_threshold,
+                        field="formal provider threshold",
+                    )
+                ),
+                "watch_decided_utc": _render_utc(
+                    watch_decided_at,
+                    field="formal watcher decision",
+                ),
+            }
         receipt_bytes = _canonical_json_bytes(
             {
                 "artifacts_api_sha256": hashlib.sha256(
@@ -2678,6 +2777,7 @@ class _GitHubFormalUnitWatch:
                 ).hexdigest(),
                 "authority": False,
                 "campaign_id": self._campaign_id,
+                "cancellation_ledger": cancellation_ledger,
                 "decision": decision,
                 "formal_unit_ordinal": self._spec.ordinal,
                 "jobs_api_sha256": hashlib.sha256(jobs_response.body).hexdigest(),
@@ -2688,7 +2788,7 @@ class _GitHubFormalUnitWatch:
                 "publication_evidence_admitted": False,
                 "run_api_sha256": hashlib.sha256(run_response.body).hexdigest(),
                 "schema_version": (
-                    "dynamic-cssc-followup-performance-watcher-receipt-v2"
+                    "dynamic-cssc-followup-performance-watcher-receipt-v3"
                 ),
                 "unit_attempt_ordinal": self._unit_attempt,
                 "watcher_session_sha256": self._session_sha256,
@@ -2719,6 +2819,10 @@ class _GitHubFormalUnitWatch:
         jobs_response = self._initial_jobs
         cancelled_for_deadline = False
         cancelled_at: datetime | None = None
+        cancellation_threshold: datetime | None = None
+        controller_detection_at: datetime | None = None
+        cancellation_requested_at: datetime | None = None
+        cancellation_acknowledged_at: datetime | None = None
         while True:
             run = self._run(run_response)
             jobs = self._jobs(jobs_response)
@@ -2738,7 +2842,10 @@ class _GitHubFormalUnitWatch:
                     >= self._assignment_timeout
                 )
             ):
+                controller_detection_at = _controller_now()
+                cancellation_requested_at = _controller_now()
                 self._cancel(self._run_id)
+                cancellation_acknowledged_at = _controller_now()
                 cancelled_for_deadline = True
                 cancelled_at = provider_now
             if producer_started is not None:
@@ -2757,11 +2864,15 @@ class _GitHubFormalUnitWatch:
                     and provider_now >= deadline
                     and not cancelled_for_deadline
                 ):
+                    cancellation_threshold = deadline
+                    controller_detection_at = _controller_now()
+                    cancellation_requested_at = _controller_now()
                     self._cancel(self._run_id)
+                    cancellation_acknowledged_at = _controller_now()
                     cancelled_for_deadline = True
                     cancelled_at = provider_now
             if run.get("status") == "completed":
-                if run.get("conclusion") == "success":
+                if run.get("conclusion") == "success" and not cancelled_for_deadline:
                     if (
                         set(jobs)
                         != {self._spec.producer_job_name, self._spec.guard_job_name}
@@ -2784,9 +2895,15 @@ class _GitHubFormalUnitWatch:
                     )
                 return self._terminal_non_success(
                     run_response=run_response,
+                    run=run,
                     jobs_response=jobs_response,
                     jobs=jobs,
                     cancelled_for_deadline=cancelled_for_deadline,
+                    cancellation_threshold=cancellation_threshold,
+                    controller_detection_at=controller_detection_at,
+                    cancellation_requested_at=cancellation_requested_at,
+                    cancellation_acknowledged_at=cancellation_acknowledged_at,
+                    watch_decided_at=_controller_now(),
                 )
             if (
                 cancelled_at is not None

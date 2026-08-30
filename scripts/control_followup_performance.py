@@ -7,8 +7,7 @@ import argparse
 import json
 import os
 import subprocess
-import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -602,125 +601,6 @@ class GitHubFollowupAdapter:
             "--repo",
             self._repository,
             maximum_bytes=64 * 1024,
-        )
-
-    def _post_dispatch(
-        self,
-        *,
-        workflow: str,
-        inputs: dict[str, str],
-        expected_s2: str,
-    ) -> int:
-        if self._workflow_run_ids(workflow):
-            raise FollowupControllerError("one-shot workflow already has a provider run")
-        payload = json.dumps(
-            {"inputs": inputs, "ref": "main"},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("ascii")
-        encoded = quote(workflow, safe="")
-        self._gh(
-            "api",
-            "--method",
-            "POST",
-            f"/repos/{self._repository}/actions/workflows/{encoded}/dispatches",
-            "--input",
-            "-",
-            maximum_bytes=64 * 1024,
-            input_bytes=payload,
-        )
-        deadline = datetime.now(UTC) + timedelta(minutes=2)
-        while datetime.now(UTC) <= deadline:
-            run_ids = self._workflow_run_ids(workflow)
-            if len(run_ids) == 1:
-                run = self._run_document(run_ids[0])
-                if (
-                    run.get("event") != "workflow_dispatch"
-                    or run.get("head_sha") != expected_s2
-                    or run.get("head_branch") != "main"
-                    or run.get("run_attempt") != 1
-                ):
-                    raise FollowupControllerError("dispatched workflow identity changed")
-                return run_ids[0]
-            if len(run_ids) > 1:
-                raise FollowupControllerError("one-shot workflow dispatch is ambiguous")
-            time.sleep(2)
-        raise FollowupControllerError("dispatched workflow run ID was not observed")
-
-    def _claim_authority(
-        self,
-        *,
-        kind: str,
-        workflow: str,
-        expected_s2: str,
-    ) -> str:
-        """Atomically create the durable provider-side predecessor to one run binding."""
-
-        if kind not in _AUTHORITY_REFS:
-            raise FollowupControllerError("provider authority kind is outside its domain")
-        if (
-            type(expected_s2) is not str
-            or len(expected_s2) != 40
-            or any(character not in "0123456789abcdef" for character in expected_s2)
-        ):
-            raise FollowupControllerError("provider authority S2 is not a lowercase Git SHA")
-        if self._workflow_run_ids(workflow):
-            raise FollowupControllerError(
-                "one-shot workflow already has a provider run before authority claim"
-            )
-        authority_ref = _AUTHORITY_REFS[kind]
-        payload = json.dumps(
-            {"ref": authority_ref, "sha": expected_s2},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("ascii")
-        self._gh(
-            "api",
-            "--method",
-            "POST",
-            f"/repos/{self._repository}/git/refs",
-            "--input",
-            "-",
-            maximum_bytes=64 * 1024,
-            input_bytes=payload,
-        )
-        ref_path = quote(authority_ref.removeprefix("refs/"), safe="/")
-        document = self._api_json(
-            f"/repos/{self._repository}/git/ref/{ref_path}"
-        )
-        target = document.get("object")
-        if (
-            document.get("ref") != authority_ref
-            or type(target) is not dict
-            or target.get("type") != "commit"
-            or target.get("sha") != expected_s2
-        ):
-            raise FollowupControllerError("provider authority claim identity changed")
-        return expected_s2
-
-    def dispatch_qualification(
-        self,
-        *,
-        expected_s1_git_sha: str,
-        expected_s2_git_sha: str,
-        expected_compatibility_receipt_sha256: str,
-    ) -> int:
-        claim_oid = self._claim_authority(
-            kind="qualification",
-            workflow=_QUALIFICATION_WORKFLOW,
-            expected_s2=expected_s2_git_sha,
-        )
-        return self._post_dispatch(
-            workflow=_QUALIFICATION_WORKFLOW,
-            inputs={
-                "expected_authority_claim_oid": claim_oid,
-                "expected_compatibility_receipt_sha256": (
-                    expected_compatibility_receipt_sha256
-                ),
-                "expected_s1_git_sha": expected_s1_git_sha,
-                "expected_s2_git_sha": expected_s2_git_sha,
-            },
-            expected_s2=expected_s2_git_sha,
         )
 
 def _parser() -> argparse.ArgumentParser:

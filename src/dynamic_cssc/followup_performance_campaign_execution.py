@@ -457,6 +457,7 @@ def execute_followup_formal_campaign(
                 unit_attempt_ordinal=1,
                 run_json=result.outcome.provider_run_json,
                 jobs_json=result.outcome.provider_jobs_json,
+                watcher_receipt_json=result.outcome.watcher_receipt_bytes,
                 terminal_campaign_state_bytes=result.terminal_state.document_bytes,
             )
         )
@@ -522,6 +523,7 @@ def execute_followup_formal_campaign(
                     unit_attempt_ordinal=2,
                     run_json=replacement.outcome.provider_run_json,
                     jobs_json=replacement.outcome.provider_jobs_json,
+                    watcher_receipt_json=replacement.outcome.watcher_receipt_bytes,
                     terminal_campaign_state_bytes=(
                         replacement.terminal_state.document_bytes
                     ),

@@ -21,6 +21,10 @@ from dynamic_cssc.followup_performance_formal_matrix import (
     FollowupFormalUnitSpec,
     followup_formal_unit_specs,
 )
+from dynamic_cssc.followup_performance_watcher_receipt import (
+    FollowupFormalWatcherReceiptError,
+    inspect_followup_formal_watcher_receipt,
+)
 from dynamic_cssc.route_a_scientific_profile import RouteAScientificProfile
 from dynamic_cssc.route_a_synthetic_suite import RouteASyntheticSuiteLineage
 
@@ -138,7 +142,60 @@ class FollowupFormalRunEvidence:
     unit_attempt_ordinal: int
     run_json: bytes
     jobs_json: bytes
+    watcher_receipt_json: bytes
     terminal_campaign_state_bytes: bytes
+
+
+def _watcher_cancellation_ledger(
+    content: bytes,
+    *,
+    expected_jobs_json: bytes,
+    expected_run_id: int,
+    expected_run_json: bytes,
+    expected_unit_ordinal: int,
+    expected_unit_attempt_ordinal: int,
+    expected_decision: str,
+    expected_run_updated_at: object,
+    expected_run_conclusion: object,
+) -> tuple[dict[str, object], dict[str, object] | None]:
+    try:
+        inspected = inspect_followup_formal_watcher_receipt(content)
+    except FollowupFormalWatcherReceiptError as error:
+        raise FollowupFormalTimingError(
+            "formal watcher receipt failed canonical inspection"
+        ) from error
+    receipt = inspected.document
+    if (
+        receipt.get("provider_run_id") != expected_run_id
+        or receipt.get("formal_unit_ordinal") != expected_unit_ordinal
+        or receipt.get("unit_attempt_ordinal") != expected_unit_attempt_ordinal
+        or receipt.get("decision") != expected_decision
+        or receipt.get("run_api_sha256")
+        != hashlib.sha256(expected_run_json).hexdigest()
+        or receipt.get("jobs_api_sha256")
+        != hashlib.sha256(expected_jobs_json).hexdigest()
+    ):
+        raise FollowupFormalTimingError("formal watcher receipt identity changed")
+    cancellation = inspected.cancellation_ledger
+    if cancellation is None:
+        if (
+            expected_decision == "no-go"
+            and receipt.get("no_go_reason_or_null") == "budget-exhausted"
+        ):
+            raise FollowupFormalTimingError(
+                "budget-exhausted watcher lacks its cancellation ledger"
+            )
+        return receipt, None
+    if (
+        cancellation["provider_terminal_updated_utc"]
+        != expected_run_updated_at
+        or cancellation["final_conclusion"] != expected_run_conclusion
+        or expected_run_conclusion == "success"
+    ):
+        raise FollowupFormalTimingError(
+            "formal cancellation ledger terminal binding changed"
+        )
+    return receipt, dict(cancellation)
 
 
 def _campaign_run(
@@ -320,6 +377,7 @@ def inspect_followup_formal_timing_campaign(
     segment_seconds = {name: 0 for name in _SEGMENT_LIMIT_SECONDS}
     units: list[dict[str, object]] = []
     all_run_ids: set[int] = set()
+    cancellation_ledger: list[dict[str, object]] = []
     total_ordinary_seconds = 0
     total_retry_seconds = 0
     for spec, selected in zip(specs, selected_units, strict=True):
@@ -338,6 +396,9 @@ def inspect_followup_formal_timing_campaign(
                 item.terminal_campaign_state_bytes
             )
             run_id = state.document["provider_run_id_or_null"]
+            watcher_receipt_sha256 = hashlib.sha256(
+                item.watcher_receipt_json
+            ).hexdigest()
             if (
                 state.document["campaign_id"] != campaign_id
                 or state.document["unit_ordinal_or_null"] != spec.ordinal
@@ -346,6 +407,8 @@ def inspect_followup_formal_timing_campaign(
                 or state.document["provider_run_attempt_or_null"] != 1
                 or type(run_id) is not int
                 or run_id in all_run_ids
+                or state.document["watcher_receipt_sha256_or_null"]
+                != watcher_receipt_sha256
                 or (successful and state.state != "unit-committed")
                 or (not successful and state.state != "unit-provider-failed")
             ):
@@ -377,6 +440,59 @@ def inspect_followup_formal_timing_campaign(
                 guard_name=spec.guard_job_name,
                 successful=successful,
             )
+            receipt_document, cancellation = _watcher_cancellation_ledger(
+                item.watcher_receipt_json,
+                expected_jobs_json=item.jobs_json,
+                expected_run_id=run_id,
+                expected_run_json=item.run_json,
+                expected_unit_ordinal=spec.ordinal,
+                expected_unit_attempt_ordinal=attempt,
+                expected_decision=("success" if successful else "provider-failure"),
+                expected_run_updated_at=run["updated_at"],
+                expected_run_conclusion=run["conclusion"],
+            )
+            if (
+                receipt_document["watcher_session_sha256"]
+                != state.document["watcher_session_sha256_or_null"]
+                or (
+                    successful
+                    and (
+                        receipt_document["artifact_id"]
+                        != state.document["artifact_id_or_null"]
+                        or receipt_document["artifact_name"]
+                        != state.document["artifact_name_or_null"]
+                        or receipt_document["artifact_provider_digest"]
+                        != state.document["artifact_provider_digest_or_null"]
+                        or receipt_document["unit_output_envelope_sha256"]
+                        != state.document["unit_output_envelope_sha256_or_null"]
+                    )
+                )
+                or (
+                    not successful
+                    and (
+                        receipt_document["provider_failure_class_or_null"]
+                        != state.document["provider_failure_class_or_null"]
+                        or receipt_document[
+                            "provider_failure_evidence_sha256_or_null"
+                        ]
+                        != state.document[
+                            "provider_failure_evidence_sha256_or_null"
+                        ]
+                    )
+                )
+            ):
+                raise FollowupFormalTimingError(
+                    "formal watcher receipt differs from its terminal campaign state"
+                )
+            if cancellation is not None:
+                cancellation = {
+                    **cancellation,
+                    "charged_runner_seconds": runner_seconds,
+                    "formal_unit_ordinal": spec.ordinal,
+                    "provider_run_id": run_id,
+                    "unit_attempt_ordinal": attempt,
+                }
+                cancellation_ledger.append(cancellation)
             if successful:
                 assert earliest is not None
                 assert latest is not None
@@ -394,6 +510,7 @@ def inspect_followup_formal_timing_campaign(
             attempt_rows.append(
                 {
                     "campaign_state_sha256": state.sha256,
+                    "cancellation_ledger": cancellation,
                     "jobs": job_rows,
                     "provider_failure_class_or_null": state.document[
                         "provider_failure_class_or_null"
@@ -464,12 +581,13 @@ def inspect_followup_formal_timing_campaign(
         "authority": False,
         "campaign_id": campaign_id,
         "campaign_selection_sha256": campaign_selection.sha256,
+        "cancellation_ledger": cancellation_ledger,
         "formal_unit_count": 17,
         "provider_retry_used": replacement_used,
         "publication_evidence_admitted": False,
         "retry_runner_seconds": total_retry_seconds,
         "schema_version": (
-            "dynamic-cssc-followup-performance-formal-timing-ledger-v2"
+            "dynamic-cssc-followup-performance-formal-timing-ledger-v3"
         ),
         "segment_ordinary_runner_seconds": segment_seconds,
         "study_id": FOLLOWUP_STUDY_ID,

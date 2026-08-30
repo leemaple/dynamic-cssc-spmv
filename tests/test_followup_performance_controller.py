@@ -32,8 +32,8 @@ from dynamic_cssc.followup_performance_controller import (
     abandon_followup_qualification_capability,
     authorize_followup_formal_campaign,
     authorize_followup_qualification_dispatch,
-    dispatch_followup_qualification,
-    open_followup_formal_campaign,
+    consume_followup_formal_campaign_capability,
+    consume_followup_qualification_capability,
     watch_followup_formal_campaign,
     watch_followup_qualification,
 )
@@ -103,24 +103,6 @@ class _PrerequisiteProvider:
     ) -> FollowupPrerequisiteObservation:
         self.calls.append(run_ids)
         return self.observation
-
-
-class _QualificationDispatcher:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, object]] = []
-
-    def dispatch_qualification(self, **kwargs: object) -> int:
-        self.calls.append(kwargs)
-        return 91
-
-
-class _FormalDispatcher:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, object]] = []
-
-    def open_formal_campaign(self, **kwargs: object) -> int:
-        self.calls.append(kwargs)
-        return 92
 
 
 def _stub_local_and_prerequisite_validation(
@@ -219,15 +201,13 @@ class _QualificationProvider:
         return self.observation
 
 
-def test_qualification_capability_is_nonserializable_and_dispatches_once(
+def test_qualification_capability_is_nonserializable_and_consumes_once(
     monkeypatch: pytest.MonkeyPatch,
     clock: _Clock,
 ) -> None:
     _stub_local_and_prerequisite_validation(monkeypatch)
     request = _request()
     provider = _PrerequisiteProvider(clock.value)
-    dispatcher = _QualificationDispatcher()
-
     capability = authorize_followup_qualification_dispatch(
         Path.cwd(),
         provider,
@@ -239,17 +219,12 @@ def test_qualification_capability_is_nonserializable_and_dispatches_once(
     with pytest.raises(TypeError, match="cannot be serialized"):
         pickle.dumps(capability)
     clock.value += timedelta(seconds=1)
-    assert dispatch_followup_qualification(capability, request, dispatcher) == 91
-    assert dispatcher.calls == [
-        {
-            "expected_compatibility_receipt_sha256": "c" * 64,
-            "expected_s1_git_sha": "a" * 40,
-            "expected_s2_git_sha": "b" * 40,
-        }
-    ]
+    opening = consume_followup_qualification_capability(capability, request)
+    assert opening.experiment_source_s1_sha == "a" * 40
+    assert opening.evidence_freeze_s2_sha == "b" * 40
+    assert opening.compatibility_receipt_sha256 == "c" * 64
     with pytest.raises(FollowupControllerError, match="absent or consumed"):
-        dispatch_followup_qualification(capability, request, dispatcher)
-    assert len(dispatcher.calls) == 1
+        consume_followup_qualification_capability(capability, request)
 
 
 def test_expired_qualification_capability_is_consumed_before_dispatch(
@@ -263,18 +238,15 @@ def test_expired_qualification_capability_is_consumed_before_dispatch(
         _PrerequisiteProvider(clock.value),
         request,
     )
-    dispatcher = _QualificationDispatcher()
-
     clock.value += timedelta(seconds=31)
     with pytest.raises(FollowupControllerError, match="expired"):
-        dispatch_followup_qualification(capability, request, dispatcher)
+        consume_followup_qualification_capability(capability, request)
     clock.value -= timedelta(seconds=30)
     with pytest.raises(FollowupControllerError, match="absent or consumed"):
-        dispatch_followup_qualification(capability, request, dispatcher)
-    assert not dispatcher.calls
+        consume_followup_qualification_capability(capability, request)
 
 
-def test_formal_capability_is_distinct_and_opens_one_campaign(
+def test_formal_capability_is_distinct_and_consumes_one_cas_opening(
     monkeypatch: pytest.MonkeyPatch,
     clock: _Clock,
 ) -> None:
@@ -304,22 +276,18 @@ def test_formal_capability_is_distinct_and_opens_one_campaign(
         _QualificationProvider(_qualification_observation(clock.value)),
         request,
     )
-    dispatcher = _FormalDispatcher()
-
     with pytest.raises(TypeError, match="wrong follow-up authority type"):
-        dispatch_followup_qualification(capability, prerequisites, _QualificationDispatcher())  # type: ignore[arg-type]
+        consume_followup_qualification_capability(capability, prerequisites)  # type: ignore[arg-type]
     clock.value += timedelta(seconds=1)
-    assert open_followup_formal_campaign(capability, request, dispatcher) == 92
+    opening = consume_followup_formal_campaign_capability(capability, request)
+    assert opening.experiment_source_s1_sha == "a" * 40
+    assert opening.evidence_freeze_s2_sha == "b" * 40
+    assert opening.compatibility_receipt_sha256 == "c" * 64
+    assert opening.qualification_run_id == 90
+    assert opening.qualification_q6_artifact_id == 106
+    assert opening.qualification_q6_artifact_digest == "sha256:" + "d" * 64
     with pytest.raises(FollowupControllerError, match="absent or consumed"):
-        open_followup_formal_campaign(capability, request, dispatcher)
-    assert dispatcher.calls == [
-        {
-            "expected_compatibility_receipt_sha256": "c" * 64,
-            "expected_s1_git_sha": "a" * 40,
-            "expected_s2_git_sha": "b" * 40,
-            "qualification_run_id": 90,
-        }
-    ]
+        consume_followup_formal_campaign_capability(capability, request)
 
 
 def test_abandonment_consumes_without_dispatch(
@@ -337,7 +305,7 @@ def test_abandonment_consumes_without_dispatch(
     abandon_followup_qualification_capability(capability)
 
     with pytest.raises(FollowupControllerError, match="absent or consumed"):
-        dispatch_followup_qualification(capability, request, _QualificationDispatcher())
+        consume_followup_qualification_capability(capability, request)
 
 
 def _qualification_jobs(now: datetime) -> tuple[FollowupJobSnapshot, ...]:
@@ -599,7 +567,7 @@ def test_provider_archive_path_traversal_fails_closed() -> None:
         raise AssertionError("unsafe archive unexpectedly yielded")
 
 
-def test_concurrent_double_dispatch_has_one_provider_mutation(
+def test_concurrent_double_consume_has_one_live_opening(
     monkeypatch: pytest.MonkeyPatch,
     clock: _Clock,
 ) -> None:
@@ -610,26 +578,30 @@ def test_concurrent_double_dispatch_has_one_provider_mutation(
         _PrerequisiteProvider(clock.value),
         request,
     )
-    dispatcher = _QualificationDispatcher()
     clock.value += timedelta(seconds=1)
     barrier = threading.Barrier(2)
 
-    def dispatch() -> str:
+    def consume() -> str:
         barrier.wait()
         try:
-            dispatch_followup_qualification(capability, request, dispatcher)
+            consume_followup_qualification_capability(capability, request)
         except FollowupControllerError as error:
             assert "absent or consumed" in str(error)
             return "rejected"
-        return "dispatched"
+        return "consumed"
 
-    threads = [threading.Thread(target=dispatch) for _ in range(2)]
+    results: list[str] = []
+
+    def record() -> None:
+        results.append(consume())
+
+    threads = [threading.Thread(target=record) for _ in range(2)]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
 
-    assert len(dispatcher.calls) == 1
+    assert sorted(results) == ["consumed", "rejected"]
 
 
 class _FormalLiveProvider:

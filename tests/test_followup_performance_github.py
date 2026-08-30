@@ -606,6 +606,7 @@ class _DeadlineCancellationTransport(_FakeGitHubTransport):
         )
         return {
             "conclusion": "cancelled" if completed else None,
+            "created_at": "2026-08-30T00:00:00Z",
             "event": "workflow_dispatch",
             "head_branch": "main",
             "head_sha": S2,
@@ -613,6 +614,11 @@ class _DeadlineCancellationTransport(_FakeGitHubTransport):
             "path": ".github/workflows/followup-performance-formal-unit.yml",
             "run_attempt": 1,
             "status": "completed" if completed else "in_progress",
+            "updated_at": (
+                "2026-08-30T00:20:01Z"
+                if completed
+                else "2026-08-30T00:19:59Z"
+            ),
         }
 
     def _jobs(self) -> dict[str, object]:
@@ -656,6 +662,32 @@ class _DeadlineCancellationTransport(_FakeGitHubTransport):
         )
 
 
+class _CancelThenSuccessTransport(_DeadlineCancellationTransport):
+    """Model the provider reporting success only after cancellation was sent."""
+
+    def _run(self) -> dict[str, object]:
+        document = super()._run()
+        if self.cancel_was_posted:
+            document["conclusion"] = "success"
+            document["status"] = "completed"
+            document["updated_at"] = "2026-08-30T00:20:01Z"
+        return document
+
+
+class _CancelThenStartupFailureTransport(_DeadlineCancellationTransport):
+    """A post-cancel startup_failure cannot retroactively authorize retry."""
+
+    def _jobs(self) -> dict[str, object]:
+        document = super()._jobs()
+        if self.cancel_was_posted:
+            rows = document["jobs"]
+            assert type(rows) is list and len(rows) == 1
+            row = rows[0]
+            assert type(row) is dict
+            row["conclusion"] = "startup_failure"
+        return document
+
+
 class _LostCompareAndSwapTransport(_FakeGitHubTransport):
     """Model a competing controller moving the ref during updateRefs."""
 
@@ -679,6 +711,37 @@ class _LostCompareAndSwapTransport(_FakeGitHubTransport):
                     }
                 ),
             )
+        return super().request(
+            method=method,
+            path=path,
+            payload=payload,
+            expected_statuses=expected_statuses,
+            maximum_bytes=maximum_bytes,
+        )
+
+
+class _DuplicateQualificationClaimTransport(_FakeGitHubTransport):
+    """Share one provider ref namespace across two controller instances."""
+
+    def __init__(self) -> None:
+        super().__init__(qualification=True)
+        self.claim_created = False
+
+    def request(
+        self,
+        *,
+        method: str,
+        path: str,
+        payload: bytes | None,
+        expected_statuses: frozenset[int],
+        maximum_bytes: int,
+    ) -> GitHubHttpResponse:
+        if method == "POST" and path.endswith("/git/refs"):
+            if self.claim_created:
+                raise FollowupCampaignControlError(
+                    "provider ref already exists"
+                )
+            self.claim_created = True
         return super().request(
             method=method,
             path=path,
@@ -813,6 +876,21 @@ def test_github_qualification_claim_dispatch_watch_cas_and_terminal_evidence() -
     assert update["name"].endswith(
         "dynamic-cssc-followup-performance-qualification-authority-v1"
     )
+
+
+def test_two_controllers_cannot_both_create_the_provider_global_qualification_claim() -> None:
+    transport = _DuplicateQualificationClaimTransport()
+    first = _provider(transport)
+    second = _provider(transport)
+    opening = FollowupQualificationOpening(
+        experiment_source_s1_sha="1" * 40,
+        evidence_freeze_s2_sha=S2,
+        compatibility_receipt_sha256="4" * 64,
+    )
+
+    assert first.open_qualification(opening)[0] == S2
+    with pytest.raises(FollowupCampaignControlError, match="already exists"):
+        second.open_qualification(opening)
 
 
 def test_github_terminal_transport_claim_dispatch_and_watch_cas() -> None:
@@ -1175,6 +1253,24 @@ def test_formal_watcher_uses_the_later_jobs_provider_date_for_stop_loss() -> Non
 
     assert outcome.decision == "no-go"
     assert outcome.no_go_reason_or_null == "budget-exhausted"
+    receipt = json.loads(outcome.watcher_receipt_bytes)
+    cancellation = receipt["cancellation_ledger"]
+    assert set(cancellation) == {
+        "ack_to_watch_decision_seconds",
+        "cancel_request_utc",
+        "controller_detection_utc",
+        "final_conclusion",
+        "provider_api_ack_utc",
+        "provider_terminal_updated_utc",
+        "request_to_ack_seconds",
+        "threshold_utc",
+        "watch_decided_utc",
+    }
+    assert cancellation["threshold_utc"] == "2026-08-30T00:20:00Z"
+    assert cancellation["final_conclusion"] == "cancelled"
+    assert cancellation["provider_terminal_updated_utc"] is not None
+    assert cancellation["request_to_ack_seconds"] >= 0
+    assert cancellation["ack_to_watch_decision_seconds"] >= 0
     # Dispatch verification and the initial watcher read are the first two run
     # reads.  The third belongs to cancel_formal_unit, proving that the jobs
     # response at the exact deadline triggered cancellation without another poll.
@@ -1204,4 +1300,44 @@ def test_formal_assignment_stop_loss_submits_only_one_cancel_request() -> None:
     assert outcome.decision == "no-go"
     assert outcome.no_go_reason_or_null == "budget-exhausted"
     assert transport.run_reads_at_cancel == [4]
+    assert transport.cancelled == [RUN_ID]
+
+
+def test_formal_watcher_never_admits_success_observed_after_cancel_request() -> None:
+    transport = _CancelThenSuccessTransport()
+    provider = _provider(transport)
+    spec = followup_formal_unit_specs(PROFILE)[0]
+    run_id = provider.dispatch_formal_unit(inputs=_inputs())
+    transport.observed_at = datetime(2026, 8, 30, 0, 19, 58, tzinfo=UTC)
+
+    outcome = provider.start_formal_unit_watch(
+        provider_run_id=run_id,
+        spec=spec,
+        reservation_minutes=spec.reservation_minutes,
+    ).wait()
+
+    assert outcome.decision == "no-go"
+    assert outcome.no_go_reason_or_null == "budget-exhausted"
+    assert outcome.artifact_id_or_null is None
+    receipt = json.loads(outcome.watcher_receipt_bytes)
+    assert receipt["cancellation_ledger"]["final_conclusion"] == "success"
+    assert transport.cancelled == [RUN_ID]
+
+
+def test_formal_watcher_never_reclassifies_a_deadline_cancel_as_provider_retry() -> None:
+    transport = _CancelThenStartupFailureTransport()
+    provider = _provider(transport)
+    spec = followup_formal_unit_specs(PROFILE)[0]
+    run_id = provider.dispatch_formal_unit(inputs=_inputs())
+    transport.observed_at = datetime(2026, 8, 30, 0, 19, 58, tzinfo=UTC)
+
+    outcome = provider.start_formal_unit_watch(
+        provider_run_id=run_id,
+        spec=spec,
+        reservation_minutes=spec.reservation_minutes,
+    ).wait()
+
+    assert outcome.decision == "no-go"
+    assert outcome.no_go_reason_or_null == "budget-exhausted"
+    assert outcome.provider_failure_class_or_null is None
     assert transport.cancelled == [RUN_ID]

@@ -327,6 +327,7 @@ def inspect_followup_campaign_evidence_bundle(
                     unit_attempt_ordinal=attempt,
                     run_json=run_bytes,
                     jobs_json=jobs_bytes,
+                    watcher_receipt_json=watcher_bytes,
                     terminal_campaign_state_bytes=terminal_state,
                 )
             )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import replace
 
 import pytest
@@ -19,6 +20,7 @@ from dynamic_cssc.followup_performance_campaign_controller import (
     FollowupFormalUnitWatchOutcome,
     dispatch_bind_watch,
 )
+from dynamic_cssc.followup_performance_contract import _canonical_json_bytes
 from dynamic_cssc.followup_performance_formal_matrix import (
     followup_formal_unit_specs,
 )
@@ -47,26 +49,122 @@ def _opened() -> FollowupCampaignState:
 
 
 def _success_outcome(
-    *, run_id: int = 9001, watcher_session: str = "5" * 64
+    *,
+    artifact_name: str | None = None,
+    attempt: int = 1,
+    ordinal: int = 0,
+    run_id: int = 9001,
+    watcher_session: str = "5" * 64,
 ) -> FollowupFormalUnitWatchOutcome:
-    watcher_receipt = b'{"watcher-receipt-sentinel":true}\n'
+    spec = followup_formal_unit_specs(PROFILE)[ordinal]
+    artifact_name = artifact_name or f"followup-performance-v1-{spec.job_token}"
+    run_json = b'{"conclusion":"success","updated_at":"2026-08-30T00:10:00Z"}\n'
+    jobs_json = b'{"jobs":[],"total_count":0}\n'
+    artifacts_json = b'{"artifacts":[],"total_count":0}\n'
+    guard_receipt = b'{"guard":true}\n'
+    watcher_receipt = _canonical_json_bytes(
+        {
+            "artifact_id": 9101,
+            "artifact_name": artifact_name,
+            "artifact_provider_digest": f"sha256:{'7' * 64}",
+            "artifacts_api_sha256": hashlib.sha256(artifacts_json).hexdigest(),
+            "authority": False,
+            "campaign_id": _opened().document["campaign_id"],
+            "cancellation_ledger": None,
+            "critical_path_seconds": 600,
+            "decision": "success",
+            "formal_unit_ordinal": ordinal,
+            "guard_receipt_bytes_sha256": hashlib.sha256(
+                guard_receipt
+            ).hexdigest(),
+            "jobs_api_sha256": hashlib.sha256(jobs_json).hexdigest(),
+            "provider_run_id": run_id,
+            "publication_evidence_admitted": False,
+            "reservation_minutes": spec.reservation_minutes,
+            "run_api_sha256": hashlib.sha256(run_json).hexdigest(),
+            "schema_version": (
+                "dynamic-cssc-followup-performance-watcher-receipt-v3"
+            ),
+            "unit_attempt_ordinal": attempt,
+            "unit_output_envelope_sha256": "8" * 64,
+            "watcher_session_sha256": watcher_session,
+        }
+    )
     return FollowupFormalUnitWatchOutcome(
         provider_run_id=run_id,
         watcher_session_sha256=watcher_session,
         watcher_receipt_sha256=hashlib.sha256(watcher_receipt).hexdigest(),
         watcher_receipt_bytes=watcher_receipt,
-        provider_run_json=b'{"run":true}\n',
-        provider_jobs_json=b'{"jobs":[]}\n',
-        provider_artifacts_json=b'{"artifacts":[]}\n',
-        provider_guard_receipt_bytes_or_null=b'{"guard":true}\n',
+        provider_run_json=run_json,
+        provider_jobs_json=jobs_json,
+        provider_artifacts_json=artifacts_json,
+        provider_guard_receipt_bytes_or_null=guard_receipt,
         decision="success",
         artifact_id_or_null=9101,
-        artifact_name_or_null="followup-performance-v1-formal-acquisition-00",
+        artifact_name_or_null=artifact_name,
         artifact_provider_digest_or_null=f"sha256:{'7' * 64}",
         unit_output_envelope_sha256_or_null="8" * 64,
         provider_failure_class_or_null=None,
         provider_failure_evidence_sha256_or_null=None,
         provider_failure_evidence_bytes_or_null=None,
+        no_go_reason_or_null=None,
+    )
+
+
+def _provider_failure_outcome(
+    *,
+    attempt: int = 1,
+    ordinal: int = 0,
+    run_id: int = 9001,
+    watcher_session: str = "5" * 64,
+) -> FollowupFormalUnitWatchOutcome:
+    failure_evidence = b'{"provider-failure-sentinel":true}\n'
+    run_json = (
+        b'{"conclusion":"cancelled",'
+        b'"updated_at":"2026-08-30T00:10:00Z"}\n'
+    )
+    jobs_json = b'{"jobs":[],"total_count":0}\n'
+    artifacts_json = b'{"artifacts":[],"total_count":0}\n'
+    failure_sha = hashlib.sha256(failure_evidence).hexdigest()
+    watcher_receipt = _canonical_json_bytes(
+        {
+            "artifacts_api_sha256": hashlib.sha256(artifacts_json).hexdigest(),
+            "authority": False,
+            "campaign_id": _opened().document["campaign_id"],
+            "cancellation_ledger": None,
+            "decision": "provider-failure",
+            "formal_unit_ordinal": ordinal,
+            "jobs_api_sha256": hashlib.sha256(jobs_json).hexdigest(),
+            "no_go_reason_or_null": None,
+            "provider_failure_class_or_null": "hosted-runner-loss-or-shutdown",
+            "provider_failure_evidence_sha256_or_null": failure_sha,
+            "provider_run_id": run_id,
+            "publication_evidence_admitted": False,
+            "run_api_sha256": hashlib.sha256(run_json).hexdigest(),
+            "schema_version": (
+                "dynamic-cssc-followup-performance-watcher-receipt-v3"
+            ),
+            "unit_attempt_ordinal": attempt,
+            "watcher_session_sha256": watcher_session,
+        }
+    )
+    return FollowupFormalUnitWatchOutcome(
+        provider_run_id=run_id,
+        watcher_session_sha256=watcher_session,
+        watcher_receipt_sha256=hashlib.sha256(watcher_receipt).hexdigest(),
+        watcher_receipt_bytes=watcher_receipt,
+        provider_run_json=run_json,
+        provider_jobs_json=jobs_json,
+        provider_artifacts_json=artifacts_json,
+        provider_guard_receipt_bytes_or_null=None,
+        decision="provider-failure",
+        artifact_id_or_null=None,
+        artifact_name_or_null=None,
+        artifact_provider_digest_or_null=None,
+        unit_output_envelope_sha256_or_null=None,
+        provider_failure_class_or_null="hosted-runner-loss-or-shutdown",
+        provider_failure_evidence_sha256_or_null=failure_sha,
+        provider_failure_evidence_bytes_or_null=failure_evidence,
         no_go_reason_or_null=None,
     )
 
@@ -246,26 +344,48 @@ def test_malformed_success_is_cancelled_and_closed_instead_of_committed() -> Non
     )
 
 
-def test_only_first_closed_provider_failure_can_be_replaced() -> None:
-    failure_evidence = b'{"provider-failure-sentinel":true}\n'
-    failed_outcome = replace(
-        _success_outcome(),
-        decision="provider-failure",
-        artifact_id_or_null=None,
-        artifact_name_or_null=None,
-        artifact_provider_digest_or_null=None,
-        unit_output_envelope_sha256_or_null=None,
-        provider_guard_receipt_bytes_or_null=None,
-        provider_failure_class_or_null="hosted-runner-loss-or-shutdown",
-        provider_failure_evidence_sha256_or_null=hashlib.sha256(
-            failure_evidence
-        ).hexdigest(),
-        provider_failure_evidence_bytes_or_null=failure_evidence,
+def test_watcher_receipt_must_bind_exact_provider_bytes() -> None:
+    outcome = _success_outcome()
+    provider = _Provider(
+        replace(
+            outcome,
+            provider_jobs_json=b'{"jobs":[{"tampered":true}],"total_count":1}\n',
+        )
     )
+
+    with pytest.raises(FollowupCampaignControlError, match="exact provider outcome"):
+        _dispatch(provider)
+
+    assert provider.cancelled == [9001]
+    assert provider.install_calls[-1][2].state == "campaign-no-go"
+
+
+def test_rehashed_watcher_authority_tamper_is_rejected() -> None:
+    outcome = _success_outcome()
+    receipt = json.loads(outcome.watcher_receipt_bytes)
+    receipt["authority"] = True
+    receipt_bytes = _canonical_json_bytes(receipt)
+    provider = _Provider(
+        replace(
+            outcome,
+            watcher_receipt_bytes=receipt_bytes,
+            watcher_receipt_sha256=hashlib.sha256(receipt_bytes).hexdigest(),
+        )
+    )
+
+    with pytest.raises(FollowupCampaignControlError, match="canonical inspection"):
+        _dispatch(provider)
+
+    assert provider.cancelled == [9001]
+    assert provider.install_calls[-1][2].state == "campaign-no-go"
+
+
+def test_only_first_closed_provider_failure_can_be_replaced() -> None:
+    failed_outcome = _provider_failure_outcome()
     first = _dispatch(_Provider(failed_outcome))
     assert first.terminal_state.state == "unit-provider-failed"
 
-    second_outcome = replace(failed_outcome, provider_run_id=9002)
+    second_outcome = _provider_failure_outcome(run_id=9002, attempt=2)
     second = _dispatch(
         _Provider(second_outcome),
         previous=first.terminal_state,
@@ -295,10 +415,10 @@ def test_ordered_unit_requires_exact_acquisition_provider_binding() -> None:
         unit_attempt_ordinal=1,
     )
     success = _Provider(
-        replace(
-            _success_outcome(),
-            provider_run_id=9013,
-            artifact_name_or_null="followup-performance-v1-formal-ordered-event-13",
+        _success_outcome(
+            run_id=9013,
+            ordinal=13,
+            artifact_name="followup-performance-v1-formal-ordered-event-13",
         )
     )
     result = _dispatch(

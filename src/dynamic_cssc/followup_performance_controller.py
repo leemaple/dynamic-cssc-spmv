@@ -74,7 +74,6 @@ __all__ = (
     "FollowupDispatchPrerequisites",
     "FollowupFormalAdmissionRequest",
     "FollowupFormalCampaignOpening",
-    "FollowupFormalCampaignDispatcher",
     "FollowupFormalDispatchCapability",
     "FollowupFormalLiveJobSnapshot",
     "FollowupFormalLiveObservation",
@@ -86,7 +85,6 @@ __all__ = (
     "FollowupProviderAuthoritySnapshot",
     "FollowupPrerequisiteProvider",
     "FollowupQualificationDispatchCapability",
-    "FollowupQualificationDispatcher",
     "FollowupQualificationOpening",
     "FollowupQualificationObservation",
     "FollowupQualificationProvider",
@@ -97,9 +95,7 @@ __all__ = (
     "authorize_followup_formal_campaign",
     "authorize_followup_qualification_dispatch",
     "consume_followup_qualification_capability",
-    "dispatch_followup_qualification",
     "consume_followup_formal_campaign_capability",
-    "open_followup_formal_campaign",
     "watch_followup_formal_campaign",
     "watch_followup_qualification",
 )
@@ -458,27 +454,6 @@ class FollowupQualificationProvider(Protocol):
         self,
         run_id: int,
     ) -> FollowupQualificationObservation: ...
-
-
-class FollowupQualificationDispatcher(Protocol):
-    def dispatch_qualification(
-        self,
-        *,
-        expected_s1_git_sha: str,
-        expected_s2_git_sha: str,
-        expected_compatibility_receipt_sha256: str,
-    ) -> int: ...
-
-
-class FollowupFormalCampaignDispatcher(Protocol):
-    def open_formal_campaign(
-        self,
-        *,
-        expected_s1_git_sha: str,
-        expected_s2_git_sha: str,
-        expected_compatibility_receipt_sha256: str,
-        qualification_run_id: int,
-    ) -> int: ...
 
 
 class FollowupFormalLiveProvider(Protocol):
@@ -1148,31 +1123,6 @@ def _validate_binding_claim(
     claimed_at = _require_utc(_utc_now(), "follow-up capability consumption")
     if claimed_at < binding.controller_observed_at or claimed_at > binding.expires_at:
         raise FollowupControllerError("follow-up capability expired before dispatch")
-
-
-def dispatch_followup_qualification(
-    capability: FollowupQualificationDispatchCapability,
-    request: FollowupDispatchPrerequisites,
-    dispatcher: FollowupQualificationDispatcher,
-) -> int:
-    """Atomically consume qualification authority and perform its sole dispatch."""
-
-    opening = consume_followup_qualification_capability(capability, request)
-    try:
-        run_id = dispatcher.dispatch_qualification(
-            expected_s1_git_sha=opening.experiment_source_s1_sha,
-            expected_s2_git_sha=opening.evidence_freeze_s2_sha,
-            expected_compatibility_receipt_sha256=(
-                opening.compatibility_receipt_sha256
-            ),
-        )
-    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as error:
-        raise FollowupControllerError(
-            "sole qualification dispatch failed or is ambiguous"
-        ) from error
-    if type(run_id) is not int or run_id <= 0:
-        raise FollowupControllerError("qualification dispatcher returned an invalid run ID")
-    return run_id
 
 
 def consume_followup_qualification_capability(
@@ -1864,30 +1814,6 @@ def consume_followup_formal_campaign_capability(
         qualification_q6_artifact_id=binding.q6_artifact_id,
         qualification_q6_artifact_digest=binding.q6_artifact_digest,
     )
-
-
-def open_followup_formal_campaign(
-    capability: FollowupFormalDispatchCapability,
-    request: FollowupFormalAdmissionRequest,
-    dispatcher: FollowupFormalCampaignDispatcher,
-) -> int:
-    """Legacy one-run adapter retained until callers migrate to campaign CAS."""
-
-    opening = consume_followup_formal_campaign_capability(capability, request)
-    try:
-        run_id = dispatcher.open_formal_campaign(
-            expected_s1_git_sha=opening.experiment_source_s1_sha,
-            expected_s2_git_sha=opening.evidence_freeze_s2_sha,
-            expected_compatibility_receipt_sha256=(
-                opening.compatibility_receipt_sha256
-            ),
-            qualification_run_id=opening.qualification_run_id,
-        )
-    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as error:
-        raise FollowupControllerError("formal campaign dispatch failed or is ambiguous") from error
-    if type(run_id) is not int or run_id <= 0:
-        raise FollowupControllerError("formal dispatcher returned an invalid run ID")
-    return run_id
 
 
 def _formal_live_job_document(job: FollowupFormalLiveJobSnapshot) -> dict[str, object]:

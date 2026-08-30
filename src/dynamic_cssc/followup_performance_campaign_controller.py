@@ -25,8 +25,15 @@ from dynamic_cssc.followup_performance_campaign import (
     record_followup_provider_failure,
     reserve_followup_campaign_unit,
 )
-from dynamic_cssc.followup_performance_contract import FollowupContractError
+from dynamic_cssc.followup_performance_contract import (
+    FollowupContractError,
+    _parse_ascii_json,
+)
 from dynamic_cssc.followup_performance_formal_matrix import FollowupFormalUnitSpec
+from dynamic_cssc.followup_performance_watcher_receipt import (
+    FollowupFormalWatcherReceiptError,
+    inspect_followup_formal_watcher_receipt,
+)
 
 __all__ = (
     "FollowupAcquisitionRunBinding",
@@ -203,7 +210,11 @@ def _dispatch_inputs(
 def _validated_watch_outcome(
     outcome: object,
     *,
+    campaign_id: str,
+    formal_unit_ordinal: int,
     provider_run_id: int,
+    reservation_minutes: int,
+    unit_attempt_ordinal: int,
     watcher_session_sha256: str,
 ) -> FollowupFormalUnitWatchOutcome:
     if (
@@ -225,6 +236,54 @@ def _validated_watch_outcome(
         )
     ):
         raise FollowupCampaignControlError("watcher outcome identity changed")
+    try:
+        receipt = inspect_followup_formal_watcher_receipt(
+            outcome.watcher_receipt_bytes
+        )
+    except FollowupFormalWatcherReceiptError as error:
+        raise FollowupCampaignControlError(
+            "watcher receipt failed canonical inspection"
+        ) from error
+    receipt_document = receipt.document
+    if (
+        receipt.sha256 != outcome.watcher_receipt_sha256
+        or receipt_document["campaign_id"] != campaign_id
+        or receipt_document["formal_unit_ordinal"] != formal_unit_ordinal
+        or receipt_document["provider_run_id"] != provider_run_id
+        or receipt_document["unit_attempt_ordinal"] != unit_attempt_ordinal
+        or receipt_document["watcher_session_sha256"]
+        != watcher_session_sha256
+        or receipt_document["decision"] != outcome.decision
+        or receipt_document["run_api_sha256"]
+        != hashlib.sha256(outcome.provider_run_json).hexdigest()
+        or receipt_document["jobs_api_sha256"]
+        != hashlib.sha256(outcome.provider_jobs_json).hexdigest()
+        or receipt_document["artifacts_api_sha256"]
+        != hashlib.sha256(outcome.provider_artifacts_json).hexdigest()
+    ):
+        raise FollowupCampaignControlError(
+            "watcher receipt is not bound to the exact provider outcome"
+        )
+    cancellation = receipt.cancellation_ledger
+    if cancellation is not None:
+        try:
+            run = _parse_ascii_json(
+                outcome.provider_run_json,
+                label="formal watcher run API response",
+            )
+        except FollowupContractError as error:
+            raise FollowupCampaignControlError(
+                "watcher terminal provider run is unreadable"
+            ) from error
+        if (
+            type(run) is not dict
+            or cancellation["provider_terminal_updated_utc"]
+            != run.get("updated_at")
+            or cancellation["final_conclusion"] != run.get("conclusion")
+        ):
+            raise FollowupCampaignControlError(
+                "watcher cancellation is not bound to the terminal provider run"
+            )
     artifact_fields = (
         outcome.artifact_id_or_null,
         outcome.artifact_name_or_null,
@@ -248,6 +307,17 @@ def _validated_watch_outcome(
             or any(value is not None for value in provider_failure_fields)
             or outcome.provider_failure_evidence_bytes_or_null is not None
             or outcome.no_go_reason_or_null is not None
+            or receipt_document["artifact_id"] != outcome.artifact_id_or_null
+            or receipt_document["artifact_name"] != outcome.artifact_name_or_null
+            or receipt_document["artifact_provider_digest"]
+            != outcome.artifact_provider_digest_or_null
+            or receipt_document["unit_output_envelope_sha256"]
+            != outcome.unit_output_envelope_sha256_or_null
+            or receipt_document["guard_receipt_bytes_sha256"]
+            != hashlib.sha256(
+                outcome.provider_guard_receipt_bytes_or_null
+            ).hexdigest()
+            or receipt_document["reservation_minutes"] != reservation_minutes
         ):
             raise FollowupCampaignControlError(
                 "successful watcher outcome lacks one exact guarded artifact"
@@ -265,6 +335,10 @@ def _validated_watch_outcome(
             != outcome.provider_failure_evidence_sha256_or_null
             or outcome.provider_guard_receipt_bytes_or_null is not None
             or outcome.no_go_reason_or_null is not None
+            or receipt_document["provider_failure_class_or_null"]
+            != outcome.provider_failure_class_or_null
+            or receipt_document["provider_failure_evidence_sha256_or_null"]
+            != outcome.provider_failure_evidence_sha256_or_null
         ):
             raise FollowupCampaignControlError(
                 "provider-failure watcher outcome is not replacement-eligible"
@@ -276,6 +350,8 @@ def _validated_watch_outcome(
             or outcome.provider_failure_evidence_bytes_or_null is not None
             or outcome.provider_guard_receipt_bytes_or_null is not None
             or type(outcome.no_go_reason_or_null) is not str
+            or receipt_document["no_go_reason_or_null"]
+            != outcome.no_go_reason_or_null
         ):
             raise FollowupCampaignControlError("NO-GO watcher outcome is malformed")
     else:
@@ -452,7 +528,11 @@ def dispatch_bind_watch(
     try:
         outcome = _validated_watch_outcome(
             outcome,
+            campaign_id=armed.document["campaign_id"],  # type: ignore[arg-type]
+            formal_unit_ordinal=spec.ordinal,
             provider_run_id=provider_run_id,
+            reservation_minutes=spec.reservation_minutes,
+            unit_attempt_ordinal=unit_attempt_ordinal,
             watcher_session_sha256=watcher_session,
         )
     except FollowupCampaignControlError:

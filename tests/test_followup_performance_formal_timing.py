@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -10,6 +12,7 @@ from dynamic_cssc.followup_performance_campaign import (
     bind_followup_campaign_run,
     build_followup_campaign_selection,
     commit_followup_campaign_unit,
+    inspect_followup_campaign_state,
     open_followup_campaign_state,
     record_followup_provider_failure,
     reserve_followup_campaign_unit,
@@ -141,7 +144,6 @@ def _campaign_documents(*, replacement_ordinal: int | None = None):  # type: ign
         qualification_q6_artifact_digest=f"sha256:{'4' * 64}",
         scientific_profile=PROFILE,
     )
-    committed = []
     admissions = []
     terminal_attempts = []
     run_id = 20_000
@@ -179,21 +181,16 @@ def _campaign_documents(*, replacement_ordinal: int | None = None):  # type: ign
             armed,
             watcher_receipt_sha256=f"{run_id + 2:064x}",
             artifact_id=30_000 + spec.ordinal,
-            artifact_name=f"followup-performance-v1-{spec.job_token}",
+            artifact_name=f"followup-performance-v1-{spec.job_token.lower()}",
             artifact_provider_digest=f"sha256:{40_000 + spec.ordinal:064x}",
             unit_output_envelope_sha256=f"{50_000 + spec.ordinal:064x}",
         )
         terminal_attempts.append(success)
-        committed.append(success)
         admissions.append(f"{60_000 + spec.ordinal:064x}")
         previous = success
         run_id += 10
-    selection = build_followup_campaign_selection(
-        tuple(committed),
-        tuple(admissions),
-        scientific_profile=PROFILE,
-    )
     evidence = []
+    committed = []
     cursor = datetime(2026, 8, 30, 0, 0, tzinfo=UTC)
     for state in terminal_attempts:
         ordinal = state.document["unit_ordinal_or_null"]
@@ -260,18 +257,99 @@ def _campaign_documents(*, replacement_ordinal: int | None = None):  # type: ign
             "status": "completed",
             "updated_at": _timestamp(updated),
         }
+        run_bytes = _canonical_json_bytes(run)
+        jobs_bytes = _canonical_json_bytes(
+            {"jobs": jobs, "total_count": len(jobs)}
+        )
+        if successful:
+            cancellation_ledger = None
+        else:
+            detection = producer_start + timedelta(seconds=1)
+            requested = detection + timedelta(seconds=1)
+            acknowledged = requested + timedelta(seconds=1)
+            decided = acknowledged + timedelta(seconds=1)
+            cancellation_ledger = {
+                "ack_to_watch_decision_seconds": 1,
+                "cancel_request_utc": _timestamp(requested),
+                "controller_detection_utc": _timestamp(detection),
+                "final_conclusion": run["conclusion"],
+                "provider_api_ack_utc": _timestamp(acknowledged),
+                "provider_terminal_updated_utc": run["updated_at"],
+                "request_to_ack_seconds": 1,
+                "threshold_utc": None,
+                "watch_decided_utc": _timestamp(decided),
+            }
+        watcher_session = state.document["watcher_session_sha256_or_null"]
+        assert type(watcher_session) is str
+        common_receipt = {
+            "artifacts_api_sha256": "0" * 64,
+            "authority": False,
+            "campaign_id": state.document["campaign_id"],
+            "cancellation_ledger": cancellation_ledger,
+            "decision": "success" if successful else "provider-failure",
+            "formal_unit_ordinal": ordinal,
+            "jobs_api_sha256": hashlib.sha256(jobs_bytes).hexdigest(),
+            "provider_run_id": run_id,
+            "publication_evidence_admitted": False,
+            "run_api_sha256": hashlib.sha256(run_bytes).hexdigest(),
+            "schema_version": (
+                "dynamic-cssc-followup-performance-watcher-receipt-v3"
+            ),
+            "unit_attempt_ordinal": attempt,
+            "watcher_session_sha256": watcher_session,
+        }
+        if successful:
+            receipt_document = {
+                **common_receipt,
+                "artifact_id": state.document["artifact_id_or_null"],
+                "artifact_name": state.document["artifact_name_or_null"],
+                "artifact_provider_digest": state.document[
+                    "artifact_provider_digest_or_null"
+                ],
+                "critical_path_seconds": 10,
+                "guard_receipt_bytes_sha256": "7" * 64,
+                "reservation_minutes": spec.reservation_minutes,
+                "unit_output_envelope_sha256": state.document[
+                    "unit_output_envelope_sha256_or_null"
+                ],
+            }
+        else:
+            receipt_document = {
+                **common_receipt,
+                "no_go_reason_or_null": None,
+                "provider_failure_class_or_null": state.document[
+                    "provider_failure_class_or_null"
+                ],
+                "provider_failure_evidence_sha256_or_null": state.document[
+                    "provider_failure_evidence_sha256_or_null"
+                ],
+            }
+        watcher_receipt = _canonical_json_bytes(receipt_document)
+        state_document = dict(state.document)
+        state_document["watcher_receipt_sha256_or_null"] = hashlib.sha256(
+            watcher_receipt
+        ).hexdigest()
+        state = inspect_followup_campaign_state(
+            _canonical_json_bytes(state_document)
+        )
+        if successful:
+            committed.append(state)
         evidence.append(
             FollowupFormalRunEvidence(
                 unit_ordinal=ordinal,
                 unit_attempt_ordinal=attempt,
-                run_json=_canonical_json_bytes(run),
-                jobs_json=_canonical_json_bytes(
-                    {"jobs": jobs, "total_count": len(jobs)}
-                ),
+                run_json=run_bytes,
+                jobs_json=jobs_bytes,
+                watcher_receipt_json=watcher_receipt,
                 terminal_campaign_state_bytes=state.document_bytes,
             )
         )
         cursor = updated + timedelta(seconds=1)
+    selection = build_followup_campaign_selection(
+        tuple(committed),
+        tuple(admissions),
+        scientific_profile=PROFILE,
+    )
     return tuple(evidence), selection
 
 
@@ -302,6 +380,32 @@ def test_campaign_timing_charges_failed_and_replacement_attempt_once() -> None:
     assert ledger.document["total_ordinary_runner_seconds"] == 17 * 9 + 3
     assert ledger.document["retry_runner_seconds"] == 0
     assert len(ledger.document["units"][4]["attempts"]) == 2  # type: ignore[index]
+
+
+def test_campaign_timing_rejects_rehashed_cancellation_arithmetic_tamper() -> None:
+    evidence, selection = _campaign_documents(replacement_ordinal=4)
+    failed = evidence[4]
+    receipt = json.loads(failed.watcher_receipt_json)
+    receipt["cancellation_ledger"]["request_to_ack_seconds"] = 2
+    receipt_bytes = _canonical_json_bytes(receipt)
+    state = inspect_followup_campaign_state(failed.terminal_campaign_state_bytes)
+    state_document = dict(state.document)
+    state_document["watcher_receipt_sha256_or_null"] = hashlib.sha256(
+        receipt_bytes
+    ).hexdigest()
+    tampered = replace(
+        failed,
+        watcher_receipt_json=receipt_bytes,
+        terminal_campaign_state_bytes=_canonical_json_bytes(state_document),
+    )
+    evidence = (*evidence[:4], tampered, *evidence[5:])
+
+    with pytest.raises(FollowupFormalTimingError, match="canonical inspection"):
+        inspect_followup_formal_timing_campaign(
+            evidence,
+            campaign_selection=selection,
+            scientific_profile=PROFILE,
+        )
 
 
 def test_attempt_runner_charge_is_available_before_replacement_dispatch() -> None:

@@ -1,10 +1,11 @@
 # Follow-up performance Stage-2 implementation review
 
-> **Current gate:** HOLD.  The first exact successor candidate passed ZCode and
-> exact-head Linux CI with no P0/P1 finding, but ChatGPT Pro is still reviewing
-> that exact object.  The committed P2 closure successor below is not yet
-> exact-head reviewed.  No qualification or formal seed is authorized by this
-> document.
+> **Current gate:** HOLD.  Exact candidate `67e7708` passed ZCode and exact-head
+> Linux CI, but ChatGPT Pro found one unresolved P0 and one unresolved P1 on
+> that same object.  The pending closure successor removes those authority
+> surfaces and binds the newly required cancellation ledger; it is locally
+> green but has not yet received exact-head CI or either exact-object review.
+> No qualification or formal seed is authorized by this document.
 
 ## Review lineage
 
@@ -112,6 +113,80 @@ single process.  Every changed Python file also passes Ruff, and the Git diff
 check passes.  These checks use only disjoint sentinel identities.  The delta
 still requires one exact commit, exact-head CI, and the same configured
 reviewers before it can replace `b085e26` as the final Stage-2 gate object.
+
+## Exact `67e7708` review and the authority/cancellation successor
+
+The P2-closure candidate subsequently frozen for common review was:
+
+- commit `67e77086e708ea4de31e4827364f5f0107209bdc`;
+- tree `45bb9278c3ae67a4c4f7eeaf4c8acc46bb1f7d23`;
+- sole parent `b085e26ed20436f7d42c461d8decebdc14b7d37e`;
+- binary diff SHA-256
+  `13ee175c8f529a0444e1dbc05c6c2d0679f11fafdb40524a1b3c81f093e45431`;
+  and
+- unchanged external packet SHA-256
+  `759f65bb74e2d207358a29d39398489bc5e6885a31fc12ddf3f6a822cae55d1f`.
+
+ZCode GLM-5.3 Max returned **PASS, P0=0, P1=0, P2=3**.  Its nonblocking
+findings were the retained legacy positive-authority exports, a repository
+sweep that could be broadened beyond the registered follow-up filename
+patterns, and one test that reached the child classifier through a private
+helper rather than its public inspector.
+
+ChatGPT Pro independently returned **AMEND, P0=1, P1=1, P2=1**.  The P2 was
+the already-corrected external packet filename.  Its two blocking findings
+were stricter and are adopted as the controlling interpretation:
+
+1. the public controller module still exported two authority-consuming legacy
+   operations and their dispatcher protocols, so a caller-supplied dispatcher
+   could consume an in-process capability without first winning the durable
+   provider-global claim; and
+2. the formal watcher and final timing ledger did not retain the frozen
+   threshold, controller detection/request/API-ack/decision clocks, exact
+   provider terminal update/conclusion, or the two same-clock lag values.
+
+Exact-head CI run
+[`33305210194`](https://github.com/leemaple/dynamic-cssc-spmv/actions/runs/33305210194)
+completed successfully on `67e7708`: P-1 and syntax passed; unit tests recorded
+**2,600 passed, 2 skipped** in 1,701.80 seconds; predicted-only smoke and R0
+packaging passed.  Artifact `9730595652`,
+`r0-freeze-67e77086e708ea4de31e4827364f5f0107209bdc`, is 8,885,131 bytes with
+provider digest
+`sha256:7ee94001206ee5995cf193a6bc5da7e169e0dbbb83e4654909f6c05869fede7e`.
+That historical green run cannot close Pro's P0/P1 and grants no dispatch
+authority.
+
+The present successor closes the stricter findings without changing a seed,
+matrix, workload, estimator, threshold, or claim rule:
+
+- it deletes the four legacy positive-authority names from the controller and
+  deletes the unused legacy qualification claim/dispatch methods from the CLI
+  adapter; the only qualification path now consumes its capability inside the
+  provider-global claim -> dispatch -> watch -> CAS execution module;
+- the formal watcher receipt is version 3 and retains all nine frozen
+  cancellation fields, with provider and controller clocks kept in separate
+  domains and only same-controller-clock elapsed values derived;
+- one deep canonical receipt inspector now closes exact field sets, authority
+  flags, provider-document hashes, terminal update/conclusion, cancellation
+  order/arithmetic, guarded artifact identity, and the terminal campaign-state
+  receipt hash before any commit or timing admission;
+- cancellation requested at a frozen threshold remains NO-GO even if the
+  provider later reports a successful run conclusion or a startup-failure
+  label that would have been replacement-eligible before controller
+  cancellation; and
+- regressions now include two controller instances competing for the one
+  provider claim, exact-provider-byte substitution, rehashed authority and
+  cancellation-ledger tampering, and single charging of failed/replacement
+  runner seconds.
+
+The affected follow-up suite is **155 passed** in 81.28 seconds under one
+low-priority process.  Ruff, Git diff checking, Behavior-Set import closure,
+the orphan-path sweep, and sorted/unique role inventories pass.  Because these
+changes alter authority and evidence interpretation, the analyzer,
+control-registration, and formal follow-up Behavior Sets advance from v2 to
+v3.  This remains a local engineering witness only: after it is frozen as one
+exact commit, exact-head Linux CI and zero-P0/P1 verdicts from both configured
+reviewers are still mandatory.
 
 ## Dispatch boundary
 

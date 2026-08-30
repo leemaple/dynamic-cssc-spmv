@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -224,7 +225,6 @@ class _SerialProvider:
         spec: FollowupFormalUnitSpec,
         reservation_minutes: int,
     ) -> _Watch:
-        del reservation_minutes
         inputs = self._dispatch[provider_run_id]
         attempt = int(inputs["unit_attempt_ordinal"])
         fail = (
@@ -267,18 +267,69 @@ class _SerialProvider:
             artifact_digest = f"sha256:{artifact_id:064x}"
             envelope = f"{provider_run_id + 200_000:064x}"
             failure_class = None
-        receipt_document = {
+        run_document = json.loads(run)
+        run_started = datetime.strptime(
+            run_document["created_at"], "%Y-%m-%dT%H:%M:%SZ"
+        ).replace(tzinfo=UTC)
+        if fail:
+            detection = run_started + timedelta(minutes=reservation_minutes)
+            requested = detection + timedelta(seconds=1)
+            acknowledged = requested + timedelta(seconds=1)
+            decided = acknowledged + timedelta(seconds=1)
+            cancellation_ledger = {
+                "ack_to_watch_decision_seconds": 1,
+                "cancel_request_utc": _render(requested),
+                "controller_detection_utc": _render(detection),
+                "final_conclusion": run_document["conclusion"],
+                "provider_api_ack_utc": _render(acknowledged),
+                "provider_terminal_updated_utc": run_document["updated_at"],
+                "request_to_ack_seconds": 1,
+                "threshold_utc": _render(detection),
+                "watch_decided_utc": _render(decided),
+            }
+        else:
+            cancellation_ledger = None
+        common_receipt = {
             "artifacts_api_sha256": hashlib.sha256(artifacts).hexdigest(),
+            "authority": False,
+            "campaign_id": inputs["expected_campaign_id"],
+            "cancellation_ledger": cancellation_ledger,
             "decision": decision,
+            "formal_unit_ordinal": spec.ordinal,
             "jobs_api_sha256": hashlib.sha256(jobs).hexdigest(),
             "provider_run_id": provider_run_id,
+            "publication_evidence_admitted": False,
             "run_api_sha256": hashlib.sha256(run).hexdigest(),
+            "schema_version": (
+                "dynamic-cssc-followup-performance-watcher-receipt-v3"
+            ),
+            "unit_attempt_ordinal": attempt,
             "watcher_session_sha256": session,
         }
         if guard_log is not None:
-            receipt_document["guard_receipt_bytes_sha256"] = hashlib.sha256(
-                guard_log
-            ).hexdigest()
+            receipt_document = {
+                **common_receipt,
+                "artifact_id": artifact_id,
+                "artifact_name": artifact_name,
+                "artifact_provider_digest": artifact_digest,
+                "critical_path_seconds": (
+                    self.successful_producer_seconds
+                    + 1
+                    + self.successful_guard_seconds
+                ),
+                "guard_receipt_bytes_sha256": hashlib.sha256(
+                    guard_log
+                ).hexdigest(),
+                "reservation_minutes": reservation_minutes,
+                "unit_output_envelope_sha256": envelope,
+            }
+        else:
+            receipt_document = {
+                **common_receipt,
+                "no_go_reason_or_null": None,
+                "provider_failure_class_or_null": failure_class,
+                "provider_failure_evidence_sha256_or_null": failure_sha,
+            }
         receipt = _canonical_json_bytes(receipt_document)
         return _Watch(
             FollowupFormalUnitWatchOutcome(
@@ -376,6 +427,14 @@ def test_replacement_charges_cancellation_lag_once_to_the_retry_ledger(
     first = result.timing.document["units"][0]
     assert first["ordinary_runner_seconds"] == 1_200
     assert first["retry_runner_seconds"] == 2_999
+    assert result.timing.document["cancellation_ledger"] == [
+        first["attempts"][0]["cancellation_ledger"]
+    ]
+    cancellation = result.timing.document["cancellation_ledger"][0]
+    assert cancellation["formal_unit_ordinal"] == 0
+    assert cancellation["unit_attempt_ordinal"] == 1
+    assert cancellation["charged_runner_seconds"] == 3_000
+    assert cancellation["final_conclusion"] == "cancelled"
 
 
 def test_provider_failure_without_a_full_replacement_reserve_closes_no_go(

@@ -129,6 +129,7 @@
         "src/dynamic_cssc/followup_performance_terminal_binding.py",
         "src/dynamic_cssc/followup_performance_terminal_evidence.py",
         "src/dynamic_cssc/followup_performance_terminal_execution.py",
+        "src/dynamic_cssc/followup_performance_watcher_receipt.py",
         "src/dynamic_cssc/mask_ledger.py",
         "src/dynamic_cssc/metrics.py",
         "src/dynamic_cssc/openfhe_query_runner.py",
@@ -175,7 +176,7 @@
         "src/dynamic_cssc/strong_execution.py",
         "src/dynamic_cssc/strong_packed_coo.py"
       ],
-      "schema_version": "dynamic-cssc-followup-performance-analyzer-behavior-set-v2"
+      "schema_version": "dynamic-cssc-followup-performance-analyzer-behavior-set-v3"
     },
     "control-registration": {
       "paths": [
@@ -232,6 +233,7 @@
         "src/dynamic_cssc/followup_performance_terminal_binding.py",
         "src/dynamic_cssc/followup_performance_terminal_evidence.py",
         "src/dynamic_cssc/followup_performance_terminal_execution.py",
+        "src/dynamic_cssc/followup_performance_watcher_receipt.py",
         "src/dynamic_cssc/mask_ledger.py",
         "src/dynamic_cssc/metrics.py",
         "src/dynamic_cssc/openfhe_query_runner.py",
@@ -277,7 +279,7 @@
         "src/dynamic_cssc/strong_execution.py",
         "src/dynamic_cssc/strong_packed_coo.py"
       ],
-      "schema_version": "dynamic-cssc-followup-performance-control-registration-behavior-set-v2"
+      "schema_version": "dynamic-cssc-followup-performance-control-registration-behavior-set-v3"
     },
     "formal": {
       "paths": [
@@ -342,6 +344,7 @@
         "src/dynamic_cssc/followup_performance_provider_artifacts.py",
         "src/dynamic_cssc/followup_performance_terminal.py",
         "src/dynamic_cssc/followup_performance_terminal_binding.py",
+        "src/dynamic_cssc/followup_performance_watcher_receipt.py",
         "src/dynamic_cssc/mask_ledger.py",
         "src/dynamic_cssc/metrics.py",
         "src/dynamic_cssc/openfhe_query_runner.py",
@@ -387,7 +390,7 @@
         "src/dynamic_cssc/strong_execution.py",
         "src/dynamic_cssc/strong_packed_coo.py"
       ],
-      "schema_version": "dynamic-cssc-followup-performance-formal-behavior-set-v2"
+      "schema_version": "dynamic-cssc-followup-performance-formal-behavior-set-v3"
     },
     "qualification": {
       "paths": [
