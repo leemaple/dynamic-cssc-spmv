@@ -28,6 +28,8 @@ jobs:
     name: Produce and independently reinspect follow-up registration
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}
     steps:
       - name: Validate exact identities before checkout
         env:

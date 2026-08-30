@@ -474,3 +474,35 @@ qualification GO permits a separate fresh reread and, only if it passes, one
 nonserialized formal capability for the strictly serial 17-unit campaign.
 Every non-success remains fail-closed.  CI, registration, review, and this note
 mint no publication authority.
+
+## Post-S2 registration failure and replacement boundary
+
+The first five-control attempt against historical S1
+`7b3a8fbf79794ea07d6002e19b6d267552fa841d` and its data-only child S2
+`974d35672d25a1eac331fd5601b4b0f8f9585f03` exposed a deterministic control
+workflow defect before qualification or formal execution began.  Descriptive
+registration run
+[`33321883812`](https://github.com/leemaple/dynamic-cssc-spmv/actions/runs/33321883812)
+failed in `Verify lineage and the registration producer contract` with
+`ModuleNotFoundError: No module named 'dynamic_cssc'`.  Checkout, exact
+identity validation, CPython setup, and the hash-locked dependency install had
+all succeeded.  The run produced zero artifacts; all producer, independent
+reinspection, and upload steps were skipped.
+
+The cause is local to
+`.github/workflows/followup-performance-registration.yml`: its isolated virtual
+environment installs the frozen third-party requirements but the job did not
+bind repository imports to the exact checked-out `src/` tree.  This is a
+deterministic workflow defect, not a provider transient, scientific result, or
+authorization event.  The failed run must not be rerun.  Historical controls
+against S1/S2 above cannot transfer to a behavior-changing repair.
+
+The replacement source candidate therefore adds one job-wide absolute
+`PYTHONPATH` binding to the checked-out repository, adds a focused regression
+that first failed against the historical workflow and then passed with the
+binding, advances only the affected control-registration Behavior Set from v6
+to v7, and restores the registration-anchor file to its canonical empty S1
+form.  Qualification, formal execution, analysis, and registered-seed values
+remain untouched.  A new reviewed S1, a new deterministic direct-child
+data-only S2, and all five fresh authority-false controls are required before
+the existing dispatch boundary can be reconsidered.
