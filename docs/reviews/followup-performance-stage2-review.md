@@ -506,3 +506,67 @@ form.  Qualification, formal execution, analysis, and registered-seed values
 remain untouched.  A new reviewed S1, a new deterministic direct-child
 data-only S2, and all five fresh authority-false controls are required before
 the existing dispatch boundary can be reconsidered.
+
+## Post-replacement dedicated-CI static-gate failure
+
+The replacement lineage then closed its generic push CI and four dedicated
+authority-false controls, but the first dedicated exact-head Linux CI run
+[`33327887418`](https://github.com/leemaple/dynamic-cssc-spmv/actions/runs/33327887418)
+failed before emitting its control receipt.  The run was bound to replacement
+S1 `ecdc1e248e1d54d473510ab9c61a40af81777c79`, data-only S2
+`b3541edf5519fd64debb56ec697f7c6dd879418d`, and compatibility receipt
+`ce45f1a9a50fa42a7e430ec54e8280371ca7f81b14e6fd1579b61c15f89a93d7`.
+Its identity, detached-S1 checkout, S1/S2 compatibility, compilation, and full
+test suite all succeeded; the suite reported **2620 passed, 2 expected
+runner-dependent skips in 1702.98 seconds**.
+
+The subsequent Ruff command failed on exactly eight static findings in
+`scripts/build_route_c_paper_docx.py`: one import-layout finding, six line-length
+findings, and one nested-condition simplification.  Bash fail-fast therefore
+did not execute the following `git diff --check`.  Receipt packaging and upload
+were skipped, and the provider artifact API returned zero artifacts.  No
+qualification tag, qualification run, formal capability, or experimental
+artifact was created.
+
+This is a deterministic source-tree hygiene defect exposed by the dedicated
+control, not a provider transient or scientific outcome.  The failed run must
+not be rerun or used as one of the five controls.  The narrow repair changes
+only Python layout: it organizes the import boundary, wraps signatures, tuples,
+and literal strings without changing their values, and combines two equivalent
+nested conditions.  It does not change a workflow, scientific plan, seed,
+artifact schema, claim, Behavior Set registry membership, or Behavior Set
+schema.  This review note is itself an existing control-registration member, so
+its exact-byte inventory digest changes and must be regenerated in the fresh S2
+anchor.  The repair therefore changes the exact S1 tree and requires a new
+reviewed replacement S1, a new deterministic direct-child data-only S2, and
+five fresh authority-false controls before the external controller may
+reconsider qualification dispatch.
+
+## First static-repair candidate topology amendment
+
+The first static-repair candidate
+`38a806529f9fecd6058e0886f2d826d8717f9d58` was created from replacement S1
+`ecdc1e248e1d54d473510ab9c61a40af81777c79`.  Its two-path repair was locally
+Ruff-clean and behavior-preserving, and ZCode's GLM-5.3 Max review returned
+`PASS, P0=0, P1=0, P2=0` for the source repair.  ChatGPT Pro independently
+accepted the source and evidence-note semantics but returned `AMEND, P1=1` for
+the proposed integration topology.
+
+Remote `main` already pointed to historical data-only S2
+`b3541edf5519fd64debb56ec697f7c6dd879418d`.  The candidate diverged from that
+S2 at merge base `ecdc1e248e1d54d473510ab9c61a40af81777c79` and did not change
+the registration-anchor path relative to the merge base.  An ordinary merge
+would therefore retain the populated S2 anchor rather than restore canonical
+empty S1 bytes.  Force-moving `main` back to the candidate would instead remove
+the historical S2 from the forward lineage.  Neither result is admissible.
+Pull request #46 was closed without merge, and its branch remains as the exact
+reviewed-but-amended object.
+
+The successor must descend from exact current `main` S2, carry the same narrow
+source repair and factual record, and explicitly reset
+`config/followup-performance-registration-anchors.json` to the canonical empty
+`100644` S1 object.  Its parent, three-path diff, tree, empty-anchor object, and
+prospective merge tree require fresh exact-object review and CI.  Only the
+eventual merge commit may become the next replacement S1; all anchors,
+inventories, receipts, controls, and run IDs from the `b3541edf...` cycle remain
+non-transferable.
