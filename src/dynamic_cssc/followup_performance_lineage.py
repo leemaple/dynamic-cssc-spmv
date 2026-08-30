@@ -383,9 +383,10 @@ def verify_followup_s1_s2_compatibility(
     changed_paths = _changed_paths(repository, s1, s2)
     if changed_paths != [FOLLOWUP_REGISTRATION_ANCHOR_PATH]:
         raise FollowupLineageError("follow-up S2 may change only its data anchor")
-    if _read_blob(repository, s1, FOLLOWUP_REGISTRATION_ANCHOR_PATH).content != (
-        _EMPTY_ANCHOR_BYTES
-    ):
+    s1_anchor = _read_blob(repository, s1, FOLLOWUP_REGISTRATION_ANCHOR_PATH)
+    if s1_anchor.mode != "100644":
+        raise FollowupLineageError("follow-up S1 registration anchor mode is not 100644")
+    if s1_anchor.content != _EMPTY_ANCHOR_BYTES:
         raise FollowupLineageError("follow-up S1 registration anchor is not empty")
     inventories_s1 = {
         role: capture_followup_behavior_inventory(repository, s1, role)
@@ -400,11 +401,14 @@ def verify_followup_s1_s2_compatibility(
             inventories_s2[role]
         ):
             raise FollowupLineageError(f"follow-up {role} Behavior Set changed across S1/S2")
-    anchor_bytes = _read_blob(
+    s2_anchor = _read_blob(
         repository,
         s2,
         FOLLOWUP_REGISTRATION_ANCHOR_PATH,
-    ).content
+    )
+    if s2_anchor.mode != "100644":
+        raise FollowupLineageError("follow-up S2 registration anchor mode is not 100644")
+    anchor_bytes = s2_anchor.content
     if anchor_bytes != build_followup_registration_anchor(repository, s1=s1):
         raise FollowupLineageError("follow-up S2 data anchor differs from exact S1")
     receipt_bytes = _canonical_json_bytes(
