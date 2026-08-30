@@ -82,6 +82,7 @@ __all__ = (
     "FollowupFormalWatchResult",
     "FollowupJobSnapshot",
     "FollowupOneShotInventoryObservation",
+    "FollowupWorkflowInventoryObservation",
     "FollowupPrerequisiteObservation",
     "FollowupProviderAuthoritySnapshot",
     "FollowupPrerequisiteProvider",
@@ -260,12 +261,19 @@ class FollowupPrerequisiteObservation:
 
 
 @dataclass(frozen=True, slots=True)
-class FollowupOneShotInventoryObservation:
-    """Fresh mutable provider state reread after immutable evidence validation."""
+class FollowupWorkflowInventoryObservation:
+    """One workflow inventory paired with its own provider observation time."""
 
     observed_at: datetime
-    qualification_run_ids: tuple[int, ...]
-    formal_run_ids: tuple[int, ...]
+    runs: tuple[FollowupRunSnapshot, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FollowupOneShotInventoryObservation:
+    """Both mutable workflow inventories reread after immutable validation."""
+
+    qualification: FollowupWorkflowInventoryObservation
+    formal: FollowupWorkflowInventoryObservation
 
 
 @dataclass(frozen=True, slots=True)
@@ -1044,33 +1052,76 @@ def _validate_one_shot_inventory(
     observation: FollowupOneShotInventoryObservation,
     controller_now: datetime,
     *,
-    expected_qualification_run_ids: tuple[int, ...],
+    expected_qualification_runs: tuple[FollowupRunSnapshot, ...],
 ) -> None:
     if type(observation) is not FollowupOneShotInventoryObservation:
         raise FollowupControllerError(
             "one-shot provider inventory snapshot type changed"
         )
-    _validate_fresh_observation(observation.observed_at, controller_now)
+    if (
+        type(observation.qualification) is not FollowupWorkflowInventoryObservation
+        or type(observation.formal) is not FollowupWorkflowInventoryObservation
+    ):
+        raise FollowupControllerError(
+            "one-shot provider inventory endpoint type changed"
+        )
+    _validate_one_shot_inventory_times(observation, controller_now)
     for values in (
-        observation.qualification_run_ids,
-        observation.formal_run_ids,
-        expected_qualification_run_ids,
+        observation.qualification.runs,
+        observation.formal.runs,
+        expected_qualification_runs,
     ):
         if (
             type(values) is not tuple
-            or any(type(run_id) is not int or run_id <= 0 for run_id in values)
-            or len(set(values)) != len(values)
+            or any(type(run) is not FollowupRunSnapshot for run in values)
+            or any(run.database_id <= 0 for run in values)
+            or len({run.database_id for run in values}) != len(values)
         ):
             raise FollowupControllerError(
                 "one-shot provider inventory identity changed"
             )
     if (
-        observation.qualification_run_ids != expected_qualification_run_ids
-        or observation.formal_run_ids
+        observation.qualification.runs != expected_qualification_runs
+        or observation.formal.runs
     ):
         raise FollowupControllerError(
             "one-shot provider run inventory changed before capability mint"
         )
+
+
+def _validate_one_shot_inventory_times(
+    observation: FollowupOneShotInventoryObservation,
+    controller_now: datetime,
+) -> None:
+    """Validate each sequential provider read without timestamp masking."""
+
+    qualification_at = _require_utc(
+        observation.qualification.observed_at,
+        "qualification workflow inventory observation",
+    )
+    formal_at = _require_utc(
+        observation.formal.observed_at,
+        "formal workflow inventory observation",
+    )
+    if qualification_at > formal_at:
+        raise FollowupControllerError(
+            "one-shot provider inventory observation moved backwards"
+        )
+    _validate_fresh_observation(qualification_at, controller_now)
+    _validate_fresh_observation(formal_at, controller_now)
+
+
+def _capability_issue_time_after_inventory_validation(
+    observation: FollowupOneShotInventoryObservation,
+    validation_started_at: datetime,
+) -> datetime:
+    """Start the lease only after bounded shape validation has completed."""
+
+    issued_at = _require_utc(_utc_now(), "follow-up capability issue time")
+    if issued_at < validation_started_at:
+        raise FollowupControllerError("follow-up controller clock moved backwards")
+    _validate_one_shot_inventory_times(observation, issued_at)
+    return issued_at
 
 
 def _discard_capability(
@@ -1158,11 +1209,18 @@ def authorize_followup_qualification_dispatch(
         expected_qualification_run_ids=(),
     )
     inventory = _read_one_shot_inventory(provider)
-    issued_at = _require_utc(_utc_now(), "qualification capability issue time")
+    inventory_validation_started_at = _require_utc(
+        _utc_now(),
+        "qualification inventory validation time",
+    )
     _validate_one_shot_inventory(
         inventory,
-        issued_at,
-        expected_qualification_run_ids=(),
+        inventory_validation_started_at,
+        expected_qualification_runs=(),
+    )
+    issued_at = _capability_issue_time_after_inventory_validation(
+        inventory,
+        inventory_validation_started_at,
     )
     capability = _mint_capability(
         FollowupQualificationDispatchCapability,
@@ -1838,11 +1896,18 @@ def authorize_followup_formal_campaign(
         qualification_validation_started_at,
     )
     inventory = _read_one_shot_inventory(prerequisite_provider)
-    issued_at = _require_utc(_utc_now(), "formal capability issue time")
+    inventory_validation_started_at = _require_utc(
+        _utc_now(),
+        "formal inventory validation time",
+    )
     _validate_one_shot_inventory(
         inventory,
-        issued_at,
-        expected_qualification_run_ids=(request.qualification_run_id,),
+        inventory_validation_started_at,
+        expected_qualification_runs=(qualification_observation.run,),
+    )
+    issued_at = _capability_issue_time_after_inventory_validation(
+        inventory,
+        inventory_validation_started_at,
     )
     capability = _mint_capability(
         FollowupFormalDispatchCapability,

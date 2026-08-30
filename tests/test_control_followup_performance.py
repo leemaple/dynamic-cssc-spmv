@@ -73,9 +73,25 @@ def test_github_adapter_rereads_only_the_two_one_shot_inventories(
 
     observation = adapter.read_one_shot_inventory()
 
-    assert observation.observed_at == datetime(2026, 8, 30, 12, 0, 1, tzinfo=UTC)
-    assert observation.qualification_run_ids == ()
-    assert observation.formal_run_ids == ()
+    assert observation.qualification.observed_at == datetime(
+        2026,
+        8,
+        30,
+        12,
+        0,
+        tzinfo=UTC,
+    )
+    assert observation.qualification.runs == ()
+    assert observation.formal.observed_at == datetime(
+        2026,
+        8,
+        30,
+        12,
+        0,
+        1,
+        tzinfo=UTC,
+    )
+    assert observation.formal.runs == ()
     assert calls == [
         (
             "api",
@@ -90,6 +106,96 @@ def test_github_adapter_rereads_only_the_two_one_shot_inventories(
             "followup-performance-formal-unit.yml/runs?per_page=100",
         ),
     ]
+
+
+def test_github_adapter_pairs_each_inventory_time_with_full_run_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = GitHubFollowupAdapter(repository="owner/repository")
+    qualification_row = {
+        "id": 90,
+        "path": ".github/workflows/followup-performance-qualification.yml",
+        "event": "workflow_dispatch",
+        "head_sha": "b" * 40,
+        "head_branch": "main",
+        "run_attempt": 2,
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-08-30T11:00:00Z",
+        "updated_at": "2026-08-30T11:59:59Z",
+    }
+    responses = iter(
+        (
+            _included(
+                "Sun, 30 Aug 2026 12:00:00 GMT",
+                json.dumps(
+                    {"total_count": 1, "workflow_runs": [qualification_row]},
+                    separators=(",", ":"),
+                ).encode("ascii"),
+            ),
+            _included(
+                "Sun, 30 Aug 2026 12:00:01 GMT",
+                b'{"total_count":0,"workflow_runs":[]}\n',
+            ),
+        )
+    )
+    monkeypatch.setattr(adapter, "_gh", lambda *_args, **_kwargs: next(responses))
+
+    observation = adapter.read_one_shot_inventory()
+
+    assert observation.qualification.observed_at == datetime(
+        2026,
+        8,
+        30,
+        12,
+        0,
+        tzinfo=UTC,
+    )
+    assert len(observation.qualification.runs) == 1
+    run = observation.qualification.runs[0]
+    assert run.database_id == 90
+    assert run.attempt == 2
+    assert run.status == "completed"
+    assert run.conclusion == "success"
+    assert observation.formal.observed_at == datetime(
+        2026,
+        8,
+        30,
+        12,
+        0,
+        1,
+        tzinfo=UTC,
+    )
+    assert observation.formal.runs == ()
+
+
+def test_github_adapter_rejects_a_nonterminal_inventory_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = GitHubFollowupAdapter(repository="owner/repository")
+    row = {
+        "id": 90,
+        "path": ".github/workflows/followup-performance-qualification.yml",
+        "event": "workflow_dispatch",
+        "head_sha": "b" * 40,
+        "head_branch": "main",
+        "run_attempt": 2,
+        "status": "in_progress",
+        "conclusion": None,
+        "created_at": "2026-08-30T11:00:00Z",
+        "updated_at": "2026-08-30T11:59:59Z",
+    }
+    response = _included(
+        "Sun, 30 Aug 2026 12:00:00 GMT",
+        json.dumps(
+            {"total_count": 1, "workflow_runs": [row]},
+            separators=(",", ":"),
+        ).encode("ascii"),
+    )
+    monkeypatch.setattr(adapter, "_gh", lambda *_args, **_kwargs: response)
+
+    with pytest.raises(FollowupControllerError, match="run.conclusion"):
+        adapter.read_one_shot_inventory()
 
 
 def test_github_adapter_rejects_missing_backward_or_redirected_provider_time(
