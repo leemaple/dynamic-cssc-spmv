@@ -190,6 +190,35 @@ def test_followup_behavior_set_closes_python_imports_and_native_build_inputs(
         assert native_build_inputs <= role_paths
 
 
+def test_followup_behavior_registry_covers_every_followup_owned_behavior_path() -> None:
+    """An orphan follow-up workflow, action, script, or module must fail CI."""
+
+    registry = json.loads(
+        (REPOSITORY_ROOT / "config/followup-performance-behavior-sets.json").read_text(
+            encoding="ascii"
+        )
+    )
+    registered = {
+        path
+        for role in registry["roles"].values()
+        for path in role["paths"]
+    }
+    candidates = {
+        path.relative_to(REPOSITORY_ROOT).as_posix()
+        for pattern in (
+            ".github/workflows/followup-performance-*.yml",
+            ".github/actions/followup-*/action.yml",
+            "src/dynamic_cssc/followup_performance_*.py",
+            "scripts/*followup_performance*.py",
+            "scripts/verify_followup_*.py",
+        )
+        for path in REPOSITORY_ROOT.glob(pattern)
+        if path.is_file()
+    }
+
+    assert candidates - registered == set()
+
+
 def test_followup_registration_rejects_dirty_or_non_exact_s2_checkout(
     tmp_path: Path,
 ) -> None:

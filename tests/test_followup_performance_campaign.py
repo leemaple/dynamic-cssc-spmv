@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import scripts.verify_followup_campaign_run_admission as admission_script
 from dynamic_cssc.followup_performance_campaign import (
     FollowupCampaignError,
     arm_followup_campaign_watch,
@@ -273,3 +277,117 @@ def test_campaign_selection_rejects_duplicate_run_admission() -> None:
             tuple(duplicate),
             scientific_profile=PROFILE,
         )
+
+
+def test_campaign_admission_script_rebuilds_reserve_bind_watch_chain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    opened = _open()
+    spec = followup_formal_unit_specs(PROFILE)[0]
+    reserved = reserve_followup_campaign_unit(
+        opened,
+        spec,
+        unit_attempt_ordinal=1,
+    )
+    bound = bind_followup_campaign_run(reserved, provider_run_id=9001)
+    armed = arm_followup_campaign_watch(
+        bound,
+        watcher_session_sha256="5" * 64,
+    )
+    reservation_oid = "a" * 40
+    binding_oid = "b" * 40
+    watch_oid = "c" * 40
+    tree_oid = "e" * 40
+
+    def write(name: str, value: dict[str, object]) -> Path:
+        path = tmp_path / name
+        path.write_text(
+            json.dumps(value, sort_keys=True, separators=(",", ":")),
+            encoding="ascii",
+        )
+        return path.resolve()
+
+    ref_path = write(
+        "ref.json",
+        {
+            "object": {"sha": watch_oid, "type": "commit"},
+            "ref": admission_script.FOLLOWUP_FORMAL_PROGRESS_REF,
+        },
+    )
+    reservation_path = write(
+        "reservation.json",
+        {
+            "message": reserved.document_bytes.decode("ascii"),
+            "parents": [{"sha": "d" * 40}],
+            "sha": reservation_oid,
+            "tree": {"sha": tree_oid},
+        },
+    )
+    binding_path = write(
+        "binding.json",
+        {
+            "message": bound.document_bytes.decode("ascii"),
+            "parents": [{"sha": reservation_oid}],
+            "sha": binding_oid,
+            "tree": {"sha": tree_oid},
+        },
+    )
+    watch_path = write(
+        "watch.json",
+        {
+            "message": armed.document_bytes.decode("ascii"),
+            "parents": [{"sha": binding_oid}],
+            "sha": watch_oid,
+            "tree": {"sha": tree_oid},
+        },
+    )
+
+    def fake_git(_root: Path, *arguments: str) -> str:
+        if arguments == ("rev-parse", "HEAD"):
+            return "2" * 40
+        if arguments == ("status", "--porcelain=v1", "--untracked-files=no"):
+            return ""
+        if arguments == ("rev-parse", "HEAD^{tree}"):
+            return tree_oid
+        raise AssertionError(arguments)
+
+    monkeypatch.setattr(admission_script, "_git", fake_git)
+    monkeypatch.setattr(
+        admission_script,
+        "materialize_followup_scientific_plan",
+        lambda _root: SimpleNamespace(scientific_profile=PROFILE),
+    )
+    arguments = argparse.Namespace(
+        repository_root=tmp_path,
+        ref_json=ref_path,
+        reservation_commit_json=reservation_path,
+        binding_commit_json=binding_path,
+        watch_commit_json=watch_path,
+        expected_reservation_oid=reservation_oid,
+        expected_reservation_minutes=20,
+        expected_campaign_id=opened.document["campaign_id"],
+        expected_s1="1" * 40,
+        expected_s2="2" * 40,
+        expected_compatibility="3" * 64,
+        expected_unit_ordinal=0,
+        expected_unit_attempt_ordinal=1,
+        expected_job_token=spec.job_token,
+        expected_provider_run_id=9001,
+    )
+
+    assert admission_script._main(arguments) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["watch_armed_oid"] == watch_oid
+    assert output["unit_kind"] == "formal-acquisition"
+
+    write(
+        "ref.json",
+        {
+            "object": {"sha": binding_oid, "type": "commit"},
+            "ref": admission_script.FOLLOWUP_FORMAL_PROGRESS_REF,
+        },
+    )
+    with pytest.raises(FollowupCampaignError, match="watch commit provider topology"):
+        admission_script._main(arguments)

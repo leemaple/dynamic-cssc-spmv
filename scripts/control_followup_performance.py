@@ -723,34 +723,6 @@ class GitHubFollowupAdapter:
             expected_s2=expected_s2_git_sha,
         )
 
-    def open_formal_campaign(
-        self,
-        *,
-        expected_s1_git_sha: str,
-        expected_s2_git_sha: str,
-        expected_compatibility_receipt_sha256: str,
-        qualification_run_id: int,
-    ) -> int:
-        claim_oid = self._claim_authority(
-            kind="formal",
-            workflow=_FORMAL_WORKFLOW,
-            expected_s2=expected_s2_git_sha,
-        )
-        return self._post_dispatch(
-            workflow=_FORMAL_WORKFLOW,
-            inputs={
-                "expected_authority_claim_oid": claim_oid,
-                "expected_compatibility_receipt_sha256": (
-                    expected_compatibility_receipt_sha256
-                ),
-                "expected_qualification_run_id": str(qualification_run_id),
-                "expected_s1_git_sha": expected_s1_git_sha,
-                "expected_s2_git_sha": expected_s2_git_sha,
-            },
-            expected_s2=expected_s2_git_sha,
-        )
-
-
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument(

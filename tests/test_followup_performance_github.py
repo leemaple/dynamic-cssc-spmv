@@ -4,11 +4,16 @@ import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from dynamic_cssc.followup_performance_analysis_binding import (
     build_followup_analysis_claim,
     build_followup_analysis_watch_binding,
 )
 from dynamic_cssc.followup_performance_campaign import open_followup_campaign_state
+from dynamic_cssc.followup_performance_campaign_controller import (
+    FollowupCampaignControlError,
+)
 from dynamic_cssc.followup_performance_campaign_transport import (
     FollowupCampaignTransport,
 )
@@ -651,6 +656,70 @@ class _DeadlineCancellationTransport(_FakeGitHubTransport):
         )
 
 
+class _LostCompareAndSwapTransport(_FakeGitHubTransport):
+    """Model a competing controller moving the ref during updateRefs."""
+
+    def request(
+        self,
+        *,
+        method: str,
+        path: str,
+        payload: bytes | None,
+        expected_statuses: frozenset[int],
+        maximum_bytes: int,
+    ) -> GitHubHttpResponse:
+        if method == "POST" and path == "/graphql":
+            self.calls.append((method, path, payload))
+            self.current_ref = "f" * 40
+            return self._response(
+                200,
+                _json_bytes(
+                    {
+                        "errors": [{"message": "beforeOid no longer matches"}],
+                    }
+                ),
+            )
+        return super().request(
+            method=method,
+            path=path,
+            payload=payload,
+            expected_statuses=expected_statuses,
+            maximum_bytes=maximum_bytes,
+        )
+
+
+class _ArtifactIdentityDriftTransport(_FakeGitHubTransport):
+    def __init__(self, drift: str) -> None:
+        super().__init__()
+        self.drift = drift
+
+    def _artifacts(self) -> dict[str, object]:
+        document = super()._artifacts()
+        rows = document["artifacts"]
+        assert type(rows) is list and rows and type(rows[0]) is dict
+        if self.drift == "expired":
+            rows[0]["expired"] = True
+        elif self.drift == "wrong-run":
+            workflow_run = rows[0]["workflow_run"]
+            assert type(workflow_run) is dict
+            workflow_run["id"] = RUN_ID + 1
+        else:  # pragma: no cover - the test owns the closed drift domain
+            raise AssertionError(self.drift)
+        return document
+
+
+class _UnclassifiedProviderFailureTransport(_FakeGitHubTransport):
+    def __init__(self) -> None:
+        super().__init__(successful=False)
+
+    def _jobs(self) -> dict[str, object]:
+        document = super()._jobs()
+        rows = document["jobs"]
+        assert type(rows) is list and rows and type(rows[0]) is dict
+        rows[0]["conclusion"] = "failure"
+        return document
+
+
 def _provider(transport: _FakeGitHubTransport) -> GitHubFollowupCampaignProvider:
     return GitHubFollowupCampaignProvider(
         repository="example/project",
@@ -950,6 +1019,29 @@ def test_github_state_install_uses_one_update_refs_compare_and_swap() -> None:
     ]
 
 
+def test_github_state_install_rejects_a_lost_compare_and_swap() -> None:
+    transport = _LostCompareAndSwapTransport()
+    provider = _provider(transport)
+    state = open_followup_campaign_state(
+        experiment_source_s1_sha="1" * 40,
+        evidence_freeze_s2_sha=S2,
+        compatibility_receipt_sha256="4" * 64,
+        qualification_run_id=7001,
+        qualification_q6_artifact_id=8001,
+        qualification_q6_artifact_digest=f"sha256:{'5' * 64}",
+        scientific_profile=PROFILE,
+    )
+
+    with pytest.raises(FollowupCampaignControlError, match="candidate was not installed"):
+        provider.install_campaign_state(
+            expected_oid="a" * 40,
+            expected_tree_oid="b" * 40,
+            state=state,
+        )
+
+    assert transport.current_ref == "f" * 40
+
+
 def test_github_campaign_open_creates_the_progress_ref_at_the_opening_commit() -> None:
     transport = _FakeGitHubTransport()
     provider = _provider(transport)
@@ -1026,6 +1118,46 @@ def test_github_watcher_only_classifies_explicit_startup_failure_for_retry() -> 
     assert hashlib.sha256(
         outcome.provider_failure_evidence_bytes_or_null
     ).hexdigest() == outcome.provider_failure_evidence_sha256_or_null
+
+
+def test_github_watcher_does_not_retry_an_unclassified_provider_failure() -> None:
+    transport = _UnclassifiedProviderFailureTransport()
+    provider = _provider(transport)
+    spec = followup_formal_unit_specs(PROFILE)[0]
+    run_id = provider.dispatch_formal_unit(inputs=_inputs())
+
+    outcome = provider.start_formal_unit_watch(
+        provider_run_id=run_id,
+        spec=spec,
+        reservation_minutes=spec.reservation_minutes,
+    ).wait()
+
+    assert outcome.decision == "no-go"
+    assert outcome.provider_failure_class_or_null is None
+    assert outcome.no_go_reason_or_null == "scientific-or-guard-failure"
+
+
+@pytest.mark.parametrize("drift", ["expired", "wrong-run"])
+def test_github_watcher_rejects_stale_or_wrong_run_artifact_metadata(
+    drift: str,
+) -> None:
+    transport = _ArtifactIdentityDriftTransport(drift)
+    provider = _provider(transport)
+    spec = followup_formal_unit_specs(PROFILE)[0]
+    run_id = provider.dispatch_formal_unit(inputs=_inputs())
+
+    with pytest.raises(
+        FollowupCampaignControlError,
+        match="formal watcher failed closed",
+    ) as caught:
+        provider.start_formal_unit_watch(
+            provider_run_id=run_id,
+            spec=spec,
+            reservation_minutes=spec.reservation_minutes,
+        ).wait()
+
+    assert caught.value.__cause__ is not None
+    assert "provider identity" in str(caught.value.__cause__)
 
 
 def test_formal_watcher_uses_the_later_jobs_provider_date_for_stop_loss() -> None:

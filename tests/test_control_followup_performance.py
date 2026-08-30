@@ -129,6 +129,12 @@ def test_github_adapter_atomically_creates_the_one_provider_claim(
     }
 
 
+def test_github_adapter_exposes_no_legacy_one_run_formal_dispatch() -> None:
+    """Only the serial campaign provider may dispatch formal unit runs."""
+
+    assert not hasattr(GitHubFollowupAdapter, "open_formal_campaign")
+
+
 def test_analysis_command_needs_no_preanalysis_control_run_ids(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

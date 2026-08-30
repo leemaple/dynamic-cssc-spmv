@@ -226,3 +226,21 @@ def test_analysis_rejects_derived_member_drift(tmp_path: Path) -> None:
             aggregate=aggregate,
             compatibility=compatibility,
         )
+
+
+def test_analysis_rejects_incomplete_formal_claim_ledger(tmp_path: Path) -> None:
+    """FU-E4 cannot silently survive one missing formal unit."""
+
+    parent = (tmp_path / "output").resolve()
+    parent.mkdir()
+    aggregate = _aggregate()
+    records = aggregate.document["formal_artifacts"]
+    assert type(records) is list
+    records.pop()
+
+    with pytest.raises(FollowupAnalysisError, match="source ledger"):
+        produce_followup_analysis(
+            aggregate,
+            _compatibility(),
+            parent / "analysis",
+        )

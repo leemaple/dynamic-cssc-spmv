@@ -80,8 +80,18 @@ class _Watch:
 
 
 class _SerialProvider:
-    def __init__(self, *, provider_failure_ordinal: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        provider_failure_ordinal: int | None = None,
+        failed_runner_seconds: int = 3,
+        successful_producer_seconds: int = 3,
+        successful_guard_seconds: int = 3,
+    ) -> None:
         self.provider_failure_ordinal = provider_failure_ordinal
+        self.failed_runner_seconds = failed_runner_seconds
+        self.successful_producer_seconds = successful_producer_seconds
+        self.successful_guard_seconds = successful_guard_seconds
         self._failed_once = False
         self._oid = 1
         self._run_id = 20_000
@@ -109,7 +119,13 @@ class _SerialProvider:
         successful: bool,
     ) -> tuple[bytes, bytes, bytes, bytes]:
         start = self._cursor
-        producer_end = start + timedelta(seconds=3)
+        producer_end = start + timedelta(
+            seconds=(
+                self.successful_producer_seconds
+                if successful
+                else self.failed_runner_seconds
+            )
+        )
         producer = {
             "completed_at": _render(producer_end),
             "conclusion": "success" if successful else "cancelled",
@@ -123,7 +139,9 @@ class _SerialProvider:
         jobs = [producer]
         if successful:
             guard_start = producer_end + timedelta(seconds=1)
-            guard_end = guard_start + timedelta(seconds=3)
+            guard_end = guard_start + timedelta(
+                seconds=self.successful_guard_seconds
+            )
             jobs.append(
                 {
                     "completed_at": _render(guard_end),
@@ -330,6 +348,57 @@ def test_serial_campaign_rebuilds_complete_selection_timing_and_watcher_evidence
             evidence_root,
             scientific_profile=PROFILE,
         )
+
+
+def test_replacement_charges_cancellation_lag_once_to_the_retry_ledger(
+    tmp_path: Path,
+) -> None:
+    provider = _SerialProvider(
+        provider_failure_ordinal=0,
+        failed_runner_seconds=3_000,
+        successful_producer_seconds=599,
+        successful_guard_seconds=600,
+    )
+
+    result = execute_followup_formal_campaign(
+        _opened(),
+        progress_oid="a" * 40,
+        evidence_tree_oid="b" * 40,
+        scientific_profile=PROFILE,
+        provider=provider,
+        evidence_root=(tmp_path / "campaign-retry-ledger").resolve(),
+    )
+
+    assert result.decision == "ready-for-terminal"
+    assert result.timing is not None
+    assert result.timing.document["provider_retry_used"] is True
+    assert result.timing.document["retry_runner_seconds"] == 2_999
+    first = result.timing.document["units"][0]
+    assert first["ordinary_runner_seconds"] == 1_200
+    assert first["retry_runner_seconds"] == 2_999
+
+
+def test_provider_failure_without_a_full_replacement_reserve_closes_no_go(
+    tmp_path: Path,
+) -> None:
+    provider = _SerialProvider(
+        provider_failure_ordinal=0,
+        failed_runner_seconds=3_601,
+    )
+
+    result = execute_followup_formal_campaign(
+        _opened(),
+        progress_oid="a" * 40,
+        evidence_tree_oid="b" * 40,
+        scientific_profile=PROFILE,
+        provider=provider,
+        evidence_root=(tmp_path / "campaign-no-retry-reserve").resolve(),
+    )
+
+    assert result.decision == "no-go"
+    assert result.final_state.document["terminal_reason_code_or_null"] == (
+        "retry-budget-insufficient"
+    )
 
 
 def test_final_selection_or_timing_failure_closes_provider_campaign_no_go(

@@ -344,3 +344,26 @@ def test_terminal_admits_exact_ordered_seventeen_object_set(
     assert inspected.document["publication_evidence_admitted"] is True
     assert inspected.document["replacement_attempt_used"] is False
     assert inspected.envelope.document["authority"] is False
+
+
+@pytest.mark.parametrize("directory_count", [16, 18])
+def test_terminal_rejects_incomplete_or_extra_direct_artifact_set(
+    tmp_path: Path,
+    directory_count: int,
+) -> None:
+    """Terminal admission must reject both a missing and an extra unit."""
+
+    root = (tmp_path / "terminal-inputs").resolve()
+    root.mkdir()
+    for ordinal in range(directory_count):
+        (root / f"artifact-{ordinal:02d}").mkdir()
+
+    with pytest.raises(
+        terminal_module.FollowupTerminalAdmissionError,
+        match="exactly seventeen",
+    ):
+        terminal_module._classify_children(
+            root,
+            experiment_source_s1_sha="1" * 40,
+            evidence_freeze_s2_sha="2" * 40,
+        )
