@@ -261,24 +261,7 @@ def _campaign_documents(*, replacement_ordinal: int | None = None):  # type: ign
         jobs_bytes = _canonical_json_bytes(
             {"jobs": jobs, "total_count": len(jobs)}
         )
-        if successful:
-            cancellation_ledger = None
-        else:
-            detection = producer_start + timedelta(seconds=1)
-            requested = detection + timedelta(seconds=1)
-            acknowledged = requested + timedelta(seconds=1)
-            decided = acknowledged + timedelta(seconds=1)
-            cancellation_ledger = {
-                "ack_to_watch_decision_seconds": 1,
-                "cancel_request_utc": _timestamp(requested),
-                "controller_detection_utc": _timestamp(detection),
-                "final_conclusion": run["conclusion"],
-                "provider_api_ack_utc": _timestamp(acknowledged),
-                "provider_terminal_updated_utc": run["updated_at"],
-                "request_to_ack_seconds": 1,
-                "threshold_utc": None,
-                "watch_decided_utc": _timestamp(decided),
-            }
+        cancellation_ledger = None
         watcher_session = state.document["watcher_session_sha256_or_null"]
         assert type(watcher_session) is str
         common_receipt = {
@@ -382,11 +365,21 @@ def test_campaign_timing_charges_failed_and_replacement_attempt_once() -> None:
     assert len(ledger.document["units"][4]["attempts"]) == 2  # type: ignore[index]
 
 
-def test_campaign_timing_rejects_rehashed_cancellation_arithmetic_tamper() -> None:
+def test_campaign_timing_rejects_rehashed_provider_failure_cancellation() -> None:
     evidence, selection = _campaign_documents(replacement_ordinal=4)
     failed = evidence[4]
     receipt = json.loads(failed.watcher_receipt_json)
-    receipt["cancellation_ledger"]["request_to_ack_seconds"] = 2
+    receipt["cancellation_ledger"] = {
+        "ack_to_watch_decision_seconds": 1,
+        "cancel_request_utc": "2026-08-30T00:00:02Z",
+        "controller_detection_utc": "2026-08-30T00:00:01Z",
+        "final_conclusion": "cancelled",
+        "provider_api_ack_utc": "2026-08-30T00:00:03Z",
+        "provider_terminal_updated_utc": "2026-08-30T00:00:04Z",
+        "request_to_ack_seconds": 1,
+        "threshold_utc": None,
+        "watch_decided_utc": "2026-08-30T00:00:04Z",
+    }
     receipt_bytes = _canonical_json_bytes(receipt)
     state = inspect_followup_campaign_state(failed.terminal_campaign_state_bytes)
     state_document = dict(state.document)

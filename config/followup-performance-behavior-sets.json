@@ -176,7 +176,7 @@
         "src/dynamic_cssc/strong_execution.py",
         "src/dynamic_cssc/strong_packed_coo.py"
       ],
-      "schema_version": "dynamic-cssc-followup-performance-analyzer-behavior-set-v3"
+      "schema_version": "dynamic-cssc-followup-performance-analyzer-behavior-set-v4"
     },
     "control-registration": {
       "paths": [
@@ -279,7 +279,7 @@
         "src/dynamic_cssc/strong_execution.py",
         "src/dynamic_cssc/strong_packed_coo.py"
       ],
-      "schema_version": "dynamic-cssc-followup-performance-control-registration-behavior-set-v3"
+      "schema_version": "dynamic-cssc-followup-performance-control-registration-behavior-set-v4"
     },
     "formal": {
       "paths": [
@@ -390,7 +390,7 @@
         "src/dynamic_cssc/strong_execution.py",
         "src/dynamic_cssc/strong_packed_coo.py"
       ],
-      "schema_version": "dynamic-cssc-followup-performance-formal-behavior-set-v3"
+      "schema_version": "dynamic-cssc-followup-performance-formal-behavior-set-v4"
     },
     "qualification": {
       "paths": [

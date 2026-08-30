@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from dynamic_cssc.followup_performance_campaign_bundle import (
 )
 from dynamic_cssc.followup_performance_campaign_controller import (
     FollowupCampaignControlError,
+    FollowupFormalCancellationSubmission,
     FollowupFormalUnitWatchOutcome,
 )
 from dynamic_cssc.followup_performance_campaign_execution import (
@@ -85,11 +87,15 @@ class _SerialProvider:
         self,
         *,
         provider_failure_ordinal: int | None = None,
+        provider_failure_carries_cancellation: bool = False,
         failed_runner_seconds: int = 3,
         successful_producer_seconds: int = 3,
         successful_guard_seconds: int = 3,
     ) -> None:
         self.provider_failure_ordinal = provider_failure_ordinal
+        self.provider_failure_carries_cancellation = (
+            provider_failure_carries_cancellation
+        )
         self.failed_runner_seconds = failed_runner_seconds
         self.successful_producer_seconds = successful_producer_seconds
         self.successful_guard_seconds = successful_guard_seconds
@@ -271,7 +277,7 @@ class _SerialProvider:
         run_started = datetime.strptime(
             run_document["created_at"], "%Y-%m-%dT%H:%M:%SZ"
         ).replace(tzinfo=UTC)
-        if fail:
+        if fail and self.provider_failure_carries_cancellation:
             detection = run_started + timedelta(minutes=reservation_minutes)
             requested = detection + timedelta(seconds=1)
             acknowledged = requested + timedelta(seconds=1)
@@ -353,8 +359,72 @@ class _SerialProvider:
             )
         )
 
-    def cancel_formal_unit(self, provider_run_id: int) -> None:
+    def cancel_formal_unit(
+        self,
+        provider_run_id: int,
+    ) -> FollowupFormalCancellationSubmission:
         self.cancelled.append(provider_run_id)
+        return FollowupFormalCancellationSubmission(
+            provider_run_id=provider_run_id,
+            response_status=202,
+            provider_observed_at=self._cursor,
+        )
+
+
+def test_cancelled_provider_failure_never_dispatches_a_replacement(
+    tmp_path: Path,
+) -> None:
+    provider = _SerialProvider(
+        provider_failure_ordinal=0,
+        provider_failure_carries_cancellation=True,
+    )
+
+    with pytest.raises(FollowupCampaignControlError, match="watcher"):
+        execute_followup_formal_campaign(
+            _opened(),
+            progress_oid="a" * 40,
+            evidence_tree_oid="b" * 40,
+            scientific_profile=PROFILE,
+            provider=provider,
+            evidence_root=(tmp_path / "campaign-cancelled-provider-failure").resolve(),
+        )
+
+    assert len(provider._dispatch) == 1
+
+
+def test_execution_rechecks_retry_eligibility_before_replacement_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _SerialProvider(provider_failure_ordinal=0)
+    inspect_receipt = execution_module.inspect_followup_formal_watcher_receipt
+
+    def _inject_cancelled_projection(content: bytes):  # type: ignore[no-untyped-def]
+        receipt = inspect_receipt(content)
+        if receipt.document["decision"] != "provider-failure":
+            return receipt
+        return replace(receipt, cancellation_ledger={"injected": True})
+
+    monkeypatch.setattr(
+        execution_module,
+        "inspect_followup_formal_watcher_receipt",
+        _inject_cancelled_projection,
+    )
+
+    result = execute_followup_formal_campaign(
+        _opened(),
+        progress_oid="a" * 40,
+        evidence_tree_oid="b" * 40,
+        scientific_profile=PROFILE,
+        provider=provider,
+        evidence_root=(tmp_path / "campaign-retry-reinspection").resolve(),
+    )
+
+    assert result.decision == "no-go"
+    assert result.final_state.document["terminal_reason_code_or_null"] == (
+        "nonretryable-provider-failure"
+    )
+    assert len(provider._dispatch) == 1
 
 
 @pytest.mark.parametrize("replacement_ordinal", [None, 4])
@@ -401,7 +471,7 @@ def test_serial_campaign_rebuilds_complete_selection_timing_and_watcher_evidence
         )
 
 
-def test_replacement_charges_cancellation_lag_once_to_the_retry_ledger(
+def test_replacement_charges_failed_excess_and_replacement_once(
     tmp_path: Path,
 ) -> None:
     provider = _SerialProvider(
@@ -427,14 +497,8 @@ def test_replacement_charges_cancellation_lag_once_to_the_retry_ledger(
     first = result.timing.document["units"][0]
     assert first["ordinary_runner_seconds"] == 1_200
     assert first["retry_runner_seconds"] == 2_999
-    assert result.timing.document["cancellation_ledger"] == [
-        first["attempts"][0]["cancellation_ledger"]
-    ]
-    cancellation = result.timing.document["cancellation_ledger"][0]
-    assert cancellation["formal_unit_ordinal"] == 0
-    assert cancellation["unit_attempt_ordinal"] == 1
-    assert cancellation["charged_runner_seconds"] == 3_000
-    assert cancellation["final_conclusion"] == "cancelled"
+    assert first["attempts"][0]["cancellation_ledger"] is None
+    assert result.timing.document["cancellation_ledger"] == []
 
 
 def test_provider_failure_without_a_full_replacement_reserve_closes_no_go(

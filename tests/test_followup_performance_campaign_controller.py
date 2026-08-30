@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import pytest
 
@@ -17,6 +18,7 @@ from dynamic_cssc.followup_performance_campaign import (
 from dynamic_cssc.followup_performance_campaign_controller import (
     FollowupAcquisitionRunBinding,
     FollowupCampaignControlError,
+    FollowupFormalCancellationSubmission,
     FollowupFormalUnitWatchOutcome,
     dispatch_bind_watch,
 )
@@ -232,8 +234,16 @@ class _Provider:
             raise OSError("watcher not established")
         return _Watch(self.outcome, fail_wait=self.fail_watch_wait)
 
-    def cancel_formal_unit(self, provider_run_id: int) -> None:
+    def cancel_formal_unit(
+        self,
+        provider_run_id: int,
+    ) -> FollowupFormalCancellationSubmission:
         self.cancelled.append(provider_run_id)
+        return FollowupFormalCancellationSubmission(
+            provider_run_id=provider_run_id,
+            response_status=202,
+            provider_observed_at=datetime(2026, 8, 30, tzinfo=UTC),
+        )
 
 
 def _dispatch(

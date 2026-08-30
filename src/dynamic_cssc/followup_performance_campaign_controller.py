@@ -11,6 +11,7 @@ import hashlib
 import re
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Literal, Protocol
 
 from dynamic_cssc.followup_performance_campaign import (
@@ -40,6 +41,7 @@ __all__ = (
     "FollowupBoundUnitResult",
     "FollowupCampaignControlError",
     "FollowupCampaignProvider",
+    "FollowupFormalCancellationSubmission",
     "FollowupFormalUnitWatch",
     "FollowupFormalUnitWatchOutcome",
     "dispatch_bind_watch",
@@ -48,6 +50,27 @@ __all__ = (
 
 class FollowupCampaignControlError(FollowupContractError):
     """One provider mutation was failed, ambiguous, or could not be closed."""
+
+
+@dataclass(frozen=True, slots=True)
+class FollowupFormalCancellationSubmission:
+    """Proof that the formal provider received one exact cancel POST."""
+
+    provider_run_id: int
+    response_status: Literal[202]
+    provider_observed_at: datetime
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.provider_run_id) is not int
+            or self.provider_run_id <= 0
+            or self.response_status != 202
+            or type(self.provider_observed_at) is not datetime
+            or self.provider_observed_at.tzinfo is not UTC
+        ):
+            raise FollowupCampaignControlError(
+                "formal cancellation submission changed"
+            )
 
 
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -120,7 +143,10 @@ class FollowupCampaignProvider(Protocol):
         reservation_minutes: int,
     ) -> FollowupFormalUnitWatch: ...
 
-    def cancel_formal_unit(self, provider_run_id: int) -> None: ...
+    def cancel_formal_unit(
+        self,
+        provider_run_id: int,
+    ) -> FollowupFormalCancellationSubmission: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -325,6 +351,7 @@ def _validated_watch_outcome(
     elif outcome.decision == "provider-failure":
         if (
             any(value is not None for value in artifact_fields)
+            or cancellation is not None
             or outcome.provider_failure_class_or_null
             not in FOLLOWUP_PROVIDER_FAILURE_CLASSES
             or not _is_sha256(outcome.provider_failure_evidence_sha256_or_null)
@@ -350,6 +377,10 @@ def _validated_watch_outcome(
             or outcome.provider_failure_evidence_bytes_or_null is not None
             or outcome.provider_guard_receipt_bytes_or_null is not None
             or type(outcome.no_go_reason_or_null) is not str
+            or (
+                (outcome.no_go_reason_or_null == "budget-exhausted")
+                != (cancellation is not None)
+            )
             or receipt_document["no_go_reason_or_null"]
             != outcome.no_go_reason_or_null
         ):

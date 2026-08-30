@@ -157,8 +157,12 @@ def _cancellation_ledger(value: object) -> dict[str, object] | None:
             "formal cancellation ledger field set changed"
         )
     threshold = value["threshold_utc"]
+    threshold_timestamp: datetime | None = None
     if threshold is not None:
-        _provider_timestamp(threshold, field="cancellation.threshold_utc")
+        threshold_timestamp = _provider_timestamp(
+            threshold,
+            field="cancellation.threshold_utc",
+        )
     detection = _controller_timestamp(
         value["controller_detection_utc"],
         field="cancellation.controller_detection_utc",
@@ -194,10 +198,17 @@ def _cancellation_ledger(value: object) -> dict[str, object] | None:
         raise FollowupFormalWatcherReceiptError(
             "formal cancellation elapsed arithmetic changed"
         )
-    _provider_timestamp(
+    terminal_timestamp = _provider_timestamp(
         value["provider_terminal_updated_utc"],
         field="cancellation.provider_terminal_updated_utc",
     )
+    if (
+        threshold_timestamp is not None
+        and terminal_timestamp < threshold_timestamp
+    ):
+        raise FollowupFormalWatcherReceiptError(
+            "formal cancellation provider terminal update precedes its threshold"
+        )
     if type(value["final_conclusion"]) is not str or not value["final_conclusion"]:
         raise FollowupFormalWatcherReceiptError(
             "formal cancellation final conclusion is absent"
@@ -292,12 +303,13 @@ def inspect_followup_formal_watcher_receipt(
         )
     elif decision == "provider-failure":
         if (
-            value["provider_failure_class_or_null"]
+            cancellation is not None
+            or value["provider_failure_class_or_null"]
             not in FOLLOWUP_PROVIDER_FAILURE_CLASSES
             or value["no_go_reason_or_null"] is not None
         ):
             raise FollowupFormalWatcherReceiptError(
-                "provider-failure watcher classification changed"
+                "provider-failure watcher classification or cancellation changed"
             )
         _sha256(
             value["provider_failure_evidence_sha256_or_null"],
@@ -309,8 +321,8 @@ def inspect_followup_formal_watcher_receipt(
             or value["provider_failure_evidence_sha256_or_null"] is not None
             or value["no_go_reason_or_null"] not in _NO_GO_REASONS
             or (
-                value["no_go_reason_or_null"] == "budget-exhausted"
-                and cancellation is None
+                (value["no_go_reason_or_null"] == "budget-exhausted")
+                != (cancellation is not None)
             )
         ):
             raise FollowupFormalWatcherReceiptError(

@@ -34,6 +34,10 @@ from dynamic_cssc.followup_performance_formal_timing import (
     inspect_followup_formal_attempt_runner_seconds,
     inspect_followup_formal_timing_campaign,
 )
+from dynamic_cssc.followup_performance_watcher_receipt import (
+    FollowupFormalWatcherReceiptError,
+    inspect_followup_formal_watcher_receipt,
+)
 from dynamic_cssc.route_a_scientific_profile import RouteAScientificProfile
 
 __all__ = (
@@ -480,6 +484,31 @@ def execute_followup_formal_campaign(
                 evidence_root=journal.root,
             )
         if result.terminal_state.state == "unit-provider-failed":
+            try:
+                failed_receipt = inspect_followup_formal_watcher_receipt(
+                    result.outcome.watcher_receipt_bytes
+                )
+            except FollowupFormalWatcherReceiptError:
+                return _close_no_go(
+                    result.terminal_state,
+                    previous_oid=result.terminal_oid,
+                    evidence_tree_oid=evidence_tree_oid,
+                    reason="nonretryable-provider-failure",
+                    provider=provider,
+                    journal=journal,
+                )
+            if (
+                failed_receipt.document["decision"] != "provider-failure"
+                or failed_receipt.cancellation_ledger is not None
+            ):
+                return _close_no_go(
+                    result.terminal_state,
+                    previous_oid=result.terminal_oid,
+                    evidence_tree_oid=evidence_tree_oid,
+                    reason="nonretryable-provider-failure",
+                    provider=provider,
+                    journal=journal,
+                )
             ordinary_unspent = max(
                 spec.reservation_minutes * 60
                 - min(attempt_seconds, spec.reservation_minutes * 60),

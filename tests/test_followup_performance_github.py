@@ -13,6 +13,7 @@ from dynamic_cssc.followup_performance_analysis_binding import (
 from dynamic_cssc.followup_performance_campaign import open_followup_campaign_state
 from dynamic_cssc.followup_performance_campaign_controller import (
     FollowupCampaignControlError,
+    FollowupFormalCancellationSubmission,
 )
 from dynamic_cssc.followup_performance_campaign_transport import (
     FollowupCampaignTransport,
@@ -688,6 +689,43 @@ class _CancelThenStartupFailureTransport(_DeadlineCancellationTransport):
         return document
 
 
+class _TerminalBetweenObservationAndCancelTransport(_DeadlineCancellationTransport):
+    """The cancel preflight sees terminal although the watcher saw live."""
+
+    def _run(self) -> dict[str, object]:
+        document = super()._run()
+        if self.run_reads >= 3 and not self.cancel_was_posted:
+            document["conclusion"] = "success"
+            document["status"] = "completed"
+            document["updated_at"] = "2026-08-30T00:20:01Z"
+        return document
+
+
+class _CancelConflictTransport(_FakeGitHubTransport):
+    """Model GitHub returning the documented 409 cancellation conflict."""
+
+    def request(
+        self,
+        *,
+        method: str,
+        path: str,
+        payload: bytes | None,
+        expected_statuses: frozenset[int],
+        maximum_bytes: int,
+    ) -> GitHubHttpResponse:
+        if method == "POST" and path.endswith(f"/actions/runs/{RUN_ID}/cancel"):
+            del payload, expected_statuses, maximum_bytes
+            self.calls.append((method, path, None))
+            return self._response(409, b"")
+        return super().request(
+            method=method,
+            path=path,
+            payload=payload,
+            expected_statuses=expected_statuses,
+            maximum_bytes=maximum_bytes,
+        )
+
+
 class _LostCompareAndSwapTransport(_FakeGitHubTransport):
     """Model a competing controller moving the ref during updateRefs."""
 
@@ -891,6 +929,35 @@ def test_two_controllers_cannot_both_create_the_provider_global_qualification_cl
     assert first.open_qualification(opening)[0] == S2
     with pytest.raises(FollowupCampaignControlError, match="already exists"):
         second.open_qualification(opening)
+
+
+def test_two_controllers_cannot_both_create_the_formal_campaign_progress_ref() -> None:
+    transport = _DuplicateQualificationClaimTransport()
+    first = _provider(transport)
+    second = _provider(transport)
+    opened = open_followup_campaign_state(
+        experiment_source_s1_sha="1" * 40,
+        evidence_freeze_s2_sha=S2,
+        compatibility_receipt_sha256="4" * 64,
+        qualification_run_id=7001,
+        qualification_q6_artifact_id=8001,
+        qualification_q6_artifact_digest=f"sha256:{'5' * 64}",
+        scientific_profile=PROFILE,
+    )
+
+    assert first.open_campaign(opened)[0] == "0" * 39 + "1"
+    with pytest.raises(FollowupCampaignControlError, match="already exists"):
+        second.open_campaign(opened)
+
+    formal_dispatches = [
+        call
+        for call in transport.calls
+        if call[0] == "POST"
+        and call[1].endswith(
+            "/actions/workflows/followup-performance-formal-unit.yml/dispatches"
+        )
+    ]
+    assert formal_dispatches == []
 
 
 def test_github_terminal_transport_claim_dispatch_and_watch_cas() -> None:
@@ -1271,11 +1338,42 @@ def test_formal_watcher_uses_the_later_jobs_provider_date_for_stop_loss() -> Non
     assert cancellation["provider_terminal_updated_utc"] is not None
     assert cancellation["request_to_ack_seconds"] >= 0
     assert cancellation["ack_to_watch_decision_seconds"] >= 0
-    # Dispatch verification and the initial watcher read are the first two run
-    # reads.  The third belongs to cancel_formal_unit, proving that the jobs
-    # response at the exact deadline triggered cancellation without another poll.
-    assert transport.run_reads_at_cancel == [3]
+    # Dispatch verification and the initial watcher read are the only run
+    # reads before the exact-deadline jobs response submits cancellation.  The
+    # cancel path itself performs no terminal preflight read.
+    assert transport.run_reads_at_cancel == [2]
     assert transport.cancelled == [RUN_ID]
+
+
+def test_formal_cancel_is_one_typed_exact_202_post() -> None:
+    transport = _FakeGitHubTransport()
+    provider = _provider(transport)
+
+    submission = provider.cancel_formal_unit(RUN_ID)
+
+    assert type(submission) is FollowupFormalCancellationSubmission
+    assert submission.provider_run_id == RUN_ID
+    assert submission.response_status == 202
+    assert submission.provider_observed_at == transport.observed_at
+    assert transport.cancelled == [RUN_ID]
+
+
+def test_formal_cancel_conflict_cannot_mint_a_submission() -> None:
+    transport = _CancelConflictTransport()
+    provider = _provider(transport)
+
+    with pytest.raises(
+        FollowupCampaignControlError,
+        match="cancellation submission",
+    ):
+        provider.cancel_formal_unit(RUN_ID)
+
+    assert [call[:2] for call in transport.calls] == [
+        (
+            "POST",
+            f"/repos/example/project/actions/runs/{RUN_ID}/cancel",
+        )
+    ]
 
 
 def test_formal_assignment_stop_loss_submits_only_one_cancel_request() -> None:
@@ -1299,7 +1397,7 @@ def test_formal_assignment_stop_loss_submits_only_one_cancel_request() -> None:
 
     assert outcome.decision == "no-go"
     assert outcome.no_go_reason_or_null == "budget-exhausted"
-    assert transport.run_reads_at_cancel == [4]
+    assert transport.run_reads_at_cancel == [3]
     assert transport.cancelled == [RUN_ID]
 
 
@@ -1340,4 +1438,22 @@ def test_formal_watcher_never_reclassifies_a_deadline_cancel_as_provider_retry()
     assert outcome.decision == "no-go"
     assert outcome.no_go_reason_or_null == "budget-exhausted"
     assert outcome.provider_failure_class_or_null is None
+    assert transport.cancelled == [RUN_ID]
+
+
+def test_formal_watcher_never_fabricates_cancel_ack_after_terminal_preflight() -> None:
+    transport = _TerminalBetweenObservationAndCancelTransport()
+    provider = _provider(transport)
+    spec = followup_formal_unit_specs(PROFILE)[0]
+    run_id = provider.dispatch_formal_unit(inputs=_inputs())
+    transport.observed_at = datetime(2026, 8, 30, 0, 19, 58, tzinfo=UTC)
+
+    outcome = provider.start_formal_unit_watch(
+        provider_run_id=run_id,
+        spec=spec,
+        reservation_minutes=spec.reservation_minutes,
+    ).wait()
+
+    assert outcome.decision == "no-go"
+    assert json.loads(outcome.watcher_receipt_bytes)["cancellation_ledger"] is not None
     assert transport.cancelled == [RUN_ID]

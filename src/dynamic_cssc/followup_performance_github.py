@@ -37,6 +37,7 @@ from dynamic_cssc.followup_performance_campaign import (
 )
 from dynamic_cssc.followup_performance_campaign_controller import (
     FollowupCampaignControlError,
+    FollowupFormalCancellationSubmission,
     FollowupFormalUnitWatch,
     FollowupFormalUnitWatchOutcome,
 )
@@ -1482,17 +1483,22 @@ class GitHubFollowupCampaignProvider:
             cancellation_observation_seconds=self._cancellation_observation,
         )
 
-    def cancel_formal_unit(self, provider_run_id: int) -> None:
+    def cancel_formal_unit(
+        self,
+        provider_run_id: int,
+    ) -> FollowupFormalCancellationSubmission:
         run_id = _positive_integer(provider_run_id, field="formal run ID")
-        run, _raw = self._run_document(run_id)
-        if run.get("status") == "completed":
-            return
-        self._transport.request(
+        response = self._transport.request(
             method="POST",
             path=f"/repos/{self._repository}/actions/runs/{run_id}/cancel",
             payload=None,
             expected_statuses=frozenset({202}),
             maximum_bytes=64 * 1024,
+        )
+        return FollowupFormalCancellationSubmission(
+            provider_run_id=run_id,
+            response_status=response.status,
+            provider_observed_at=response.provider_observed_at,
         )
 
 
@@ -2310,7 +2316,7 @@ class _GitHubFormalUnitWatch:
         repository: str,
         expected_s2: str,
         transport: _GitHubTransport,
-        cancel: Callable[[int], None],
+        cancel: Callable[[int], FollowupFormalCancellationSubmission],
         provider_run_id: int,
         spec: FollowupFormalUnitSpec,
         reservation_minutes: int,
@@ -2362,6 +2368,17 @@ class _GitHubFormalUnitWatch:
             daemon=True,
         )
         self._thread.start()
+
+    def _submit_cancel(self, provider_now: datetime) -> None:
+        submission = self._cancel(self._run_id)
+        if (
+            type(submission) is not FollowupFormalCancellationSubmission
+            or submission.provider_run_id != self._run_id
+            or submission.provider_observed_at < provider_now
+        ):
+            raise FollowupCampaignControlError(
+                "formal cancellation POST was not acknowledged"
+            )
 
     @property
     def session_sha256(self) -> str:
@@ -2844,7 +2861,7 @@ class _GitHubFormalUnitWatch:
             ):
                 controller_detection_at = _controller_now()
                 cancellation_requested_at = _controller_now()
-                self._cancel(self._run_id)
+                self._submit_cancel(provider_now)
                 cancellation_acknowledged_at = _controller_now()
                 cancelled_for_deadline = True
                 cancelled_at = provider_now
@@ -2867,7 +2884,7 @@ class _GitHubFormalUnitWatch:
                     cancellation_threshold = deadline
                     controller_detection_at = _controller_now()
                     cancellation_requested_at = _controller_now()
-                    self._cancel(self._run_id)
+                    self._submit_cancel(provider_now)
                     cancellation_acknowledged_at = _controller_now()
                     cancelled_for_deadline = True
                     cancelled_at = provider_now

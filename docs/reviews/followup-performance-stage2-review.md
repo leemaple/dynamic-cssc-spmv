@@ -1,11 +1,12 @@
 # Follow-up performance Stage-2 implementation review
 
-> **Current gate:** HOLD.  Exact candidate `67e7708` passed ZCode and exact-head
-> Linux CI, but ChatGPT Pro found one unresolved P0 and one unresolved P1 on
-> that same object.  The pending closure successor removes those authority
-> surfaces and binds the newly required cancellation ledger; it is locally
-> green but has not yet received exact-head CI or either exact-object review.
-> No qualification or formal seed is authorized by this document.
+> **Current gate:** HOLD.  Exact candidate `bc6a0df` passed exact-head Linux CI
+> and ZCode, but ChatGPT Pro found two reproducible P1 evidence-control defects
+> on that same object.  The pending closure successor makes cancellation and
+> replacement outcomes mutually exclusive, requires one typed exact cancel
+> POST, and closes the provider-clock ordering.  It has not yet received an
+> exact commit, Linux CI, or either exact-object re-review.  No qualification
+> or formal seed is authorized by this document.
 
 ## Review lineage
 
@@ -187,6 +188,69 @@ control-registration, and formal follow-up Behavior Sets advance from v2 to
 v3.  This remains a local engineering witness only: after it is frozen as one
 exact commit, exact-head Linux CI and zero-P0/P1 verdicts from both configured
 reviewers are still mandatory.
+
+## Exact `bc6a0df` review and pending P1 closure
+
+The next common-review object was:
+
+- commit `bc6a0df4c39613c89ad7b0a9675d62d30966c484`;
+- tree `0ecf10c3435f919a2028f33d16d974fdd9a37ae7`;
+- sole parent `67e77086e708ea4de31e4827364f5f0107209bdc`;
+- binary diff SHA-256
+  `a2ebb100939c66a6a0149001418a2d961e2bbbb324f0c847b88b2ca7b64051d7`;
+  and
+- common packet SHA-256
+  `6337fe443a070fc8719a7b300d2a3a3475cf98048596617374e01207fbcffa03`.
+
+Exact-head CI run
+[`33307462481`](https://github.com/leemaple/dynamic-cssc-spmv/actions/runs/33307462481)
+completed successfully: P-1 and syntax passed, **2,606 tests passed** and the
+only two skips were the expected unbuilt-real-OpenFHE-runner tests, predicted
+smoke and R0 packaging passed, and artifact `9731267918` had provider digest
+`sha256:cc34fd0add79b1700f24c6520a33aaa0f8777f238508bb30e8d832f28c56b623`.
+This remained a control witness and granted no experimental authority.
+
+ZCode GLM-5.3 Max returned **PASS, P0=0, P1=0, P2=3**.  ChatGPT Pro reviewed
+the identical packet and independently returned **AMEND, P0=0, P1=2, P2=1**.
+Repository-level reproduction resolved the disagreement in Pro's stricter
+direction:
+
+1. a fully rehashed `provider-failure` watcher receipt could also carry a
+   cancellation ledger, reach `unit-provider-failed`, and authorize attempt 2;
+2. `cancel_formal_unit` could observe an already-terminal run in its preflight,
+   send no cancel POST, and still let the outer watcher record request and API
+   acknowledgement times; and
+3. a cancellation threshold later than the provider terminal `updated_at`
+   remained canonically admissible.
+
+Four minimized regressions reproduced those exact paths twice on unmodified
+production code: **4 failed in 1.37 seconds** and **4 failed in 1.38 seconds**.
+The pending successor then closes the outcome matrix at the canonical receipt,
+controller, and pre-replacement-dispatch layers; requires success and
+provider-failure receipts to carry no cancellation, budget exhaustion to carry
+one cancellation, and scientific/guard NO-GO to carry none; enforces
+`threshold_utc <= provider_terminal_updated_utc`; replaces the ambiguous
+cancel callback with a typed confirmation of one exact HTTP 202 POST; and adds
+the missing symmetric two-controller formal-ref race regression.  The analyzer,
+control-registration, and formal Behavior Sets therefore advance from v3 to
+v4.  These are evidence-control changes only: no seed, workload, matrix,
+estimator, threshold, claim rule, or scientific payload changes.
+
+The GitHub REST contract for
+[cancelling a workflow run](https://docs.github.com/en/rest/actions/workflow-runs#cancel-a-workflow-run)
+lists `202 Accepted` and `409 Conflict`.  The successor mints the typed
+submission only from the exact `202` response; a `409`, transport error, stale
+provider clock, or malformed return fails closed and cannot populate the
+cancellation acknowledgement ledger.
+
+After the production fix, the original minimized loop closed at **4 passed in
+1.22 seconds**.  The expanded regression set, including the explicit outcome
+matrix, defensive pre-replacement reinspection, `202`/`409` cancel responses,
+and the formal-ref race, passed **49 tests in 9.71 seconds**.  The complete
+follow-up control/evidence/CLI/workflow-contract suite then passed **186 tests
+in 84.68 seconds** under one low-priority process.  Ruff, JSON parsing, Behavior
+Set import/orphan closure, and `git diff --check` also passed.  These remain
+local engineering evidence pending an exact successor and Linux CI.
 
 ## Dispatch boundary
 
