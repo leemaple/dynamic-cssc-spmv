@@ -1,10 +1,12 @@
 # Follow-up performance Stage-2 implementation review
 
-> **Current gate:** the post-merge S1/S2 closure and Git-mode repair passed
-> exact review and exact-head Linux CI at object `7c52925`.  This
-> review-record-only successor must still pass its own exact-head CI and short
-> exact-object fidelity review before merge.  No qualification or formal seed
-> is authorized by this document.
+> **Current gate:** qualification and formal execution remain forbidden.  A
+> replacement S1 may enter a merge-only pull request only after its exact final
+> commit has zero unresolved P0/P1 findings from both configured external
+> reviewers and terminal-success exact-head Linux CI.  The merge must preserve
+> the reviewed tree and canonical empty registration-anchor object.  This
+> review record is authority-false and does not itself assert that a future
+> candidate has met those conditions.
 
 ## Review lineage
 
@@ -506,3 +508,111 @@ form.  Qualification, formal execution, analysis, and registered-seed values
 remain untouched.  A new reviewed S1, a new deterministic direct-child
 data-only S2, and all five fresh authority-false controls are required before
 the existing dispatch boundary can be reconsidered.
+
+## Post-replacement dedicated-CI static-gate failure
+
+The replacement lineage then closed its generic push CI and four dedicated
+authority-false controls, but the first dedicated exact-head Linux CI run
+[`33327887418`](https://github.com/leemaple/dynamic-cssc-spmv/actions/runs/33327887418)
+failed before emitting its control receipt.  The run was bound to replacement
+S1 `ecdc1e248e1d54d473510ab9c61a40af81777c79`, data-only S2
+`b3541edf5519fd64debb56ec697f7c6dd879418d`, and compatibility receipt
+`ce45f1a9a50fa42a7e430ec54e8280371ca7f81b14e6fd1579b61c15f89a93d7`.
+Its identity, detached-S1 checkout, S1/S2 compatibility, compilation, and full
+test suite all succeeded; the suite reported **2620 passed, 2 expected
+runner-dependent skips in 1702.98 seconds**.
+
+The subsequent Ruff command failed on exactly eight static findings in
+`scripts/build_route_c_paper_docx.py`: one import-layout finding, six line-length
+findings, and one nested-condition simplification.  Bash fail-fast therefore
+did not execute the following `git diff --check`.  Receipt packaging and upload
+were skipped, and the provider artifact API returned zero artifacts.  No
+qualification tag, qualification run, formal capability, or experimental
+artifact was created.
+
+This is a deterministic source-tree hygiene defect exposed by the dedicated
+control, not a provider transient or scientific outcome.  The failed run must
+not be rerun or used as one of the five controls.  The narrow repair changes
+only Python layout: it organizes the import boundary, wraps signatures, tuples,
+and literal strings without changing their values, and combines two equivalent
+nested conditions.  It does not change a workflow, scientific plan, seed,
+artifact schema, claim, Behavior Set registry membership, or Behavior Set
+schema.  This review note is itself an existing control-registration member, so
+its exact-byte inventory digest changes and must be regenerated in the fresh S2
+anchor.  The repair therefore changes the exact S1 tree and requires a new
+reviewed replacement S1, a new deterministic direct-child data-only S2, and
+five fresh authority-false controls before the external controller may
+reconsider qualification dispatch.
+
+## First static-repair candidate topology amendment
+
+The first static-repair candidate
+`38a806529f9fecd6058e0886f2d826d8717f9d58` was created from replacement S1
+`ecdc1e248e1d54d473510ab9c61a40af81777c79`.  Its two-path repair was locally
+Ruff-clean and behavior-preserving, and ZCode's GLM-5.3 Max review returned
+`PASS, P0=0, P1=0, P2=0` for the source repair.  ChatGPT Pro independently
+accepted the source and evidence-note semantics but returned `AMEND, P1=1` for
+the proposed integration topology.
+
+Remote `main` already pointed to historical data-only S2
+`b3541edf5519fd64debb56ec697f7c6dd879418d`.  The candidate diverged from that
+S2 at merge base `ecdc1e248e1d54d473510ab9c61a40af81777c79` and did not change
+the registration-anchor path relative to the merge base.  An ordinary merge
+would therefore retain the populated S2 anchor rather than restore canonical
+empty S1 bytes.  Force-moving `main` back to the candidate would instead remove
+the historical S2 from the forward lineage.  Neither result is admissible.
+Pull request #46 was closed without merge, and its branch remains as the exact
+reviewed-but-amended object.
+
+The successor must descend from exact current `main` S2, carry the same narrow
+source repair and factual record, and explicitly reset
+`config/followup-performance-registration-anchors.json` to the canonical empty
+`100644` S1 object.  Its parent, three-path diff, tree, empty-anchor object, and
+prospective merge tree require fresh exact-object review and CI.  Only the
+eventual merge commit may become the next replacement S1; all anchors,
+inventories, receipts, controls, and run IDs from the `b3541edf...` cycle remain
+non-transferable.
+
+## Corrected static-repair successor and material review closure
+
+The corrected material candidate is
+`23c53a4bc39cfeeadc84024db2e59f7b37344b01`, with tree
+`f5d772778019133044b2c0318daffdf327db3755` and sole parent exact current
+`main` S2 `b3541edf5519fd64debb56ec697f7c6dd879418d`.  Its binary diff SHA-256 is
+`5f8086b555853c63f6399e9bdb9fc5e75a528ca5995cc7ed5d1e6794a5c9b509`,
+and it modifies exactly three paths: the route-C DOCX builder, this review
+record, and the registration-anchor set.  The anchor is restored as mode
+`100644`, blob `7ce8f9944629317901269249585f9b2860593f91`, with canonical bytes
+`{"anchors":[],"schema_version":"dynamic-cssc-followup-performance-registration-anchor-set-v1"}\n`.
+An independent prospective merge-tree computation against exact parent
+`b3541edf...` yields the candidate tree `f5d77277...`, so a merge commit can
+preserve both the reviewed repair and the empty S1 anchor without rewriting
+history.
+
+ZCode GLM-5.3 in Max reasoning and Full access mode returned
+**PASS, P0=0, P1=0, P2=0** on the exact material object.  It independently
+verified the commit, tree, parent, binary diff, three-path scope, anchor mode,
+blob and bytes, prospective merge tree, behavior-preserving source repair, and
+the expected control-registration inventory-digest change without a schema
+advance.  ChatGPT Pro independently returned **PASS, P0=0, P1=0, P2=1**.  It
+closed the prior integration-topology P1 and accepted the exact source, anchor,
+tree, inventory, and authority boundaries.  Its only P2 was that the prior top
+banner still described the historical `7c52925` gate.  This review-record-only
+successor replaces that stale status claim with the time-stable, authority-
+false gate above; it changes no implementation or registration-anchor bytes.
+
+Exact-head push CI run
+[`33330315004`](https://github.com/leemaple/dynamic-cssc-spmv/actions/runs/33330315004)
+completed successfully on branch `codex/followup-static-gate-s1-v2`, exact
+head `23c53a4bc39cfeeadc84024db2e59f7b37344b01`, attempt 1.  P-1, syntax,
+unit tests, predicted-only smoke, R0 bundle creation, upload, and all cleanup
+steps succeeded.  The suite recorded **2620 passed, 2 skipped in 1683.94
+seconds**; the only skips were the two parametrizations requiring the real
+OpenFHE query runner that ordinary CI deliberately does not build.  The sole
+R0 artifact is ID `9737808767`, name
+`r0-freeze-23c53a4bc39cfeeadc84024db2e59f7b37344b01`, 480 files,
+8,922,465 bytes, provider digest
+`sha256:1ff63ff4e9c08f496c58b3dcdf80c0eddbf6b3374db69bfafb7886826ffcfec1`.
+It is bound by the provider API to the same run, branch, and head.  This CI and
+both reviews are control evidence only and grant no qualification, formal, or
+publication authority.

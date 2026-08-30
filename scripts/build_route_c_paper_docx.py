@@ -23,7 +23,6 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
-
 REPO = Path(__file__).resolve().parents[1]
 PAPER = REPO / "docs" / "paper"
 EN_MD = PAPER / "manuscript-draft.md"
@@ -110,7 +109,14 @@ def _set_run_font(run, name: str, size: float | None = None) -> None:
     _set_font_element(run._element.get_or_add_rPr(), name)
 
 
-def _set_paragraph_tokens(style, *, before: float, after: float, line: float, justify=False) -> None:
+def _set_paragraph_tokens(
+    style,
+    *,
+    before: float,
+    after: float,
+    line: float,
+    justify=False,
+) -> None:
     fmt = style.paragraph_format
     fmt.space_before = Pt(before)
     fmt.space_after = Pt(after)
@@ -419,12 +425,18 @@ def _configure_numbering(doc: Document) -> None:
 def _format_figures_and_alt_text(doc: Document, *, language: str) -> None:
     descriptions = (
         [
-            "Version-bound protocol flow: Client A owns matrix publication, metadata, the complete plan, and encrypted masks; Client B owns the query and key set, encrypts the gathered query, and reconstructs; the Cloud executes only the public program and encrypted operands.",
-            "Evidence lineage from S1 and S2 through the stopped qualification to the Route C boundary; the formal campaign was not dispatched.",
+            "Version-bound protocol flow: Client A owns matrix publication, "
+            "metadata, the complete plan, and encrypted masks; Client B owns the "
+            "query and key set, encrypts the gathered query, and reconstructs; "
+            "the Cloud executes only the public program and encrypted operands.",
+            "Evidence lineage from S1 and S2 through the stopped qualification "
+            "to the Route C boundary; the formal campaign was not dispatched.",
         ]
         if language == "en"
         else [
-            "版本绑定协议流程：Client A 拥有矩阵发布、元数据、完整计划和加密掩码；Client B 拥有查询与密钥、加密重排后的查询并完成重构；Cloud 只执行公开程序和密文操作数。",
+            "版本绑定协议流程：Client A 拥有矩阵发布、元数据、完整计划和加密"
+            "掩码；Client B 拥有查询与密钥、加密重排后的查询并完成重构；"
+            "Cloud 只执行公开程序和密文操作数。",
             "从 S1、S2 到一次性资格停止点的证据链；正式实验没有启动，论文转入 Route C。",
         ]
     )
@@ -454,9 +466,11 @@ def _style_block_quotes(doc: Document) -> None:
 
 def _apply_font_everywhere(doc: Document, font: str) -> None:
     for style in doc.styles:
-        if style.type in {WD_STYLE_TYPE.PARAGRAPH, WD_STYLE_TYPE.CHARACTER}:
-            if style.element.rPr is not None:
-                _set_font_element(style.element.get_or_add_rPr(), font)
+        if (
+            style.type in {WD_STYLE_TYPE.PARAGRAPH, WD_STYLE_TYPE.CHARACTER}
+            and style.element.rPr is not None
+        ):
+            _set_font_element(style.element.get_or_add_rPr(), font)
     for paragraph in doc.paragraphs:
         for run in paragraph.runs:
             _set_run_font(run, font)
@@ -467,14 +481,23 @@ def _apply_font_everywhere(doc: Document, font: str) -> None:
                     for run in paragraph.runs:
                         _set_run_font(run, font)
     for section in doc.sections:
-        for part in (section.header, section.first_page_header, section.footer, section.first_page_footer):
+        for part in (
+            section.header,
+            section.first_page_header,
+            section.footer,
+            section.first_page_footer,
+        ):
             for paragraph in part.paragraphs:
                 for run in paragraph.runs:
                     _set_run_font(run, font)
 
 
 def _remove_empty_trailing_paragraphs(doc: Document) -> None:
-    while doc.paragraphs and not doc.paragraphs[-1].text and not doc.paragraphs[-1]._p.xpath(".//w:drawing"):
+    while (
+        doc.paragraphs
+        and not doc.paragraphs[-1].text
+        and not doc.paragraphs[-1]._p.xpath(".//w:drawing")
+    ):
         paragraph = doc.paragraphs[-1]
         paragraph._element.getparent().remove(paragraph._element)
 
