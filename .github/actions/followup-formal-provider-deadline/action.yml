@@ -1,0 +1,70 @@
+name: Reinspect one follow-up formal provider deadline
+description: Derive the shared producer-to-guard deadline from GitHub provider time.
+
+inputs:
+  expected-s2:
+    required: true
+  expected-job-token:
+    required: true
+  expected-reservation-minutes:
+    required: true
+  unit-ordinal:
+    required: true
+  phase:
+    required: true
+  checkpoint:
+    required: true
+  require-positive-remaining:
+    required: false
+    default: 'true'
+
+outputs:
+  remaining_seconds:
+    value: ${{ steps.deadline.outputs.remaining_seconds }}
+  deadline_utc:
+    value: ${{ steps.deadline.outputs.deadline_utc }}
+  checkpoint_sha256:
+    value: ${{ steps.deadline.outputs.checkpoint_sha256 }}
+
+runs:
+  using: composite
+  steps:
+    - name: Rebind the shared reservation to provider Date and producer startedAt
+      id: deadline
+      shell: bash
+      env:
+        EXPECTED_S2: ${{ inputs.expected-s2 }}
+        EXPECTED_JOB_TOKEN: ${{ inputs.expected-job-token }}
+        EXPECTED_RESERVATION_MINUTES: ${{ inputs.expected-reservation-minutes }}
+        UNIT_ORDINAL: ${{ inputs.unit-ordinal }}
+        PHASE: ${{ inputs.phase }}
+        CHECKPOINT: ${{ inputs.checkpoint }}
+        REQUIRE_POSITIVE: ${{ inputs.require-positive-remaining }}
+        GH_TOKEN: ${{ github.token }}
+        PYTHONPATH: ${{ github.workspace }}/src
+      run: |
+        set -euo pipefail
+        test "$REQUIRE_POSITIVE" = true || test "$REQUIRE_POSITIVE" = false
+        ARGS=(
+          --repository-root "$GITHUB_WORKSPACE"
+          --repository "$GITHUB_REPOSITORY"
+          --provider-run-id "$GITHUB_RUN_ID"
+          --expected-s2 "$EXPECTED_S2"
+          --formal-unit-ordinal "$UNIT_ORDINAL"
+          --expected-job-token "$EXPECTED_JOB_TOKEN"
+          --expected-reservation-minutes "$EXPECTED_RESERVATION_MINUTES"
+          --phase "$PHASE"
+          --checkpoint "$CHECKPOINT"
+        )
+        if test "$REQUIRE_POSITIVE" = true; then
+          ARGS+=(--require-positive-remaining)
+        fi
+        DOCUMENT="$(python3 scripts/verify_followup_formal_phase_deadline.py "${ARGS[@]}")"
+        REMAINING="$(jq -er '.remaining_seconds | select(type == "number" and . >= 0 and floor == .)' <<<"$DOCUMENT")"
+        DEADLINE="$(jq -er '.formal_unit_deadline_utc | select(type == "string")' <<<"$DOCUMENT")"
+        CHECKPOINT_SHA256="$(printf '%s\n' "$DOCUMENT" | sha256sum | cut -d' ' -f1)"
+        [[ "$CHECKPOINT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+        printf 'FOLLOWUP_FORMAL_PROVIDER_DEADLINE_V1=%s\n' "$DOCUMENT"
+        echo "remaining_seconds=$REMAINING" >> "$GITHUB_OUTPUT"
+        echo "deadline_utc=$DEADLINE" >> "$GITHUB_OUTPUT"
+        echo "checkpoint_sha256=$CHECKPOINT_SHA256" >> "$GITHUB_OUTPUT"

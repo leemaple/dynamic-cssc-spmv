@@ -18,6 +18,7 @@ from dynamic_cssc.route_a_artifacts import (
 )
 from dynamic_cssc.route_a_evaluation import (
     RouteASyntheticCellRun,
+    replay_route_a_ordered_event_cell_read_only,
     replay_route_a_synthetic_cell_read_only,
     route_a_evidence_stream_root,
 )
@@ -26,16 +27,23 @@ from dynamic_cssc.route_a_results import (
     canonical_route_a_document,
     validate_route_a_strategy_cell,
 )
+from dynamic_cssc.route_a_scientific_profile import (
+    PREDECESSOR_ROUTE_A_PROFILE,
+    RouteAScientificProfile,
+)
+from dynamic_cssc.route_a_snap import RouteASnapTrace, validate_route_a_snap_trace
 from dynamic_cssc.route_a_strategy import ROUTE_A_STRATEGY_CANDIDATES
 from dynamic_cssc.route_a_workloads import RouteASyntheticTrace, validate_route_a_synthetic_trace
 
 __all__ = (
+    "RouteAOrderedEventCellTarget",
     "RouteAReplayError",
     "RouteASyntheticCellTarget",
     "RouteASyntheticReplayArchiveInspection",
     "RouteASyntheticCellReplay",
     "inspect_route_a_synthetic_replay_archive",
     "produce_route_a_synthetic_replay_archive",
+    "replay_route_a_ordered_event_cell",
     "replay_route_a_synthetic_cell",
 )
 
@@ -118,8 +126,12 @@ class RouteASyntheticCellTarget:
         rho: Fraction,
         shard_identity_sha256: str,
         unit_attempt_ordinal: int,
+        scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
     ) -> RouteASyntheticCellTarget:
-        trace = validate_route_a_synthetic_trace(trace)
+        trace = validate_route_a_synthetic_trace(
+            trace,
+            scientific_profile=scientific_profile,
+        )
         target = cls(
             source_event_trace_sha256=trace.event_trace_sha256,
             suite_role=trace.suite_role,
@@ -171,6 +183,93 @@ class RouteASyntheticCellTarget:
                 "source_event_trace_sha256": self.source_event_trace_sha256,
                 "strategy_candidate_id": self.strategy_candidate_id,
                 "suite_role": self.suite_role,
+                "unit_attempt_ordinal": self.unit_attempt_ordinal,
+            }
+        )
+
+    @property
+    def sha256(self) -> str:
+        return hashlib.sha256(self.document_bytes).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class RouteAOrderedEventCellTarget:
+    """External target for one exact SNAP partition/semantics/rho lane."""
+
+    source_event_trace_sha256: str
+    raw_object_sha256: str
+    mapping_sha256: str
+    partition: int
+    semantics: str
+    strategy_candidate_id: str
+    rho: Fraction
+    shard_identity_sha256: str
+    unit_attempt_ordinal: int
+
+    @classmethod
+    def for_snap_trace(
+        cls,
+        trace: RouteASnapTrace,
+        *,
+        strategy_candidate_id: str,
+        rho: Fraction,
+        shard_identity_sha256: str,
+        unit_attempt_ordinal: int,
+    ) -> RouteAOrderedEventCellTarget:
+        trace = validate_route_a_snap_trace(trace)
+        target = cls(
+            source_event_trace_sha256=trace.event_trace_sha256,
+            raw_object_sha256=trace.raw_object_sha256,
+            mapping_sha256=trace.mapping_sha256,
+            partition=trace.partition,
+            semantics=trace.semantics,
+            strategy_candidate_id=strategy_candidate_id,
+            rho=rho,
+            shard_identity_sha256=shard_identity_sha256,
+            unit_attempt_ordinal=unit_attempt_ordinal,
+        )
+        target._validate()
+        return target
+
+    def _validate(self) -> None:
+        digests = (
+            self.source_event_trace_sha256,
+            self.raw_object_sha256,
+            self.mapping_sha256,
+            self.shard_identity_sha256,
+        )
+        if (
+            any(
+                type(value) is not str
+                or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+                for value in digests
+            )
+            or type(self.partition) is not int
+            or self.partition not in {0, 1}
+            or self.semantics not in {"T1", "T2"}
+            or self.strategy_candidate_id not in ROUTE_A_STRATEGY_CANDIDATES
+            or type(self.rho) is not Fraction
+            or self.rho not in {Fraction(1, 10), Fraction(1)}
+            or type(self.unit_attempt_ordinal) is not int
+            or self.unit_attempt_ordinal not in {0, 1}
+        ):
+            raise RouteAReplayError("ordered-event replay target is invalid")
+
+    @property
+    def document_bytes(self) -> bytes:
+        self._validate()
+        return canonical_route_a_document(
+            {
+                "mapping_sha256": self.mapping_sha256,
+                "partition": self.partition,
+                "raw_object_sha256": self.raw_object_sha256,
+                "rho": _rho_text(self.rho),
+                "schema_version": "dynamic-cssc-route-a-ordered-event-cell-target-v1",
+                "semantics": self.semantics,
+                "shard_identity_sha256": self.shard_identity_sha256,
+                "source_event_trace_sha256": self.source_event_trace_sha256,
+                "strategy_candidate_id": self.strategy_candidate_id,
                 "unit_attempt_ordinal": self.unit_attempt_ordinal,
             }
         )
@@ -325,6 +424,8 @@ def _canonical_dict(content: bytes, label: str) -> dict[str, object]:
 
 def inspect_route_a_synthetic_replay_archive(
     archive_bytes: bytes,
+    *,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> RouteASyntheticReplayArchiveInspection:
     """Independently reconstruct one replay handoff and its nested replay cell."""
 
@@ -345,7 +446,8 @@ def inspect_route_a_synthetic_replay_archive(
     ):
         raise RouteAReplayError("replay handoff authority boundary changed")
     final_cell = validate_route_a_strategy_cell(
-        _canonical_dict(members["final-cell.json"], "final cell")
+        _canonical_dict(members["final-cell.json"], "final cell"),
+        scientific_profile=scientific_profile,
     )
     receipt = _canonical_dict(members["replay-receipt.json"], "replay receipt")
     if (
@@ -354,7 +456,10 @@ def inspect_route_a_synthetic_replay_archive(
         != "dynamic-cssc-route-a-synthetic-cell-replay-receipt-v2"
     ):
         raise RouteAReplayError("replay receipt does not match its closed schema")
-    nested = inspect_route_a_synthetic_cell_archive(members["replay-cell.zip"])
+    nested = inspect_route_a_synthetic_cell_archive(
+        members["replay-cell.zip"],
+        scientific_profile=scientific_profile,
+    )
     replay = RouteASyntheticCellReplay(
         final_cell=final_cell,
         replay_run=nested.cell_run,
@@ -409,37 +514,16 @@ def _validate_producer_identity(
     return strategy, _RHO_BY_TEXT[rho_text], attempt, shard_sha256
 
 
-def replay_route_a_synthetic_cell(
-    trace: RouteASyntheticTrace,
+def _close_replay(
     *,
-    archive_bytes: bytes,
-    expected_target: RouteASyntheticCellTarget,
-    machine_plan_bytes: bytes,
-    scratch_directory: Path,
+    producer: RouteASyntheticCellRun,
+    replay: RouteASyntheticCellRun,
+    producer_archive_sha256: str,
+    expected_target_sha256: str,
+    source_event_trace_sha256: str,
+    replay_started_ns: int,
+    scientific_profile: RouteAScientificProfile,
 ) -> RouteASyntheticCellReplay:
-    """Reinspect a producer handoff and independently execute its exact cell."""
-
-    replay_started = time.perf_counter_ns()
-    trace = validate_route_a_synthetic_trace(trace)
-    inspection = inspect_route_a_synthetic_cell_archive(archive_bytes)
-    producer = inspection.cell_run
-    strategy, rho, attempt, shard_sha256 = _validate_producer_identity(
-        trace,
-        producer,
-        expected_target,
-    )
-    replay = replay_route_a_synthetic_cell_read_only(
-        trace,
-        strategy_candidate_id=strategy,
-        rho=rho,
-        shard_identity_sha256=shard_sha256,
-        unit_attempt_ordinal=attempt,
-        machine_plan_bytes=machine_plan_bytes,
-        scratch_directory=scratch_directory,
-        private_preparation_documents=producer.private_preparation_documents,
-        ledger_snapshot_bytes=producer.ledger_snapshot_bytes,
-    )
-
     producer_document = producer.cell.document
     replay_document = replay.cell.document
     if producer.window_trace_bytes != replay.window_trace_bytes:
@@ -466,16 +550,19 @@ def replay_route_a_synthetic_cell(
     if producer_document["bindings"] != replay_document["bindings"]:
         raise RouteAReplayError("independent replay changed an exact cell binding")
 
-    replay_elapsed_nanoseconds = time.perf_counter_ns() - replay_started
+    replay_elapsed_nanoseconds = time.perf_counter_ns() - replay_started_ns
     final_document = producer.cell.document
     final_document["measurements"]["replay_seconds"] = _seconds(
         replay_elapsed_nanoseconds
     )
-    final_cell = validate_route_a_strategy_cell(final_document)
+    final_cell = validate_route_a_strategy_cell(
+        final_document,
+        scientific_profile=scientific_profile,
+    )
     receipt_bytes = canonical_route_a_document(
         {
             "deterministic_accounting_equal": True,
-            "expected_target_sha256": expected_target.sha256,
+            "expected_target_sha256": expected_target_sha256,
             "final_cell_sha256": final_cell.sha256,
             "formal_authority_granted": False,
             "independent_oracle_equality": True,
@@ -484,7 +571,7 @@ def replay_route_a_synthetic_cell(
                 "machine_plan_sha256"
             ],
             "ledger_snapshot_read_only_verified": True,
-            "producer_archive_sha256": inspection.archive_sha256,
+            "producer_archive_sha256": producer_archive_sha256,
             "producer_cell_sha256": producer.cell.sha256,
             "producer_ledger_root": producer_document["bindings"]["ledger_root"],
             "producer_ledger_snapshot_sha256": producer.ledger_snapshot_sha256,
@@ -505,7 +592,7 @@ def replay_route_a_synthetic_cell(
                 "typed-reexecution-oracle-and-final-comparison-before-receipt-serialization"
             ),
             "schema_version": "dynamic-cssc-route-a-synthetic-cell-replay-receipt-v2",
-            "source_event_trace_sha256": trace.event_trace_sha256,
+            "source_event_trace_sha256": source_event_trace_sha256,
             "window_trace_sha256": producer.window_trace_sha256,
         }
     )
@@ -514,4 +601,142 @@ def replay_route_a_synthetic_cell(
         replay_run=replay,
         receipt_bytes=receipt_bytes,
         receipt_sha256=hashlib.sha256(receipt_bytes).hexdigest(),
+    )
+
+
+def replay_route_a_synthetic_cell(
+    trace: RouteASyntheticTrace,
+    *,
+    archive_bytes: bytes,
+    expected_target: RouteASyntheticCellTarget,
+    machine_plan_bytes: bytes,
+    scratch_directory: Path,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
+) -> RouteASyntheticCellReplay:
+    """Reinspect a producer handoff and independently execute its exact cell."""
+
+    replay_started = time.perf_counter_ns()
+    trace = validate_route_a_synthetic_trace(
+        trace,
+        scientific_profile=scientific_profile,
+    )
+    inspection = inspect_route_a_synthetic_cell_archive(
+        archive_bytes,
+        scientific_profile=scientific_profile,
+    )
+    producer = inspection.cell_run
+    strategy, rho, attempt, shard_sha256 = _validate_producer_identity(
+        trace,
+        producer,
+        expected_target,
+    )
+    replay = replay_route_a_synthetic_cell_read_only(
+        trace,
+        strategy_candidate_id=strategy,
+        rho=rho,
+        shard_identity_sha256=shard_sha256,
+        unit_attempt_ordinal=attempt,
+        machine_plan_bytes=machine_plan_bytes,
+        scratch_directory=scratch_directory,
+        private_preparation_documents=producer.private_preparation_documents,
+        ledger_snapshot_bytes=producer.ledger_snapshot_bytes,
+        scientific_profile=scientific_profile,
+    )
+
+    return _close_replay(
+        producer=producer,
+        replay=replay,
+        producer_archive_sha256=inspection.archive_sha256,
+        expected_target_sha256=expected_target.sha256,
+        source_event_trace_sha256=trace.event_trace_sha256,
+        replay_started_ns=replay_started,
+        scientific_profile=scientific_profile,
+    )
+
+
+def _validate_ordered_producer_identity(
+    trace: RouteASnapTrace,
+    producer: RouteASyntheticCellRun,
+    expected_target: RouteAOrderedEventCellTarget,
+) -> tuple[str, Fraction, int, str]:
+    if type(expected_target) is not RouteAOrderedEventCellTarget:
+        raise TypeError("expected_target must be an exact ordered-event target")
+    expected_target._validate()
+    identity = producer.cell.document["identity"]
+    rho_text = identity["rho"]
+    if type(rho_text) is not str or rho_text not in {"1/10", "1"}:
+        raise RouteAReplayError("ordered-event producer rho is not directly replayable")
+    expected = {
+        "formal_seed_or_null": None,
+        "object_sha256_or_null": expected_target.raw_object_sha256,
+        "partition_or_null": expected_target.partition,
+        "rho": _rho_text(expected_target.rho),
+        "scale_or_null": None,
+        "semantics_or_null": expected_target.semantics,
+        "shard_identity_sha256": expected_target.shard_identity_sha256,
+        "source_kind": "snap-a2q",
+        "strategy_candidate_id": expected_target.strategy_candidate_id,
+        "suite_role": "formal",
+        "unit_attempt_ordinal": expected_target.unit_attempt_ordinal,
+    }
+    if (
+        expected_target.source_event_trace_sha256 != trace.event_trace_sha256
+        or expected_target.raw_object_sha256 != trace.raw_object_sha256
+        or expected_target.mapping_sha256 != trace.mapping_sha256
+        or expected_target.partition != trace.partition
+        or expected_target.semantics != trace.semantics
+        or any(identity[field] != value for field, value in expected.items())
+    ):
+        raise RouteAReplayError("ordered-event producer differs from its external target")
+    strategy = identity["strategy_candidate_id"]
+    attempt = identity["unit_attempt_ordinal"]
+    shard_sha256 = identity["shard_identity_sha256"]
+    if type(strategy) is not str or type(attempt) is not int or type(shard_sha256) is not str:
+        raise RouteAReplayError("ordered-event producer identity is malformed")
+    return strategy, _RHO_BY_TEXT[rho_text], attempt, shard_sha256
+
+
+def replay_route_a_ordered_event_cell(
+    trace: RouteASnapTrace,
+    *,
+    archive_bytes: bytes,
+    expected_target: RouteAOrderedEventCellTarget,
+    machine_plan_bytes: bytes,
+    scratch_directory: Path,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
+) -> RouteASyntheticCellReplay:
+    """Reinspect and independently replay one exact SNAP producer cell."""
+
+    replay_started = time.perf_counter_ns()
+    trace = validate_route_a_snap_trace(trace)
+    inspection = inspect_route_a_synthetic_cell_archive(
+        archive_bytes,
+        scientific_profile=scientific_profile,
+    )
+    producer = inspection.cell_run
+    strategy, rho, attempt, shard_sha256 = _validate_ordered_producer_identity(
+        trace,
+        producer,
+        expected_target,
+    )
+    replay = replay_route_a_ordered_event_cell_read_only(
+        trace,
+        strategy_candidate_id=strategy,
+        rho=rho,
+        shard_identity_sha256=shard_sha256,
+        unit_attempt_ordinal=attempt,
+        machine_plan_bytes=machine_plan_bytes,
+        scratch_directory=scratch_directory,
+        private_preparation_documents=producer.private_preparation_documents,
+        ledger_snapshot_bytes=producer.ledger_snapshot_bytes,
+        scientific_profile=scientific_profile,
+    )
+    return _close_replay(
+        producer=producer,
+        replay=replay,
+        producer_archive_sha256=inspection.archive_sha256,
+        expected_target_sha256=expected_target.sha256,
+        source_event_trace_sha256=trace.event_trace_sha256,
+        replay_started_ns=replay_started,
+        scientific_profile=scientific_profile,
     )

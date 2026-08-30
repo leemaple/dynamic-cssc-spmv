@@ -21,9 +21,10 @@
         "src/dynamic_cssc/publication_traces.py",
         "src/dynamic_cssc/route_a_contract.py",
         "src/dynamic_cssc/route_a_schedule.py",
+        "src/dynamic_cssc/route_a_scientific_profile.py",
         "src/dynamic_cssc/route_a_workloads.py"
       ],
-      "schema_version": "dynamic-cssc-route-a-acquisition-behavior-set-v5"
+      "schema_version": "dynamic-cssc-route-a-acquisition-behavior-set-v6"
     },
     "analyzer": {
       "paths": [
@@ -51,9 +52,10 @@
         "src/dynamic_cssc/publication_traces.py",
         "src/dynamic_cssc/route_a_lineage.py",
         "src/dynamic_cssc/route_a_results.py",
+        "src/dynamic_cssc/route_a_scientific_profile.py",
         "src/dynamic_cssc/route_a_serialized_bytes.py"
       ],
-      "schema_version": "dynamic-cssc-route-a-analyzer-behavior-set-v5"
+      "schema_version": "dynamic-cssc-route-a-analyzer-behavior-set-v6"
     },
     "control-registration": {
       "paths": [
@@ -77,13 +79,14 @@
         "src/dynamic_cssc/route_a_controller.py",
         "src/dynamic_cssc/route_a_lineage.py",
         "src/dynamic_cssc/route_a_results.py",
+        "src/dynamic_cssc/route_a_scientific_profile.py",
         "src/dynamic_cssc/route_a_serialized_bytes.py",
         "tests/test_route_a_controller.py",
         "tests/test_route_a_controller_github.py",
         "tests/test_route_a_lineage.py",
         "tests/test_route_a_live_stop_loss.py"
       ],
-      "schema_version": "dynamic-cssc-route-a-control-registration-behavior-set-v6"
+      "schema_version": "dynamic-cssc-route-a-control-registration-behavior-set-v7"
     },
     "formal": {
       "paths": [
@@ -137,7 +140,9 @@
         "src/dynamic_cssc/route_a_replay.py",
         "src/dynamic_cssc/route_a_results.py",
         "src/dynamic_cssc/route_a_schedule.py",
+        "src/dynamic_cssc/route_a_scientific_profile.py",
         "src/dynamic_cssc/route_a_serialized_bytes.py",
+        "src/dynamic_cssc/route_a_snap.py",
         "src/dynamic_cssc/route_a_strategy.py",
         "src/dynamic_cssc/route_a_workloads.py",
         "src/dynamic_cssc/simulator.py",
@@ -146,7 +151,7 @@
         "src/dynamic_cssc/strong_execution.py",
         "src/dynamic_cssc/strong_packed_coo.py"
       ],
-      "schema_version": "dynamic-cssc-route-a-formal-behavior-set-v6"
+      "schema_version": "dynamic-cssc-route-a-formal-behavior-set-v7"
     },
     "qualification": {
       "paths": [
@@ -182,6 +187,8 @@
         "src/dynamic_cssc/day2_openfhe_key_plan.py",
         "src/dynamic_cssc/events.py",
         "src/dynamic_cssc/evidence_compatibility.py",
+        "src/dynamic_cssc/followup_performance_artifacts.py",
+        "src/dynamic_cssc/followup_performance_contract.py",
         "src/dynamic_cssc/mask_ledger.py",
         "src/dynamic_cssc/metrics.py",
         "src/dynamic_cssc/openfhe_query_runner.py",
@@ -213,13 +220,16 @@
         "src/dynamic_cssc/route_a_native_runtime.py",
         "src/dynamic_cssc/route_a_native_suite.py",
         "src/dynamic_cssc/route_a_openfhe_package.py",
+        "src/dynamic_cssc/route_a_ordered_suite.py",
         "src/dynamic_cssc/route_a_postrun_admission.py",
         "src/dynamic_cssc/route_a_qualification_guard.py",
         "src/dynamic_cssc/route_a_qualification_runtime.py",
         "src/dynamic_cssc/route_a_replay.py",
         "src/dynamic_cssc/route_a_results.py",
         "src/dynamic_cssc/route_a_schedule.py",
+        "src/dynamic_cssc/route_a_scientific_profile.py",
         "src/dynamic_cssc/route_a_serialized_bytes.py",
+        "src/dynamic_cssc/route_a_snap.py",
         "src/dynamic_cssc/route_a_strategy.py",
         "src/dynamic_cssc/route_a_synthetic_suite.py",
         "src/dynamic_cssc/route_a_workloads.py",
@@ -255,12 +265,15 @@
         "tests/test_route_a_native_suite.py",
         "tests/test_route_a_openfhe_contract.py",
         "tests/test_route_a_openfhe_package.py",
+        "tests/test_route_a_ordered_suite.py",
         "tests/test_route_a_postrun_admission.py",
         "tests/test_route_a_qualification_clis.py",
         "tests/test_route_a_qualification_guard.py",
         "tests/test_route_a_qualification_workflow.py",
         "tests/test_route_a_results.py",
         "tests/test_route_a_schedule.py",
+        "tests/test_route_a_scientific_profile.py",
+        "tests/test_route_a_snap.py",
         "tests/test_route_a_strategy.py",
         "tests/test_route_a_synthetic_suite.py",
         "tests/test_route_a_workloads.py",
@@ -276,7 +289,7 @@
         "tests/test_strong_strategy_state.py",
         "tests/test_strong_whole_query_witness_contract.py"
       ],
-      "schema_version": "dynamic-cssc-route-a-qualification-behavior-set-v8"
+      "schema_version": "dynamic-cssc-route-a-qualification-behavior-set-v9"
     }
   },
   "schema_version": "dynamic-cssc-route-a-behavior-set-registry-v3",

@@ -1,0 +1,125 @@
+name: Follow-up performance descriptive registration
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_s1_git_sha:
+        description: Exact reviewed follow-up experiment-source S1 commit
+        required: true
+        type: string
+      expected_s2_git_sha:
+        description: Exact terminal data-only follow-up S2 commit
+        required: true
+        type: string
+      expected_compatibility_receipt_sha256:
+        description: Exact follow-up S1-to-S2 compatibility receipt SHA-256
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: followup-performance-registration-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  descriptive-registration:
+    name: Produce and independently reinspect follow-up registration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Validate exact identities before checkout
+        env:
+          EXPECTED_S1: ${{ inputs.expected_s1_git_sha }}
+          EXPECTED_S2: ${{ inputs.expected_s2_git_sha }}
+          EXPECTED_COMPATIBILITY: ${{ inputs.expected_compatibility_receipt_sha256 }}
+        run: |
+          [[ "$EXPECTED_S1" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_S2" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_COMPATIBILITY" =~ ^[0-9a-f]{64}$ ]]
+      - name: Check out exact data-only S2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.expected_s2_git_sha }}
+      - name: Verify exact workflow and checkout identity
+        env:
+          EXPECTED_S2: ${{ inputs.expected_s2_git_sha }}
+        run: |
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_SHA" = "$EXPECTED_S2"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_S2"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+      - name: Build hash-locked Python environment
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12.13'
+      - name: Install hash-locked dependencies
+        run: |
+          python -m venv "$RUNNER_TEMP/followup-registration-venv"
+          "$RUNNER_TEMP/followup-registration-venv/bin/python" -m pip install --require-hashes -r requirements-ci.txt
+      - name: Verify lineage and the registration producer contract
+        env:
+          EXPECTED_S1: ${{ inputs.expected_s1_git_sha }}
+          EXPECTED_S2: ${{ inputs.expected_s2_git_sha }}
+          EXPECTED_COMPATIBILITY: ${{ inputs.expected_compatibility_receipt_sha256 }}
+        run: |
+          "$RUNNER_TEMP/followup-registration-venv/bin/python" scripts/verify_followup_performance_lineage.py \
+            --repository-root "$GITHUB_WORKSPACE" \
+            --s1 "$EXPECTED_S1" \
+            --s2 "$EXPECTED_S2" \
+            --expected-receipt-sha256 "$EXPECTED_COMPATIBILITY"
+          "$RUNNER_TEMP/followup-registration-venv/bin/python" -m pytest -q \
+            tests/test_followup_performance_contract.py \
+            tests/test_followup_performance_lineage.py
+          "$RUNNER_TEMP/followup-registration-venv/bin/python" -m ruff check \
+            src/dynamic_cssc/followup_performance_contract.py \
+            src/dynamic_cssc/followup_performance_lineage.py \
+            scripts/produce_followup_performance_registration.py \
+            scripts/verify_followup_performance_registration.py
+      - name: Produce deterministic descriptive registration
+        id: produce
+        env:
+          EXPECTED_S1: ${{ inputs.expected_s1_git_sha }}
+          EXPECTED_S2: ${{ inputs.expected_s2_git_sha }}
+        run: |
+          "$RUNNER_TEMP/followup-registration-venv/bin/python" scripts/produce_followup_performance_registration.py \
+            --repository-root "$GITHUB_WORKSPACE" \
+            --s1 "$EXPECTED_S1" \
+            --s2 "$EXPECTED_S2" \
+            --output "$RUNNER_TEMP/followup-registration.zip" \
+            > "$RUNNER_TEMP/followup-registration-receipt.json"
+          ARCHIVE_SHA256="$(jq -er .archive_sha256 "$RUNNER_TEMP/followup-registration-receipt.json")"
+          ENVELOPE_SHA256="$(jq -er .envelope_sha256 "$RUNNER_TEMP/followup-registration-receipt.json")"
+          ARTIFACT_NAME="$(jq -er .artifact_name "$RUNNER_TEMP/followup-registration-receipt.json")"
+          [[ "$ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$ENVELOPE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$ARTIFACT_NAME" =~ ^followup-performance-v1-control-registration-[a-z0-9-]+$ ]]
+          echo "archive_sha256=$ARCHIVE_SHA256" >> "$GITHUB_OUTPUT"
+          echo "envelope_sha256=$ENVELOPE_SHA256" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+      - name: Independently reinspect exact registration bytes
+        env:
+          EXPECTED_S1: ${{ inputs.expected_s1_git_sha }}
+          EXPECTED_S2: ${{ inputs.expected_s2_git_sha }}
+          ARCHIVE_SHA256: ${{ steps.produce.outputs.archive_sha256 }}
+          ENVELOPE_SHA256: ${{ steps.produce.outputs.envelope_sha256 }}
+        run: |
+          "$RUNNER_TEMP/followup-registration-venv/bin/python" scripts/verify_followup_performance_registration.py \
+            --repository-root "$GITHUB_WORKSPACE" \
+            --s1 "$EXPECTED_S1" \
+            --s2 "$EXPECTED_S2" \
+            --archive "$RUNNER_TEMP/followup-registration.zip" \
+            --expected-archive-sha256 "$ARCHIVE_SHA256" \
+            --expected-envelope-sha256 "$ENVELOPE_SHA256"
+      - name: Upload descriptive registration only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ steps.produce.outputs.artifact_name }}
+          path: ${{ runner.temp }}/followup-registration.zip
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

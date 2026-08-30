@@ -1,0 +1,137 @@
+name: Verify one bound follow-up campaign run
+description: Reinspect reserve, exact-run binding, and mandatory watcher before any seed.
+
+inputs:
+  expected-s1:
+    required: true
+  expected-s2:
+    required: true
+  expected-compatibility:
+    required: true
+  expected-campaign-id:
+    required: true
+  expected-reservation-oid:
+    required: true
+  expected-reservation-minutes:
+    required: true
+  unit-ordinal:
+    required: true
+  unit-attempt-ordinal:
+    required: true
+  expected-job-token:
+    required: true
+
+outputs:
+  admission_receipt_sha256:
+    value: ${{ steps.verify.outputs.admission_receipt_sha256 }}
+  reservation_minutes:
+    value: ${{ steps.verify.outputs.reservation_minutes }}
+  unit_kind:
+    value: ${{ steps.verify.outputs.unit_kind }}
+  watch_armed_oid:
+    value: ${{ steps.verify.outputs.watch_armed_oid }}
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch and independently close the exact provider progress chain
+      id: verify
+      shell: bash
+      env:
+        EXPECTED_S1: ${{ inputs.expected-s1 }}
+        EXPECTED_S2: ${{ inputs.expected-s2 }}
+        EXPECTED_COMPATIBILITY: ${{ inputs.expected-compatibility }}
+        EXPECTED_CAMPAIGN_ID: ${{ inputs.expected-campaign-id }}
+        EXPECTED_RESERVATION_OID: ${{ inputs.expected-reservation-oid }}
+        EXPECTED_RESERVATION_MINUTES: ${{ inputs.expected-reservation-minutes }}
+        UNIT_ORDINAL: ${{ inputs.unit-ordinal }}
+        UNIT_ATTEMPT_ORDINAL: ${{ inputs.unit-attempt-ordinal }}
+        EXPECTED_JOB_TOKEN: ${{ inputs.expected-job-token }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        test "$GITHUB_EVENT_NAME" = workflow_dispatch
+        test "$GITHUB_REF" = refs/heads/main
+        test "$GITHUB_SHA" = "$EXPECTED_S2"
+        test "$GITHUB_RUN_ATTEMPT" = 1
+        [[ "$EXPECTED_S1" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$EXPECTED_S2" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$EXPECTED_COMPATIBILITY" =~ ^[0-9a-f]{64}$ ]]
+        [[ "$EXPECTED_CAMPAIGN_ID" =~ ^[0-9a-f]{64}$ ]]
+        [[ "$EXPECTED_RESERVATION_OID" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$EXPECTED_RESERVATION_MINUTES" =~ ^(20|25|40|50)$ ]]
+        [[ "$UNIT_ORDINAL" =~ ^([0-9]|1[0-6])$ ]]
+        [[ "$UNIT_ATTEMPT_ORDINAL" =~ ^[12]$ ]]
+
+        ROOT="$RUNNER_TEMP/followup-campaign-admission"
+        install -d -m 700 "$ROOT"
+        API_VERSION='2026-03-10'
+        REF_PATH='tags/dynamic-cssc-followup-performance-formal-authority-v1'
+        WATCH_OID=''
+        for _OBSERVATION in $(seq 1 25); do
+          gh api -H "X-GitHub-Api-Version:$API_VERSION" \
+            "/repos/$GITHUB_REPOSITORY/git/ref/$REF_PATH" > "$ROOT/ref.json"
+          CANDIDATE_OID="$(jq -er '.object.sha' "$ROOT/ref.json")"
+          [[ "$CANDIDATE_OID" =~ ^[0-9a-f]{40}$ ]]
+          gh api -H "X-GitHub-Api-Version:$API_VERSION" \
+            "/repos/$GITHUB_REPOSITORY/git/commits/$CANDIDATE_OID" > "$ROOT/candidate.json"
+          CANDIDATE_STATE="$(jq -er '.message | fromjson | .state' "$ROOT/candidate.json")"
+          if test "$CANDIDATE_STATE" = watch-armed; then
+            jq -e \
+              --arg campaign "$EXPECTED_CAMPAIGN_ID" \
+              --argjson run "$GITHUB_RUN_ID" \
+              --argjson ordinal "$UNIT_ORDINAL" \
+              --argjson attempt "$UNIT_ATTEMPT_ORDINAL" \
+              '.message | fromjson
+               | .campaign_id == $campaign
+                 and .provider_run_id_or_null == $run
+                 and .provider_run_attempt_or_null == 1
+                 and .unit_ordinal_or_null == $ordinal
+                 and .unit_attempt_ordinal_or_null == $attempt' \
+              "$ROOT/candidate.json" >/dev/null
+            WATCH_OID="$CANDIDATE_OID"
+            mv "$ROOT/candidate.json" "$ROOT/watch.json"
+            break
+          fi
+          if test "$CANDIDATE_STATE" = campaign-no-go; then
+            echo 'campaign closed NO-GO before run admission' >&2
+            exit 1
+          fi
+          if test "$CANDIDATE_STATE" != unit-reserved && \
+             test "$CANDIDATE_STATE" != run-bound; then
+            echo 'campaign progress ref moved to an incompatible state' >&2
+            exit 1
+          fi
+          sleep 5
+        done
+        [[ "$WATCH_OID" =~ ^[0-9a-f]{40}$ ]]
+        BINDING_OID="$(jq -er '.parents | if length == 1 then .[0].sha else error("parent-count") end' "$ROOT/watch.json")"
+        [[ "$BINDING_OID" =~ ^[0-9a-f]{40}$ ]]
+        gh api -H "X-GitHub-Api-Version:$API_VERSION" \
+          "/repos/$GITHUB_REPOSITORY/git/commits/$BINDING_OID" > "$ROOT/binding.json"
+        RESERVATION_OID="$(jq -er '.parents | if length == 1 then .[0].sha else error("parent-count") end' "$ROOT/binding.json")"
+        test "$RESERVATION_OID" = "$EXPECTED_RESERVATION_OID"
+        gh api -H "X-GitHub-Api-Version:$API_VERSION" \
+          "/repos/$GITHUB_REPOSITORY/git/commits/$RESERVATION_OID" > "$ROOT/reservation.json"
+
+        python scripts/verify_followup_campaign_run_admission.py \
+          --repository-root "$GITHUB_WORKSPACE" \
+          --ref-json "$ROOT/ref.json" \
+          --reservation-commit-json "$ROOT/reservation.json" \
+          --binding-commit-json "$ROOT/binding.json" \
+          --watch-commit-json "$ROOT/watch.json" \
+          --expected-reservation-oid "$EXPECTED_RESERVATION_OID" \
+          --expected-reservation-minutes "$EXPECTED_RESERVATION_MINUTES" \
+          --expected-campaign-id "$EXPECTED_CAMPAIGN_ID" \
+          --expected-s1 "$EXPECTED_S1" \
+          --expected-s2 "$EXPECTED_S2" \
+          --expected-compatibility "$EXPECTED_COMPATIBILITY" \
+          --expected-unit-ordinal "$UNIT_ORDINAL" \
+          --expected-unit-attempt-ordinal "$UNIT_ATTEMPT_ORDINAL" \
+          --expected-job-token "$EXPECTED_JOB_TOKEN" \
+          --expected-provider-run-id "$GITHUB_RUN_ID" > "$ROOT/receipt.json"
+
+        for FIELD in admission_receipt_sha256 reservation_minutes unit_kind watch_armed_oid; do
+          VALUE="$(jq -er --arg field "$FIELD" '.[$field]' "$ROOT/receipt.json")"
+          echo "$FIELD=$VALUE" >> "$GITHUB_OUTPUT"
+        done

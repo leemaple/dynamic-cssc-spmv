@@ -192,13 +192,20 @@ class _Job:
         }
 
 
-def _jobs(document: dict[str, object]) -> tuple[_Job, ...]:
+def _jobs(
+    document: dict[str, object],
+    *,
+    expected_names: tuple[str, ...] = _JOBS,
+) -> tuple[_Job, ...]:
     rows = document.get("jobs")
     if (
         type(rows) is not list
         or document.get("total_count") != len(rows)
-        or len(rows) != len(_JOBS)
+        or len(rows) != len(expected_names)
         or any(type(row) is not dict for row in rows)
+        or len(expected_names) != 6
+        or len(set(expected_names)) != 6
+        or any(type(name) is not str or not name for name in expected_names)
     ):
         raise RouteAPostrunAdmissionError("q6 provider job set is incomplete")
     by_name: dict[str, dict[str, object]] = {}
@@ -207,11 +214,11 @@ def _jobs(document: dict[str, object]) -> tuple[_Job, ...]:
         if type(name) is not str or name in by_name:
             raise RouteAPostrunAdmissionError("q6 provider job identity is duplicated")
         by_name[name] = row
-    if set(by_name) != set(_JOBS):
+    if set(by_name) != set(expected_names):
         raise RouteAPostrunAdmissionError("q6 provider job names are missing or extra")
     parsed: list[_Job] = []
     identifiers: set[int] = set()
-    for name in _JOBS:
+    for name in expected_names:
         row = by_name[name]
         identifier = row.get("id")
         started = _timestamp(row.get("started_at"), field=f"{name}.started_at")
@@ -263,6 +270,7 @@ def _validate_prefix_artifacts(
     *,
     expected_head_sha: str,
     expected_run_id: int,
+    expected_names: tuple[str, ...] = _PREFIX_ARTIFACTS,
 ) -> None:
     if type(expected_run_id) is not int or expected_run_id <= 0:
         raise RouteAPostrunAdmissionError("q6 expected provider run ID is invalid")
@@ -270,8 +278,11 @@ def _validate_prefix_artifacts(
     if (
         type(rows) is not list
         or document.get("total_count") != len(rows)
-        or len(rows) != len(_PREFIX_ARTIFACTS)
+        or len(rows) != len(expected_names)
         or any(type(row) is not dict for row in rows)
+        or len(expected_names) != 5
+        or len(set(expected_names)) != 5
+        or any(type(name) is not str or not name for name in expected_names)
     ):
         raise RouteAPostrunAdmissionError("q6 prefix artifact set is incomplete")
     by_name: dict[str, dict[str, object]] = {}
@@ -298,7 +309,7 @@ def _validate_prefix_artifacts(
             raise RouteAPostrunAdmissionError("q6 prefix artifact identity is invalid")
         identifiers.add(identifier)
         by_name[name] = row
-    if set(by_name) != set(_PREFIX_ARTIFACTS):
+    if set(by_name) != set(expected_names):
         raise RouteAPostrunAdmissionError("q6 prefix artifact names are missing or extra")
 
 
@@ -371,6 +382,8 @@ def produce_route_a_postrun_admission(
     expected_run_attempt: int,
     output_directory: Path,
     observed_at: datetime | None = None,
+    expected_job_names: tuple[str, ...] = _JOBS,
+    expected_prefix_artifact_names: tuple[str, ...] = _PREFIX_ARTIFACTS,
 ) -> RouteAPostrunAdmissionInspection:
     """Validate live q1-q5/q6 provider state and write q6's authority-false record."""
 
@@ -406,7 +419,8 @@ def produce_route_a_postrun_admission(
         _provider_object(
             _stable_read(jobs_json_path, maximum=_MAX_PROVIDER_BYTES),
             field="q6 provider jobs",
-        )
+        ),
+        expected_names=expected_job_names,
     )
     _validate_prefix_artifacts(
         _provider_object(
@@ -415,6 +429,7 @@ def produce_route_a_postrun_admission(
         ),
         expected_head_sha=expected_s2_git_sha,
         expected_run_id=expected_run_id,
+        expected_names=expected_prefix_artifact_names,
     )
     q1, _q2, q3, q4, q5, q6 = jobs
     assert q5.completed_at is not None

@@ -1,0 +1,331 @@
+# Follow-up performance Stage-2 implementation review
+
+> **Current gate:** implementation PASS at exact object `37d5e5a`.  ChatGPT Pro
+> and ZCode independently report zero P0/P1 findings, and exact-head Linux CI
+> succeeded.  The next object may change only this review record and must
+> receive exact-object CI and a short fidelity re-review before merge.  No
+> qualification or formal seed is authorized by this document.
+
+## Review lineage
+
+The historical candidate `f920f87c8342673a8e129a886f70d80b585502a9`
+received AMEND findings from both configured reviewers.  ChatGPT Pro reported
+P0=1/P1=3/P2=1; ZCode independently confirmed the launch-name, retry, budget,
+and serial-watch defects.  Checkpoint `1408e5730c077c87957674d9098706510f69a962`
+closed part of that set but was never treated as a dispatch gate.
+
+The first complete successor reviewed from the common packet was:
+
+- commit `b085e26ed20436f7d42c461d8decebdc14b7d37e`;
+- tree `b92f0f8084430a62ae0d4c296473ceb218cfad5e`;
+- sole parent `1408e5730c077c87957674d9098706510f69a962`;
+- binary diff SHA-256
+  `8f0d45d880d0bbc4b328265adaf7403575d9e513b158aa3a996fc79d05f84f9c`;
+  and
+- packet `stage2-review-packet-b085e26.md`, SHA-256
+  `fd07537f05206de7ad7861295620c9e6f2d7b3d3af5c42ff41bfdeab2264bc7d`.
+
+The packet called the machine plan
+`config/followup-performance-plan.json`; the repository-owned file is actually
+`config/followup-performance-study.json`.  ZCode detected the packet typo,
+reviewed the real frozen file, and classified it as a packet discrepancy rather
+than a candidate defect.  The packet hash is retained unchanged so the review
+record remains reproducible.
+
+## Exact `b085e26` results
+
+ZCode ran GLM-5.3 in Max reasoning and Full access mode, read-only, against the
+exact public commit.  Its verdict was **PASS, P0=0, P1=0, P2=4**.  It
+independently re-proved closure of:
+
+1. provider-global one-shot creation and every later `beforeOid`/`afterOid`,
+   `force:false` compare-and-swap;
+2. the reserve -> dispatch -> bind -> watch-arm transaction and the in-run
+   exact-`GITHUB_RUN_ID` admission barrier;
+3. exact unit-workflow dispatch and repeated run-identity checks;
+4. the one permitted replacement, segment reservations, retry reserve, and
+   unified 12-hour ledger;
+5. transitive follow-up Behavior Sets without hidden scientific-payload drift;
+   and
+6. the exact 17-unit FU-E4 claim-to-artifact relation and bounded descriptive,
+   non-superiority wording.
+
+ZCode's four P2 findings were evidence-pipeline hygiene and negative-test debt,
+not authority or evidence-integrity failures:
+
+- historical one-run formal helpers still name the deleted 34-job workflow,
+  although the production command reaches only the new serial controller;
+- the production provider classifier deliberately mints a replacement only for
+  the unambiguous `startup_failure` signal and treats every other provider
+  failure as terminal NO-GO;
+- Behavior-Set closure started from registry roots rather than sweeping the
+  repository for orphan follow-up behavior files; and
+- several load-bearing negative paths lacked direct regression tests.
+
+Exact-head GitHub Actions run
+[`33303067475`](https://github.com/leemaple/dynamic-cssc-spmv/actions/runs/33303067475)
+then completed successfully on the same branch/head/event identity.  It
+recorded:
+
+- P-1 manifest and Python syntax gates: success;
+- unit tests: **2,586 passed, 2 skipped** in 1,763.17 seconds;
+- the only skips: the two real-OpenFHE-runner tests whose binary is not built in
+  ordinary CI;
+- predicted-only smoke, R0 bundle creation, and upload: success; and
+- artifact ID `9729951938`, name
+  `r0-freeze-b085e26ed20436f7d42c461d8decebdc14b7d37e`, 479 files,
+  8,878,911 bytes, provider digest
+  `sha256:cfb37a178752f270c1bc9c49d6b201a8bb671a1b59a9faa43d7dae2f70072bfb`,
+  expiring 2026-09-29.
+
+That CI run was a control witness only.  It parsed no registered follow-up seed
+through a generator and produced no publication experiment artifact.
+
+## P2 closure successor after the first exact review
+
+The successor delta is deliberately limited to evidence-pipeline
+hardening.  It makes no scientific-plan, seed, workload, rho, matrix, runner,
+dependency, cache, timing, estimand, or claim-threshold change.
+
+- The unused `followup-provider-authority` composite action is deleted.  The
+  repository-owned GitHub adapter no longer exposes the old one-run
+  `open_formal_campaign` method.  Historical observation/stop-loss helpers
+  remain for old record interpretation, but no production adapter can dispatch
+  through them; the only live `execute-formal` path opens the serial campaign
+  provider.
+- Conservative classifier under-recognition is accepted intentionally.  Only
+  explicit `startup_failure` is replacement-eligible; an ordinary provider
+  `failure` remains terminal `scientific-or-guard-failure`.  This can reduce
+  availability but cannot admit a second attempt after an ambiguous scientific
+  failure.
+- A repository sweep now fails if any follow-up-owned workflow, composite
+  action, Python module, or controller/verifier script is absent from every
+  follow-up Behavior Set.
+- Direct negative regressions now cover a lost provider CAS, unclassified
+  provider failure, expired/wrong-run artifacts, 16- and 18-directory terminal
+  inputs, a 16-record FU-E4 ledger, cancellation-lag charging, insufficient
+  replacement reserve, and the qualification/formal-unit/terminal admission
+  script I/O seams.
+
+The affected local gate is **68 passed** in 26.07 seconds under a low-priority
+single process.  Every changed Python file also passes Ruff, and the Git diff
+check passes.  These checks use only disjoint sentinel identities.  The delta
+still requires one exact commit, exact-head CI, and the same configured
+reviewers before it can replace `b085e26` as the final Stage-2 gate object.
+
+## Exact `67e7708` review and the authority/cancellation successor
+
+The P2-closure candidate subsequently frozen for common review was:
+
+- commit `67e77086e708ea4de31e4827364f5f0107209bdc`;
+- tree `45bb9278c3ae67a4c4f7eeaf4c8acc46bb1f7d23`;
+- sole parent `b085e26ed20436f7d42c461d8decebdc14b7d37e`;
+- binary diff SHA-256
+  `13ee175c8f529a0444e1dbc05c6c2d0679f11fafdb40524a1b3c81f093e45431`;
+  and
+- unchanged external packet SHA-256
+  `759f65bb74e2d207358a29d39398489bc5e6885a31fc12ddf3f6a822cae55d1f`.
+
+ZCode GLM-5.3 Max returned **PASS, P0=0, P1=0, P2=3**.  Its nonblocking
+findings were the retained legacy positive-authority exports, a repository
+sweep that could be broadened beyond the registered follow-up filename
+patterns, and one test that reached the child classifier through a private
+helper rather than its public inspector.
+
+ChatGPT Pro independently returned **AMEND, P0=1, P1=1, P2=1**.  The P2 was
+the already-corrected external packet filename.  Its two blocking findings
+were stricter and are adopted as the controlling interpretation:
+
+1. the public controller module still exported two authority-consuming legacy
+   operations and their dispatcher protocols, so a caller-supplied dispatcher
+   could consume an in-process capability without first winning the durable
+   provider-global claim; and
+2. the formal watcher and final timing ledger did not retain the frozen
+   threshold, controller detection/request/API-ack/decision clocks, exact
+   provider terminal update/conclusion, or the two same-clock lag values.
+
+Exact-head CI run
+[`33305210194`](https://github.com/leemaple/dynamic-cssc-spmv/actions/runs/33305210194)
+completed successfully on `67e7708`: P-1 and syntax passed; unit tests recorded
+**2,600 passed, 2 skipped** in 1,701.80 seconds; predicted-only smoke and R0
+packaging passed.  Artifact `9730595652`,
+`r0-freeze-67e77086e708ea4de31e4827364f5f0107209bdc`, is 8,885,131 bytes with
+provider digest
+`sha256:7ee94001206ee5995cf193a6bc5da7e169e0dbbb83e4654909f6c05869fede7e`.
+That historical green run cannot close Pro's P0/P1 and grants no dispatch
+authority.
+
+The present successor closes the stricter findings without changing a seed,
+matrix, workload, estimator, threshold, or claim rule:
+
+- it deletes the four legacy positive-authority names from the controller and
+  deletes the unused legacy qualification claim/dispatch methods from the CLI
+  adapter; the only qualification path now consumes its capability inside the
+  provider-global claim -> dispatch -> watch -> CAS execution module;
+- the formal watcher receipt is version 3 and retains all nine frozen
+  cancellation fields, with provider and controller clocks kept in separate
+  domains and only same-controller-clock elapsed values derived;
+- one deep canonical receipt inspector now closes exact field sets, authority
+  flags, provider-document hashes, terminal update/conclusion, cancellation
+  order/arithmetic, guarded artifact identity, and the terminal campaign-state
+  receipt hash before any commit or timing admission;
+- cancellation requested at a frozen threshold remains NO-GO even if the
+  provider later reports a successful run conclusion or a startup-failure
+  label that would have been replacement-eligible before controller
+  cancellation; and
+- regressions now include two controller instances competing for the one
+  provider claim, exact-provider-byte substitution, rehashed authority and
+  cancellation-ledger tampering, and single charging of failed/replacement
+  runner seconds.
+
+The affected follow-up suite is **155 passed** in 81.28 seconds under one
+low-priority process.  Ruff, Git diff checking, Behavior-Set import closure,
+the orphan-path sweep, and sorted/unique role inventories pass.  Because these
+changes alter authority and evidence interpretation, the analyzer,
+control-registration, and formal follow-up Behavior Sets advance from v2 to
+v3.  This remains a local engineering witness only: after it is frozen as one
+exact commit, exact-head Linux CI and zero-P0/P1 verdicts from both configured
+reviewers are still mandatory.
+
+## Exact `bc6a0df` review and pending P1 closure
+
+The next common-review object was:
+
+- commit `bc6a0df4c39613c89ad7b0a9675d62d30966c484`;
+- tree `0ecf10c3435f919a2028f33d16d974fdd9a37ae7`;
+- sole parent `67e77086e708ea4de31e4827364f5f0107209bdc`;
+- binary diff SHA-256
+  `a2ebb100939c66a6a0149001418a2d961e2bbbb324f0c847b88b2ca7b64051d7`;
+  and
+- common packet SHA-256
+  `6337fe443a070fc8719a7b300d2a3a3475cf98048596617374e01207fbcffa03`.
+
+Exact-head CI run
+[`33307462481`](https://github.com/leemaple/dynamic-cssc-spmv/actions/runs/33307462481)
+completed successfully: P-1 and syntax passed, **2,606 tests passed** and the
+only two skips were the expected unbuilt-real-OpenFHE-runner tests, predicted
+smoke and R0 packaging passed, and artifact `9731267918` had provider digest
+`sha256:cc34fd0add79b1700f24c6520a33aaa0f8777f238508bb30e8d832f28c56b623`.
+This remained a control witness and granted no experimental authority.
+
+ZCode GLM-5.3 Max returned **PASS, P0=0, P1=0, P2=3**.  ChatGPT Pro reviewed
+the identical packet and independently returned **AMEND, P0=0, P1=2, P2=1**.
+Repository-level reproduction resolved the disagreement in Pro's stricter
+direction:
+
+1. a fully rehashed `provider-failure` watcher receipt could also carry a
+   cancellation ledger, reach `unit-provider-failed`, and authorize attempt 2;
+2. `cancel_formal_unit` could observe an already-terminal run in its preflight,
+   send no cancel POST, and still let the outer watcher record request and API
+   acknowledgement times; and
+3. a cancellation threshold later than the provider terminal `updated_at`
+   remained canonically admissible.
+
+Four minimized regressions reproduced those exact paths twice on unmodified
+production code: **4 failed in 1.37 seconds** and **4 failed in 1.38 seconds**.
+The pending successor then closes the outcome matrix at the canonical receipt,
+controller, and pre-replacement-dispatch layers; requires success and
+provider-failure receipts to carry no cancellation, budget exhaustion to carry
+one cancellation, and scientific/guard NO-GO to carry none; enforces
+`threshold_utc <= provider_terminal_updated_utc`; replaces the ambiguous
+cancel callback with a typed confirmation of one exact HTTP 202 POST; and adds
+the missing symmetric two-controller formal-ref race regression.  The analyzer,
+control-registration, and formal Behavior Sets therefore advance from v3 to
+v4.  These are evidence-control changes only: no seed, workload, matrix,
+estimator, threshold, claim rule, or scientific payload changes.
+
+The GitHub REST contract for
+[cancelling a workflow run](https://docs.github.com/en/rest/actions/workflow-runs#cancel-a-workflow-run)
+lists `202 Accepted` and `409 Conflict`.  The successor mints the typed
+submission only from the exact `202` response; a `409`, transport error, stale
+provider clock, or malformed return fails closed and cannot populate the
+cancellation acknowledgement ledger.
+
+After the production fix, the original minimized loop closed at **4 passed in
+1.22 seconds**.  The expanded regression set, including the explicit outcome
+matrix, defensive pre-replacement reinspection, `202`/`409` cancel responses,
+and the formal-ref race, passed **49 tests in 9.71 seconds**.  The complete
+follow-up control/evidence/CLI/workflow-contract suite then passed **186 tests
+in 84.68 seconds** under one low-priority process.  Ruff, JSON parsing, Behavior
+Set import/orphan closure, and `git diff --check` also passed.  These remain
+local engineering evidence until the exact successor and CI closure recorded
+below.
+
+## Exact `37d5e5a` P1 closure
+
+The exact implementation closure object was:
+
+- commit `37d5e5a0b56e17ff5c6bade87e9bfeb018a6f3fd`;
+- tree `ab436bef8c12b01dc101b6bbd21adf84ea181d82`;
+- sole parent `bc6a0df4c39613c89ad7b0a9675d62d30966c484`;
+- parent-to-candidate binary diff SHA-256
+  `38fb26ad393475236c13bcdc5a276c2c4a3f26d069d51e5d78f38ddcf9a3a857`;
+  and
+- common review packet SHA-256
+  `e8481a3e0cef90d735c1692f6240208f159628f7f2eab368b58f20aeaee2f4a9`.
+
+ChatGPT Pro returned **PASS, P0=0, P1=0, P2=0**.  It independently closed
+the four-way decision/cancellation matrix at the canonical receipt,
+controller, replacement-dispatch, and timing boundaries; verified that only
+one exact cancel `POST` receiving `202 Accepted` can mint the typed submission;
+confirmed that `409`, wrong-run, malformed-return, transport, and provider-clock
+regression paths fail before a cancellation acknowledgement; and accepted the
+new symmetric fixed-ref race regression.  It also freshly read exact-head CI
+run `33310810906` in terminal success rather than inheriting the packet's
+earlier in-progress observation.
+
+ZCode GLM-5.3 Max independently returned **PASS, P0=0, P1=0, P2=3**.  It
+recomputed the packet and Git identities, passed 49 focused regressions, 12
+Behavior-Set closure tests, and an expanded 188-test follow-up selection.  Its
+nonblocking P2 findings were: the live cancel-202 provider `Date` is validated
+but not persisted for later forensic replay; the completed-campaign timing
+schema now retains a structurally unreachable cancellation-ledger array and a
+conservative cancel-then-success asymmetry; and the exact 186-test selection
+command should be retained with the witness count.  The first two can reduce
+forensic detail or keep a conservative dead field but cannot authorize a
+replacement or fabricate an acknowledgement.  The third is closed here by
+recording the exact command:
+
+```text
+nice -n 15 .venv/bin/pytest -q tests/test_followup_performance_*.py tests/test_control_followup_performance.py tests/test_prepare_followup_performance_analysis_inputs.py tests/test_run_followup_performance_*.py tests/test_verify_followup_analysis_run_admission.py
+```
+
+Exact-head push CI run
+[`33310810906`](https://github.com/leemaple/dynamic-cssc-spmv/actions/runs/33310810906)
+completed successfully on the same commit, branch, and push event.  P-1 and
+syntax passed; unit tests recorded **2,615 passed, 2 skipped** in 1,347.55
+seconds; the two skips are the ordinary/strong parametrizations that require
+the real OpenFHE runner absent from ordinary CI; predicted-only smoke, R0
+creation, and upload all succeeded.  The sole artifact is ID `9732208497`,
+`r0-freeze-37d5e5a0b56e17ff5c6bade87e9bfeb018a6f3fd`, 8,908,119 bytes,
+provider digest
+`sha256:441320056ea182f68434168eca0cc944911e85cd656f7e70d4dc3d367405fa82`,
+expiring 2026-09-29.  It is a control witness, not experiment evidence.
+
+Verdict: PASS — P0=0, P1=0.
+External gate: ChatGPT Pro PASS; ZCode strongest-mode PASS.
+
+The successor that records this closure may alter only this Markdown file.  It
+must preserve the exact implementation tree outside this path, pass exact-head
+CI, and receive a short exact-object fidelity review before it can become S1.
+Neither this verdict nor that mechanical successor mints qualification,
+formal, analysis, or publication authority.
+
+## Dispatch boundary
+
+The final Stage-2 candidate must not be used for qualification or formal
+dispatch until this file records:
+
+1. zero unresolved P0/P1 findings from both ChatGPT Pro and ZCode on the exact
+   final commit;
+2. successful exact-head Linux CI and PRE-S1 validation;
+3. a successful descriptive registration archive and independently verified
+   data-only direct-child S2 anchor; and
+4. a fresh external-controller reread of all exact identities and artifacts.
+
+Only that fresh reread may mint the one nonserialized qualification capability.
+Qualification q1--q6 must then close within both frozen deadlines.  A factual
+qualification GO permits a separate fresh reread and, only if it passes, one
+nonserialized formal capability for the strictly serial 17-unit campaign.
+Every non-success remains fail-closed.  CI, registration, review, and this note
+mint no publication authority.

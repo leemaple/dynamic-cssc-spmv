@@ -33,11 +33,14 @@ from dynamic_cssc.route_a_replay import (
     replay_route_a_synthetic_cell,
 )
 from dynamic_cssc.route_a_results import (
-    ROUTE_A_MACHINE_PLAN_SHA256,
     RouteACanonicalStrategyCell,
     canonical_route_a_document,
     project_route_a_rho10,
     validate_route_a_strategy_cell,
+)
+from dynamic_cssc.route_a_scientific_profile import (
+    PREDECESSOR_ROUTE_A_PROFILE,
+    RouteAScientificProfile,
 )
 from dynamic_cssc.route_a_strategy import ROUTE_A_STRATEGY_CANDIDATES
 from dynamic_cssc.route_a_workloads import (
@@ -321,12 +324,22 @@ class RouteASyntheticSuiteLineage:
 def route_a_synthetic_shard_identity(
     trace: RouteASyntheticTrace,
     lineage: RouteASyntheticSuiteLineage,
+    *,
+    unit_attempt_ordinal: int = 0,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> str:
     """Derive the one shared simulator/native identity for a synthetic unit."""
 
-    trace = validate_route_a_synthetic_trace(trace)
+    trace = validate_route_a_synthetic_trace(
+        trace,
+        scientific_profile=scientific_profile,
+    )
     if type(lineage) is not RouteASyntheticSuiteLineage:
         raise TypeError("lineage must be an exact RouteASyntheticSuiteLineage")
+    if type(unit_attempt_ordinal) is not int or unit_attempt_ordinal not in {0, 1}:
+        raise RouteASyntheticSuiteError(
+            "Route A suite attempt is outside the inherited retry domain"
+        )
     return hashlib.sha256(
         canonical_route_a_document(
             {
@@ -342,7 +355,7 @@ def route_a_synthetic_shard_identity(
                 "source_event_trace_sha256": trace.event_trace_sha256,
                 "source_kind": "synthetic",
                 "suite_role": trace.suite_role,
-                "unit_attempt_ordinal": 0,
+                "unit_attempt_ordinal": unit_attempt_ordinal,
                 "workflow_head_sha": lineage.workflow_head_sha,
             }
         )
@@ -463,20 +476,31 @@ def produce_route_a_synthetic_suite_handoff(
     machine_plan_bytes: bytes,
     scratch_root: Path,
     output_path: Path,
+    unit_attempt_ordinal: int = 0,
     stage_observer: Callable[[str], None] | None = None,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> None:
     """Execute every direct cell once and write one private suite handoff."""
 
-    trace = validate_route_a_synthetic_trace(trace)
+    trace = validate_route_a_synthetic_trace(
+        trace,
+        scientific_profile=scientific_profile,
+    )
     if type(lineage) is not RouteASyntheticSuiteLineage:
         raise TypeError("lineage must be an exact RouteASyntheticSuiteLineage")
-    if (
-        type(machine_plan_bytes) is not bytes
-        or hashlib.sha256(machine_plan_bytes).hexdigest() != ROUTE_A_MACHINE_PLAN_SHA256
-    ):
-        raise RouteASyntheticSuiteError("Route A suite machine plan digest changed")
+    try:
+        scientific_profile.require_machine_plan_bytes(machine_plan_bytes)
+    except (TypeError, ValueError) as error:
+        raise RouteASyntheticSuiteError(
+            "Route A suite machine plan digest changed"
+        ) from error
     _require_empty_scratch(scratch_root)
-    shard_identity = route_a_synthetic_shard_identity(trace, lineage)
+    shard_identity = route_a_synthetic_shard_identity(
+        trace,
+        lineage,
+        unit_attempt_ordinal=unit_attempt_ordinal,
+        scientific_profile=scientific_profile,
+    )
     stages = _RegisteredStageSequence("q1", stage_observer)
     stages.observe_next()
     members: list[tuple[str, bytes]] = [
@@ -495,9 +519,10 @@ def produce_route_a_synthetic_suite_handoff(
                     strategy_candidate_id=strategy,
                     rho=rho,
                     shard_identity_sha256=shard_identity,
-                    unit_attempt_ordinal=0,
+                    unit_attempt_ordinal=unit_attempt_ordinal,
                     machine_plan_bytes=machine_plan_bytes,
                     scratch_directory=cell_scratch,
+                    scientific_profile=scientific_profile,
                 )
                 archive_bytes = produce_route_a_synthetic_cell_archive(run)
                 members.append((f"cells/{_cell_stem(strategy_ordinal, rho)}.zip", archive_bytes))
@@ -508,7 +533,11 @@ def produce_route_a_synthetic_suite_handoff(
                 shutil.rmtree(cell_scratch)
         if rho1_cell is None:  # pragma: no cover - the closed matrix includes rho=1
             raise AssertionError("Route A suite omitted its rho=1 source cell")
-        projection = project_route_a_rho10(rho1_cell, machine_plan_bytes=machine_plan_bytes)
+        projection = project_route_a_rho10(
+            rho1_cell,
+            machine_plan_bytes=machine_plan_bytes,
+            scientific_profile=scientific_profile,
+        )
         members.extend(
             (
                 (
@@ -544,14 +573,23 @@ def inspect_route_a_synthetic_suite_handoff(
     expected_trace: RouteASyntheticTrace,
     expected_lineage: RouteASyntheticSuiteLineage,
     machine_plan_bytes: bytes,
+    unit_attempt_ordinal: int = 0,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> RouteASyntheticSuiteProducerInspection:
     """Independently rehash and close one complete private producer suite."""
 
-    trace = validate_route_a_synthetic_trace(expected_trace)
+    trace = validate_route_a_synthetic_trace(
+        expected_trace,
+        scientific_profile=scientific_profile,
+    )
     if type(expected_lineage) is not RouteASyntheticSuiteLineage:
         raise TypeError("expected_lineage must be exact RouteASyntheticSuiteLineage")
-    if hashlib.sha256(machine_plan_bytes).hexdigest() != ROUTE_A_MACHINE_PLAN_SHA256:
-        raise RouteASyntheticSuiteError("Route A suite machine plan digest changed")
+    try:
+        scientific_profile.require_machine_plan_bytes(machine_plan_bytes)
+    except (TypeError, ValueError) as error:
+        raise RouteASyntheticSuiteError(
+            "Route A suite machine plan digest changed"
+        ) from error
     members = _read_archive(archive_path, expected_paths=_producer_paths())
     lineage = RouteASyntheticSuiteLineage.from_bytes(members["lineage.json"])
     if (
@@ -560,7 +598,12 @@ def inspect_route_a_synthetic_suite_handoff(
         or members["source-trace.json"] != trace.event_trace_bytes
     ):
         raise RouteASyntheticSuiteError("Route A producer suite source or lineage changed")
-    shard_identity = route_a_synthetic_shard_identity(trace, lineage)
+    shard_identity = route_a_synthetic_shard_identity(
+        trace,
+        lineage,
+        unit_attempt_ordinal=unit_attempt_ordinal,
+        scientific_profile=scientific_profile,
+    )
     cell_archives: list[tuple[str, Fraction, bytes]] = []
     rho10_cells: list[RouteACanonicalStrategyCell] = []
     for strategy_ordinal, strategy in enumerate(_STRATEGIES):
@@ -568,13 +611,17 @@ def inspect_route_a_synthetic_suite_handoff(
         for rho in _DIRECT_RHOS:
             path = f"cells/{_cell_stem(strategy_ordinal, rho)}.zip"
             archive_bytes = members[path]
-            inspection = inspect_route_a_synthetic_cell_archive(archive_bytes)
+            inspection = inspect_route_a_synthetic_cell_archive(
+                archive_bytes,
+                scientific_profile=scientific_profile,
+            )
             target = RouteASyntheticCellTarget.for_synthetic_trace(
                 trace,
                 strategy_candidate_id=strategy,
                 rho=rho,
                 shard_identity_sha256=shard_identity,
-                unit_attempt_ordinal=0,
+                unit_attempt_ordinal=unit_attempt_ordinal,
+                scientific_profile=scientific_profile,
             )
             identity = inspection.cell_run.cell.document["identity"]
             if (
@@ -588,6 +635,7 @@ def inspect_route_a_synthetic_suite_handoff(
                     rho=rho,
                     shard_identity_sha256=identity["shard_identity_sha256"],
                     unit_attempt_ordinal=identity["unit_attempt_ordinal"],
+                    scientific_profile=scientific_profile,
                 ).sha256
             ):
                 raise RouteASyntheticSuiteError("Route A producer suite cell identity drifted")
@@ -595,7 +643,11 @@ def inspect_route_a_synthetic_suite_handoff(
             if rho == Fraction(1):
                 rho1_cell = inspection.cell_run.cell
         assert rho1_cell is not None
-        projection = project_route_a_rho10(rho1_cell, machine_plan_bytes=machine_plan_bytes)
+        projection = project_route_a_rho10(
+            rho1_cell,
+            machine_plan_bytes=machine_plan_bytes,
+            scientific_profile=scientific_profile,
+        )
         cell_path = f"projections/strategy-{strategy_ordinal:02d}-rho-10-cell.json"
         envelope_path = f"projections/strategy-{strategy_ordinal:02d}-rho-10-envelope.json"
         if (
@@ -634,17 +686,24 @@ def replay_and_guard_route_a_synthetic_suite(
     producer_archive_path: Path,
     scratch_root: Path,
     output_path: Path,
+    unit_attempt_ordinal: int = 0,
     stage_observer: Callable[[str], None] | None = None,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> None:
     """Replay all direct cells read-only, guard them, and discard private bytes."""
 
-    trace = validate_route_a_synthetic_trace(trace)
+    trace = validate_route_a_synthetic_trace(
+        trace,
+        scientific_profile=scientific_profile,
+    )
     _require_empty_scratch(scratch_root)
     producer = inspect_route_a_synthetic_suite_handoff(
         producer_archive_path,
         expected_trace=trace,
         expected_lineage=lineage,
         machine_plan_bytes=machine_plan_bytes,
+        unit_attempt_ordinal=unit_attempt_ordinal,
+        scientific_profile=scientific_profile,
     )
     archive_by_identity = {
         (strategy, rho): content for strategy, rho, content in producer.cell_archives
@@ -667,7 +726,8 @@ def replay_and_guard_route_a_synthetic_suite(
                     strategy_candidate_id=strategy,
                     rho=rho,
                     shard_identity_sha256=producer.shard_identity_sha256,
-                    unit_attempt_ordinal=0,
+                    unit_attempt_ordinal=unit_attempt_ordinal,
+                    scientific_profile=scientific_profile,
                 )
                 replay = replay_route_a_synthetic_cell(
                     trace,
@@ -675,12 +735,14 @@ def replay_and_guard_route_a_synthetic_suite(
                     expected_target=target,
                     machine_plan_bytes=machine_plan_bytes,
                     scratch_directory=cell_scratch,
+                    scientific_profile=scientific_profile,
                 )
                 replay_archive = produce_route_a_synthetic_replay_archive(replay)
                 guard = guard_route_a_synthetic_replay(
                     producer_archive_bytes=archive_by_identity[(strategy, rho)],
                     replay_archive_bytes=replay_archive,
                     expected_target=target,
+                    scientific_profile=scientific_profile,
                 )
                 members.extend(
                     (
@@ -696,7 +758,11 @@ def replay_and_guard_route_a_synthetic_suite(
                 shutil.rmtree(cell_scratch)
         if rho1_final is None:  # pragma: no cover - the closed matrix includes rho=1
             raise AssertionError("Route A replay suite omitted its rho=1 source cell")
-        projection = project_route_a_rho10(rho1_final, machine_plan_bytes=machine_plan_bytes)
+        projection = project_route_a_rho10(
+            rho1_final,
+            machine_plan_bytes=machine_plan_bytes,
+            scientific_profile=scientific_profile,
+        )
         members.extend(
             (
                 (
@@ -732,15 +798,25 @@ def inspect_route_a_synthetic_suite_replay(
     expected_trace: RouteASyntheticTrace,
     expected_lineage: RouteASyntheticSuiteLineage,
     machine_plan_bytes: bytes,
+    unit_attempt_ordinal: int = 0,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> RouteASyntheticSuiteReplayInspection:
     """Reinspect a redacted suite result without accepting any private payload."""
 
-    trace = validate_route_a_synthetic_trace(expected_trace)
+    trace = validate_route_a_synthetic_trace(
+        expected_trace,
+        scientific_profile=scientific_profile,
+    )
     members = _read_archive(archive_path, expected_paths=_replay_paths())
     lineage = RouteASyntheticSuiteLineage.from_bytes(members["lineage.json"])
     if lineage != expected_lineage or members["source-trace.json"] != trace.event_trace_bytes:
         raise RouteASyntheticSuiteError("Route A replay suite source or lineage changed")
-    shard_identity = route_a_synthetic_shard_identity(trace, lineage)
+    shard_identity = route_a_synthetic_shard_identity(
+        trace,
+        lineage,
+        unit_attempt_ordinal=unit_attempt_ordinal,
+        scientific_profile=scientific_profile,
+    )
     final_cells: list[RouteACanonicalStrategyCell] = []
     replay_receipts: list[bytes] = []
     guard_receipts: list[bytes] = []
@@ -750,7 +826,8 @@ def inspect_route_a_synthetic_suite_replay(
         for rho in _DIRECT_RHOS:
             stem = _cell_stem(strategy_ordinal, rho)
             cell = validate_route_a_strategy_cell(
-                _canonical_object(members[f"cells/{stem}/final-cell.json"], label="final cell")
+                _canonical_object(members[f"cells/{stem}/final-cell.json"], label="final cell"),
+                scientific_profile=scientific_profile,
             )
             replay_receipt = members[f"cells/{stem}/replay-receipt.json"]
             guard_receipt = members[f"cells/{stem}/guard-receipt.json"]
@@ -761,7 +838,8 @@ def inspect_route_a_synthetic_suite_replay(
                 strategy_candidate_id=strategy,
                 rho=rho,
                 shard_identity_sha256=shard_identity,
-                unit_attempt_ordinal=0,
+                unit_attempt_ordinal=unit_attempt_ordinal,
+                scientific_profile=scientific_profile,
             )
             if (
                 cell.document["identity"]["strategy_candidate_id"] != strategy
@@ -782,7 +860,11 @@ def inspect_route_a_synthetic_suite_replay(
             if rho == Fraction(1):
                 rho1_final = cell
         assert rho1_final is not None
-        projection = project_route_a_rho10(rho1_final, machine_plan_bytes=machine_plan_bytes)
+        projection = project_route_a_rho10(
+            rho1_final,
+            machine_plan_bytes=machine_plan_bytes,
+            scientific_profile=scientific_profile,
+        )
         cell_path = f"projections/strategy-{strategy_ordinal:02d}-rho-10-cell.json"
         envelope_path = f"projections/strategy-{strategy_ordinal:02d}-rho-10-envelope.json"
         if (

@@ -32,11 +32,12 @@ from dynamic_cssc.route_a_contract import (
     RouteAQueryVectorDomain,
     generate_route_a_query_vector,
 )
-from dynamic_cssc.route_a_results import (
-    ROUTE_A_MACHINE_PLAN_SHA256,
-    canonical_route_a_document,
-)
+from dynamic_cssc.route_a_results import canonical_route_a_document
 from dynamic_cssc.route_a_schedule import compile_route_a_window_trace
+from dynamic_cssc.route_a_scientific_profile import (
+    PREDECESSOR_ROUTE_A_PROFILE,
+    RouteAScientificProfile,
+)
 from dynamic_cssc.route_a_strategy import (
     ROUTE_A_STRATEGY_CANDIDATES,
     RouteACandidateState,
@@ -94,15 +95,20 @@ def _canonical_input_root(inputs: tuple[tuple[str, bytes], ...]) -> str:
     return digest.hexdigest()
 
 
-def _query_domain(trace: RouteASyntheticTrace) -> RouteAQueryVectorDomain:
+def _query_domain(
+    trace: RouteASyntheticTrace,
+    scientific_profile: RouteAScientificProfile,
+) -> RouteAQueryVectorDomain:
     if trace.suite_role == "qualification":
         return RouteAQueryVectorDomain.qualification_synthetic(
             scale=trace.scale,
             qualification_seed=trace.formal_seed,
+            scientific_profile=scientific_profile,
         )
     return RouteAQueryVectorDomain.formal_synthetic(
         scale=trace.scale,
         formal_seed=trace.formal_seed,
+        scientific_profile=scientific_profile,
     )
 
 
@@ -250,18 +256,23 @@ def compile_route_a_terminal_native_case(
     shard_identity_sha256: str,
     unit_attempt_ordinal: int,
     machine_plan_bytes: bytes,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> RouteANativeCasePlan:
     """Compile only the fixed terminal query while retaining all source bytes."""
 
-    trace = validate_route_a_synthetic_trace(trace)
+    trace = validate_route_a_synthetic_trace(
+        trace,
+        scientific_profile=scientific_profile,
+    )
     if strategy_candidate_id not in ROUTE_A_STRATEGY_CANDIDATES:
         raise RouteANativeCaseError("native strategy candidate is not preregistered")
-    if (
-        type(unit_attempt_ordinal) is not int
-        or unit_attempt_ordinal not in {0, 1}
-        or type(machine_plan_bytes) is not bytes
-        or hashlib.sha256(machine_plan_bytes).hexdigest() != ROUTE_A_MACHINE_PLAN_SHA256
-    ):
+    try:
+        scientific_profile.require_machine_plan_bytes(machine_plan_bytes)
+    except (TypeError, ValueError) as error:
+        raise RouteANativeCaseError(
+            "native attempt or machine-plan binding is invalid"
+        ) from error
+    if type(unit_attempt_ordinal) is not int or unit_attempt_ordinal not in {0, 1}:
         raise RouteANativeCaseError("native attempt or machine-plan binding is invalid")
 
     window_trace = compile_route_a_window_trace(
@@ -333,7 +344,9 @@ def compile_route_a_terminal_native_case(
     ):
         raise RouteANativeCaseError("padding M terminal snapshot lacks replacement coverage")
 
-    query_vector = generate_route_a_query_vector(_query_domain(trace))
+    query_vector = generate_route_a_query_vector(
+        _query_domain(trace, scientific_profile)
+    )
     direct_output = direct_spmv(
         terminal.candidate.state.logical,
         query_vector.values,
@@ -407,7 +420,7 @@ def compile_route_a_terminal_native_case(
                     if type(bundle) is OrdinaryExecutionBundle
                     else bundle.execution_binding_digest
                 ),
-                "machine_plan_sha256": ROUTE_A_MACHINE_PLAN_SHA256,
+                "machine_plan_sha256": scientific_profile.machine_plan_sha256,
                 "output_plan_digest": cloud_plan.binding.output_plan_digest,
                 "query_vector_sha256": query_vector.vector_sha256,
                 "retained_canonical_input_root": input_root,

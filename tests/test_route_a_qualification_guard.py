@@ -15,6 +15,10 @@ from dynamic_cssc.route_a_qualification_guard import (
     produce_route_a_combined_guard,
 )
 from dynamic_cssc.route_a_results import canonical_route_a_document
+from dynamic_cssc.route_a_scientific_profile import (
+    PREDECESSOR_ROUTE_A_PROFILE,
+    RouteAScientificProfile,
+)
 from dynamic_cssc.route_a_synthetic_suite import (
     RouteASyntheticSuiteLineage,
     route_a_synthetic_shard_identity,
@@ -49,11 +53,13 @@ def _provider_json(
     lineage: RouteASyntheticSuiteLineage,
     q2: tuple[str, int],
     q4: tuple[str, int],
+    q2_name: str = "q2-simulator-guarded-receipt",
+    q4_name: str = "q4-native-guarded-case-bundle",
 ) -> bytes:
     rows = []
     for identifier, name, (digest, size) in (
-        (101, "q2-simulator-guarded-receipt", q2),
-        (103, "q4-native-guarded-case-bundle", q4),
+        (101, q2_name, q2),
+        (103, q4_name, q4),
     ):
         rows.append(
             {
@@ -117,9 +123,25 @@ def _patch_q5_inputs(
     lineage: RouteASyntheticSuiteLineage,
     *,
     probe_nonempty_auxiliary_segment: bool = True,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> tuple[SimpleNamespace, str]:
-    trace = generate_route_a_qualification_trace(scale="M", qualification_seed=20260821)
-    shard = route_a_synthetic_shard_identity(trace, lineage)
+    if scientific_profile is PREDECESSOR_ROUTE_A_PROFILE:
+        trace = generate_route_a_qualification_trace(
+            scale="M",
+            qualification_seed=scientific_profile.qualification_seed,
+        )
+        shard = route_a_synthetic_shard_identity(trace, lineage)
+    else:
+        trace = generate_route_a_qualification_trace(
+            scale="M",
+            qualification_seed=scientific_profile.qualification_seed,
+            scientific_profile=scientific_profile,
+        )
+        shard = route_a_synthetic_shard_identity(
+            trace,
+            lineage,
+            scientific_profile=scientific_profile,
+        )
     expected_case = _fake_case(
         trace,
         "packed-coo-cloud-segmented-delta/segment-width=128",
@@ -150,7 +172,7 @@ def _patch_q5_inputs(
     cell = SimpleNamespace(
         document={
             "identity": {
-                "formal_seed_or_null": 20260821,
+                "formal_seed_or_null": scientific_profile.qualification_seed,
                 "rho": "1",
                 "shard_identity_sha256": shard,
                 "strategy_candidate_id": (
@@ -449,3 +471,69 @@ def test_q5_inspector_recomputes_formal_vectors_after_self_rehash(
             expected_lineage=lineage,
             machine_plan_bytes=PLAN_BYTES,
         )
+
+
+def test_q5_followup_mode_closes_outer_wrappers_and_profile_specific_names(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    lineage: RouteASyntheticSuiteLineage,
+) -> None:
+    repository = (tmp_path / "repo").resolve()
+    scratch = (tmp_path / "scratch").resolve()
+    output = (tmp_path / "out/q5").resolve()
+    repository.mkdir()
+    scratch.mkdir()
+    output.parent.mkdir()
+    q2_name = "followup-performance-v1-qualification-q2-sentinel"
+    q4_name = "followup-performance-v1-qualification-q4-sentinel"
+    q2_wrapper = (tmp_path / "q2.zip").resolve()
+    q4_wrapper = (tmp_path / "q4.zip").resolve()
+    q2 = _wrapper(q2_wrapper, {"inner/payload.bin": b"q2"})
+    q4 = _wrapper(q4_wrapper, {"inner/payload.bin": b"q4"})
+    provider_path = (tmp_path / "artifacts.json").resolve()
+    provider_path.write_bytes(
+        _provider_json(
+            lineage=lineage,
+            q2=q2,
+            q4=q4,
+            q2_name=q2_name,
+            q4_name=q4_name,
+        )
+    )
+    profile = RouteAScientificProfile(
+        profile_id="q5-followup-sentinel",
+        qualification_seed=91_101,
+        formal_seeds=(91_102, 91_103, 91_104),
+        query_vector_seed=9_110_202,
+        machine_plan_sha256=hashlib.sha256(PLAN_BYTES).hexdigest(),
+    )
+    _patch_q5_inputs(monkeypatch, lineage, scientific_profile=profile)
+    observed_stages: list[str] = []
+
+    def inspect_outer(root: Path, *, stage: str, **_kwargs: object) -> SimpleNamespace:
+        observed_stages.append(stage)
+        return SimpleNamespace(inner_directory=root / "inner")
+
+    monkeypatch.setattr(
+        "dynamic_cssc.followup_performance_artifacts.inspect_followup_qualification_artifact",
+        inspect_outer,
+    )
+
+    inspection = produce_route_a_combined_guard(
+        repository_root=repository,
+        lineage=lineage,
+        provider_artifacts_json_path=provider_path,
+        q2_wrapper_path=q2_wrapper,
+        q4_wrapper_path=q4_wrapper,
+        scratch_parent=scratch,
+        output_directory=output,
+        scientific_profile=profile,
+        machine_plan_bytes=PLAN_BYTES,
+        q2_provider_name=q2_name,
+        q4_provider_name=q4_name,
+        followup_outer_wrappers=True,
+    )
+
+    assert observed_stages == ["q2", "q4"]
+    assert inspection.q2_provider.name == q2_name
+    assert inspection.q4_provider.name == q4_name

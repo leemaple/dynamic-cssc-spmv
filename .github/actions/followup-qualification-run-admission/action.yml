@@ -1,0 +1,76 @@
+name: Verify the externally watched qualification run
+description: Wait for and rederive the exact watch-armed binding before q1 seed access.
+
+inputs:
+  expected-claim-oid:
+    required: true
+  expected-s1:
+    required: true
+  expected-s2:
+    required: true
+  expected-compatibility:
+    required: true
+
+outputs:
+  admission_receipt_sha256:
+    value: ${{ steps.verify.outputs.admission_receipt_sha256 }}
+  binding_oid:
+    value: ${{ steps.verify.outputs.binding_oid }}
+  watcher_session_sha256:
+    value: ${{ steps.verify.outputs.watcher_session_sha256 }}
+
+runs:
+  using: composite
+  steps:
+    - name: Wait for one exact external watch binding and rederive admission
+      id: verify
+      shell: bash
+      env:
+        EXPECTED_CLAIM_OID: ${{ inputs.expected-claim-oid }}
+        EXPECTED_S1: ${{ inputs.expected-s1 }}
+        EXPECTED_S2: ${{ inputs.expected-s2 }}
+        EXPECTED_COMPATIBILITY: ${{ inputs.expected-compatibility }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        test "$GITHUB_EVENT_NAME" = workflow_dispatch
+        test "$GITHUB_REF" = refs/heads/main
+        test "$GITHUB_SHA" = "$EXPECTED_S2"
+        test "$GITHUB_RUN_ATTEMPT" = 1
+        test "$EXPECTED_CLAIM_OID" = "$EXPECTED_S2"
+        [[ "$EXPECTED_S1" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$EXPECTED_S2" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$EXPECTED_COMPATIBILITY" =~ ^[0-9a-f]{64}$ ]]
+
+        ROOT="$RUNNER_TEMP/followup-qualification-admission"
+        install -d -m 700 "$ROOT"
+        REF_PATH='tags/dynamic-cssc-followup-performance-qualification-authority-v1'
+        BINDING_OID=''
+        for _OBSERVATION in $(seq 1 25); do
+          gh api -H 'X-GitHub-Api-Version:2026-03-10' \
+            "/repos/$GITHUB_REPOSITORY/git/ref/$REF_PATH" > "$ROOT/ref.json"
+          CANDIDATE_OID="$(jq -er '.object.sha' "$ROOT/ref.json")"
+          [[ "$CANDIDATE_OID" =~ ^[0-9a-f]{40}$ ]]
+          if test "$CANDIDATE_OID" != "$EXPECTED_CLAIM_OID"; then
+            BINDING_OID="$CANDIDATE_OID"
+            break
+          fi
+          sleep 5
+        done
+        [[ "$BINDING_OID" =~ ^[0-9a-f]{40}$ ]]
+        gh api -H 'X-GitHub-Api-Version:2026-03-10' \
+          "/repos/$GITHUB_REPOSITORY/git/commits/$BINDING_OID" \
+          > "$ROOT/binding.json"
+        python scripts/verify_followup_qualification_run_admission.py \
+          --repository-root "$GITHUB_WORKSPACE" \
+          --ref-json "$ROOT/ref.json" \
+          --binding-commit-json "$ROOT/binding.json" \
+          --expected-claim-oid "$EXPECTED_CLAIM_OID" \
+          --expected-s1 "$EXPECTED_S1" \
+          --expected-s2 "$EXPECTED_S2" \
+          --expected-compatibility "$EXPECTED_COMPATIBILITY" \
+          --expected-provider-run-id "$GITHUB_RUN_ID" > "$ROOT/receipt.json"
+        for FIELD in admission_receipt_sha256 binding_oid watcher_session_sha256; do
+          VALUE="$(jq -er --arg field "$FIELD" '.[$field]' "$ROOT/receipt.json")"
+          echo "$FIELD=$VALUE" >> "$GITHUB_OUTPUT"
+        done

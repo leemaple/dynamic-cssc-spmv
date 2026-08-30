@@ -1,0 +1,154 @@
+name: Verify one bound follow-up analysis run
+description: Reinspect the terminal transport, analysis claim, and mandatory watcher.
+
+inputs:
+  expected-claim-oid:
+    required: true
+  expected-campaign-id:
+    required: true
+  expected-s1:
+    required: true
+  expected-s2:
+    required: true
+  expected-s3:
+    required: true
+  expected-registration-compatibility:
+    required: true
+  expected-analysis-compatibility:
+    required: true
+
+outputs:
+  admission_receipt_sha256:
+    value: ${{ steps.verify.outputs.admission_receipt_sha256 }}
+  analysis_runner_seconds_limit:
+    value: ${{ steps.verify.outputs.analysis_runner_seconds_limit }}
+  campaign_transport_path:
+    value: ${{ steps.verify.outputs.campaign_transport_path }}
+  campaign_transport_sha256:
+    value: ${{ steps.verify.outputs.campaign_transport_sha256 }}
+  campaign_transport_expanded_bytes:
+    value: ${{ steps.verify.outputs.campaign_transport_expanded_bytes }}
+  campaign_transport_member_count:
+    value: ${{ steps.verify.outputs.campaign_transport_member_count }}
+  terminal_provider_run_id:
+    value: ${{ steps.verify.outputs.terminal_provider_run_id }}
+  terminal_runner_seconds:
+    value: ${{ steps.verify.outputs.terminal_runner_seconds }}
+  terminal_artifact_id:
+    value: ${{ steps.verify.outputs.terminal_artifact_id }}
+  terminal_artifact_name:
+    value: ${{ steps.verify.outputs.terminal_artifact_name }}
+  terminal_artifact_provider_digest:
+    value: ${{ steps.verify.outputs.terminal_artifact_provider_digest }}
+  terminal_artifact_size_in_bytes:
+    value: ${{ steps.verify.outputs.terminal_artifact_size_in_bytes }}
+  aggregate_artifact_id:
+    value: ${{ steps.verify.outputs.aggregate_artifact_id }}
+  aggregate_artifact_name:
+    value: ${{ steps.verify.outputs.aggregate_artifact_name }}
+  aggregate_artifact_provider_digest:
+    value: ${{ steps.verify.outputs.aggregate_artifact_provider_digest }}
+  aggregate_artifact_size_in_bytes:
+    value: ${{ steps.verify.outputs.aggregate_artifact_size_in_bytes }}
+
+runs:
+  using: composite
+  steps:
+    - name: Wait for one exact external analysis watch binding
+      id: verify
+      shell: bash
+      env:
+        EXPECTED_CLAIM_OID: ${{ inputs.expected-claim-oid }}
+        EXPECTED_CAMPAIGN_ID: ${{ inputs.expected-campaign-id }}
+        EXPECTED_S1: ${{ inputs.expected-s1 }}
+        EXPECTED_S2: ${{ inputs.expected-s2 }}
+        EXPECTED_S3: ${{ inputs.expected-s3 }}
+        EXPECTED_REGISTRATION_COMPATIBILITY: ${{ inputs.expected-registration-compatibility }}
+        EXPECTED_ANALYSIS_COMPATIBILITY: ${{ inputs.expected-analysis-compatibility }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        test "$GITHUB_EVENT_NAME" = workflow_dispatch
+        test "$GITHUB_REF" = refs/heads/main
+        test "$GITHUB_SHA" = "$EXPECTED_S3"
+        test "$GITHUB_RUN_ATTEMPT" = 1
+        [[ "$EXPECTED_CLAIM_OID" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$EXPECTED_CAMPAIGN_ID" =~ ^[0-9a-f]{64}$ ]]
+        [[ "$EXPECTED_S1" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$EXPECTED_S2" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$EXPECTED_S3" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$EXPECTED_REGISTRATION_COMPATIBILITY" =~ ^[0-9a-f]{64}$ ]]
+        [[ "$EXPECTED_ANALYSIS_COMPATIBILITY" =~ ^[0-9a-f]{64}$ ]]
+
+        ROOT="$RUNNER_TEMP/followup-analysis-admission"
+        install -d -m 700 "$ROOT"
+        REF_PATH='tags/dynamic-cssc-followup-performance-analysis-v1'
+        BINDING_OID=''
+        for _OBSERVATION in $(seq 1 25); do
+          gh api -H 'X-GitHub-Api-Version:2026-03-10' \
+            "/repos/$GITHUB_REPOSITORY/git/ref/$REF_PATH" > "$ROOT/ref.json"
+          CANDIDATE_OID="$(jq -er '.object.sha' "$ROOT/ref.json")"
+          [[ "$CANDIDATE_OID" =~ ^[0-9a-f]{40}$ ]]
+          if test "$CANDIDATE_OID" != "$EXPECTED_CLAIM_OID"; then
+            BINDING_OID="$CANDIDATE_OID"
+            break
+          fi
+          sleep 5
+        done
+        [[ "$BINDING_OID" =~ ^[0-9a-f]{40}$ ]]
+        gh api -H 'X-GitHub-Api-Version:2026-03-10' \
+          "/repos/$GITHUB_REPOSITORY/git/commits/$EXPECTED_CLAIM_OID" \
+          > "$ROOT/claim.json"
+        gh api -H 'X-GitHub-Api-Version:2026-03-10' \
+          "/repos/$GITHUB_REPOSITORY/git/commits/$BINDING_OID" \
+          > "$ROOT/binding.json"
+        TREE_OID="$(jq -er '.tree.sha' "$ROOT/claim.json")"
+        gh api -H 'X-GitHub-Api-Version:2026-03-10' \
+          "/repos/$GITHUB_REPOSITORY/git/trees/$TREE_OID" > "$ROOT/tree.json"
+        jq -e \
+          '.truncated == false and (.tree | length) == 1 and
+           .tree[0].path == "campaign-evidence.zip" and
+           .tree[0].mode == "100644" and .tree[0].type == "blob"' \
+          "$ROOT/tree.json" >/dev/null
+        BLOB_OID="$(jq -er '.tree[0].sha' "$ROOT/tree.json")"
+        gh api -H 'X-GitHub-Api-Version:2026-03-10' \
+          "/repos/$GITHUB_REPOSITORY/git/blobs/$BLOB_OID" > "$ROOT/blob.json"
+        jq -er '.encoding == "base64" and (.content | type == "string")' \
+          "$ROOT/blob.json" >/dev/null
+        jq -r '.content' "$ROOT/blob.json" | tr -d '\n' | base64 --decode \
+          > "$ROOT/campaign-evidence.zip"
+
+        python scripts/verify_followup_analysis_run_admission.py \
+          --ref-json "$ROOT/ref.json" \
+          --claim-commit-json "$ROOT/claim.json" \
+          --binding-commit-json "$ROOT/binding.json" \
+          --campaign-transport "$ROOT/campaign-evidence.zip" \
+          --expected-claim-oid "$EXPECTED_CLAIM_OID" \
+          --expected-campaign-id "$EXPECTED_CAMPAIGN_ID" \
+          --expected-s1 "$EXPECTED_S1" \
+          --expected-s2 "$EXPECTED_S2" \
+          --expected-s3 "$EXPECTED_S3" \
+          --expected-registration-compatibility "$EXPECTED_REGISTRATION_COMPATIBILITY" \
+          --expected-analysis-compatibility "$EXPECTED_ANALYSIS_COMPATIBILITY" \
+          --expected-provider-run-id "$GITHUB_RUN_ID" > "$ROOT/receipt.json"
+        for FIELD in \
+          admission_receipt_sha256 \
+          aggregate_artifact_id \
+          aggregate_artifact_name \
+          aggregate_artifact_provider_digest \
+          aggregate_artifact_size_in_bytes \
+          analysis_runner_seconds_limit \
+          campaign_transport_sha256 \
+          campaign_transport_expanded_bytes \
+          campaign_transport_member_count \
+          terminal_artifact_id \
+          terminal_artifact_name \
+          terminal_artifact_provider_digest \
+          terminal_artifact_size_in_bytes \
+          terminal_provider_run_id \
+          terminal_runner_seconds; do
+          VALUE="$(jq -er --arg field "$FIELD" '.[$field]' "$ROOT/receipt.json")"
+          echo "$FIELD=$VALUE" >> "$GITHUB_OUTPUT"
+        done
+        echo "campaign_transport_path=$ROOT/campaign-evidence.zip" \
+          >> "$GITHUB_OUTPUT"

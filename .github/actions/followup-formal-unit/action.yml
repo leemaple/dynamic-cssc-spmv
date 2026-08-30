@@ -1,0 +1,346 @@
+name: Execute one frozen follow-up formal phase
+description: Set up exact S1, run one producer or replay/guard, and upload its exact artifact.
+
+inputs:
+  expected-s1:
+    required: true
+  expected-s2:
+    required: true
+  expected-compatibility:
+    required: true
+  expected-campaign-id:
+    required: true
+  expected-reservation-oid:
+    required: true
+  expected-reservation-minutes:
+    required: true
+  unit-ordinal:
+    required: true
+  unit-attempt-ordinal:
+    required: true
+  expected-job-token:
+    required: true
+  phase:
+    required: true
+  producer-artifact-name:
+    required: false
+    default: ''
+  acquisition-artifact-name:
+    required: false
+    default: ''
+  acquisition-provider-run-id:
+    required: false
+    default: ''
+  acquisition-provider-artifact-id:
+    required: false
+    default: ''
+  acquisition-provider-artifact-digest:
+    required: false
+    default: ''
+  acquisition-campaign-run-admission-sha256:
+    required: false
+    default: ''
+  acquisition-unit-attempt-ordinal:
+    required: false
+    default: '1'
+  retention-days:
+    required: true
+
+outputs:
+  artifact_name:
+    value: ${{ steps.run.outputs.artifact_name }}
+  campaign_run_admission_sha256:
+    value: ${{ steps.admission.outputs.admission_receipt_sha256 }}
+
+runs:
+  using: composite
+  steps:
+    - name: Verify exact run binding and mandatory watcher before seed
+      id: admission
+      uses: ./.github/actions/followup-campaign-run-admission
+      with:
+        expected-s1: ${{ inputs.expected-s1 }}
+        expected-s2: ${{ inputs.expected-s2 }}
+        expected-compatibility: ${{ inputs.expected-compatibility }}
+        expected-campaign-id: ${{ inputs.expected-campaign-id }}
+        expected-reservation-oid: ${{ inputs.expected-reservation-oid }}
+        expected-reservation-minutes: ${{ inputs.expected-reservation-minutes }}
+        unit-ordinal: ${{ inputs.unit-ordinal }}
+        unit-attempt-ordinal: ${{ inputs.unit-attempt-ordinal }}
+        expected-job-token: ${{ inputs.expected-job-token }}
+
+    - name: Freeze the provider deadline before detached source checkout
+      uses: ./.github/actions/followup-formal-provider-deadline
+      with:
+        expected-s2: ${{ inputs.expected-s2 }}
+        expected-job-token: ${{ inputs.expected-job-token }}
+        expected-reservation-minutes: ${{ steps.admission.outputs.reservation_minutes }}
+        unit-ordinal: ${{ inputs.unit-ordinal }}
+        phase: ${{ inputs.phase }}
+        checkpoint: before-detached-source-checkout
+
+    - name: Check out the exact detached experiment source
+      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      with:
+        ref: ${{ inputs.expected-s1 }}
+        fetch-depth: 1
+        persist-credentials: false
+        clean: true
+
+    - name: Verify exact detached experiment source
+      shell: bash
+      env:
+        EXPECTED_S1: ${{ inputs.expected-s1 }}
+        EXPECTED_S2: ${{ inputs.expected-s2 }}
+        EXPECTED_COMPATIBILITY: ${{ inputs.expected-compatibility }}
+      run: |
+        set -euo pipefail
+        [[ "$EXPECTED_S1" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$EXPECTED_S2" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$EXPECTED_COMPATIBILITY" =~ ^[0-9a-f]{64}$ ]]
+        test "$GITHUB_EVENT_NAME" = workflow_dispatch
+        test "$GITHUB_REF" = refs/heads/main
+        test "$GITHUB_SHA" = "$EXPECTED_S2"
+        test "$(git rev-parse HEAD)" = "$EXPECTED_S1"
+        test -z "$(git status --porcelain=v1 --untracked-files=no)"
+
+    - name: Set up frozen CPython
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+      with:
+        python-version: '3.12.13'
+
+    - name: Reinspect provider deadline before dependency installation
+      id: deadline_dependencies
+      uses: ./.github/actions/followup-formal-provider-deadline
+      with:
+        expected-s2: ${{ inputs.expected-s2 }}
+        expected-job-token: ${{ inputs.expected-job-token }}
+        expected-reservation-minutes: ${{ steps.admission.outputs.reservation_minutes }}
+        unit-ordinal: ${{ inputs.unit-ordinal }}
+        phase: ${{ inputs.phase }}
+        checkpoint: before-dependency-installation
+
+    - name: Install hash-locked Python dependencies outside S1
+      shell: bash
+      env:
+        REMAINING_SECONDS: ${{ steps.deadline_dependencies.outputs.remaining_seconds }}
+      run: |
+        set -euo pipefail
+        [[ "$REMAINING_SECONDS" =~ ^[1-9][0-9]*$ ]]
+        timeout --signal=TERM --kill-after=10s "${REMAINING_SECONDS}s" \
+          bash -euo pipefail -c '
+            python -m venv "$RUNNER_TEMP/followup-formal-venv"
+            "$RUNNER_TEMP/followup-formal-venv/bin/python" -m pip install --require-hashes -r requirements-ci.txt
+            "$RUNNER_TEMP/followup-formal-venv/bin/python" -m pip install --require-hashes -r requirements-publication.txt
+          '
+
+    - name: Verify exact S1/S2 compatibility
+      shell: bash
+      env:
+        EXPECTED_S1: ${{ inputs.expected-s1 }}
+        EXPECTED_S2: ${{ inputs.expected-s2 }}
+        EXPECTED_COMPATIBILITY: ${{ inputs.expected-compatibility }}
+      run: |
+        set -euo pipefail
+        "$RUNNER_TEMP/followup-formal-venv/bin/python" scripts/verify_followup_performance_lineage.py \
+          --repository-root "$GITHUB_WORKSPACE" \
+          --s1 "$EXPECTED_S1" \
+          --s2 "$EXPECTED_S2" \
+          --expected-receipt-sha256 "$EXPECTED_COMPATIBILITY"
+
+    - name: Download exact producer handoff
+      if: inputs.producer-artifact-name != ''
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: ${{ inputs.producer-artifact-name }}
+        path: ${{ runner.temp }}/followup-formal/input/producer
+
+    - name: Verify exact admitted acquisition provider object
+      if: inputs.acquisition-artifact-name != ''
+      shell: bash
+      env:
+        ACQUISITION_ARTIFACT_NAME: ${{ inputs.acquisition-artifact-name }}
+        ACQUISITION_PROVIDER_RUN_ID: ${{ inputs.acquisition-provider-run-id }}
+        ACQUISITION_PROVIDER_ARTIFACT_ID: ${{ inputs.acquisition-provider-artifact-id }}
+        ACQUISITION_PROVIDER_ARTIFACT_DIGEST: ${{ inputs.acquisition-provider-artifact-digest }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        [[ "$ACQUISITION_PROVIDER_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+        [[ "$ACQUISITION_PROVIDER_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+        [[ "$ACQUISITION_PROVIDER_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+        ROOT="$RUNNER_TEMP/followup-formal/acquisition-provider"
+        install -d -m 700 "$ROOT"
+        gh api -H 'X-GitHub-Api-Version:2026-03-10' \
+          "/repos/$GITHUB_REPOSITORY/actions/artifacts/$ACQUISITION_PROVIDER_ARTIFACT_ID" \
+          > "$ROOT/artifact.json"
+        jq -e \
+          --arg name "$ACQUISITION_ARTIFACT_NAME" \
+          --arg digest "$ACQUISITION_PROVIDER_ARTIFACT_DIGEST" \
+          --argjson run "$ACQUISITION_PROVIDER_RUN_ID" \
+          '.id == ($ENV.ACQUISITION_PROVIDER_ARTIFACT_ID | tonumber)
+           and .name == $name
+           and .digest == $digest
+           and .expired == false
+           and .workflow_run.id == $run' \
+          "$ROOT/artifact.json" >/dev/null
+
+    - name: Download admitted acquisition for ordered-event execution
+      if: inputs.acquisition-artifact-name != ''
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: ${{ inputs.acquisition-artifact-name }}
+        path: ${{ runner.temp }}/followup-formal/input/acquisition
+        github-token: ${{ github.token }}
+        repository: ${{ github.repository }}
+        run-id: ${{ inputs.acquisition-provider-run-id }}
+
+    - name: Reinspect provider deadline before native build
+      id: deadline_native_build
+      if: steps.admission.outputs.unit_kind == 'formal-native'
+      uses: ./.github/actions/followup-formal-provider-deadline
+      with:
+        expected-s2: ${{ inputs.expected-s2 }}
+        expected-job-token: ${{ inputs.expected-job-token }}
+        expected-reservation-minutes: ${{ steps.admission.outputs.reservation_minutes }}
+        unit-ordinal: ${{ inputs.unit-ordinal }}
+        phase: ${{ inputs.phase }}
+        checkpoint: before-native-build
+
+    - name: Install native build dependencies and build pinned OpenFHE
+      if: steps.admission.outputs.unit_kind == 'formal-native'
+      shell: bash
+      env:
+        BUILD_JOBS: '2'
+        OMP_NUM_THREADS: '2'
+        REMAINING_SECONDS: ${{ steps.deadline_native_build.outputs.remaining_seconds }}
+      run: |
+        set -euo pipefail
+        [[ "$REMAINING_SECONDS" =~ ^[1-9][0-9]*$ ]]
+        timeout --signal=TERM --kill-after=10s "${REMAINING_SECONDS}s" \
+          bash -euo pipefail -c '
+            sudo apt-get update
+            sudo apt-get install -y ninja-build libomp-dev
+            scripts/bootstrap_openfhe.sh
+            scripts/build_cpp.sh
+          '
+
+    - name: Reinspect provider deadline before formal execution
+      id: deadline_execution
+      uses: ./.github/actions/followup-formal-provider-deadline
+      with:
+        expected-s2: ${{ inputs.expected-s2 }}
+        expected-job-token: ${{ inputs.expected-job-token }}
+        expected-reservation-minutes: ${{ steps.admission.outputs.reservation_minutes }}
+        unit-ordinal: ${{ inputs.unit-ordinal }}
+        phase: ${{ inputs.phase }}
+        checkpoint: before-formal-execution
+
+    - name: Execute exact formal phase
+      id: run
+      shell: bash
+      env:
+        EXPECTED_S1: ${{ inputs.expected-s1 }}
+        EXPECTED_S2: ${{ inputs.expected-s2 }}
+        EXPECTED_COMPATIBILITY: ${{ inputs.expected-compatibility }}
+        UNIT_ORDINAL: ${{ inputs.unit-ordinal }}
+        EXPECTED_JOB_TOKEN: ${{ inputs.expected-job-token }}
+        PHASE: ${{ inputs.phase }}
+        PRODUCER_ARTIFACT_NAME: ${{ inputs.producer-artifact-name }}
+        ACQUISITION_ARTIFACT_NAME: ${{ inputs.acquisition-artifact-name }}
+        ACQUISITION_PROVIDER_RUN_ID: ${{ inputs.acquisition-provider-run-id }}
+        ACQUISITION_PROVIDER_ARTIFACT_ID: ${{ inputs.acquisition-provider-artifact-id }}
+        ACQUISITION_PROVIDER_ARTIFACT_DIGEST: ${{ inputs.acquisition-provider-artifact-digest }}
+        ACQUISITION_CAMPAIGN_RUN_ADMISSION: ${{ inputs.acquisition-campaign-run-admission-sha256 }}
+        ACQUISITION_UNIT_ATTEMPT: ${{ inputs.acquisition-unit-attempt-ordinal }}
+        CAMPAIGN_ID: ${{ inputs.expected-campaign-id }}
+        CAMPAIGN_RUN_ADMISSION: ${{ steps.admission.outputs.admission_receipt_sha256 }}
+        UNIT_ATTEMPT_ORDINAL: ${{ inputs.unit-attempt-ordinal }}
+        OMP_NUM_THREADS: '2'
+        REMAINING_SECONDS: ${{ steps.deadline_execution.outputs.remaining_seconds }}
+      run: |
+        set -euo pipefail
+        [[ "$REMAINING_SECONDS" =~ ^[1-9][0-9]*$ ]]
+        install -d -m 700 "$RUNNER_TEMP/followup-formal/unit/scratch"
+        install -d -m 700 "$RUNNER_TEMP/followup-formal/unit/out"
+        ARGS=(
+          --phase "$PHASE"
+          --formal-unit-ordinal "$UNIT_ORDINAL"
+          --expected-job-token "$EXPECTED_JOB_TOKEN"
+          --repository-root "$GITHUB_WORKSPACE"
+          --experiment-source-sha "$EXPECTED_S1"
+          --workflow-head-sha "$EXPECTED_S2"
+          --compatibility-receipt-sha256 "$EXPECTED_COMPATIBILITY"
+          --provider-run-id "$GITHUB_RUN_ID"
+          --provider-run-attempt "$GITHUB_RUN_ATTEMPT"
+          --campaign-id "$CAMPAIGN_ID"
+          --campaign-run-admission-sha256 "$CAMPAIGN_RUN_ADMISSION"
+          --unit-attempt-ordinal "$UNIT_ATTEMPT_ORDINAL"
+          --scratch-root "$RUNNER_TEMP/followup-formal/unit/scratch"
+          --output-directory "$RUNNER_TEMP/followup-formal/unit/out/artifact"
+        )
+        if [[ -n "$PRODUCER_ARTIFACT_NAME" ]]; then
+          ARGS+=(--producer-artifact-directory "$RUNNER_TEMP/followup-formal/input/producer")
+        fi
+        if [[ -n "$ACQUISITION_ARTIFACT_NAME" ]]; then
+          [[ "$ACQUISITION_PROVIDER_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ACQUISITION_PROVIDER_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ACQUISITION_PROVIDER_ARTIFACT_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$ACQUISITION_CAMPAIGN_RUN_ADMISSION" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$ACQUISITION_UNIT_ATTEMPT" =~ ^[12]$ ]]
+          ARGS+=(
+            --acquisition-artifact-directory "$RUNNER_TEMP/followup-formal/input/acquisition"
+            --acquisition-provider-run-id "$ACQUISITION_PROVIDER_RUN_ID"
+            --acquisition-provider-artifact-id "$ACQUISITION_PROVIDER_ARTIFACT_ID"
+            --acquisition-provider-artifact-digest "$ACQUISITION_PROVIDER_ARTIFACT_DIGEST"
+            --acquisition-campaign-run-admission-sha256 "$ACQUISITION_CAMPAIGN_RUN_ADMISSION"
+            --acquisition-unit-attempt-ordinal "$ACQUISITION_UNIT_ATTEMPT"
+          )
+        fi
+        timeout --signal=TERM --kill-after=10s "${REMAINING_SECONDS}s" \
+          "$RUNNER_TEMP/followup-formal-venv/bin/python" \
+          scripts/run_followup_performance_formal_unit.py "${ARGS[@]}" \
+          > "$RUNNER_TEMP/followup-formal/unit/receipt.json"
+        "$RUNNER_TEMP/followup-formal-venv/bin/python" -c \
+          'import hashlib,json,sys; receipt,outer=sys.argv[1:]; value=json.load(open(receipt)); value["unit_output_envelope_sha256"]=hashlib.sha256(open(outer,"rb").read()).hexdigest(); open(receipt,"w",encoding="ascii",newline="").write(json.dumps(value,sort_keys=True,separators=(",",":"))+"\n")' \
+          "$RUNNER_TEMP/followup-formal/unit/receipt.json" \
+          "$RUNNER_TEMP/followup-formal/unit/out/artifact/outer-envelope.json"
+        ARTIFACT_NAME="$("$RUNNER_TEMP/followup-formal-venv/bin/python" -c \
+          'import json,sys; value=json.load(open(sys.argv[1])); print(value["artifact_name"])' \
+          "$RUNNER_TEMP/followup-formal/unit/receipt.json")"
+        [[ "$ARTIFACT_NAME" =~ ^followup-performance-v1-[a-z0-9-]+$ ]]
+        "$RUNNER_TEMP/followup-formal-venv/bin/python" -c \
+          'import json,sys; value=json.load(open(sys.argv[1])); print("FOLLOWUP_FORMAL_PHASE_RECEIPT_V1=" + json.dumps(value,sort_keys=True,separators=(",",":")))' \
+          "$RUNNER_TEMP/followup-formal/unit/receipt.json"
+        test -d "$RUNNER_TEMP/followup-formal/unit/out/artifact"
+        echo "artifact_name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+
+    - name: Refuse an upload after the shared reservation expired
+      uses: ./.github/actions/followup-formal-provider-deadline
+      with:
+        expected-s2: ${{ inputs.expected-s2 }}
+        expected-job-token: ${{ inputs.expected-job-token }}
+        expected-reservation-minutes: ${{ steps.admission.outputs.reservation_minutes }}
+        unit-ordinal: ${{ inputs.unit-ordinal }}
+        phase: ${{ inputs.phase }}
+        checkpoint: before-phase-artifact-upload
+
+    - name: Upload exact phase artifact
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: ${{ steps.run.outputs.artifact_name }}
+        path: ${{ runner.temp }}/followup-formal/unit/out/artifact/
+        if-no-files-found: error
+        retention-days: ${{ inputs.retention-days }}
+        compression-level: 0
+
+    - name: Prove the upload returned no later than the shared deadline
+      uses: ./.github/actions/followup-formal-provider-deadline
+      with:
+        expected-s2: ${{ inputs.expected-s2 }}
+        expected-job-token: ${{ inputs.expected-job-token }}
+        expected-reservation-minutes: ${{ steps.admission.outputs.reservation_minutes }}
+        unit-ordinal: ${{ inputs.unit-ordinal }}
+        phase: ${{ inputs.phase }}
+        checkpoint: after-phase-artifact-upload
+        require-positive-remaining: 'false'

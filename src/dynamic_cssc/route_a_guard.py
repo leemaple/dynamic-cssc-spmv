@@ -12,6 +12,7 @@ from dynamic_cssc.route_a_evaluation import (
     route_a_evidence_stream_root,
 )
 from dynamic_cssc.route_a_replay import (
+    RouteAOrderedEventCellTarget,
     RouteASyntheticCellTarget,
     inspect_route_a_synthetic_replay_archive,
 )
@@ -19,10 +20,15 @@ from dynamic_cssc.route_a_results import (
     RouteACanonicalStrategyCell,
     canonical_route_a_document,
 )
+from dynamic_cssc.route_a_scientific_profile import (
+    PREDECESSOR_ROUTE_A_PROFILE,
+    RouteAScientificProfile,
+)
 
 __all__ = (
     "RouteAGuardError",
     "RouteASyntheticGuard",
+    "guard_route_a_ordered_event_replay",
     "guard_route_a_synthetic_replay",
 )
 
@@ -109,18 +115,24 @@ def guard_route_a_synthetic_replay(
     *,
     producer_archive_bytes: bytes,
     replay_archive_bytes: bytes,
-    expected_target: RouteASyntheticCellTarget,
+    expected_target: RouteASyntheticCellTarget | RouteAOrderedEventCellTarget,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> RouteASyntheticGuard:
     """Reinspect both archives and accept only their exact closed intersection."""
 
-    if type(expected_target) is not RouteASyntheticCellTarget:
-        raise TypeError("expected_target must be an exact RouteASyntheticCellTarget")
+    if type(expected_target) not in {
+        RouteASyntheticCellTarget,
+        RouteAOrderedEventCellTarget,
+    }:
+        raise TypeError("expected_target must be one exact Route A cell target")
     expected_target._validate()
     producer_inspection = inspect_route_a_synthetic_cell_archive(
-        producer_archive_bytes
+        producer_archive_bytes,
+        scientific_profile=scientific_profile,
     )
     replay_inspection = inspect_route_a_synthetic_replay_archive(
-        replay_archive_bytes
+        replay_archive_bytes,
+        scientific_profile=scientific_profile,
     )
     producer = producer_inspection.cell_run
     replay = replay_inspection.replay
@@ -144,19 +156,35 @@ def guard_route_a_synthetic_replay(
     if final_document != expected_final:
         raise RouteAGuardError("guarded final cell changes more than replay timing")
     window_document = json.loads(producer.window_trace_bytes.decode("ascii"))
-    expected_identity = {
-        "formal_seed_or_null": expected_target.formal_seed_or_null,
-        "rho": (
-            str(expected_target.rho.numerator)
-            if expected_target.rho.denominator == 1
-            else f"{expected_target.rho.numerator}/{expected_target.rho.denominator}"
-        ),
-        "scale_or_null": expected_target.scale_or_null,
-        "shard_identity_sha256": expected_target.shard_identity_sha256,
-        "strategy_candidate_id": expected_target.strategy_candidate_id,
-        "suite_role": expected_target.suite_role,
-        "unit_attempt_ordinal": expected_target.unit_attempt_ordinal,
-    }
+    rho_text = (
+        str(expected_target.rho.numerator)
+        if expected_target.rho.denominator == 1
+        else f"{expected_target.rho.numerator}/{expected_target.rho.denominator}"
+    )
+    if type(expected_target) is RouteASyntheticCellTarget:
+        expected_identity = {
+            "formal_seed_or_null": expected_target.formal_seed_or_null,
+            "rho": rho_text,
+            "scale_or_null": expected_target.scale_or_null,
+            "shard_identity_sha256": expected_target.shard_identity_sha256,
+            "strategy_candidate_id": expected_target.strategy_candidate_id,
+            "suite_role": expected_target.suite_role,
+            "unit_attempt_ordinal": expected_target.unit_attempt_ordinal,
+        }
+    else:
+        expected_identity = {
+            "formal_seed_or_null": None,
+            "object_sha256_or_null": expected_target.raw_object_sha256,
+            "partition_or_null": expected_target.partition,
+            "rho": rho_text,
+            "scale_or_null": None,
+            "semantics_or_null": expected_target.semantics,
+            "shard_identity_sha256": expected_target.shard_identity_sha256,
+            "source_kind": "snap-a2q",
+            "strategy_candidate_id": expected_target.strategy_candidate_id,
+            "suite_role": "formal",
+            "unit_attempt_ordinal": expected_target.unit_attempt_ordinal,
+        }
     if (
         any(
             producer_document["identity"][field] != value
@@ -231,4 +259,23 @@ def guard_route_a_synthetic_replay(
         final_cell=replay.final_cell,
         receipt_bytes=guard_receipt_bytes,
         receipt_sha256=hashlib.sha256(guard_receipt_bytes).hexdigest(),
+    )
+
+
+def guard_route_a_ordered_event_replay(
+    *,
+    producer_archive_bytes: bytes,
+    replay_archive_bytes: bytes,
+    expected_target: RouteAOrderedEventCellTarget,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
+) -> RouteASyntheticGuard:
+    """Expose the SNAP-specific guard interface over the shared deep verifier."""
+
+    if type(expected_target) is not RouteAOrderedEventCellTarget:
+        raise TypeError("expected_target must be an exact ordered-event target")
+    return guard_route_a_synthetic_replay(
+        producer_archive_bytes=producer_archive_bytes,
+        replay_archive_bytes=replay_archive_bytes,
+        expected_target=expected_target,
+        scientific_profile=scientific_profile,
     )

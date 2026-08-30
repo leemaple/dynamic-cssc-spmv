@@ -1,0 +1,115 @@
+{
+  "$id": "https://dynamic-cssc.invalid/schemas/followup-performance-evidence-envelope-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Closed authority-false outer identity for follow-up control, qualification, formal, and analysis objects. The inner payload is retained separately and is bound by inner_sha256.",
+  "properties": {
+    "authority": {
+      "const": false
+    },
+    "evidence_freeze_S2_sha": {
+      "pattern": "^[0-9a-f]{40}$",
+      "type": "string"
+    },
+    "experiment_source_S1_sha": {
+      "pattern": "^[0-9a-f]{40}$",
+      "type": "string"
+    },
+    "inner_role": {
+      "enum": [
+        "analysis",
+        "ci-provenance",
+        "combined-guard",
+        "descriptive-registration",
+        "formal-acquisition",
+        "formal-aggregate",
+        "formal-native-guarded-case",
+        "formal-native-private-handoff",
+        "formal-ordered-event-guarded-shard",
+        "formal-ordered-event-private-handoff",
+        "formal-synthetic-guarded-shard",
+        "formal-synthetic-private-handoff",
+        "formal-terminal-admission",
+        "independent-review",
+        "native-guarded-receipt",
+        "native-private-handoff",
+        "postrun-admission",
+        "pre-s1-resource-validation",
+        "simulator-guarded-receipt",
+        "simulator-private-handoff",
+        "source-anchor"
+      ],
+      "type": "string"
+    },
+    "inner_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "materialized_predecessor_baseline_sha256": {
+      "const": "0d307169356a50cc75f6ad7ba1c018321c0693e185cde7f5f2e7fef472da8e0e"
+    },
+    "schema_version": {
+      "const": "dynamic-cssc-followup-performance-evidence-envelope-v1"
+    },
+    "stage1_commit_sha": {
+      "const": "5421cecda19be559ba1c25297dd66c2634489c39"
+    },
+    "stage1_plan_sha256": {
+      "const": "a4600fbcbf630ab3a11e5004511f6b449645021ea2553243ddda80ed69f3484c"
+    },
+    "study_id": {
+      "const": "dynamic-cssc-followup-performance-2026-08-30"
+    },
+    "unit_attempt_ordinal": {
+      "enum": [
+        1,
+        2
+      ],
+      "type": "integer"
+    },
+    "unit_identity_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "unit_kind": {
+      "enum": [
+        "analysis",
+        "control-ci",
+        "control-independent-review",
+        "control-pre-s1",
+        "control-registration",
+        "control-source-anchor",
+        "formal-acquisition",
+        "formal-aggregate",
+        "formal-native",
+        "formal-ordered-event",
+        "formal-synthetic",
+        "formal-terminal-admission",
+        "qualification-q1",
+        "qualification-q2",
+        "qualification-q3",
+        "qualification-q4",
+        "qualification-q5",
+        "qualification-q6"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "study_id",
+    "stage1_commit_sha",
+    "stage1_plan_sha256",
+    "materialized_predecessor_baseline_sha256",
+    "experiment_source_S1_sha",
+    "evidence_freeze_S2_sha",
+    "unit_kind",
+    "unit_identity_sha256",
+    "unit_attempt_ordinal",
+    "inner_role",
+    "inner_sha256",
+    "authority"
+  ],
+  "title": "Dynamic CSSC follow-up performance evidence envelope",
+  "type": "object"
+}

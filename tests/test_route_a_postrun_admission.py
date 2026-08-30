@@ -250,3 +250,32 @@ def test_q6_rejects_observation_after_frozen_q5_plus_ten_minute_deadline(
             output_directory=(tmp_path / "q6").resolve(),
             observed_at=datetime(2026, 8, 29, 0, 25, 1, tzinfo=UTC),
         )
+
+
+def test_q6_accepts_only_the_explicit_followup_prefix_artifact_names(
+    tmp_path: Path,
+) -> None:
+    run, jobs, artifacts_path = _provider_files(tmp_path)
+    artifacts = json.loads(artifacts_path.read_text())
+    followup_names = tuple(
+        f"followup-performance-v1-qualification-q{ordinal}-sentinel"
+        for ordinal in range(1, 6)
+    )
+    for row, name in zip(artifacts["artifacts"], followup_names, strict=True):
+        row["name"] = name
+    artifacts_path.write_text(json.dumps(artifacts))
+
+    inspection = produce_route_a_postrun_admission(
+        run_json_path=run,
+        jobs_json_path=jobs,
+        artifacts_json_path=artifacts_path,
+        expected_run_id=RUN_ID,
+        expected_s2_git_sha=HEAD,
+        expected_head_branch="main",
+        expected_run_attempt=1,
+        output_directory=(tmp_path / "followup-q6").resolve(),
+        observed_at=datetime(2026, 8, 29, 0, 15, 10, tzinfo=UTC),
+        expected_prefix_artifact_names=followup_names,
+    )
+
+    assert inspection.record["computational_45_minute_gate"] == "pass"

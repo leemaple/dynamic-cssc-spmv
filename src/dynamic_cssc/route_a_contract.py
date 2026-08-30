@@ -9,6 +9,11 @@ from dataclasses import dataclass
 from fractions import Fraction
 from typing import Literal
 
+from dynamic_cssc.route_a_scientific_profile import (
+    PREDECESSOR_ROUTE_A_PROFILE,
+    RouteAScientificProfile,
+)
+
 __all__ = (
     "RouteAEvaluationLane",
     "RouteAQueryIdentity",
@@ -20,10 +25,7 @@ __all__ = (
 
 _DOMAIN_SCHEMA = "dynamic-cssc-route-a-query-vector-domain-v1"
 _VECTOR_SCHEMA = "dynamic-cssc-route-a-query-vector-v1"
-_QUERY_VECTOR_SEED = 2_026_082_302
 _QUERY_VECTOR_LENGTH = 8_193
-_QUALIFICATION_SYNTHETIC_SEED = 2_026_082_1
-_FORMAL_SYNTHETIC_SEEDS = frozenset({2_026_082_2, 2_026_082_3, 2_026_082_4})
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _ROUTE_A_RHOS = frozenset({Fraction(1, 100), Fraction(1, 10), Fraction(1), Fraction(10)})
 _STRATEGY_IDS = frozenset(
@@ -63,14 +65,17 @@ class RouteAQueryVectorDomain:
     mapping_sha256: str | None = None
     partition: int | None = None
     semantics: Literal["T1", "T2"] | None = None
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE
 
     def __post_init__(self) -> None:
+        if type(self.scientific_profile) is not RouteAScientificProfile:
+            raise TypeError("scientific_profile must be an exact RouteAScientificProfile")
         qualification = (
             self.kind == "synthetic"
             and self.suite_role == "qualification"
             and self.scale == "M"
             and type(self.formal_seed) is int
-            and self.formal_seed == _QUALIFICATION_SYNTHETIC_SEED
+            and self.formal_seed == self.scientific_profile.qualification_seed
             and self.object_sha256 is None
             and self.mapping_sha256 is None
             and self.partition is None
@@ -81,7 +86,7 @@ class RouteAQueryVectorDomain:
             and self.suite_role == "formal"
             and self.scale in {"S", "M"}
             and type(self.formal_seed) is int
-            and self.formal_seed in _FORMAL_SYNTHETIC_SEEDS
+            and self.formal_seed in self.scientific_profile.formal_seeds
             and self.object_sha256 is None
             and self.mapping_sha256 is None
             and self.partition is None
@@ -109,14 +114,24 @@ class RouteAQueryVectorDomain:
         *,
         scale: str,
         qualification_seed: int,
+        scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
     ) -> RouteAQueryVectorDomain:
-        if scale != "M" or qualification_seed != _QUALIFICATION_SYNTHETIC_SEED:
-            raise ValueError("qualification query-vector scope must be M/20260821")
+        if type(scientific_profile) is not RouteAScientificProfile:
+            raise TypeError("scientific_profile must be an exact RouteAScientificProfile")
+        try:
+            scientific_profile.require_trace_scope(
+                suite_role="qualification",
+                scale=scale,
+                seed=qualification_seed,
+            )
+        except (TypeError, ValueError) as error:
+            raise ValueError("qualification query-vector scope must be M/20260821") from error
         return cls(
             kind="synthetic",
             suite_role="qualification",
             scale="M",
             formal_seed=qualification_seed,
+            scientific_profile=scientific_profile,
         )
 
     @classmethod
@@ -125,14 +140,26 @@ class RouteAQueryVectorDomain:
         *,
         scale: str,
         formal_seed: int,
+        scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
     ) -> RouteAQueryVectorDomain:
-        if scale not in {"S", "M"} or formal_seed not in _FORMAL_SYNTHETIC_SEEDS:
-            raise ValueError("formal query-vector scope requires S/M and seed 20260822..20260824")
+        if type(scientific_profile) is not RouteAScientificProfile:
+            raise TypeError("scientific_profile must be an exact RouteAScientificProfile")
+        try:
+            scientific_profile.require_trace_scope(
+                suite_role="formal",
+                scale=scale,
+                seed=formal_seed,
+            )
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "formal query-vector scope requires S/M and seed 20260822..20260824"
+            ) from error
         return cls(
             kind="synthetic",
             suite_role="formal",
             scale=scale,  # type: ignore[arg-type]
             formal_seed=formal_seed,
+            scientific_profile=scientific_profile,
         )
 
     @classmethod
@@ -143,7 +170,10 @@ class RouteAQueryVectorDomain:
         mapping_sha256: str,
         partition: int,
         semantics: str,
+        scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
     ) -> RouteAQueryVectorDomain:
+        if type(scientific_profile) is not RouteAScientificProfile:
+            raise TypeError("scientific_profile must be an exact RouteAScientificProfile")
         return cls(
             kind="snap-a2q",
             suite_role="formal",
@@ -153,6 +183,7 @@ class RouteAQueryVectorDomain:
             mapping_sha256=mapping_sha256,
             partition=partition,
             semantics=semantics,  # type: ignore[arg-type]
+            scientific_profile=scientific_profile,
         )
 
     def to_document(self) -> dict[str, object]:
@@ -163,7 +194,7 @@ class RouteAQueryVectorDomain:
                 "length": _QUERY_VECTOR_LENGTH,
                 "scale": self.scale,
                 "schema_version": _DOMAIN_SCHEMA,
-                "seed": _QUERY_VECTOR_SEED,
+                "seed": self.scientific_profile.query_vector_seed,
             }
         return {
             "kind": self.kind,
@@ -172,7 +203,7 @@ class RouteAQueryVectorDomain:
             "object_sha256": self.object_sha256,
             "partition": self.partition,
             "schema_version": _DOMAIN_SCHEMA,
-            "seed": _QUERY_VECTOR_SEED,
+            "seed": self.scientific_profile.query_vector_seed,
             "semantics": self.semantics,
         }
 
