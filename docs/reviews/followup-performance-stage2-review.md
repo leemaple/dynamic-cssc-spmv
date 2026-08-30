@@ -1,12 +1,10 @@
 # Follow-up performance Stage-2 implementation review
 
-> **Current gate:** HOLD.  Exact candidate `bc6a0df` passed exact-head Linux CI
-> and ZCode, but ChatGPT Pro found two reproducible P1 evidence-control defects
-> on that same object.  The pending closure successor makes cancellation and
-> replacement outcomes mutually exclusive, requires one typed exact cancel
-> POST, and closes the provider-clock ordering.  It has not yet received an
-> exact commit, Linux CI, or either exact-object re-review.  No qualification
-> or formal seed is authorized by this document.
+> **Current gate:** implementation PASS at exact object `37d5e5a`.  ChatGPT Pro
+> and ZCode independently report zero P0/P1 findings, and exact-head Linux CI
+> succeeded.  The next object may change only this review record and must
+> receive exact-object CI and a short fidelity re-review before merge.  No
+> qualification or formal seed is authorized by this document.
 
 ## Review lineage
 
@@ -250,7 +248,68 @@ and the formal-ref race, passed **49 tests in 9.71 seconds**.  The complete
 follow-up control/evidence/CLI/workflow-contract suite then passed **186 tests
 in 84.68 seconds** under one low-priority process.  Ruff, JSON parsing, Behavior
 Set import/orphan closure, and `git diff --check` also passed.  These remain
-local engineering evidence pending an exact successor and Linux CI.
+local engineering evidence until the exact successor and CI closure recorded
+below.
+
+## Exact `37d5e5a` P1 closure
+
+The exact implementation closure object was:
+
+- commit `37d5e5a0b56e17ff5c6bade87e9bfeb018a6f3fd`;
+- tree `ab436bef8c12b01dc101b6bbd21adf84ea181d82`;
+- sole parent `bc6a0df4c39613c89ad7b0a9675d62d30966c484`;
+- parent-to-candidate binary diff SHA-256
+  `38fb26ad393475236c13bcdc5a276c2c4a3f26d069d51e5d78f38ddcf9a3a857`;
+  and
+- common review packet SHA-256
+  `e8481a3e0cef90d735c1692f6240208f159628f7f2eab368b58f20aeaee2f4a9`.
+
+ChatGPT Pro returned **PASS, P0=0, P1=0, P2=0**.  It independently closed
+the four-way decision/cancellation matrix at the canonical receipt,
+controller, replacement-dispatch, and timing boundaries; verified that only
+one exact cancel `POST` receiving `202 Accepted` can mint the typed submission;
+confirmed that `409`, wrong-run, malformed-return, transport, and provider-clock
+regression paths fail before a cancellation acknowledgement; and accepted the
+new symmetric fixed-ref race regression.  It also freshly read exact-head CI
+run `33310810906` in terminal success rather than inheriting the packet's
+earlier in-progress observation.
+
+ZCode GLM-5.3 Max independently returned **PASS, P0=0, P1=0, P2=3**.  It
+recomputed the packet and Git identities, passed 49 focused regressions, 12
+Behavior-Set closure tests, and an expanded 188-test follow-up selection.  Its
+nonblocking P2 findings were: the live cancel-202 provider `Date` is validated
+but not persisted for later forensic replay; the completed-campaign timing
+schema now retains a structurally unreachable cancellation-ledger array and a
+conservative cancel-then-success asymmetry; and the exact 186-test selection
+command should be retained with the witness count.  The first two can reduce
+forensic detail or keep a conservative dead field but cannot authorize a
+replacement or fabricate an acknowledgement.  The third is closed here by
+recording the exact command:
+
+```text
+nice -n 15 .venv/bin/pytest -q tests/test_followup_performance_*.py tests/test_control_followup_performance.py tests/test_prepare_followup_performance_analysis_inputs.py tests/test_run_followup_performance_*.py tests/test_verify_followup_analysis_run_admission.py
+```
+
+Exact-head push CI run
+[`33310810906`](https://github.com/leemaple/dynamic-cssc-spmv/actions/runs/33310810906)
+completed successfully on the same commit, branch, and push event.  P-1 and
+syntax passed; unit tests recorded **2,615 passed, 2 skipped** in 1,347.55
+seconds; the two skips are the ordinary/strong parametrizations that require
+the real OpenFHE runner absent from ordinary CI; predicted-only smoke, R0
+creation, and upload all succeeded.  The sole artifact is ID `9732208497`,
+`r0-freeze-37d5e5a0b56e17ff5c6bade87e9bfeb018a6f3fd`, 8,908,119 bytes,
+provider digest
+`sha256:441320056ea182f68434168eca0cc944911e85cd656f7e70d4dc3d367405fa82`,
+expiring 2026-09-29.  It is a control witness, not experiment evidence.
+
+Verdict: PASS — P0=0, P1=0.
+External gate: ChatGPT Pro PASS; ZCode strongest-mode PASS.
+
+The successor that records this closure may alter only this Markdown file.  It
+must preserve the exact implementation tree outside this path, pass exact-head
+CI, and receive a short exact-object fidelity review before it can become S1.
+Neither this verdict nor that mechanical successor mints qualification,
+formal, analysis, or publication authority.
 
 ## Dispatch boundary
 
