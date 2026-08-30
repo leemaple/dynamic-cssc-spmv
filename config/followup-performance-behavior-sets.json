@@ -278,7 +278,7 @@
         "src/dynamic_cssc/strong_execution.py",
         "src/dynamic_cssc/strong_packed_coo.py"
       ],
-      "schema_version": "dynamic-cssc-followup-performance-control-registration-behavior-set-v6"
+      "schema_version": "dynamic-cssc-followup-performance-control-registration-behavior-set-v7"
     },
     "formal": {
       "paths": [

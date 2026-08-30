@@ -153,6 +153,16 @@ def test_registration_and_anchor_controls_execute_only_after_exact_s2_exists() -
     assert "--kind source-anchor" in source_anchor
 
 
+def test_registration_control_binds_all_python_steps_to_the_exact_checkout() -> None:
+    registration = _text(WORKFLOWS / "followup-performance-registration.yml")
+    exact_source_binding = (
+        "    env:\n"
+        "      PYTHONPATH: ${{ github.workspace }}/src:${{ github.workspace }}\n"
+        "    steps:\n"
+    )
+    assert registration.count(exact_source_binding) == 1
+
+
 def test_formal_campaign_is_manual_one_shot_and_contains_no_registered_seed_literal() -> None:
     workflow = _text(FORMAL)
     action = _text(FORMAL_ACTION)
