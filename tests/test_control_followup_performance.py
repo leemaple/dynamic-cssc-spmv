@@ -47,6 +47,51 @@ def test_github_adapter_uses_monotonic_provider_date_not_local_clock(
     )
 
 
+def test_github_adapter_rereads_only_the_two_one_shot_inventories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = GitHubFollowupAdapter(repository="owner/repository")
+    calls: list[tuple[str, ...]] = []
+    responses = iter(
+        (
+            _included(
+                "Sun, 30 Aug 2026 12:00:00 GMT",
+                b'{"total_count":0,"workflow_runs":[]}\n',
+            ),
+            _included(
+                "Sun, 30 Aug 2026 12:00:01 GMT",
+                b'{"total_count":0,"workflow_runs":[]}\n',
+            ),
+        )
+    )
+
+    def request(*arguments: str, **_kwargs: object) -> bytes:
+        calls.append(arguments)
+        return next(responses)
+
+    monkeypatch.setattr(adapter, "_gh", request)
+
+    observation = adapter.read_one_shot_inventory()
+
+    assert observation.observed_at == datetime(2026, 8, 30, 12, 0, 1, tzinfo=UTC)
+    assert observation.qualification_run_ids == ()
+    assert observation.formal_run_ids == ()
+    assert calls == [
+        (
+            "api",
+            "--include",
+            "/repos/owner/repository/actions/workflows/"
+            "followup-performance-qualification.yml/runs?per_page=100",
+        ),
+        (
+            "api",
+            "--include",
+            "/repos/owner/repository/actions/workflows/"
+            "followup-performance-formal-unit.yml/runs?per_page=100",
+        ),
+    ]
+
+
 def test_github_adapter_rejects_missing_backward_or_redirected_provider_time(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

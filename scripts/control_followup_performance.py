@@ -32,6 +32,7 @@ from dynamic_cssc.followup_performance_controller import (
     FollowupFormalLiveObservation,
     FollowupFormalLiveRunSnapshot,
     FollowupJobSnapshot,
+    FollowupOneShotInventoryObservation,
     FollowupPrerequisiteObservation,
     FollowupProviderAuthoritySnapshot,
     FollowupQualificationObservation,
@@ -459,6 +460,17 @@ class GitHubFollowupAdapter:
         return FollowupPrerequisiteObservation(
             observed_at=self._provider_observed_at(),
             controls=tuple(controls),
+            qualification_run_ids=qualification_run_ids,
+            formal_run_ids=formal_run_ids,
+        )
+
+    def read_one_shot_inventory(self) -> FollowupOneShotInventoryObservation:
+        """Reread only mutable workflow inventories after heavy byte validation."""
+
+        qualification_run_ids = self._workflow_run_ids(_QUALIFICATION_WORKFLOW)
+        formal_run_ids = self._workflow_run_ids(_FORMAL_WORKFLOW)
+        return FollowupOneShotInventoryObservation(
+            observed_at=self._provider_observed_at(),
             qualification_run_ids=qualification_run_ids,
             formal_run_ids=formal_run_ids,
         )

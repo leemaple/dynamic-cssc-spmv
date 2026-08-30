@@ -25,6 +25,7 @@ from dynamic_cssc.followup_performance_controller import (
     FollowupFormalLiveObservation,
     FollowupFormalLiveRunSnapshot,
     FollowupJobSnapshot,
+    FollowupOneShotInventoryObservation,
     FollowupPrerequisiteObservation,
     FollowupProviderAuthoritySnapshot,
     FollowupQualificationObservation,
@@ -88,14 +89,26 @@ class _PrerequisiteProvider:
         observed_at: datetime,
         *,
         qualification_run_ids: tuple[int, ...] = (),
+        final_qualification_run_ids: tuple[int, ...] | None = None,
+        formal_run_ids: tuple[int, ...] = (),
     ) -> None:
         self.observation = FollowupPrerequisiteObservation(
             observed_at=observed_at,
             controls=(),
             qualification_run_ids=qualification_run_ids,
-            formal_run_ids=(),
+            formal_run_ids=formal_run_ids,
+        )
+        self.inventory = FollowupOneShotInventoryObservation(
+            observed_at=observed_at,
+            qualification_run_ids=(
+                qualification_run_ids
+                if final_qualification_run_ids is None
+                else final_qualification_run_ids
+            ),
+            formal_run_ids=formal_run_ids,
         )
         self.calls: list[tuple[int, ...]] = []
+        self.inventory_calls = 0
 
     def read_prerequisites(
         self,
@@ -103,6 +116,10 @@ class _PrerequisiteProvider:
     ) -> FollowupPrerequisiteObservation:
         self.calls.append(run_ids)
         return self.observation
+
+    def read_one_shot_inventory(self) -> FollowupOneShotInventoryObservation:
+        self.inventory_calls += 1
+        return self.inventory
 
 
 def _stub_local_and_prerequisite_validation(
@@ -246,6 +263,134 @@ def test_expired_qualification_capability_is_consumed_before_dispatch(
         consume_followup_qualification_capability(capability, request)
 
 
+def test_qualification_capability_lease_starts_after_heavy_validation(
+    monkeypatch: pytest.MonkeyPatch,
+    clock: _Clock,
+) -> None:
+    _stub_local_and_prerequisite_validation(monkeypatch)
+    request = _request()
+    provider = _PrerequisiteProvider(clock.value)
+
+    def validate_then_refresh(*_args: object, **_kwargs: object) -> None:
+        clock.value += timedelta(seconds=47)
+        provider.inventory = replace(provider.inventory, observed_at=clock.value)
+
+    monkeypatch.setattr(
+        controller,
+        "_validate_prerequisite_observation",
+        validate_then_refresh,
+    )
+
+    capability = authorize_followup_qualification_dispatch(
+        Path.cwd(),
+        provider,
+        request,
+    )
+
+    assert provider.inventory_calls == 1
+    clock.value += timedelta(seconds=1)
+    opening = consume_followup_qualification_capability(capability, request)
+    assert opening.evidence_freeze_s2_sha == "b" * 40
+
+
+@pytest.mark.parametrize(
+    ("qualification_run_ids", "formal_run_ids"),
+    (
+        ((90,), ()),
+        ((), (91,)),
+    ),
+)
+def test_qualification_mint_rejects_a_post_validation_inventory_race(
+    monkeypatch: pytest.MonkeyPatch,
+    clock: _Clock,
+    qualification_run_ids: tuple[int, ...],
+    formal_run_ids: tuple[int, ...],
+) -> None:
+    _stub_local_and_prerequisite_validation(monkeypatch)
+    provider = _PrerequisiteProvider(clock.value)
+    provider.inventory = replace(
+        provider.inventory,
+        qualification_run_ids=qualification_run_ids,
+        formal_run_ids=formal_run_ids,
+    )
+
+    with pytest.raises(FollowupControllerError, match="inventory changed"):
+        authorize_followup_qualification_dispatch(Path.cwd(), provider, _request())
+
+    with controller._ISSUED_CAPABILITIES_LOCK:  # noqa: SLF001
+        assert controller._ISSUED_CAPABILITIES == {}  # noqa: SLF001
+
+
+@pytest.mark.parametrize("offset_seconds", (-31, 1))
+def test_one_shot_inventory_must_be_fresh_and_not_from_the_future(
+    clock: _Clock,
+    offset_seconds: int,
+) -> None:
+    observation = FollowupOneShotInventoryObservation(
+        observed_at=clock.value + timedelta(seconds=offset_seconds),
+        qualification_run_ids=(),
+        formal_run_ids=(),
+    )
+
+    with pytest.raises(FollowupControllerError, match="observation is stale"):
+        controller._validate_one_shot_inventory(  # noqa: SLF001
+            observation,
+            clock.value,
+            expected_qualification_run_ids=(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("qualification_run_ids", "formal_run_ids"),
+    (
+        ((True,), ()),
+        ((90, 90), ()),
+        ((), [91]),
+    ),
+)
+def test_one_shot_inventory_rejects_non_strict_or_duplicate_ids(
+    clock: _Clock,
+    qualification_run_ids: object,
+    formal_run_ids: object,
+) -> None:
+    observation = FollowupOneShotInventoryObservation(
+        observed_at=clock.value,
+        qualification_run_ids=qualification_run_ids,  # type: ignore[arg-type]
+        formal_run_ids=formal_run_ids,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(FollowupControllerError, match="identity changed"):
+        controller._validate_one_shot_inventory(  # noqa: SLF001
+            observation,
+            clock.value,
+            expected_qualification_run_ids=(),
+        )
+
+
+def test_capability_lease_includes_30_seconds_but_not_more(
+    monkeypatch: pytest.MonkeyPatch,
+    clock: _Clock,
+) -> None:
+    _stub_local_and_prerequisite_validation(monkeypatch)
+    request = _request()
+    first = authorize_followup_qualification_dispatch(
+        Path.cwd(),
+        _PrerequisiteProvider(clock.value),
+        request,
+    )
+    clock.value += timedelta(seconds=30)
+    consume_followup_qualification_capability(first, request)
+
+    second = authorize_followup_qualification_dispatch(
+        Path.cwd(),
+        _PrerequisiteProvider(clock.value),
+        request,
+    )
+    clock.value += timedelta(seconds=30, microseconds=1)
+    with pytest.raises(FollowupControllerError, match="expired"):
+        consume_followup_qualification_capability(second, request)
+
+
 def test_formal_capability_is_distinct_and_consumes_one_cas_opening(
     monkeypatch: pytest.MonkeyPatch,
     clock: _Clock,
@@ -288,6 +433,111 @@ def test_formal_capability_is_distinct_and_consumes_one_cas_opening(
     assert opening.qualification_q6_artifact_digest == "sha256:" + "d" * 64
     with pytest.raises(FollowupControllerError, match="absent or consumed"):
         consume_followup_formal_campaign_capability(capability, request)
+
+
+def test_formal_capability_lease_starts_after_both_heavy_validations(
+    monkeypatch: pytest.MonkeyPatch,
+    clock: _Clock,
+) -> None:
+    _stub_local_and_prerequisite_validation(monkeypatch)
+    prerequisites = _request()
+    request = FollowupFormalAdmissionRequest(
+        prerequisites=prerequisites,
+        qualification_run_id=90,
+    )
+    provider = _PrerequisiteProvider(clock.value, qualification_run_ids=(90,))
+    q6 = FollowupArtifactSnapshot(
+        database_id=106,
+        name="q6",
+        digest="sha256:" + "d" * 64,
+        size_in_bytes=1,
+        expired=False,
+        workflow_run_id=90,
+        workflow_run_head_sha="b" * 40,
+    )
+
+    def validate_prerequisites(*_args: object, **_kwargs: object) -> None:
+        clock.value += timedelta(seconds=24)
+
+    def validate_qualification(*_args: object, **_kwargs: object) -> FollowupArtifactSnapshot:
+        clock.value += timedelta(seconds=24)
+        provider.inventory = replace(provider.inventory, observed_at=clock.value)
+        return q6
+
+    monkeypatch.setattr(
+        controller,
+        "_validate_prerequisite_observation",
+        validate_prerequisites,
+    )
+    monkeypatch.setattr(
+        controller,
+        "_validate_qualification_observation",
+        validate_qualification,
+    )
+
+    capability = authorize_followup_formal_campaign(
+        Path.cwd(),
+        provider,
+        _QualificationProvider(_qualification_observation(clock.value)),
+        request,
+    )
+
+    assert provider.inventory_calls == 1
+    clock.value += timedelta(seconds=1)
+    opening = consume_followup_formal_campaign_capability(capability, request)
+    assert opening.qualification_run_id == 90
+
+
+@pytest.mark.parametrize(
+    ("qualification_run_ids", "formal_run_ids"),
+    (
+        ((), ()),
+        ((90, 91), ()),
+        ((90,), (92,)),
+    ),
+)
+def test_formal_mint_rejects_a_post_validation_inventory_race(
+    monkeypatch: pytest.MonkeyPatch,
+    clock: _Clock,
+    qualification_run_ids: tuple[int, ...],
+    formal_run_ids: tuple[int, ...],
+) -> None:
+    _stub_local_and_prerequisite_validation(monkeypatch)
+    request = FollowupFormalAdmissionRequest(
+        prerequisites=_request(),
+        qualification_run_id=90,
+    )
+    provider = _PrerequisiteProvider(
+        clock.value,
+        qualification_run_ids=(90,),
+        final_qualification_run_ids=qualification_run_ids,
+        formal_run_ids=formal_run_ids,
+    )
+    q6 = FollowupArtifactSnapshot(
+        database_id=106,
+        name="q6",
+        digest="sha256:" + "d" * 64,
+        size_in_bytes=1,
+        expired=False,
+        workflow_run_id=90,
+        workflow_run_head_sha="b" * 40,
+    )
+    monkeypatch.setattr(
+        controller,
+        "_validate_qualification_observation",
+        lambda *_args, **_kwargs: q6,
+    )
+
+    with pytest.raises(FollowupControllerError, match="inventory changed"):
+        authorize_followup_formal_campaign(
+            Path.cwd(),
+            provider,
+            _QualificationProvider(_qualification_observation(clock.value)),
+            request,
+        )
+
+    with controller._ISSUED_CAPABILITIES_LOCK:  # noqa: SLF001
+        assert controller._ISSUED_CAPABILITIES == {}  # noqa: SLF001
 
 
 def test_abandonment_consumes_without_dispatch(
