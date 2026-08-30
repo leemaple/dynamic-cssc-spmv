@@ -117,6 +117,111 @@ def test_followup_s1_s2_registration_round_trip_is_deterministic(
     assert inspection.envelope.document["authority"] is False
 
 
+def test_followup_data_only_s2_anchor_is_not_a_behavior_path() -> None:
+    registry = json.loads(
+        (REPOSITORY_ROOT / "config/followup-performance-behavior-sets.json").read_text(
+            encoding="ascii"
+        )
+    )
+
+    assert all(
+        FOLLOWUP_REGISTRATION_ANCHOR_PATH not in role["paths"]
+        for role in registry["roles"].values()
+    )
+
+
+def test_followup_production_registry_accepts_data_only_s2_round_trip(
+    tmp_path: Path,
+) -> None:
+    repository = (tmp_path / "production-registry-repository").resolve()
+    subprocess.run(
+        (
+            "git",
+            "clone",
+            "--quiet",
+            "--shared",
+            str(REPOSITORY_ROOT),
+            str(repository),
+        ),
+        check=True,
+    )
+    _git(repository, "config", "user.name", "Followup Test")
+    _git(repository, "config", "user.email", "followup@example.invalid")
+    registry_path = "config/followup-performance-behavior-sets.json"
+    (repository / registry_path).write_bytes(
+        (REPOSITORY_ROOT / registry_path).read_bytes()
+    )
+    (repository / FOLLOWUP_REGISTRATION_ANCHOR_PATH).write_text(
+        '{"anchors":[],"schema_version":'
+        '"dynamic-cssc-followup-performance-registration-anchor-set-v1"}\n',
+        encoding="ascii",
+    )
+    _git(repository, "add", registry_path, FOLLOWUP_REGISTRATION_ANCHOR_PATH)
+    _git(repository, "commit", "--allow-empty", "-m", "synthetic production S1")
+    s1 = _git(repository, "rev-parse", "HEAD")
+    (repository / FOLLOWUP_REGISTRATION_ANCHOR_PATH).write_bytes(
+        build_followup_registration_anchor(repository, s1=s1)
+    )
+    s2 = _commit(repository, "synthetic production S2")
+
+    receipt = verify_followup_s1_s2_compatibility(repository, s1=s1, s2=s2)
+
+    assert receipt.document["changed_paths"] == [FOLLOWUP_REGISTRATION_ANCHOR_PATH]
+    assert receipt.document["compatibility_verified"] is True
+    assert receipt.document["formal_execution_authorized"] is False
+
+
+def test_followup_s2_anchor_rejects_executable_git_mode(tmp_path: Path) -> None:
+    repository, s1, _s2 = _repository(tmp_path)
+    _git(repository, "checkout", "--detach", s1)
+    (repository / FOLLOWUP_REGISTRATION_ANCHOR_PATH).write_bytes(
+        build_followup_registration_anchor(repository, s1=s1)
+    )
+    _git(repository, "add", FOLLOWUP_REGISTRATION_ANCHOR_PATH)
+    _git(repository, "update-index", "--chmod=+x", FOLLOWUP_REGISTRATION_ANCHOR_PATH)
+    _git(repository, "commit", "-m", "executable followup S2 data anchor")
+    s2 = _git(repository, "rev-parse", "HEAD")
+    assert _git(
+        repository,
+        "ls-tree",
+        s2,
+        "--",
+        FOLLOWUP_REGISTRATION_ANCHOR_PATH,
+    ).startswith("100755 blob ")
+
+    with pytest.raises(FollowupLineageError, match="S2 registration anchor mode"):
+        verify_followup_s1_s2_compatibility(repository, s1=s1, s2=s2)
+
+
+def test_followup_s1_anchor_rejects_executable_git_mode(tmp_path: Path) -> None:
+    repository, original_s1, _original_s2 = _repository(tmp_path)
+    _git(repository, "checkout", "--detach", original_s1)
+    _git(repository, "update-index", "--chmod=+x", FOLLOWUP_REGISTRATION_ANCHOR_PATH)
+    _git(repository, "commit", "-m", "executable followup S1 empty anchor")
+    s1 = _git(repository, "rev-parse", "HEAD")
+    assert _git(
+        repository,
+        "ls-tree",
+        s1,
+        "--",
+        FOLLOWUP_REGISTRATION_ANCHOR_PATH,
+    ).startswith("100755 blob ")
+    (repository / FOLLOWUP_REGISTRATION_ANCHOR_PATH).write_bytes(
+        build_followup_registration_anchor(repository, s1=s1)
+    )
+    s2 = _commit(repository, "regular followup S2 data anchor")
+    assert _git(
+        repository,
+        "ls-tree",
+        s2,
+        "--",
+        FOLLOWUP_REGISTRATION_ANCHOR_PATH,
+    ).startswith("100644 blob ")
+
+    with pytest.raises(FollowupLineageError, match="S1 registration anchor mode"):
+        verify_followup_s1_s2_compatibility(repository, s1=s1, s2=s2)
+
+
 def test_followup_behavior_inventory_is_exact_git_object_not_worktree(
     tmp_path: Path,
 ) -> None:
