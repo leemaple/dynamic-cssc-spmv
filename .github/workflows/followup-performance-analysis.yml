@@ -1,0 +1,174 @@
+name: Follow-up performance isolated descriptive analysis
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_s1_git_sha:
+        description: Exact reviewed experiment-source S1 commit
+        required: true
+        type: string
+      expected_s2_git_sha:
+        description: Exact data-only evidence-freeze S2 commit
+        required: true
+        type: string
+      expected_s3_git_sha:
+        description: Exact empty analysis-source S3 child of S2
+        required: true
+        type: string
+      expected_registration_compatibility_receipt_sha256:
+        description: Exact S1-to-S2 compatibility receipt SHA-256
+        required: true
+        type: string
+      expected_analysis_compatibility_receipt_sha256:
+        description: Exact S1-to-S2-to-S3 analysis receipt SHA-256
+        required: true
+        type: string
+      formal_provider_run_id:
+        description: Exact successful formal campaign provider run ID
+        required: true
+        type: number
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: followup-performance-isolated-analysis
+  cancel-in-progress: false
+
+jobs:
+  descriptive-analysis:
+    name: isolated-descriptive-analysis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Validate closed identities before checkout
+        env:
+          S1: ${{ inputs.expected_s1_git_sha }}
+          S2: ${{ inputs.expected_s2_git_sha }}
+          S3: ${{ inputs.expected_s3_git_sha }}
+          REGISTRATION_COMPATIBILITY: ${{ inputs.expected_registration_compatibility_receipt_sha256 }}
+          ANALYSIS_COMPATIBILITY: ${{ inputs.expected_analysis_compatibility_receipt_sha256 }}
+          FORMAL_RUN_ID: ${{ inputs.formal_provider_run_id }}
+        run: |
+          set -euo pipefail
+          [[ "$S1" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$S2" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$S3" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REGISTRATION_COMPATIBILITY" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$ANALYSIS_COMPATIBILITY" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$FORMAL_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+      - name: Check out detached exact S3 with full history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.expected_s3_git_sha }}
+      - name: Set up frozen CPython
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12.13'
+      - name: Build hash-locked analysis environment
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/followup-analysis-venv"
+          "$RUNNER_TEMP/followup-analysis-venv/bin/python" -m pip install --require-hashes -r requirements-ci.txt
+          "$RUNNER_TEMP/followup-analysis-venv/bin/python" -m pip install --require-hashes -r requirements-publication.txt
+      - name: Verify exact empty S3 and analyzer compatibility
+        env:
+          S1: ${{ inputs.expected_s1_git_sha }}
+          S2: ${{ inputs.expected_s2_git_sha }}
+          S3: ${{ inputs.expected_s3_git_sha }}
+          REGISTRATION_COMPATIBILITY: ${{ inputs.expected_registration_compatibility_receipt_sha256 }}
+          ANALYSIS_COMPATIBILITY: ${{ inputs.expected_analysis_compatibility_receipt_sha256 }}
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_SHA" = "$S3"
+          test "$(git rev-parse HEAD)" = "$S3"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          "$RUNNER_TEMP/followup-analysis-venv/bin/python" scripts/verify_followup_performance_analysis_lineage.py \
+            --repository-root "$GITHUB_WORKSPACE" \
+            --s1 "$S1" \
+            --s2 "$S2" \
+            --s3 "$S3" \
+            --expected-registration-receipt-sha256 "$REGISTRATION_COMPATIBILITY" \
+            --expected-analysis-receipt-sha256 "$ANALYSIS_COMPATIBILITY"
+      - name: Verify exact successful formal provider run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORMAL_RUN_ID: ${{ inputs.formal_provider_run_id }}
+          S2: ${{ inputs.expected_s2_git_sha }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$RUNNER_TEMP/followup-analysis-provider"
+          gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$FORMAL_RUN_ID" \
+            > "$RUNNER_TEMP/followup-analysis-provider/run.json"
+          jq -e \
+            --argjson run_id "$FORMAL_RUN_ID" \
+            --arg s2 "$S2" \
+            '.id == $run_id and .run_attempt == 1 and
+             .path == ".github/workflows/followup-performance-formal.yml" and
+             .event == "workflow_dispatch" and .head_sha == $s2 and
+             .head_branch == "main" and .status == "completed" and
+             .conclusion == "success"' \
+            "$RUNNER_TEMP/followup-analysis-provider/run.json" >/dev/null
+      - name: Download all immutable formal-run artifacts as separate directories
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: followup-performance-v1-formal-*
+          path: ${{ runner.temp }}/followup-analysis-downloads
+          merge-multiple: false
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.formal_provider_run_id }}
+      - name: Select only the terminal-admitted seventeen-unit set
+        env:
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$RUNNER_TEMP/followup-analysis-selected-parent"
+          "$RUNNER_TEMP/followup-analysis-venv/bin/python" scripts/prepare_followup_performance_analysis_inputs.py \
+            --download-root "$RUNNER_TEMP/followup-analysis-downloads" \
+            --output-directory "$RUNNER_TEMP/followup-analysis-selected-parent/selected" \
+            > "$RUNNER_TEMP/followup-analysis-selected-parent/selection-receipt.json"
+      - name: Reinspect evidence and produce bounded descriptive analysis
+        id: analysis
+        env:
+          S1: ${{ inputs.expected_s1_git_sha }}
+          S2: ${{ inputs.expected_s2_git_sha }}
+          S3: ${{ inputs.expected_s3_git_sha }}
+          REGISTRATION_COMPATIBILITY: ${{ inputs.expected_registration_compatibility_receipt_sha256 }}
+          ANALYSIS_COMPATIBILITY: ${{ inputs.expected_analysis_compatibility_receipt_sha256 }}
+          FORMAL_RUN_ID: ${{ inputs.formal_provider_run_id }}
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$RUNNER_TEMP/followup-analysis-output-parent"
+          "$RUNNER_TEMP/followup-analysis-venv/bin/python" scripts/run_followup_performance_analysis.py \
+            --repository-root "$GITHUB_WORKSPACE" \
+            --experiment-source-sha "$S1" \
+            --evidence-freeze-sha "$S2" \
+            --analysis-source-sha "$S3" \
+            --registration-compatibility-receipt-sha256 "$REGISTRATION_COMPATIBILITY" \
+            --analysis-compatibility-receipt-sha256 "$ANALYSIS_COMPATIBILITY" \
+            --formal-provider-run-id "$FORMAL_RUN_ID" \
+            --formal-provider-run-attempt 1 \
+            --formal-artifact-root "$RUNNER_TEMP/followup-analysis-selected-parent/selected/finals" \
+            --terminal-artifact-directory "$RUNNER_TEMP/followup-analysis-selected-parent/selected/terminal" \
+            --aggregate-artifact-directory "$RUNNER_TEMP/followup-analysis-selected-parent/selected/aggregate" \
+            --output-directory "$RUNNER_TEMP/followup-analysis-output-parent/artifact" \
+            > "$RUNNER_TEMP/followup-analysis-output-parent/receipt.json"
+          ARTIFACT_NAME="$(jq -er .artifact_name "$RUNNER_TEMP/followup-analysis-output-parent/receipt.json")"
+          [[ "$ARTIFACT_NAME" =~ ^followup-performance-v1-analysis-[a-z0-9-]+$ ]]
+          echo "artifact_name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+      - name: Upload bounded descriptive analysis only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ steps.analysis.outputs.artifact_name }}
+          path: ${{ runner.temp }}/followup-analysis-output-parent/artifact/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

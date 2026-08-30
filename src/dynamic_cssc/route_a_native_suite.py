@@ -33,10 +33,7 @@ from dynamic_cssc.route_a_native_case import (
     RouteANativeCasePlan,
     compile_route_a_terminal_native_case,
 )
-from dynamic_cssc.route_a_native_guard import (
-    RouteANativeGuardReceipt,
-    guard_route_a_native_replays,
-)
+from dynamic_cssc.route_a_native_guard import guard_route_a_native_replays
 from dynamic_cssc.route_a_native_invocation import (
     authorize_route_a_native_invocation,
     prepare_route_a_native_invocation,
@@ -53,15 +50,25 @@ from dynamic_cssc.route_a_openfhe_package import (
     read_route_a_openfhe_package_member,
 )
 from dynamic_cssc.route_a_results import canonical_route_a_document
+from dynamic_cssc.route_a_scientific_profile import (
+    PREDECESSOR_ROUTE_A_PROFILE,
+    RouteAScientificProfile,
+)
 from dynamic_cssc.route_a_synthetic_suite import (
     RouteASyntheticSuiteLineage,
     route_a_synthetic_shard_identity,
 )
-from dynamic_cssc.route_a_workloads import generate_route_a_qualification_trace
+from dynamic_cssc.route_a_workloads import (
+    generate_route_a_formal_trace,
+    generate_route_a_qualification_trace,
+    validate_route_a_synthetic_trace,
+)
 
 __all__ = (
     "RouteANativeQualificationError",
     "RouteANativeQualificationInspection",
+    "compile_route_a_native_formal_case",
+    "compile_route_a_native_qualification_case",
     "inspect_route_a_native_qualification_artifact",
     "produce_route_a_native_qualification_handoff",
     "replay_and_guard_route_a_native_qualification",
@@ -816,16 +823,136 @@ def _install_stage_tree(
 def _case(
     repository_root: Path,
     lineage: RouteASyntheticSuiteLineage,
+    *,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
+    machine_plan_bytes: bytes | None = None,
 ) -> RouteANativeCasePlan:
-    trace = generate_route_a_qualification_trace(scale="M", qualification_seed=20260821)
-    shard = route_a_synthetic_shard_identity(trace, lineage)
+    trace = generate_route_a_qualification_trace(
+        scale="M",
+        qualification_seed=scientific_profile.qualification_seed,
+        scientific_profile=scientific_profile,
+    )
+    shard = route_a_synthetic_shard_identity(
+        trace,
+        lineage,
+        scientific_profile=scientific_profile,
+    )
+    if machine_plan_bytes is None:
+        machine_plan_bytes = (
+            repository_root / "config/route-a-publication-plan.json"
+        ).read_bytes()
     return compile_route_a_terminal_native_case(
         trace,
         strategy_candidate_id=_STRATEGY,
         shard_identity_sha256=shard,
         unit_attempt_ordinal=0,
-        machine_plan_bytes=(repository_root / "config/route-a-publication-plan.json").read_bytes(),
+        machine_plan_bytes=machine_plan_bytes,
+        scientific_profile=scientific_profile,
     )
+
+
+def compile_route_a_native_qualification_case(
+    repository_root: Path,
+    lineage: RouteASyntheticSuiteLineage,
+    *,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
+    machine_plan_bytes: bytes | None = None,
+) -> RouteANativeCasePlan:
+    """Compile the exact qualification case without executing a native process."""
+
+    return _case(
+        repository_root,
+        lineage,
+        scientific_profile=scientific_profile,
+        machine_plan_bytes=machine_plan_bytes,
+    )
+
+
+def compile_route_a_native_formal_case(
+    repository_root: Path,
+    lineage: RouteASyntheticSuiteLineage,
+    *,
+    scale: str,
+    formal_seed: int,
+    strategy_candidate_id: str,
+    unit_attempt_ordinal: int = 0,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
+    machine_plan_bytes: bytes | None = None,
+) -> RouteANativeCasePlan:
+    """Compile one of the six registered formal native cases without execution."""
+
+    trace = generate_route_a_formal_trace(
+        scale=scale,
+        formal_seed=formal_seed,
+        scientific_profile=scientific_profile,
+    )
+    shard = route_a_synthetic_shard_identity(
+        trace,
+        lineage,
+        scientific_profile=scientific_profile,
+    )
+    if machine_plan_bytes is None:
+        machine_plan_bytes = (
+            repository_root / "config/route-a-publication-plan.json"
+        ).read_bytes()
+    return compile_route_a_terminal_native_case(
+        trace,
+        strategy_candidate_id=strategy_candidate_id,
+        shard_identity_sha256=shard,
+        unit_attempt_ordinal=unit_attempt_ordinal,
+        machine_plan_bytes=machine_plan_bytes,
+        scientific_profile=scientific_profile,
+    )
+
+
+def _resolve_case(
+    repository_root: Path,
+    lineage: RouteASyntheticSuiteLineage,
+    *,
+    case_plan: RouteANativeCasePlan | None,
+    scientific_profile: RouteAScientificProfile,
+    machine_plan_bytes: bytes | None,
+) -> RouteANativeCasePlan:
+    if case_plan is None:
+        if (
+            scientific_profile is PREDECESSOR_ROUTE_A_PROFILE
+            and machine_plan_bytes is None
+        ):
+            return _case(repository_root, lineage)
+        return _case(
+            repository_root,
+            lineage,
+            scientific_profile=scientific_profile,
+            machine_plan_bytes=machine_plan_bytes,
+        )
+    if type(case_plan) is not RouteANativeCasePlan:
+        raise TypeError("case_plan must be an exact RouteANativeCasePlan or absent")
+    if machine_plan_bytes is None:
+        machine_plan_bytes = (
+            repository_root / "config/route-a-publication-plan.json"
+        ).read_bytes()
+    trace = validate_route_a_synthetic_trace(
+        case_plan.trace,
+        scientific_profile=scientific_profile,
+    )
+    shard = route_a_synthetic_shard_identity(
+        trace,
+        lineage,
+        scientific_profile=scientific_profile,
+    )
+    expected = compile_route_a_terminal_native_case(
+        trace,
+        strategy_candidate_id=case_plan.strategy_candidate_id,
+        shard_identity_sha256=shard,
+        unit_attempt_ordinal=case_plan.unit_attempt_ordinal,
+        machine_plan_bytes=machine_plan_bytes,
+        scientific_profile=scientific_profile,
+    )
+    if case_plan != expected:
+        raise RouteANativeQualificationError(
+            "native case plan differs from its exact lineage and scientific profile"
+        )
+    return case_plan
 
 
 def produce_route_a_native_qualification_handoff(
@@ -838,6 +965,9 @@ def produce_route_a_native_qualification_handoff(
     timeout_seconds_per_process: int = 900,
     resident_memory_limit_bytes: int = 7 * 1024**3,
     scratch_limit_bytes: int = 8 * 1024**3,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
+    machine_plan_bytes: bytes | None = None,
+    case_plan: RouteANativeCasePlan | None = None,
 ) -> RouteANativeQualificationInspection:
     """Run q3: build package, one warm-up, and three fresh-key producers."""
 
@@ -848,7 +978,13 @@ def produce_route_a_native_qualification_handoff(
     _direct_directory(output_directory.parent, field="q3 output parent")
     if output_directory.exists() or output_directory.is_symlink():
         raise RouteANativeQualificationError("q3 output already exists")
-    case = _case(repository_root, lineage)
+    case = _resolve_case(
+        repository_root,
+        lineage,
+        case_plan=case_plan,
+        scientific_profile=scientific_profile,
+        machine_plan_bytes=machine_plan_bytes,
+    )
     temporary = Path(tempfile.mkdtemp(prefix=".route-a-q3-", dir=output_directory.parent))
     try:
         private = Path(tempfile.mkdtemp(prefix="route-a-q3-private-", dir=scratch_parent))
@@ -939,6 +1075,9 @@ def replay_and_guard_route_a_native_qualification(
     timeout_seconds_per_process: int = 900,
     resident_memory_limit_bytes: int = 7 * 1024**3,
     scratch_limit_bytes: int = 8 * 1024**3,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
+    machine_plan_bytes: bytes | None = None,
+    case_plan: RouteANativeCasePlan | None = None,
 ) -> RouteANativeQualificationInspection:
     """Run q4: install q3 build, replay three packages, and guard the case."""
 
@@ -960,7 +1099,13 @@ def replay_and_guard_route_a_native_qualification(
     )
     if q3.manifest_sha256 != expected_q3_manifest_sha256:
         raise RouteANativeQualificationError("q4 q3 stage-manifest address changed")
-    case = _case(repository_root, lineage)
+    case = _resolve_case(
+        repository_root,
+        lineage,
+        case_plan=case_plan,
+        scientific_profile=scientific_profile,
+        machine_plan_bytes=machine_plan_bytes,
+    )
     if case.case_binding_sha256 != q3.case_binding_sha256:
         raise RouteANativeQualificationError("q4 case binding changed before build install")
     assert q3.build_archive is not None
@@ -996,10 +1141,17 @@ def replay_and_guard_route_a_native_qualification(
                 temporary / f"replays/recorded-{ordinal}.json",
                 _replay_receipt(execution),
             )
-        guard: RouteANativeGuardReceipt = guard_route_a_native_replays(
-            case,
-            tuple(executions),  # type: ignore[arg-type]
-        )
+        if scientific_profile is PREDECESSOR_ROUTE_A_PROFILE:
+            guard = guard_route_a_native_replays(
+                case,
+                tuple(executions),  # type: ignore[arg-type]
+            )
+        else:
+            guard = guard_route_a_native_replays(
+                case,
+                tuple(executions),  # type: ignore[arg-type]
+                scientific_profile=scientific_profile,
+            )
         _write_new(temporary / "native-guard.json", guard.receipt_bytes)
         _write_new(temporary / "lineage.json", lineage.document_bytes)
         _write_new(temporary / "case-binding.json", case.case_binding_bytes)

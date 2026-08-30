@@ -33,16 +33,20 @@ from dynamic_cssc.route_a_contract import (
 )
 from dynamic_cssc.route_a_results import (
     ROUTE_A_CELL_SCHEMA,
-    ROUTE_A_MACHINE_PLAN_SHA256,
     RouteACanonicalStrategyCell,
     canonical_route_a_document,
     validate_route_a_strategy_cell,
 )
 from dynamic_cssc.route_a_schedule import compile_route_a_window_trace
+from dynamic_cssc.route_a_scientific_profile import (
+    PREDECESSOR_ROUTE_A_PROFILE,
+    RouteAScientificProfile,
+)
 from dynamic_cssc.route_a_serialized_bytes import (
     ROUTE_A_SERIALIZED_CATEGORIES,
     account_route_a_serialized_bytes,
 )
+from dynamic_cssc.route_a_snap import RouteASnapTrace, validate_route_a_snap_trace
 from dynamic_cssc.route_a_strategy import (
     ROUTE_A_STRATEGY_CANDIDATES,
     advance_route_a_candidate_timed,
@@ -63,9 +67,12 @@ from dynamic_cssc.strong_execution import (
 )
 
 __all__ = (
+    "RouteACellRun",
     "RouteAEvaluationError",
     "RouteASyntheticCellRun",
+    "evaluate_route_a_ordered_event_cell",
     "evaluate_route_a_synthetic_cell",
+    "replay_route_a_ordered_event_cell_read_only",
     "replay_route_a_synthetic_cell_read_only",
     "route_a_evidence_stream_root",
 )
@@ -256,20 +263,50 @@ class RouteASyntheticCellRun:
                 )
 
 
-def _query_domain(trace: RouteASyntheticTrace) -> RouteAQueryVectorDomain:
+RouteACellRun = RouteASyntheticCellRun
+
+
+def _query_domain(
+    trace: RouteASyntheticTrace | RouteASnapTrace,
+    scientific_profile: RouteAScientificProfile,
+) -> RouteAQueryVectorDomain:
+    if type(trace) is RouteASnapTrace:
+        return RouteAQueryVectorDomain.snap_a2q(
+            object_sha256=trace.raw_object_sha256,
+            mapping_sha256=trace.mapping_sha256,
+            partition=trace.partition,
+            semantics=trace.semantics,
+            scientific_profile=scientific_profile,
+        )
     if trace.suite_role == "qualification":
         return RouteAQueryVectorDomain.qualification_synthetic(
             scale=trace.scale,
             qualification_seed=trace.formal_seed,
+            scientific_profile=scientific_profile,
         )
     return RouteAQueryVectorDomain.formal_synthetic(
         scale=trace.scale,
         formal_seed=trace.formal_seed,
+        scientific_profile=scientific_profile,
     )
 
 
+def _validated_evaluation_trace(
+    trace: RouteASyntheticTrace | RouteASnapTrace,
+    scientific_profile: RouteAScientificProfile,
+) -> RouteASyntheticTrace | RouteASnapTrace:
+    if type(trace) is RouteASyntheticTrace:
+        return validate_route_a_synthetic_trace(
+            trace,
+            scientific_profile=scientific_profile,
+        )
+    if type(trace) is RouteASnapTrace:
+        return validate_route_a_snap_trace(trace)
+    raise TypeError("Route A evaluation trace has an unsupported exact type")
+
+
 def _evaluate_route_a_synthetic_cell(
-    trace: RouteASyntheticTrace,
+    trace: RouteASyntheticTrace | RouteASnapTrace,
     *,
     strategy_candidate_id: str,
     rho: Fraction,
@@ -279,19 +316,26 @@ def _evaluate_route_a_synthetic_cell(
     scratch_directory: Path,
     replay_preparation_documents: tuple[bytes, ...] | None,
     replay_ledger_snapshot_bytes: bytes | None,
+    scientific_profile: RouteAScientificProfile,
 ) -> RouteASyntheticCellRun:
     """Execute every direct query in one exact synthetic strategy cell."""
 
-    trace = validate_route_a_synthetic_trace(trace)
+    if type(scientific_profile) is not RouteAScientificProfile:
+        raise TypeError("scientific_profile must be an exact RouteAScientificProfile")
+    trace = _validated_evaluation_trace(
+        trace,
+        scientific_profile,
+    )
     if strategy_candidate_id not in ROUTE_A_STRATEGY_CANDIDATES:
         raise RouteAEvaluationError("strategy candidate is not preregistered")
     if type(rho) is not Fraction or rho not in _DIRECT_RHOS:
         raise RouteAEvaluationError("direct synthetic rho is not preregistered")
-    if (
-        type(machine_plan_bytes) is not bytes
-        or hashlib.sha256(machine_plan_bytes).hexdigest() != ROUTE_A_MACHINE_PLAN_SHA256
-    ):
-        raise RouteAEvaluationError("machine plan bytes do not match the frozen digest")
+    try:
+        scientific_profile.require_machine_plan_bytes(machine_plan_bytes)
+    except (TypeError, ValueError) as error:
+        raise RouteAEvaluationError(
+            "machine plan bytes do not match the frozen digest"
+        ) from error
     if not isinstance(scratch_directory, Path):
         raise TypeError("scratch_directory must be a pathlib.Path")
     try:
@@ -312,7 +356,7 @@ def _evaluate_route_a_synthetic_cell(
         rho=rho,
         freshness=Fraction(1),
     )
-    vector = generate_route_a_query_vector(_query_domain(trace))
+    vector = generate_route_a_query_vector(_query_domain(trace, scientific_profile))
     lane = RouteAEvaluationLane.simulator(
         shard_identity_sha256=shard_identity_sha256,
         strategy_candidate_id=strategy_candidate_id,
@@ -633,18 +677,21 @@ def _evaluate_route_a_synthetic_cell(
     )
     result_nanoseconds += time.perf_counter_ns() - terminal_result_started
     rho_text = _rho_string(rho)
+    is_snap = type(trace) is RouteASnapTrace
     cell = validate_route_a_strategy_cell(
         {
             "schema_version": ROUTE_A_CELL_SCHEMA,
             "identity": {
-                "formal_seed_or_null": trace.formal_seed,
-                "object_sha256_or_null": None,
-                "partition_or_null": None,
+                "formal_seed_or_null": None if is_snap else trace.formal_seed,
+                "object_sha256_or_null": (
+                    trace.raw_object_sha256 if is_snap else None
+                ),
+                "partition_or_null": trace.partition if is_snap else None,
                 "rho": rho_text,
-                "scale_or_null": trace.scale,
-                "semantics_or_null": None,
+                "scale_or_null": None if is_snap else trace.scale,
+                "semantics_or_null": trace.semantics if is_snap else None,
                 "shard_identity_sha256": shard_identity_sha256,
-                "source_kind": "synthetic",
+                "source_kind": "snap-a2q" if is_snap else "synthetic",
                 "strategy_candidate_id": strategy_candidate_id,
                 "suite_role": trace.suite_role,
                 "unit_attempt_ordinal": unit_attempt_ordinal,
@@ -689,7 +736,7 @@ def _evaluate_route_a_synthetic_cell(
                     "dynamic-cssc-route-a-consumption-receipt-stream-v1",
                     consumption_receipt_tuple,
                 ),
-                "machine_plan_sha256": ROUTE_A_MACHINE_PLAN_SHA256,
+                "machine_plan_sha256": scientific_profile.machine_plan_sha256,
                 "prepared_query_root": route_a_evidence_stream_root(
                     "dynamic-cssc-route-a-preparation-digest-stream-v1",
                     preparation_digest_tuple,
@@ -701,7 +748,8 @@ def _evaluate_route_a_synthetic_cell(
                 "source_rho1_document_sha256": None,
                 "transform_id": None,
             },
-        }
+        },
+        scientific_profile=scientific_profile,
     )
     return RouteASyntheticCellRun(
         cell=cell,
@@ -727,6 +775,7 @@ def evaluate_route_a_synthetic_cell(
     unit_attempt_ordinal: int,
     machine_plan_bytes: bytes,
     scratch_directory: Path,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> RouteASyntheticCellRun:
     """Execute a producer cell with fresh single-use masks and a durable ledger."""
 
@@ -740,6 +789,7 @@ def evaluate_route_a_synthetic_cell(
         scratch_directory=scratch_directory,
         replay_preparation_documents=None,
         replay_ledger_snapshot_bytes=None,
+        scientific_profile=scientific_profile,
     )
 
 
@@ -754,6 +804,7 @@ def replay_route_a_synthetic_cell_read_only(
     scratch_directory: Path,
     private_preparation_documents: tuple[bytes, ...],
     ledger_snapshot_bytes: bytes,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> RouteASyntheticCellRun:
     """Reexecute one exact producer lane without reserving, sampling, or consuming.
 
@@ -771,4 +822,65 @@ def replay_route_a_synthetic_cell_read_only(
         scratch_directory=scratch_directory,
         replay_preparation_documents=private_preparation_documents,
         replay_ledger_snapshot_bytes=ledger_snapshot_bytes,
+        scientific_profile=scientific_profile,
+    )
+
+
+def evaluate_route_a_ordered_event_cell(
+    trace: RouteASnapTrace,
+    *,
+    strategy_candidate_id: str,
+    rho: Fraction,
+    shard_identity_sha256: str,
+    unit_attempt_ordinal: int,
+    machine_plan_bytes: bytes,
+    scratch_directory: Path,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
+) -> RouteACellRun:
+    """Execute one direct SNAP T1/T2 cell from its admitted derived trace."""
+
+    if type(rho) is not Fraction or rho not in {Fraction(1, 10), Fraction(1)}:
+        raise RouteAEvaluationError("ordered-event rho must be exactly 1/10 or 1")
+    return _evaluate_route_a_synthetic_cell(
+        trace,
+        strategy_candidate_id=strategy_candidate_id,
+        rho=rho,
+        shard_identity_sha256=shard_identity_sha256,
+        unit_attempt_ordinal=unit_attempt_ordinal,
+        machine_plan_bytes=machine_plan_bytes,
+        scratch_directory=scratch_directory,
+        replay_preparation_documents=None,
+        replay_ledger_snapshot_bytes=None,
+        scientific_profile=scientific_profile,
+    )
+
+
+def replay_route_a_ordered_event_cell_read_only(
+    trace: RouteASnapTrace,
+    *,
+    strategy_candidate_id: str,
+    rho: Fraction,
+    shard_identity_sha256: str,
+    unit_attempt_ordinal: int,
+    machine_plan_bytes: bytes,
+    scratch_directory: Path,
+    private_preparation_documents: tuple[bytes, ...],
+    ledger_snapshot_bytes: bytes,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
+) -> RouteACellRun:
+    """Independently replay an exact SNAP producer lane without mutations."""
+
+    if type(rho) is not Fraction or rho not in {Fraction(1, 10), Fraction(1)}:
+        raise RouteAEvaluationError("ordered-event rho must be exactly 1/10 or 1")
+    return _evaluate_route_a_synthetic_cell(
+        trace,
+        strategy_candidate_id=strategy_candidate_id,
+        rho=rho,
+        shard_identity_sha256=shard_identity_sha256,
+        unit_attempt_ordinal=unit_attempt_ordinal,
+        machine_plan_bytes=machine_plan_bytes,
+        scratch_directory=scratch_directory,
+        replay_preparation_documents=private_preparation_documents,
+        replay_ledger_snapshot_bytes=ledger_snapshot_bytes,
+        scientific_profile=scientific_profile,
     )

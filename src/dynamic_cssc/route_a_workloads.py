@@ -8,6 +8,11 @@ import random
 from dataclasses import dataclass
 from typing import Literal
 
+from dynamic_cssc.route_a_scientific_profile import (
+    PREDECESSOR_ROUTE_A_PROFILE,
+    RouteAScientificProfile,
+)
+
 __all__ = (
     "RouteAAcceptedGroup",
     "RouteASetTransition",
@@ -26,10 +31,6 @@ _SCALES = {
     "S": (256, 512),
     "M": (1_024, 2_048),
 }
-_QUALIFICATION_SEED = 20_260_821
-_FORMAL_SEEDS = frozenset({20_260_822, 20_260_823, 20_260_824})
-
-
 def _canonical_json_bytes(value: object) -> bytes:
     try:
         rendered = json.dumps(
@@ -123,15 +124,20 @@ def generate_route_a_qualification_trace(
     *,
     scale: str,
     qualification_seed: int,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> RouteASyntheticTrace:
     """Generate the one permanently non-admissible qualification trace."""
 
-    if (
-        scale != "M"
-        or type(qualification_seed) is not int
-        or qualification_seed != _QUALIFICATION_SEED
-    ):
-        raise ValueError("qualification trace scope must be exactly M/20260821")
+    if type(scientific_profile) is not RouteAScientificProfile:
+        raise TypeError("scientific_profile must be an exact RouteAScientificProfile")
+    try:
+        scientific_profile.require_trace_scope(
+            suite_role="qualification",
+            scale=scale,
+            seed=qualification_seed,
+        )
+    except ValueError as error:
+        raise ValueError("qualification trace scope is outside its scientific profile") from error
     return _generate_route_a_synthetic_trace(
         suite_role="qualification",
         scale="M",
@@ -143,17 +149,20 @@ def generate_route_a_formal_trace(
     *,
     scale: str,
     formal_seed: int,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> RouteASyntheticTrace:
     """Generate one exact formal S/M accepted-event trace."""
 
-    if (
-        scale not in _SCALES
-        or type(formal_seed) is not int
-        or formal_seed not in _FORMAL_SEEDS
-    ):
-        raise ValueError(
-            "formal trace scope requires S/M and seed 20260822..20260824"
+    if type(scientific_profile) is not RouteAScientificProfile:
+        raise TypeError("scientific_profile must be an exact RouteAScientificProfile")
+    try:
+        scientific_profile.require_trace_scope(
+            suite_role="formal",
+            scale=scale,
+            seed=formal_seed,
         )
+    except ValueError as error:
+        raise ValueError("formal trace scope is outside its scientific profile") from error
     return _generate_route_a_synthetic_trace(
         suite_role="formal",
         scale=scale,
@@ -163,6 +172,8 @@ def generate_route_a_formal_trace(
 
 def validate_route_a_synthetic_trace(
     trace: RouteASyntheticTrace,
+    *,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> RouteASyntheticTrace:
     """Recompute and bind every typed field to the registered source bytes."""
 
@@ -172,11 +183,13 @@ def validate_route_a_synthetic_trace(
         expected = generate_route_a_qualification_trace(
             scale=trace.scale,
             qualification_seed=trace.formal_seed,
+            scientific_profile=scientific_profile,
         )
     elif trace.suite_role == "formal":
         expected = generate_route_a_formal_trace(
             scale=trace.scale,
             formal_seed=trace.formal_seed,
+            scientific_profile=scientific_profile,
         )
     else:  # pragma: no cover - the frozen dataclass type owns this field domain
         raise ValueError("Route A synthetic trace has an unknown suite role")

@@ -32,6 +32,10 @@ from dynamic_cssc.route_a_qualification_runtime import (
     inspect_route_a_qualification_stage_artifact,
 )
 from dynamic_cssc.route_a_results import canonical_route_a_document
+from dynamic_cssc.route_a_scientific_profile import (
+    PREDECESSOR_ROUTE_A_PROFILE,
+    RouteAScientificProfile,
+)
 from dynamic_cssc.route_a_serialized_bytes import (
     route_a_serialized_byte_formula_document,
 )
@@ -271,7 +275,8 @@ def _provider_bindings(
         or document.get("total_count") != len(rows)
         or len(rows) > 100
         or any(type(row) is not dict for row in rows)
-        or set(wrapper_paths) != {_Q2_NAME, _Q4_NAME}
+        or len(wrapper_paths) != 2
+        or any(type(name) is not str or not name for name in wrapper_paths)
     ):
         raise RouteACombinedGuardError("provider artifact list is incomplete")
     result: dict[str, RouteAProviderArtifactBinding] = {}
@@ -309,7 +314,7 @@ def _provider_bindings(
             workflow_run_head_sha=expected_head_sha,
             wrapper_sha256=wrapper_sha256,
         )
-    if result[_Q2_NAME].database_id == result[_Q4_NAME].database_id:
+    if len({binding.database_id for binding in result.values()}) != 2:
         raise RouteACombinedGuardError("q2 and q4 provider artifact identities collide")
     return result
 
@@ -441,11 +446,11 @@ def _package_bound(case: RouteANativeCasePlan) -> dict[str, object]:
     }
 
 
-def _planning_shard_identity(*, scale: str, strategy: str) -> str:
+def _planning_shard_identity(*, scale: str, strategy: str, formal_seed: int) -> str:
     return hashlib.sha256(
         canonical_route_a_document(
             {
-                "formal_seed": 20260822,
+                "formal_seed": formal_seed,
                 "identity_class": "q5-planning-only-never-an-execution-shard-identity",
                 "scale": scale,
                 "strategy_candidate_id": strategy,
@@ -533,21 +538,43 @@ def _mechanism_classes(structural_record: bytes) -> set[str]:
     return result
 
 
-def _formal_structural_set(machine_plan_bytes: bytes) -> bytes:
+def _formal_structural_set(
+    machine_plan_bytes: bytes,
+    *,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
+) -> bytes:
     rows: list[dict[str, object]] = []
     for strategy in ROUTE_A_STRATEGY_CANDIDATES:
         for scale in ("S", "M"):
-            trace = generate_route_a_formal_trace(scale=scale, formal_seed=20260822)
-            case = compile_route_a_terminal_native_case(
-                trace,
-                strategy_candidate_id=strategy,
-                shard_identity_sha256=_planning_shard_identity(
+            trace_arguments = {
+                "scale": scale,
+                "formal_seed": scientific_profile.formal_seeds[0],
+            }
+            if scientific_profile is PREDECESSOR_ROUTE_A_PROFILE:
+                trace = generate_route_a_formal_trace(**trace_arguments)
+            else:
+                trace = generate_route_a_formal_trace(
+                    **trace_arguments,
+                    scientific_profile=scientific_profile,
+                )
+            case_arguments = {
+                "strategy_candidate_id": strategy,
+                "shard_identity_sha256": _planning_shard_identity(
                     scale=scale,
                     strategy=strategy,
+                    formal_seed=scientific_profile.formal_seeds[0],
                 ),
-                unit_attempt_ordinal=0,
-                machine_plan_bytes=machine_plan_bytes,
-            )
+                "unit_attempt_ordinal": 0,
+                "machine_plan_bytes": machine_plan_bytes,
+            }
+            if scientific_profile is PREDECESSOR_ROUTE_A_PROFILE:
+                case = compile_route_a_terminal_native_case(trace, **case_arguments)
+            else:
+                case = compile_route_a_terminal_native_case(
+                    trace,
+                    **case_arguments,
+                    scientific_profile=scientific_profile,
+                )
             rows.append(_structural_row(case))
     return canonical_route_a_document(
         {
@@ -676,6 +703,9 @@ def inspect_route_a_combined_guard_artifact(
     *,
     expected_lineage: RouteASyntheticSuiteLineage,
     machine_plan_bytes: bytes,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
+    expected_q2_provider_name: str = _Q2_NAME,
+    expected_q4_provider_name: str = _Q4_NAME,
     expected_probe_bytes: bytes | None = None,
     expected_formal_vectors_bytes: bytes | None = None,
     expected_case_binding_sha256: str | None = None,
@@ -703,8 +733,23 @@ def inspect_route_a_combined_guard_artifact(
         "schema_version",
     }:
         raise RouteACombinedGuardError("q5 manifest shape changed")
-    q2 = _binding_from_document(manifest.get("q2_provider_binding"), name=_Q2_NAME)
-    q4 = _binding_from_document(manifest.get("q4_provider_binding"), name=_Q4_NAME)
+    if (
+        type(scientific_profile) is not RouteAScientificProfile
+        or type(expected_q2_provider_name) is not str
+        or not expected_q2_provider_name
+        or type(expected_q4_provider_name) is not str
+        or not expected_q4_provider_name
+        or expected_q2_provider_name == expected_q4_provider_name
+    ):
+        raise RouteACombinedGuardError("q5 scientific or provider identity is invalid")
+    q2 = _binding_from_document(
+        manifest.get("q2_provider_binding"),
+        name=expected_q2_provider_name,
+    )
+    q4 = _binding_from_document(
+        manifest.get("q4_provider_binding"),
+        name=expected_q4_provider_name,
+    )
     if (
         manifest.get("schema_version") != _MANIFEST_SCHEMA
         or manifest.get("authority_granted") is not False
@@ -742,8 +787,23 @@ def inspect_route_a_combined_guard_artifact(
         field="q5 serialized-byte formula",
     )
     ledger = _canonical_object(by_name["stage-ledger.json"], field="q5 stage ledger")
-    trace = generate_route_a_qualification_trace(scale="M", qualification_seed=20260821)
-    expected_shard = route_a_synthetic_shard_identity(trace, expected_lineage)
+    trace_arguments = {
+        "scale": "M",
+        "qualification_seed": scientific_profile.qualification_seed,
+    }
+    if scientific_profile is PREDECESSOR_ROUTE_A_PROFILE:
+        trace = generate_route_a_qualification_trace(**trace_arguments)
+        expected_shard = route_a_synthetic_shard_identity(trace, expected_lineage)
+    else:
+        trace = generate_route_a_qualification_trace(
+            **trace_arguments,
+            scientific_profile=scientific_profile,
+        )
+        expected_shard = route_a_synthetic_shard_identity(
+            trace,
+            expected_lineage,
+            scientific_profile=scientific_profile,
+        )
     supplied_expectations = (
         expected_probe_bytes is not None,
         expected_formal_vectors_bytes is not None,
@@ -756,13 +816,23 @@ def inspect_route_a_combined_guard_artifact(
         or expected_formal_vectors_bytes is None
         or expected_case_binding_sha256 is None
     ):
-        expected_case = compile_route_a_terminal_native_case(
-            trace,
-            strategy_candidate_id=_STRONG,
-            shard_identity_sha256=expected_shard,
-            unit_attempt_ordinal=0,
-            machine_plan_bytes=machine_plan_bytes,
-        )
+        expected_case_arguments = {
+            "strategy_candidate_id": _STRONG,
+            "shard_identity_sha256": expected_shard,
+            "unit_attempt_ordinal": 0,
+            "machine_plan_bytes": machine_plan_bytes,
+        }
+        if scientific_profile is PREDECESSOR_ROUTE_A_PROFILE:
+            expected_case = compile_route_a_terminal_native_case(
+                trace,
+                **expected_case_arguments,
+            )
+        else:
+            expected_case = compile_route_a_terminal_native_case(
+                trace,
+                **expected_case_arguments,
+                scientific_profile=scientific_profile,
+            )
         expected_probe = canonical_route_a_document(
             {
                 "authority_granted": False,
@@ -772,7 +842,13 @@ def inspect_route_a_combined_guard_artifact(
                 "schema_version": "dynamic-cssc-route-a-probe-structural-record-v1",
             }
         )
-        expected_formal = _formal_structural_set(machine_plan_bytes)
+        if scientific_profile is PREDECESSOR_ROUTE_A_PROFILE:
+            expected_formal = _formal_structural_set(machine_plan_bytes)
+        else:
+            expected_formal = _formal_structural_set(
+                machine_plan_bytes,
+                scientific_profile=scientific_profile,
+            )
         expected_case_sha256 = expected_case.case_binding_sha256
     else:
         if (
@@ -923,11 +999,28 @@ def produce_route_a_combined_guard(
     q4_wrapper_path: Path,
     scratch_parent: Path,
     output_directory: Path,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
+    machine_plan_bytes: bytes | None = None,
+    q2_provider_name: str = _Q2_NAME,
+    q4_provider_name: str = _Q4_NAME,
+    followup_outer_wrappers: bool = False,
 ) -> RouteACombinedGuardInspection:
     """Run q5 and atomically install one redacted combined-guard bundle."""
 
-    if type(lineage) is not RouteASyntheticSuiteLineage:
-        raise TypeError("lineage must be an exact RouteASyntheticSuiteLineage")
+    if (
+        type(lineage) is not RouteASyntheticSuiteLineage
+        or type(scientific_profile) is not RouteAScientificProfile
+    ):
+        raise TypeError("lineage and scientific profile must have exact types")
+    if (
+        type(q2_provider_name) is not str
+        or not q2_provider_name
+        or type(q4_provider_name) is not str
+        or not q4_provider_name
+        or q2_provider_name == q4_provider_name
+        or type(followup_outer_wrappers) is not bool
+    ):
+        raise RouteACombinedGuardError("q5 provider wrapper domain is invalid")
     for field, path in (
         ("repository root", repository_root),
         ("scratch parent", scratch_parent),
@@ -937,7 +1030,12 @@ def produce_route_a_combined_guard(
             raise RouteACombinedGuardError(f"q5 {field} is unsafe")
     if output_directory.exists() or output_directory.is_symlink():
         raise RouteACombinedGuardError("q5 output already exists")
-    plan_bytes = (repository_root / "config/route-a-publication-plan.json").read_bytes()
+    if machine_plan_bytes is None:
+        plan_bytes = (repository_root / "config/route-a-publication-plan.json").read_bytes()
+    elif type(machine_plan_bytes) is bytes:
+        plan_bytes = machine_plan_bytes
+    else:
+        raise TypeError("machine_plan_bytes must be bytes or None")
     temporary = Path(tempfile.mkdtemp(prefix=".route-a-q5-", dir=output_directory.parent))
     try:
         private = Path(tempfile.mkdtemp(prefix="route-a-q5-private-", dir=scratch_parent))
@@ -955,40 +1053,104 @@ def produce_route_a_combined_guard(
             _stable_read(provider_artifacts_json_path, maximum=_MAX_PROVIDER_JSON_BYTES),
             expected_head_sha=lineage.workflow_head_sha,
             expected_run_id=lineage.provider_run_id,
-            wrapper_paths={_Q2_NAME: q2_wrapper_path, _Q4_NAME: q4_wrapper_path},
+            wrapper_paths={
+                q2_provider_name: q2_wrapper_path,
+                q4_provider_name: q4_wrapper_path,
+            },
         )
-        q2_root = private / "q2"
-        q4_root = private / "q4"
-        _extract_provider_wrapper(q2_wrapper_path, q2_root)
-        _extract_provider_wrapper(q4_wrapper_path, q4_root)
+        q2_extracted = private / "q2"
+        q4_extracted = private / "q4"
+        _extract_provider_wrapper(q2_wrapper_path, q2_extracted)
+        _extract_provider_wrapper(q4_wrapper_path, q4_extracted)
+        if followup_outer_wrappers:
+            from dynamic_cssc.followup_performance_artifacts import (
+                inspect_followup_qualification_artifact,
+            )
+
+            q2_root = inspect_followup_qualification_artifact(
+                q2_extracted,
+                stage="q2",
+                lineage=lineage,
+                scientific_profile=scientific_profile,
+                machine_plan_bytes=plan_bytes,
+                repository_root=repository_root,
+            ).inner_directory
+            q4_root = inspect_followup_qualification_artifact(
+                q4_extracted,
+                stage="q4",
+                lineage=lineage,
+                scientific_profile=scientific_profile,
+                machine_plan_bytes=plan_bytes,
+                repository_root=repository_root,
+            ).inner_directory
+        else:
+            q2_root = q2_extracted
+            q4_root = q4_extracted
         phase("provider-wrapper-closure", started)
 
         started = time.perf_counter_ns()
-        trace = generate_route_a_qualification_trace(scale="M", qualification_seed=20260821)
+        trace_arguments = {
+            "scale": "M",
+            "qualification_seed": scientific_profile.qualification_seed,
+        }
+        if scientific_profile is PREDECESSOR_ROUTE_A_PROFILE:
+            trace = generate_route_a_qualification_trace(**trace_arguments)
+        else:
+            trace = generate_route_a_qualification_trace(
+                **trace_arguments,
+                scientific_profile=scientific_profile,
+            )
         q2_stage = inspect_route_a_qualification_stage_artifact(
             q2_root,
             expected_stage="q2",
             expected_lineage=lineage,
         )
-        q2 = inspect_route_a_synthetic_suite_replay(
-            q2_stage.payload_path,
-            expected_trace=trace,
-            expected_lineage=lineage,
-            machine_plan_bytes=plan_bytes,
-        )
+        q2_arguments = {
+            "expected_trace": trace,
+            "expected_lineage": lineage,
+            "machine_plan_bytes": plan_bytes,
+        }
+        if scientific_profile is PREDECESSOR_ROUTE_A_PROFILE:
+            q2 = inspect_route_a_synthetic_suite_replay(
+                q2_stage.payload_path,
+                **q2_arguments,
+            )
+        else:
+            q2 = inspect_route_a_synthetic_suite_replay(
+                q2_stage.payload_path,
+                **q2_arguments,
+                scientific_profile=scientific_profile,
+            )
         q4 = inspect_route_a_native_qualification_artifact(
             q4_root,
             expected_stage="q4",
             expected_lineage=lineage,
         )
-        expected_shard = route_a_synthetic_shard_identity(trace, lineage)
-        expected_case = compile_route_a_terminal_native_case(
-            trace,
-            strategy_candidate_id=_STRONG,
-            shard_identity_sha256=expected_shard,
-            unit_attempt_ordinal=0,
-            machine_plan_bytes=plan_bytes,
-        )
+        if scientific_profile is PREDECESSOR_ROUTE_A_PROFILE:
+            expected_shard = route_a_synthetic_shard_identity(trace, lineage)
+        else:
+            expected_shard = route_a_synthetic_shard_identity(
+                trace,
+                lineage,
+                scientific_profile=scientific_profile,
+            )
+        expected_case_arguments = {
+            "strategy_candidate_id": _STRONG,
+            "shard_identity_sha256": expected_shard,
+            "unit_attempt_ordinal": 0,
+            "machine_plan_bytes": plan_bytes,
+        }
+        if scientific_profile is PREDECESSOR_ROUTE_A_PROFILE:
+            expected_case = compile_route_a_terminal_native_case(
+                trace,
+                **expected_case_arguments,
+            )
+        else:
+            expected_case = compile_route_a_terminal_native_case(
+                trace,
+                **expected_case_arguments,
+                scientific_profile=scientific_profile,
+            )
         selected = _selected_strong_rho1(q2)
         identity = selected.document["identity"]
         native_guard = _canonical_object(
@@ -1004,7 +1166,8 @@ def produce_route_a_combined_guard(
             or identity.get("strategy_candidate_id") != _STRONG
             or identity.get("rho") != "1"
             or identity.get("shard_identity_sha256") != expected_shard
-            or identity.get("formal_seed_or_null") != 20260821
+            or identity.get("formal_seed_or_null")
+            != scientific_profile.qualification_seed
             or native_guard.get("accepted") is not True
             or type(mechanisms) is not dict
             or any(
@@ -1041,7 +1204,13 @@ def produce_route_a_combined_guard(
                 "schema_version": "dynamic-cssc-route-a-probe-structural-record-v1",
             }
         )
-        formal_vectors = _formal_structural_set(plan_bytes)
+        if scientific_profile is PREDECESSOR_ROUTE_A_PROFILE:
+            formal_vectors = _formal_structural_set(plan_bytes)
+        else:
+            formal_vectors = _formal_structural_set(
+                plan_bytes,
+                scientific_profile=scientific_profile,
+            )
         formula = canonical_route_a_document(route_a_serialized_byte_formula_document())
         missing_operation_types = sorted(
             _operation_types(formal_vectors) - _operation_types(probe_record)
@@ -1085,8 +1254,8 @@ def produce_route_a_combined_guard(
                 "functional_bindings": functional,
                 "lineage_sha256": lineage.sha256,
                 "provider_bindings": {
-                    "q2": provider[_Q2_NAME].document,
-                    "q4": provider[_Q4_NAME].document,
+                    "q2": provider[q2_provider_name].document,
+                    "q4": provider[q4_provider_name].document,
                 },
                 "publication_evidence": False,
                 "schema_version": _SCHEMA,
@@ -1120,8 +1289,8 @@ def produce_route_a_combined_guard(
             raise RouteACombinedGuardError("q5 output member order changed")
         manifest = _manifest(
             lineage=lineage,
-            q2=provider[_Q2_NAME],
-            q4=provider[_Q4_NAME],
+            q2=provider[q2_provider_name],
+            q4=provider[q4_provider_name],
             members=members,
         )
         _write_new(temporary / "manifest.json", manifest)
@@ -1131,6 +1300,9 @@ def produce_route_a_combined_guard(
             output_directory,
             expected_lineage=lineage,
             machine_plan_bytes=plan_bytes,
+            scientific_profile=scientific_profile,
+            expected_q2_provider_name=q2_provider_name,
+            expected_q4_provider_name=q4_provider_name,
             expected_probe_bytes=probe_record,
             expected_formal_vectors_bytes=formal_vectors,
             expected_case_binding_sha256=expected_case.case_binding_sha256,

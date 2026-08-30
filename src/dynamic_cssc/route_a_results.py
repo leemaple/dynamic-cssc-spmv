@@ -8,6 +8,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from dynamic_cssc.route_a_scientific_profile import (
+    PREDECESSOR_ROUTE_A_PROFILE,
+    RouteAScientificProfile,
+)
 from dynamic_cssc.route_a_serialized_bytes import (
     ROUTE_A_CANONICAL_METADATA_MAX_BYTES,
     ROUTE_A_CIPHERTEXT_MAX_BYTES,
@@ -218,7 +222,10 @@ def _seconds_or_none(value: object, field: str) -> str | None:
     return value
 
 
-def _validate_identity(identity: dict[str, object]) -> None:
+def _validate_identity(
+    identity: dict[str, object],
+    scientific_profile: RouteAScientificProfile,
+) -> None:
     source_kind = identity["source_kind"]
     suite_role = identity["suite_role"]
     scale = identity["scale_or_null"]
@@ -231,7 +238,7 @@ def _validate_identity(identity: dict[str, object]) -> None:
         and suite_role == "qualification"
         and scale == "M"
         and type(seed) is int
-        and seed == 20260821
+        and seed == scientific_profile.qualification_seed
         and object_sha is None
         and partition is None
         and semantics is None
@@ -241,7 +248,7 @@ def _validate_identity(identity: dict[str, object]) -> None:
         and suite_role == "formal"
         and scale in {"S", "M"}
         and type(seed) is int
-        and seed in {20260822, 20260823, 20260824}
+        and seed in scientific_profile.formal_seeds
         and object_sha is None
         and partition is None
         and semantics is None
@@ -388,12 +395,15 @@ def _validate_measurements(document: dict[str, object]) -> None:
             _strict_nonnegative(value, f"measurements.{field}")
 
 
-def _validate_semantics(document: dict[str, object]) -> None:
+def _validate_semantics(
+    document: dict[str, object],
+    scientific_profile: RouteAScientificProfile,
+) -> None:
     identity = document["identity"]
     evaluation = _closed_object(document["evaluation"], _EVALUATION_FIELDS, "evaluation")
     correctness = _closed_object(document["correctness"], _CORRECTNESS_FIELDS, "correctness")
     bindings = _closed_object(document["bindings"], _BINDING_FIELDS, "bindings")
-    if bindings["machine_plan_sha256"] != ROUTE_A_MACHINE_PLAN_SHA256:
+    if bindings["machine_plan_sha256"] != scientific_profile.machine_plan_sha256:
         raise RouteAResultContractError("bindings.machine_plan_sha256 is not frozen")
     for field in (
         "ledger_root",
@@ -482,20 +492,26 @@ class RouteARho10Projection:
     integrity_envelope_sha256: str
 
 
-def validate_route_a_strategy_cell(document: object) -> RouteACanonicalStrategyCell:
+def validate_route_a_strategy_cell(
+    document: object,
+    *,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
+) -> RouteACanonicalStrategyCell:
     """Validate the closed strategy-cell schema and cross-field invariants."""
 
+    if type(scientific_profile) is not RouteAScientificProfile:
+        raise TypeError("scientific_profile must be an exact RouteAScientificProfile")
     cell = _closed_object(document, _TOP_LEVEL_FIELDS, "top-level")
     if cell["schema_version"] != ROUTE_A_CELL_SCHEMA:
         raise RouteAResultContractError("strategy-cell schema version is not frozen")
     identity = _closed_object(cell["identity"], _IDENTITY_FIELDS, "identity")
-    _validate_identity(identity)
+    _validate_identity(identity, scientific_profile)
     _validate_counts(cell)
     _validate_primitive_counts(cell)
     _validate_rotations(cell)
     _validate_serialized(cell)
     _validate_measurements(cell)
-    _validate_semantics(cell)
+    _validate_semantics(cell, scientific_profile)
     content = canonical_route_a_document(cell)
     detached = json.loads(content.decode("ascii"), object_pairs_hook=_reject_duplicate_pairs)
     detached_content = canonical_route_a_document(detached)
@@ -515,16 +531,18 @@ def project_route_a_rho10(
     source: RouteACanonicalStrategyCell,
     *,
     machine_plan_bytes: bytes,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> RouteARho10Projection:
     """Apply only the preregistered non-executing rho=1 to rho=10 transform."""
 
     if type(source) is not RouteACanonicalStrategyCell:
         raise TypeError("source must be an exact validated Route A strategy cell")
-    if (
-        type(machine_plan_bytes) is not bytes
-        or hashlib.sha256(machine_plan_bytes).hexdigest() != ROUTE_A_MACHINE_PLAN_SHA256
-    ):
-        raise RouteAResultContractError("machine plan bytes do not match the Stage-1 freeze")
+    try:
+        scientific_profile.require_machine_plan_bytes(machine_plan_bytes)
+    except (TypeError, ValueError) as error:
+        raise RouteAResultContractError(
+            "machine plan bytes do not match the Stage-1 freeze"
+        ) from error
     try:
         plan = json.loads(
             machine_plan_bytes.decode("ascii"), object_pairs_hook=_reject_duplicate_pairs
@@ -569,15 +587,15 @@ def project_route_a_rho10(
     }
     document["bindings"] = {
         "ledger_root": None,
-        "machine_plan_sha256": ROUTE_A_MACHINE_PLAN_SHA256,
+        "machine_plan_sha256": scientific_profile.machine_plan_sha256,
         "prepared_query_root": None,
         "query_id_root": None,
         "source_rho1_document_sha256": source.sha256,
         "transform_id": _RHO10_TRANSFORM_ID,
     }
-    target = validate_route_a_strategy_cell(document)
+    target = validate_route_a_strategy_cell(document, scientific_profile=scientific_profile)
     envelope = {
-        "machine_plan_sha256": ROUTE_A_MACHINE_PLAN_SHA256,
+        "machine_plan_sha256": scientific_profile.machine_plan_sha256,
         "schema_version": _RHO10_ENVELOPE_SCHEMA,
         "source_rho1_document_sha256": source.sha256,
         "transform_id": _RHO10_TRANSFORM_ID,

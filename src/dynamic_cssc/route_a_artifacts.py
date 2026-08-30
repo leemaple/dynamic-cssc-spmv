@@ -15,6 +15,10 @@ from dynamic_cssc.route_a_results import (
     canonical_route_a_document,
     validate_route_a_strategy_cell,
 )
+from dynamic_cssc.route_a_scientific_profile import (
+    PREDECESSOR_ROUTE_A_PROFILE,
+    RouteAScientificProfile,
+)
 
 __all__ = (
     "RouteAArtifactError",
@@ -252,6 +256,8 @@ class RouteASyntheticCellArchiveInspection:
 
 def inspect_route_a_synthetic_cell_archive(
     archive_bytes: bytes,
+    *,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> RouteASyntheticCellArchiveInspection:
     """Independently reconstruct and cross-check one private replay handoff."""
 
@@ -265,7 +271,8 @@ def inspect_route_a_synthetic_cell_archive(
         raise RouteAArtifactError("Route A cell handoff manifest does not match its members")
 
     cell = validate_route_a_strategy_cell(
-        _canonical_object(members["cell.json"], label="cell")
+        _canonical_object(members["cell.json"], label="cell"),
+        scientific_profile=scientific_profile,
     )
     window_trace = _canonical_object(members["window-trace.json"], label="window trace")
     if (

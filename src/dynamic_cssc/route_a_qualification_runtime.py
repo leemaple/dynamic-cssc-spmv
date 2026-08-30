@@ -28,6 +28,10 @@ from pathlib import Path
 from typing import Literal
 
 from dynamic_cssc.route_a_results import canonical_route_a_document
+from dynamic_cssc.route_a_scientific_profile import (
+    PREDECESSOR_ROUTE_A_PROFILE,
+    RouteAScientificProfile,
+)
 from dynamic_cssc.route_a_synthetic_suite import (
     RouteASyntheticSuiteLineage,
     inspect_route_a_synthetic_suite_handoff,
@@ -317,6 +321,7 @@ def _run_child(
     scratch_root: Path,
     producer_artifact_directory: Path | None,
     timeout_seconds: int,
+    worker_script_relative_path: str,
 ) -> _OwnedChildObservation:
     stage_read, stage_write = os.pipe()
     acknowledgement_read, acknowledgement_write = os.pipe()
@@ -325,7 +330,14 @@ def _run_child(
     payload_path = scratch_root / _STAGE_PAYLOAD[stage]
     worker_scratch = scratch_root / "worker-scratch"
     worker_scratch.mkdir(mode=0o700)
-    script = repository_root / "scripts/run_route_a_qualification.py"
+    if worker_script_relative_path not in {
+        "scripts/run_route_a_qualification.py",
+        "scripts/run_followup_performance_qualification.py",
+    }:
+        raise RouteAQualificationRuntimeError(
+            "qualification worker script is outside the closed domain"
+        )
+    script = repository_root / worker_script_relative_path
     command = [
         sys.executable,
         str(script),
@@ -735,6 +747,9 @@ def run_owned_route_a_qualification_stage(
     output_directory: Path,
     producer_artifact_directory: Path | None = None,
     timeout_seconds: int = 2700,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
+    machine_plan_bytes: bytes | None = None,
+    worker_script_relative_path: str = "scripts/run_route_a_qualification.py",
 ) -> RouteAQualificationStageArtifactInspection:
     """Run q1 or q2 as one Linux-owned child and atomically install its tree."""
 
@@ -776,15 +791,25 @@ def run_owned_route_a_qualification_stage(
             scratch_root=scratch_root,
             producer_artifact_directory=producer_artifact_directory,
             timeout_seconds=timeout_seconds,
+            worker_script_relative_path=worker_script_relative_path,
         )
-        trace = generate_route_a_qualification_trace(scale="M", qualification_seed=20260821)
-        plan_bytes = (repository_root / "config/route-a-publication-plan.json").read_bytes()
+        trace = generate_route_a_qualification_trace(
+            scale="M",
+            qualification_seed=scientific_profile.qualification_seed,
+            scientific_profile=scientific_profile,
+        )
+        plan_bytes = (
+            (repository_root / "config/route-a-publication-plan.json").read_bytes()
+            if machine_plan_bytes is None
+            else machine_plan_bytes
+        )
         if stage == "q1":
             inspect_route_a_synthetic_suite_handoff(
                 observation.payload_path,
                 expected_trace=trace,
                 expected_lineage=lineage,
                 machine_plan_bytes=plan_bytes,
+                scientific_profile=scientific_profile,
             )
         else:
             inspect_route_a_synthetic_suite_replay(
@@ -792,6 +817,7 @@ def run_owned_route_a_qualification_stage(
                 expected_trace=trace,
                 expected_lineage=lineage,
                 machine_plan_bytes=plan_bytes,
+                scientific_profile=scientific_profile,
             )
         payload_target = temporary_output / _STAGE_PAYLOAD[stage]
         os.replace(observation.payload_path, payload_target)

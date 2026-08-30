@@ -29,6 +29,10 @@ from dynamic_cssc.route_a_openfhe_package import (
     RouteAOpenFHEPackageMember,
 )
 from dynamic_cssc.route_a_results import canonical_route_a_document
+from dynamic_cssc.route_a_scientific_profile import (
+    PREDECESSOR_ROUTE_A_PROFILE,
+    RouteAScientificProfile,
+)
 
 __all__ = (
     "RouteANativeGuardError",
@@ -134,6 +138,8 @@ def guard_route_a_native_replays(
         RouteANativeReplayExecution,
         RouteANativeReplayExecution,
     ],
+    *,
+    scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> RouteANativeGuardReceipt:
     """Accept exactly three immutable, fresh-key, independently replayed packages."""
 
@@ -275,7 +281,7 @@ def guard_route_a_native_replays(
     coverage = dict(case.mechanism_coverage)
     if case.trace.suite_role == "qualification" and (
         case.trace.scale != "M"
-        or case.trace.formal_seed != 20260821
+        or case.trace.formal_seed != scientific_profile.qualification_seed
         or case.strategy_candidate_id != _QUALIFICATION_STRATEGY
         or any(coverage.get(name) is not True for name in _QUALIFICATION_COVERAGE)
     ):

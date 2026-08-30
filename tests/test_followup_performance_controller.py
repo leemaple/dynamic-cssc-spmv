@@ -1,0 +1,583 @@
+from __future__ import annotations
+
+import io
+import pickle
+import threading
+import zipfile
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
+
+import dynamic_cssc.followup_performance_controller as controller
+from dynamic_cssc.followup_performance_contract import (
+    materialize_followup_scientific_plan,
+)
+from dynamic_cssc.followup_performance_controller import (
+    FollowupArtifactSnapshot,
+    FollowupControllerError,
+    FollowupDispatchPrerequisites,
+    FollowupFormalAdmissionRequest,
+    FollowupFormalLiveJobSnapshot,
+    FollowupFormalLiveObservation,
+    FollowupFormalLiveRunSnapshot,
+    FollowupJobSnapshot,
+    FollowupPrerequisiteObservation,
+    FollowupQualificationObservation,
+    FollowupRunSnapshot,
+    abandon_followup_qualification_capability,
+    authorize_followup_formal_campaign,
+    authorize_followup_qualification_dispatch,
+    dispatch_followup_qualification,
+    open_followup_formal_campaign,
+    watch_followup_formal_campaign,
+)
+
+
+class _Clock:
+    def __init__(self, value: datetime) -> None:
+        self.value = value
+
+    def __call__(self) -> datetime:
+        return self.value
+
+
+@pytest.fixture(autouse=True)
+def isolated_capability_registry() -> None:
+    with controller._ISSUED_CAPABILITIES_LOCK:  # noqa: SLF001
+        controller._ISSUED_CAPABILITIES.clear()  # noqa: SLF001
+    yield
+    with controller._ISSUED_CAPABILITIES_LOCK:  # noqa: SLF001
+        controller._ISSUED_CAPABILITIES.clear()  # noqa: SLF001
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
+    value = _Clock(datetime(2026, 8, 30, 6, 0, tzinfo=UTC))
+    monkeypatch.setattr(controller, "_utc_now", value)
+    return value
+
+
+def _request() -> FollowupDispatchPrerequisites:
+    return FollowupDispatchPrerequisites(
+        expected_s1_git_sha="a" * 40,
+        expected_s2_git_sha="b" * 40,
+        expected_compatibility_receipt_sha256="c" * 64,
+        ci_run_id=11,
+        pre_s1_run_id=12,
+        registration_run_id=13,
+        source_anchor_run_id=14,
+        independent_review_run_id=15,
+    )
+
+
+class _PrerequisiteProvider:
+    def __init__(
+        self,
+        observed_at: datetime,
+        *,
+        qualification_run_ids: tuple[int, ...] = (),
+    ) -> None:
+        self.observation = FollowupPrerequisiteObservation(
+            observed_at=observed_at,
+            controls=(),
+            qualification_run_ids=qualification_run_ids,
+            formal_run_ids=(),
+        )
+        self.calls: list[tuple[int, ...]] = []
+
+    def read_prerequisites(
+        self,
+        run_ids: tuple[int, ...],
+    ) -> FollowupPrerequisiteObservation:
+        self.calls.append(run_ids)
+        return self.observation
+
+
+class _QualificationDispatcher:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def dispatch_qualification(self, **kwargs: object) -> int:
+        self.calls.append(kwargs)
+        return 91
+
+
+class _FormalDispatcher:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def open_formal_campaign(self, **kwargs: object) -> int:
+        self.calls.append(kwargs)
+        return 92
+
+
+def _stub_local_and_prerequisite_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scientific = materialize_followup_scientific_plan(Path.cwd())
+    monkeypatch.setattr(
+        controller,
+        "_inspect_local_authority",
+        lambda _root, _request: controller._LocalAuthority(  # noqa: SLF001
+            scientific=scientific,
+            compatibility_receipt_sha256="c" * 64,
+        ),
+    )
+    monkeypatch.setattr(
+        controller,
+        "_validate_prerequisite_observation",
+        lambda *_args, **_kwargs: None,
+    )
+
+
+def _qualification_observation(observed_at: datetime) -> FollowupQualificationObservation:
+    run = FollowupRunSnapshot(
+        database_id=90,
+        workflow_path=".github/workflows/followup-performance-qualification.yml",
+        event="workflow_dispatch",
+        head_sha="b" * 40,
+        head_branch="main",
+        attempt=1,
+        status="completed",
+        conclusion="success",
+        created_at=observed_at - timedelta(minutes=40),
+        updated_at=observed_at - timedelta(minutes=1),
+    )
+    return FollowupQualificationObservation(
+        observed_at=observed_at,
+        run=run,
+        jobs=(),
+        artifacts=(),
+        q6_provider_archive_bytes=b"placeholder",
+    )
+
+
+class _QualificationProvider:
+    def __init__(self, observation: FollowupQualificationObservation) -> None:
+        self.observation = observation
+
+    def read_qualification(self, run_id: int) -> FollowupQualificationObservation:
+        assert run_id == 90
+        return self.observation
+
+
+def test_qualification_capability_is_nonserializable_and_dispatches_once(
+    monkeypatch: pytest.MonkeyPatch,
+    clock: _Clock,
+) -> None:
+    _stub_local_and_prerequisite_validation(monkeypatch)
+    request = _request()
+    provider = _PrerequisiteProvider(clock.value)
+    dispatcher = _QualificationDispatcher()
+
+    capability = authorize_followup_qualification_dispatch(
+        Path.cwd(),
+        provider,
+        request,
+    )
+
+    with pytest.raises(TypeError, match="not a Boolean"):
+        bool(capability)
+    with pytest.raises(TypeError, match="cannot be serialized"):
+        pickle.dumps(capability)
+    clock.value += timedelta(seconds=1)
+    assert dispatch_followup_qualification(capability, request, dispatcher) == 91
+    assert dispatcher.calls == [
+        {
+            "expected_compatibility_receipt_sha256": "c" * 64,
+            "expected_s1_git_sha": "a" * 40,
+            "expected_s2_git_sha": "b" * 40,
+        }
+    ]
+    with pytest.raises(FollowupControllerError, match="absent or consumed"):
+        dispatch_followup_qualification(capability, request, dispatcher)
+    assert len(dispatcher.calls) == 1
+
+
+def test_expired_qualification_capability_is_consumed_before_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    clock: _Clock,
+) -> None:
+    _stub_local_and_prerequisite_validation(monkeypatch)
+    request = _request()
+    capability = authorize_followup_qualification_dispatch(
+        Path.cwd(),
+        _PrerequisiteProvider(clock.value),
+        request,
+    )
+    dispatcher = _QualificationDispatcher()
+
+    clock.value += timedelta(seconds=31)
+    with pytest.raises(FollowupControllerError, match="expired"):
+        dispatch_followup_qualification(capability, request, dispatcher)
+    clock.value -= timedelta(seconds=30)
+    with pytest.raises(FollowupControllerError, match="absent or consumed"):
+        dispatch_followup_qualification(capability, request, dispatcher)
+    assert not dispatcher.calls
+
+
+def test_formal_capability_is_distinct_and_opens_one_campaign(
+    monkeypatch: pytest.MonkeyPatch,
+    clock: _Clock,
+) -> None:
+    _stub_local_and_prerequisite_validation(monkeypatch)
+    prerequisites = _request()
+    request = FollowupFormalAdmissionRequest(
+        prerequisites=prerequisites,
+        qualification_run_id=90,
+    )
+    q6 = FollowupArtifactSnapshot(
+        database_id=106,
+        name="q6",
+        digest="sha256:" + "d" * 64,
+        size_in_bytes=1,
+        expired=False,
+        workflow_run_id=90,
+        workflow_run_head_sha="b" * 40,
+    )
+    monkeypatch.setattr(
+        controller,
+        "_validate_qualification_observation",
+        lambda *_args, **_kwargs: q6,
+    )
+    capability = authorize_followup_formal_campaign(
+        Path.cwd(),
+        _PrerequisiteProvider(clock.value, qualification_run_ids=(90,)),
+        _QualificationProvider(_qualification_observation(clock.value)),
+        request,
+    )
+    dispatcher = _FormalDispatcher()
+
+    with pytest.raises(TypeError, match="wrong follow-up authority type"):
+        dispatch_followup_qualification(capability, prerequisites, _QualificationDispatcher())  # type: ignore[arg-type]
+    clock.value += timedelta(seconds=1)
+    assert open_followup_formal_campaign(capability, request, dispatcher) == 92
+    with pytest.raises(FollowupControllerError, match="absent or consumed"):
+        open_followup_formal_campaign(capability, request, dispatcher)
+    assert dispatcher.calls == [
+        {
+            "expected_compatibility_receipt_sha256": "c" * 64,
+            "expected_s1_git_sha": "a" * 40,
+            "expected_s2_git_sha": "b" * 40,
+            "qualification_run_id": 90,
+        }
+    ]
+
+
+def test_abandonment_consumes_without_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    clock: _Clock,
+) -> None:
+    _stub_local_and_prerequisite_validation(monkeypatch)
+    request = _request()
+    capability = authorize_followup_qualification_dispatch(
+        Path.cwd(),
+        _PrerequisiteProvider(clock.value),
+        request,
+    )
+
+    abandon_followup_qualification_capability(capability)
+
+    with pytest.raises(FollowupControllerError, match="absent or consumed"):
+        dispatch_followup_qualification(capability, request, _QualificationDispatcher())
+
+
+def _qualification_jobs(now: datetime) -> tuple[FollowupJobSnapshot, ...]:
+    spans = (
+        (50, 45),
+        (44, 39),
+        (38, 30),
+        (29, 22),
+        (21, 15),
+        (14, 10),
+    )
+    return tuple(
+        FollowupJobSnapshot(
+            database_id=100 + index,
+            name=name,
+            started_at=now - timedelta(minutes=start),
+            completed_at=now - timedelta(minutes=end),
+            status="completed",
+            conclusion="success",
+        )
+        for index, (name, (start, end)) in enumerate(
+            zip(controller._QUALIFICATION_JOB_NAMES, spans, strict=True)  # noqa: SLF001
+        )
+    )
+
+
+def test_qualification_timing_gate_is_not_relaxed() -> None:
+    now = datetime(2026, 8, 30, 6, 0, tzinfo=UTC)
+    jobs = _qualification_jobs(now)
+
+    assert controller._validate_qualification_jobs(jobs) == jobs  # noqa: SLF001
+
+    q5 = replace(jobs[4], completed_at=jobs[0].started_at + timedelta(minutes=46))
+    q6 = replace(
+        jobs[5],
+        started_at=q5.completed_at + timedelta(seconds=1),
+        completed_at=q5.completed_at + timedelta(minutes=2),
+    )
+    with pytest.raises(FollowupControllerError, match="45-minute"):
+        controller._validate_qualification_jobs((*jobs[:4], q5, q6))  # noqa: SLF001
+
+
+def test_provider_archive_path_traversal_fails_closed() -> None:
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("../escape", b"payload")
+
+    with (
+        pytest.raises(FollowupControllerError, match="unsafe"),
+        controller._extracted_provider_archive(  # noqa: SLF001
+            output.getvalue(),
+            maximum_bytes=1024,
+        ),
+    ):
+        raise AssertionError("unsafe archive unexpectedly yielded")
+
+
+def test_concurrent_double_dispatch_has_one_provider_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    clock: _Clock,
+) -> None:
+    _stub_local_and_prerequisite_validation(monkeypatch)
+    request = _request()
+    capability = authorize_followup_qualification_dispatch(
+        Path.cwd(),
+        _PrerequisiteProvider(clock.value),
+        request,
+    )
+    dispatcher = _QualificationDispatcher()
+    clock.value += timedelta(seconds=1)
+    barrier = threading.Barrier(2)
+
+    def dispatch() -> str:
+        barrier.wait()
+        try:
+            dispatch_followup_qualification(capability, request, dispatcher)
+        except FollowupControllerError as error:
+            assert "absent or consumed" in str(error)
+            return "rejected"
+        return "dispatched"
+
+    threads = [threading.Thread(target=dispatch) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(dispatcher.calls) == 1
+
+
+class _FormalLiveProvider:
+    def __init__(self, observations: list[FollowupFormalLiveObservation]) -> None:
+        self.observations = observations
+        self.cancelled: list[int] = []
+
+    def read_live_formal(self, run_id: int) -> FollowupFormalLiveObservation:
+        assert run_id == 92
+        if len(self.observations) > 1:
+            return self.observations.pop(0)
+        return self.observations[0]
+
+    def cancel_formal(self, run_id: int) -> None:
+        self.cancelled.append(run_id)
+
+
+def _live_run(
+    now: datetime,
+    *,
+    status: str,
+    conclusion: str | None,
+) -> FollowupFormalLiveRunSnapshot:
+    return FollowupFormalLiveRunSnapshot(
+        database_id=92,
+        workflow_path=".github/workflows/followup-performance-formal.yml",
+        event="workflow_dispatch",
+        head_sha="b" * 40,
+        head_branch="main",
+        attempt=1,
+        status=status,
+        conclusion=conclusion,
+        created_at=now - timedelta(minutes=30),
+        updated_at=now,
+    )
+
+
+def _live_job(
+    database_id: int,
+    name: str,
+    *,
+    started_at: datetime | None,
+    completed_at: datetime | None,
+    status: str,
+    conclusion: str | None,
+) -> FollowupFormalLiveJobSnapshot:
+    return FollowupFormalLiveJobSnapshot(
+        database_id=database_id,
+        name=name,
+        started_at=started_at,
+        completed_at=completed_at,
+        status=status,
+        conclusion=conclusion,
+    )
+
+
+def test_formal_watch_cancels_at_the_combined_unit_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+    clock: _Clock,
+) -> None:
+    _stub_local_and_prerequisite_validation(monkeypatch)
+    scientific = materialize_followup_scientific_plan(Path.cwd())
+    first = controller.followup_formal_unit_specs(scientific.scientific_profile)[0]
+    launch = _live_job(
+        201,
+        "formal-launch-admission",
+        started_at=clock.value - timedelta(minutes=22),
+        completed_at=clock.value - timedelta(minutes=21, seconds=30),
+        status="completed",
+        conclusion="success",
+    )
+    producer = _live_job(
+        202,
+        first.producer_job_name,
+        started_at=clock.value - timedelta(minutes=21),
+        completed_at=None,
+        status="in_progress",
+        conclusion=None,
+    )
+    active = FollowupFormalLiveObservation(
+        observed_at=clock.value,
+        provider_observed_at=clock.value,
+        run=_live_run(clock.value, status="in_progress", conclusion=None),
+        jobs=(launch, producer),
+    )
+    cancelled_producer = replace(
+        producer,
+        completed_at=clock.value,
+        status="completed",
+        conclusion="cancelled",
+    )
+    terminal = FollowupFormalLiveObservation(
+        observed_at=clock.value,
+        provider_observed_at=clock.value,
+        run=_live_run(clock.value, status="completed", conclusion="cancelled"),
+        jobs=(launch, cancelled_producer),
+    )
+    provider = _FormalLiveProvider([active, terminal])
+    request = FollowupFormalAdmissionRequest(
+        prerequisites=_request(),
+        qualification_run_id=90,
+    )
+
+    result = watch_followup_formal_campaign(
+        Path.cwd(),
+        provider,
+        request,
+        92,
+        poll_interval_seconds=1,
+        wait=lambda _seconds: None,
+    )
+
+    assert provider.cancelled == [92]
+    assert result.document["decision"] == "terminal-no-go"
+    assert result.document["current_unit_ordinal_or_null"] == 0
+    assert result.document["reason"] == "formal unit reached its combined reservation"
+    assert result.document["cancellation"]["provider_request_submitted"] is True
+
+
+def test_formal_watch_accepts_only_one_complete_serial_success(
+    monkeypatch: pytest.MonkeyPatch,
+    clock: _Clock,
+) -> None:
+    _stub_local_and_prerequisite_validation(monkeypatch)
+    scientific = materialize_followup_scientific_plan(Path.cwd())
+    specs = controller.followup_formal_unit_specs(scientific.scientific_profile)
+    cursor = clock.value - timedelta(minutes=10)
+    jobs = [
+        _live_job(
+            301,
+            "formal-launch-admission",
+            started_at=cursor,
+            completed_at=cursor + timedelta(seconds=5),
+            status="completed",
+            conclusion="success",
+        )
+    ]
+    cursor += timedelta(seconds=5)
+    identifier = 302
+    for spec in specs:
+        producer_started = cursor
+        producer_completed = producer_started + timedelta(seconds=5)
+        guard_started = producer_completed
+        guard_completed = guard_started + timedelta(seconds=5)
+        jobs.extend(
+            (
+                _live_job(
+                    identifier,
+                    spec.producer_job_name,
+                    started_at=producer_started,
+                    completed_at=producer_completed,
+                    status="completed",
+                    conclusion="success",
+                ),
+                _live_job(
+                    identifier + 1,
+                    spec.guard_job_name,
+                    started_at=guard_started,
+                    completed_at=guard_completed,
+                    status="completed",
+                    conclusion="success",
+                ),
+            )
+        )
+        identifier += 2
+        cursor = guard_completed
+    jobs.extend(
+        (
+            _live_job(
+                identifier,
+                "formal-terminal-admission",
+                started_at=cursor,
+                completed_at=cursor + timedelta(seconds=5),
+                status="completed",
+                conclusion="success",
+            ),
+            _live_job(
+                identifier + 1,
+                "formal-aggregate",
+                started_at=cursor + timedelta(seconds=5),
+                completed_at=cursor + timedelta(seconds=10),
+                status="completed",
+                conclusion="success",
+            ),
+        )
+    )
+    observation = FollowupFormalLiveObservation(
+        observed_at=clock.value,
+        provider_observed_at=clock.value,
+        run=_live_run(clock.value, status="completed", conclusion="success"),
+        jobs=tuple(jobs),
+    )
+    provider = _FormalLiveProvider([observation])
+    request = FollowupFormalAdmissionRequest(
+        prerequisites=_request(),
+        qualification_run_id=90,
+    )
+
+    result = watch_followup_formal_campaign(
+        Path.cwd(),
+        provider,
+        request,
+        92,
+        poll_interval_seconds=1,
+        wait=lambda _seconds: None,
+    )
+
+    assert not provider.cancelled
+    assert result.document["decision"] == "terminal-success-candidate"
+    assert result.document["cancellation"] is None
+    assert result.document["publication_evidence_admitted"] is False
