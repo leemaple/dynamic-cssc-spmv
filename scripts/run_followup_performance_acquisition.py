@@ -24,6 +24,7 @@ from dynamic_cssc.followup_performance_acquisition import (
 )
 from dynamic_cssc.followup_performance_contract import (
     FollowupContractError,
+    followup_inherited_unit_attempt_ordinal,
     materialize_followup_scientific_plan,
 )
 from dynamic_cssc.followup_performance_lineage import (
@@ -132,7 +133,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--compatibility-receipt-sha256", required=True)
     parser.add_argument("--provider-run-id", required=True, type=int)
     parser.add_argument("--provider-run-attempt", required=True, type=int, choices=(1,))
-    parser.add_argument("--unit-attempt-ordinal", type=int, default=1, choices=(1,))
+    parser.add_argument("--campaign-id", required=True)
+    parser.add_argument("--campaign-run-admission-sha256", required=True)
+    parser.add_argument("--formal-unit-ordinal", required=True, type=int, choices=range(17))
+    parser.add_argument("--unit-attempt-ordinal", type=int, default=1, choices=(1, 2))
     parser.add_argument("--scratch-root", required=True, type=Path)
     parser.add_argument("--output-directory", required=True, type=Path)
     parser.add_argument("--producer-artifact-directory", type=Path)
@@ -186,7 +190,10 @@ def _main(arguments: argparse.Namespace) -> int:
         final_url, retrieved_utc, headers = _download(raw_path)
         receipt = build_route_a_snap_acquisition_receipt(
             raw_path,
-            unit_attempt_ordinal=0,
+            unit_attempt_ordinal=followup_inherited_unit_attempt_ordinal(
+                unit_kind="formal-acquisition",
+                unit_attempt_ordinal=arguments.unit_attempt_ordinal,
+            ),
             final_url=final_url,
             retrieved_utc=retrieved_utc,
             response_headers=headers,
@@ -203,6 +210,11 @@ def _main(arguments: argparse.Namespace) -> int:
                 receipt,
                 arguments.output_directory,
                 lineage=lineage,
+                campaign_id=arguments.campaign_id,
+                campaign_run_admission_sha256=(
+                    arguments.campaign_run_admission_sha256
+                ),
+                formal_unit_ordinal=arguments.formal_unit_ordinal,
                 unit_attempt_ordinal=arguments.unit_attempt_ordinal,
             )
         else:
@@ -213,6 +225,11 @@ def _main(arguments: argparse.Namespace) -> int:
                 receipt,
                 arguments.output_directory,
                 lineage=lineage,
+                campaign_id=arguments.campaign_id,
+                campaign_run_admission_sha256=(
+                    arguments.campaign_run_admission_sha256
+                ),
+                formal_unit_ordinal=arguments.formal_unit_ordinal,
                 unit_attempt_ordinal=arguments.unit_attempt_ordinal,
             )
     finally:

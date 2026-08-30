@@ -18,6 +18,10 @@ from dynamic_cssc.followup_performance_analysis import (
     FollowupAnalysisError,
     produce_followup_analysis,
 )
+from dynamic_cssc.followup_performance_campaign_bundle import (
+    FollowupCampaignEvidenceBundleError,
+    inspect_followup_campaign_evidence_bundle,
+)
 from dynamic_cssc.followup_performance_contract import (
     FollowupContractError,
     _canonical_json_bytes,
@@ -111,14 +115,15 @@ def _parser() -> argparse.ArgumentParser:
         "--analysis-compatibility-receipt-sha256",
         required=True,
     )
-    parser.add_argument("--formal-provider-run-id", required=True, type=int)
+    parser.add_argument("--terminal-provider-run-id", required=True, type=int)
     parser.add_argument(
-        "--formal-provider-run-attempt",
+        "--terminal-provider-run-attempt",
         required=True,
         type=int,
         choices=(1,),
     )
     parser.add_argument("--formal-artifact-root", required=True, type=Path)
+    parser.add_argument("--campaign-evidence-root", required=True, type=Path)
     parser.add_argument("--terminal-artifact-directory", required=True, type=Path)
     parser.add_argument("--aggregate-artifact-directory", required=True, type=Path)
     parser.add_argument("--output-directory", required=True, type=Path)
@@ -128,6 +133,7 @@ def _parser() -> argparse.ArgumentParser:
 def _main(arguments: argparse.Namespace) -> int:
     paths = (
         arguments.repository_root,
+        arguments.campaign_evidence_root,
         arguments.formal_artifact_root,
         arguments.terminal_artifact_directory,
         arguments.aggregate_artifact_directory,
@@ -150,28 +156,44 @@ def _main(arguments: argparse.Namespace) -> int:
     ):
         raise FollowupAnalysisError("registration compatibility receipt changed")
     scientific = materialize_followup_scientific_plan(arguments.repository_root)
+    campaign = inspect_followup_campaign_evidence_bundle(
+        arguments.campaign_evidence_root,
+        scientific_profile=scientific.scientific_profile,
+    )
+    if (
+        campaign.selection.document["experiment_source_S1_sha"]
+        != arguments.experiment_source_sha
+        or campaign.selection.document["evidence_freeze_S2_sha"]
+        != arguments.evidence_freeze_sha
+        or campaign.selection.document["compatibility_receipt_sha256"]
+        != arguments.registration_compatibility_receipt_sha256
+    ):
+        raise FollowupAnalysisError("analysis campaign evidence lineage changed")
     lineage = RouteASyntheticSuiteLineage(
         experiment_source_sha=arguments.experiment_source_sha,
         workflow_head_sha=arguments.evidence_freeze_sha,
         compatibility_receipt_sha256=(
             arguments.registration_compatibility_receipt_sha256
         ),
-        provider_run_id=arguments.formal_provider_run_id,
-        provider_run_attempt=arguments.formal_provider_run_attempt,
+        provider_run_id=arguments.terminal_provider_run_id,
+        provider_run_attempt=arguments.terminal_provider_run_attempt,
     )
     artifact_set = inspect_followup_formal_artifact_set(
         arguments.formal_artifact_root,
         repository_root=arguments.repository_root,
-        lineage=lineage,
+        campaign_selection=campaign.selection,
         scientific_profile=scientific.scientific_profile,
         machine_plan_bytes=scientific.machine_plan_bytes,
     )
-    timing = _timing_from_terminal(arguments.terminal_artifact_directory)
+    terminal_timing = _timing_from_terminal(arguments.terminal_artifact_directory)
+    if terminal_timing != campaign.timing:
+        raise FollowupAnalysisError("terminal and campaign timing ledgers differ")
     terminal = inspect_followup_terminal_admission(
         arguments.terminal_artifact_directory,
         artifact_set=artifact_set,
+        campaign_selection=campaign.selection,
         lineage=lineage,
-        timing_ledger=timing,
+        timing_ledger=campaign.timing,
     )
     aggregate = inspect_followup_aggregate(
         arguments.aggregate_artifact_directory,
@@ -205,6 +227,7 @@ def main() -> int:
     except (
         FollowupAggregateError,
         FollowupAnalysisError,
+        FollowupCampaignEvidenceBundleError,
         FollowupContractError,
         FollowupTerminalAdmissionError,
         OSError,

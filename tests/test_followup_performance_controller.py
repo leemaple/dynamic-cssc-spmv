@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 import dynamic_cssc.followup_performance_controller as controller
+import dynamic_cssc.route_a_controller as route_a_controller
 from dynamic_cssc.followup_performance_contract import (
     materialize_followup_scientific_plan,
 )
@@ -34,6 +35,12 @@ from dynamic_cssc.followup_performance_controller import (
     dispatch_followup_qualification,
     open_followup_formal_campaign,
     watch_followup_formal_campaign,
+    watch_followup_qualification,
+)
+from dynamic_cssc.route_a_controller import (
+    RouteALiveJobSnapshot,
+    RouteALiveQualificationObservation,
+    RouteALiveRunSnapshot,
 )
 
 
@@ -58,6 +65,7 @@ def isolated_capability_registry() -> None:
 def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
     value = _Clock(datetime(2026, 8, 30, 6, 0, tzinfo=UTC))
     monkeypatch.setattr(controller, "_utc_now", value)
+    monkeypatch.setattr(route_a_controller, "_utc_now", value)
     return value
 
 
@@ -370,6 +378,210 @@ def test_qualification_timing_gate_is_not_relaxed() -> None:
     )
     with pytest.raises(FollowupControllerError, match="45-minute"):
         controller._validate_qualification_jobs((*jobs[:4], q5, q6))  # noqa: SLF001
+
+
+class _LiveQualificationProvider:
+    def __init__(
+        self,
+        observations: list[RouteALiveQualificationObservation],
+    ) -> None:
+        self.observations = observations
+        self.cancelled: list[int] = []
+
+    def read_live_qualification(
+        self,
+        run_id: int,
+    ) -> RouteALiveQualificationObservation:
+        assert run_id == 90
+        if len(self.observations) > 1:
+            return self.observations.pop(0)
+        return self.observations[0]
+
+    def cancel_qualification(self, run_id: int) -> None:
+        self.cancelled.append(run_id)
+
+
+def _live_qualification_observation(
+    clock: datetime,
+    *,
+    jobs: tuple[RouteALiveJobSnapshot, ...],
+    provider_now: datetime,
+    status: str,
+    conclusion: str | None,
+) -> RouteALiveQualificationObservation:
+    return RouteALiveQualificationObservation(
+        observed_at=clock,
+        provider_observed_at=provider_now,
+        run=RouteALiveRunSnapshot(
+            database_id=90,
+            event="workflow_dispatch",
+            head_sha="b" * 40,
+            head_branch="main",
+            attempt=1,
+            status=status,
+            conclusion=conclusion,
+            created_at=jobs[0].started_at - timedelta(seconds=5),  # type: ignore[operator]
+            updated_at=provider_now - timedelta(seconds=1),
+        ),
+        jobs=jobs,
+    )
+
+
+def _live_qualification_jobs(
+    start: datetime,
+    *,
+    include_q6: bool = False,
+    q6_completed: datetime | None,
+    q6_conclusion: str | None,
+) -> tuple[RouteALiveJobSnapshot, ...]:
+    jobs: list[RouteALiveJobSnapshot] = []
+    cursor = start
+    for index, name in enumerate(controller._QUALIFICATION_JOB_NAMES[:5]):  # noqa: SLF001
+        completed = cursor + timedelta(minutes=4)
+        jobs.append(
+            RouteALiveJobSnapshot(
+                database_id=500 + index,
+                name=name,
+                started_at=cursor,
+                completed_at=completed,
+                status="completed",
+                conclusion="success",
+            )
+        )
+        cursor = completed
+    if include_q6 or q6_completed is not None or q6_conclusion is not None:
+        jobs.append(
+            RouteALiveJobSnapshot(
+                database_id=505,
+                name=controller._QUALIFICATION_JOB_NAMES[5],  # noqa: SLF001
+                started_at=cursor,
+                completed_at=q6_completed,
+                status="completed" if q6_completed is not None else "in_progress",
+                conclusion=q6_conclusion,
+            )
+        )
+    return tuple(jobs)
+
+
+def test_qualification_watch_stays_armed_through_q6_and_the_55_minute_gate(
+    clock: _Clock,
+) -> None:
+    start = clock.value - timedelta(minutes=30)
+    prefix = _live_qualification_jobs(
+        start,
+        q6_completed=None,
+        q6_conclusion=None,
+    )[:5]
+    complete = _live_qualification_jobs(
+        start,
+        q6_completed=start + timedelta(minutes=22),
+        q6_conclusion="success",
+    )
+    provider = _LiveQualificationProvider(
+        [
+            _live_qualification_observation(
+                clock.value,
+                jobs=prefix,
+                provider_now=clock.value,
+                status="in_progress",
+                conclusion=None,
+            ),
+            _live_qualification_observation(
+                clock.value,
+                jobs=complete,
+                provider_now=clock.value,
+                status="completed",
+                conclusion="success",
+            ),
+        ]
+    )
+
+    result = watch_followup_qualification(
+        provider,
+        FollowupFormalAdmissionRequest(
+            prerequisites=_request(),
+            qualification_run_id=90,
+        ),
+        poll_interval_seconds=1,
+        wait=lambda _seconds: None,
+    )
+
+    assert result.qualification_decision == "qualification-go"
+    assert result.q6_started_at == start + timedelta(minutes=20)
+    assert result.q6_completed_at == start + timedelta(minutes=22)
+    assert result.q6_wall_threshold_at == start + timedelta(minutes=30)
+    assert result.q6_provider_terminal_conclusion == "success"
+    assert result.q6_cancellation_requested_at is None
+    assert result.document["schema_version"].endswith("-v2")
+    assert provider.cancelled == []
+
+
+def test_qualification_watch_cancels_when_q6_misses_the_total_gate(
+    clock: _Clock,
+) -> None:
+    start = clock.value - timedelta(minutes=54)
+    prefix = _live_qualification_jobs(
+        start,
+        q6_completed=None,
+        q6_conclusion=None,
+    )[:5]
+    active = _live_qualification_jobs(
+        start,
+        include_q6=True,
+        q6_completed=None,
+        q6_conclusion=None,
+    )
+    terminal = list(active)
+    terminal[-1] = replace(
+        terminal[-1],
+        completed_at=clock.value + timedelta(minutes=1),
+        status="completed",
+        conclusion="cancelled",
+    )
+    provider = _LiveQualificationProvider(
+        [
+            _live_qualification_observation(
+                clock.value,
+                jobs=prefix,
+                provider_now=clock.value,
+                status="in_progress",
+                conclusion=None,
+            ),
+            _live_qualification_observation(
+                clock.value,
+                jobs=active,
+                provider_now=clock.value + timedelta(minutes=2),
+                status="in_progress",
+                conclusion=None,
+            ),
+            _live_qualification_observation(
+                clock.value,
+                jobs=tuple(terminal),
+                provider_now=clock.value + timedelta(minutes=3),
+                status="completed",
+                conclusion="cancelled",
+            ),
+        ]
+    )
+
+    result = watch_followup_qualification(
+        provider,
+        FollowupFormalAdmissionRequest(
+            prerequisites=_request(),
+            qualification_run_id=90,
+        ),
+        poll_interval_seconds=1,
+        wait=lambda _seconds: None,
+    )
+
+    assert result.qualification_decision == "qualification-no-go"
+    assert result.q6_started_at == start + timedelta(minutes=20)
+    assert result.q6_cancellation_requested_at == clock.value
+    assert result.q6_cancellation_acknowledged_at == clock.value
+    assert result.q6_provider_terminal_conclusion == "cancelled"
+    assert result.q6_watch_decided_at == clock.value
+    assert result.q6_cancellation_error is None
+    assert provider.cancelled == [90]
 
 
 def test_provider_archive_path_traversal_fails_closed() -> None:

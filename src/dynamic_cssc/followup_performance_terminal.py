@@ -10,8 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dynamic_cssc.followup_performance_acquisition import (
+    build_followup_acquisition_provider_binding,
     inspect_followup_acquisition_artifact,
 )
+from dynamic_cssc.followup_performance_campaign import FollowupCampaignSelection
 from dynamic_cssc.followup_performance_contract import (
     FOLLOWUP_STUDY_ID,
     FollowupContractError,
@@ -32,6 +34,7 @@ from dynamic_cssc.followup_performance_formal_artifacts import (
     expected_followup_formal_synthetic_artifact_name,
     inspect_followup_formal_synthetic_artifact,
 )
+from dynamic_cssc.followup_performance_formal_matrix import followup_formal_unit_specs
 from dynamic_cssc.followup_performance_formal_native_artifacts import (
     expected_followup_formal_native_artifact_name,
     inspect_followup_formal_native_artifact,
@@ -44,7 +47,6 @@ from dynamic_cssc.followup_performance_formal_timing import (
     FollowupFormalTimingLedger,
 )
 from dynamic_cssc.route_a_scientific_profile import RouteAScientificProfile
-from dynamic_cssc.route_a_strategy import ROUTE_A_STRATEGY_CANDIDATES
 from dynamic_cssc.route_a_synthetic_suite import RouteASyntheticSuiteLineage
 from dynamic_cssc.route_a_workloads import generate_route_a_formal_trace
 
@@ -84,16 +86,28 @@ class FollowupFormalArtifactRecord:
     unit_identity_sha256: str
     envelope_sha256: str
     inner_sha256: str
+    artifact_id: int
+    artifact_provider_digest: str
+    campaign_run_admission_sha256: str
+    committed_state_sha256: str
+    provider_run_id: int
+    unit_attempt_ordinal: int
     scope: dict[str, object]
 
     def document(self) -> dict[str, object]:
         return {
             "artifact_name": self.artifact_name,
+            "artifact_id": self.artifact_id,
+            "artifact_provider_digest": self.artifact_provider_digest,
+            "campaign_run_admission_sha256": self.campaign_run_admission_sha256,
+            "committed_state_sha256": self.committed_state_sha256,
             "envelope_sha256": self.envelope_sha256,
             "inner_sha256": self.inner_sha256,
             "ordinal": self.ordinal,
             "scope": self.scope,
-            "unit_attempt_ordinal": 1,
+            "provider_run_attempt": 1,
+            "provider_run_id": self.provider_run_id,
+            "unit_attempt_ordinal": self.unit_attempt_ordinal,
             "unit_identity_sha256": self.unit_identity_sha256,
             "unit_kind": self.unit_kind,
         }
@@ -105,6 +119,7 @@ class FollowupFormalArtifactSet:
     inspections: tuple[object, ...]
     document_bytes: bytes
     sha256: str
+    campaign_selection_sha256: str
 
 
 def _record(
@@ -112,21 +127,38 @@ def _record(
     ordinal: int,
     unit_kind: str,
     inspection: object,
+    selected: dict[str, object],
     scope: dict[str, object],
 ) -> FollowupFormalArtifactRecord:
     artifact_name = getattr(inspection, "artifact_name", None)
     root = getattr(inspection, "root", None)
     unit_identity = getattr(inspection, "unit_identity_sha256", None)
     envelope = getattr(inspection, "envelope", None)
+    selected_attempt = selected.get("unit_attempt_ordinal")
+    selected_artifact_id = selected.get("artifact_id")
+    selected_artifact_digest = selected.get("artifact_provider_digest")
+    selected_admission = selected.get("campaign_run_admission_sha256")
+    selected_state = selected.get("committed_state_sha256")
+    selected_run_id = selected.get("provider_run_id")
     if (
         type(artifact_name) is not str
         or not isinstance(root, Path)
         or root.name != artifact_name
         or type(unit_identity) is not str
         or not isinstance(envelope, FollowupEvidenceEnvelope)
-        or envelope.document.get("unit_attempt_ordinal") != 1
+        or type(selected_attempt) is not int
+        or envelope.document.get("unit_attempt_ordinal") != selected_attempt
         or envelope.document.get("unit_kind") != unit_kind
         or envelope.document.get("unit_identity_sha256") != unit_identity
+        or envelope.sha256 != selected.get("unit_output_envelope_sha256")
+        or artifact_name != selected.get("artifact_name")
+        or selected.get("formal_unit_ordinal") != ordinal
+        or selected.get("unit_kind") != unit_kind
+        or type(selected_artifact_id) is not int
+        or type(selected_artifact_digest) is not str
+        or type(selected_admission) is not str
+        or type(selected_state) is not str
+        or type(selected_run_id) is not int
     ):
         raise FollowupTerminalAdmissionError(
             "formal artifact provider name or outer identity changed"
@@ -141,6 +173,12 @@ def _record(
         unit_identity_sha256=unit_identity,
         envelope_sha256=envelope.sha256,
         inner_sha256=inner_sha,
+        artifact_id=selected_artifact_id,
+        artifact_provider_digest=selected_artifact_digest,
+        campaign_run_admission_sha256=selected_admission,
+        committed_state_sha256=selected_state,
+        provider_run_id=selected_run_id,
+        unit_attempt_ordinal=selected_attempt,
         scope=scope,
     )
 
@@ -148,16 +186,15 @@ def _record(
 def _classify_children(
     artifact_root: Path,
     *,
-    lineage: RouteASyntheticSuiteLineage,
+    experiment_source_s1_sha: str,
+    evidence_freeze_s2_sha: str,
 ) -> dict[str, dict[str, Path]]:
     artifact_root = _direct_directory(
         artifact_root,
         label="formal terminal input root",
     )
     children = tuple(sorted(artifact_root.iterdir(), key=lambda path: path.name))
-    if len(children) != 17 or any(
-        child.is_symlink() or not child.is_dir() for child in children
-    ):
+    if len(children) != 17 or any(child.is_symlink() or not child.is_dir() for child in children):
         raise FollowupTerminalAdmissionError(
             "terminal admission requires exactly seventeen direct directories"
         )
@@ -167,8 +204,8 @@ def _classify_children(
         envelope = inspect_followup_outer_envelope(
             _stable_read(child / "outer-envelope.json"),
             inner,
-            expected_experiment_source_s1_sha=lineage.experiment_source_sha,
-            expected_evidence_freeze_s2_sha=lineage.workflow_head_sha,
+            expected_experiment_source_s1_sha=experiment_source_s1_sha,
+            expected_evidence_freeze_s2_sha=evidence_freeze_s2_sha,
         )
         kind = envelope.document["unit_kind"]
         if kind not in classified or child.name in classified[kind]:
@@ -194,26 +231,87 @@ def inspect_followup_formal_artifact_set(
     artifact_root: Path,
     *,
     repository_root: Path,
-    lineage: RouteASyntheticSuiteLineage,
+    campaign_selection: FollowupCampaignSelection,
     scientific_profile: RouteAScientificProfile,
     machine_plan_bytes: bytes,
 ) -> FollowupFormalArtifactSet:
     """Reinspect and order the exact final-successful-attempt 17-object set."""
 
-    if type(lineage) is not RouteASyntheticSuiteLineage:
-        raise TypeError("lineage must be an exact RouteASyntheticSuiteLineage")
+    if type(campaign_selection) is not FollowupCampaignSelection:
+        raise TypeError("campaign_selection must be exact")
     if type(scientific_profile) is not RouteAScientificProfile:
         raise TypeError("scientific_profile must be an exact RouteAScientificProfile")
-    classified = _classify_children(artifact_root, lineage=lineage)
+    selection = campaign_selection.document
+    s1 = selection.get("experiment_source_S1_sha")
+    s2 = selection.get("evidence_freeze_S2_sha")
+    compatibility = selection.get("compatibility_receipt_sha256")
+    campaign_id = selection.get("campaign_id")
+    if any(type(value) is not str for value in (s1, s2, compatibility, campaign_id)):
+        raise FollowupTerminalAdmissionError("campaign selection lineage changed")
+    assert type(s1) is str
+    assert type(s2) is str
+    assert type(compatibility) is str
+    assert type(campaign_id) is str
+    units = campaign_selection.units
+    specs = followup_formal_unit_specs(scientific_profile)
+    if len(units) != 17:
+        raise FollowupTerminalAdmissionError("campaign selection is incomplete")
+    classified = _classify_children(
+        artifact_root,
+        experiment_source_s1_sha=s1,
+        evidence_freeze_s2_sha=s2,
+    )
     records: list[FollowupFormalArtifactRecord] = []
     inspections: list[object] = []
 
+    def selected_lineage(ordinal: int) -> RouteASyntheticSuiteLineage:
+        selected = units[ordinal]
+        run_id = selected.get("provider_run_id")
+        run_attempt = selected.get("provider_run_attempt")
+        if type(run_id) is not int or run_attempt != 1:
+            raise FollowupTerminalAdmissionError("campaign selection provider lineage changed")
+        return RouteASyntheticSuiteLineage(
+            experiment_source_sha=s1,
+            workflow_head_sha=s2,
+            compatibility_receipt_sha256=compatibility,
+            provider_run_id=run_id,
+            provider_run_attempt=1,
+        )
+
+    def binding(ordinal: int) -> dict[str, object]:
+        selected = units[ordinal]
+        admission = selected.get("campaign_run_admission_sha256")
+        attempt = selected.get("unit_attempt_ordinal")
+        if type(admission) is not str or type(attempt) is not int:
+            raise FollowupTerminalAdmissionError("campaign selection attempt binding changed")
+        return {
+            "campaign_id": campaign_id,
+            "campaign_run_admission_sha256": admission,
+            "formal_unit_ordinal": ordinal,
+            "unit_attempt_ordinal": attempt,
+        }
+
     acquisition_root = next(iter(classified["formal-acquisition"].values()))
+    acquisition_lineage = selected_lineage(0)
     acquisition = inspect_followup_acquisition_artifact(
         acquisition_root,
         phase="guarded-final",
-        lineage=lineage,
-        unit_attempt_ordinal=1,
+        lineage=acquisition_lineage,
+        **binding(0),
+    )
+    acquisition_artifact_id = units[0].get("artifact_id")
+    acquisition_artifact_digest = units[0].get("artifact_provider_digest")
+    if (
+        type(acquisition_artifact_id) is not int
+        or type(acquisition_artifact_digest) is not str
+    ):
+        raise FollowupTerminalAdmissionError(
+            "acquisition provider selection changed"
+        )
+    acquisition_provider_binding = build_followup_acquisition_provider_binding(
+        acquisition,
+        artifact_id=acquisition_artifact_id,
+        artifact_provider_digest=acquisition_artifact_digest,
     )
     inspections.append(acquisition)
     records.append(
@@ -221,14 +319,14 @@ def inspect_followup_formal_artifact_set(
             ordinal=0,
             unit_kind="formal-acquisition",
             inspection=acquisition,
+            selected=units[0],
             scope={
                 "accepted_trace_sha256s": [
                     partition.accepted_trace_sha256
                     for partition in acquisition.transform.partitions
                 ],
                 "mapping_sha256s": [
-                    partition.mapping_sha256
-                    for partition in acquisition.transform.partitions
+                    partition.mapping_sha256 for partition in acquisition.transform.partitions
                 ],
                 "raw_object_sha256": acquisition.transform.raw_object_sha256,
                 "source_kind": "snap-a2q",
@@ -236,125 +334,144 @@ def inspect_followup_formal_artifact_set(
         )
     )
 
-    native_seed = scientific_profile.formal_seeds[0]
-    for strategy in ROUTE_A_STRATEGY_CANDIDATES:
-        for scale in ("S", "M"):
-            expected = expected_followup_formal_native_artifact_name(
-                phase="guarded-final",
-                repository_root=repository_root,
-                lineage=lineage,
-                scale=scale,
-                formal_seed=native_seed,
-                strategy_candidate_id=strategy,
-                scientific_profile=scientific_profile,
-                machine_plan_bytes=machine_plan_bytes,
+    for spec in specs[1:7]:
+        assert spec.scale is not None
+        assert spec.formal_seed is not None
+        assert spec.strategy_candidate_id is not None
+        ordinal = spec.ordinal
+        lineage = selected_lineage(ordinal)
+        expected = expected_followup_formal_native_artifact_name(
+            phase="guarded-final",
+            repository_root=repository_root,
+            lineage=lineage,
+            scale=spec.scale,
+            formal_seed=spec.formal_seed,
+            strategy_candidate_id=spec.strategy_candidate_id,
+            scientific_profile=scientific_profile,
+            machine_plan_bytes=machine_plan_bytes,
+            **binding(ordinal),
+        )
+        inspection = inspect_followup_formal_native_artifact(
+            _named(classified["formal-native"], expected),
+            phase="guarded-final",
+            repository_root=repository_root,
+            lineage=lineage,
+            scale=spec.scale,
+            formal_seed=spec.formal_seed,
+            strategy_candidate_id=spec.strategy_candidate_id,
+            scientific_profile=scientific_profile,
+            machine_plan_bytes=machine_plan_bytes,
+            **binding(ordinal),
+        )
+        inspections.append(inspection)
+        records.append(
+            _record(
+                ordinal=ordinal,
+                unit_kind="formal-native",
+                inspection=inspection,
+                selected=units[ordinal],
+                scope={
+                    "case_binding_sha256": inspection.case.case_binding_sha256,
+                    "formal_seed": spec.formal_seed,
+                    "scale": spec.scale,
+                    "source_kind": "synthetic-native-snapshot",
+                    "strategy_candidate_id": spec.strategy_candidate_id,
+                },
             )
-            inspection = inspect_followup_formal_native_artifact(
-                _named(classified["formal-native"], expected),
-                phase="guarded-final",
-                repository_root=repository_root,
-                lineage=lineage,
-                scale=scale,
-                formal_seed=native_seed,
-                strategy_candidate_id=strategy,
-                scientific_profile=scientific_profile,
-                machine_plan_bytes=machine_plan_bytes,
-                unit_attempt_ordinal=1,
-            )
-            inspections.append(inspection)
-            records.append(
-                _record(
-                    ordinal=len(records),
-                    unit_kind="formal-native",
-                    inspection=inspection,
-                    scope={
-                        "case_binding_sha256": inspection.case.case_binding_sha256,
-                        "formal_seed": native_seed,
-                        "scale": scale,
-                        "source_kind": "synthetic-native-snapshot",
-                        "strategy_candidate_id": strategy,
-                    },
-                )
-            )
+        )
 
-    for scale in ("S", "M"):
-        for formal_seed in tuple(sorted(scientific_profile.formal_seeds)):
-            trace = generate_route_a_formal_trace(
-                scale=scale,
-                formal_seed=formal_seed,
-                scientific_profile=scientific_profile,
+    for spec in specs[7:13]:
+        assert spec.scale is not None
+        assert spec.formal_seed is not None
+        ordinal = spec.ordinal
+        lineage = selected_lineage(ordinal)
+        trace = generate_route_a_formal_trace(
+            scale=spec.scale,
+            formal_seed=spec.formal_seed,
+            scientific_profile=scientific_profile,
+        )
+        expected = expected_followup_formal_synthetic_artifact_name(
+            phase="guarded-final",
+            trace=trace,
+            lineage=lineage,
+            scientific_profile=scientific_profile,
+            **binding(ordinal),
+        )
+        inspection = inspect_followup_formal_synthetic_artifact(
+            _named(classified["formal-synthetic"], expected),
+            phase="guarded-final",
+            trace=trace,
+            lineage=lineage,
+            scientific_profile=scientific_profile,
+            machine_plan_bytes=machine_plan_bytes,
+            **binding(ordinal),
+        )
+        inspections.append(inspection)
+        records.append(
+            _record(
+                ordinal=ordinal,
+                unit_kind="formal-synthetic",
+                inspection=inspection,
+                selected=units[ordinal],
+                scope={
+                    "formal_seed": spec.formal_seed,
+                    "scale": spec.scale,
+                    "shard_identity_sha256": inspection.inherited.shard_identity_sha256,
+                    "source_event_trace_sha256": trace.event_trace_sha256,
+                    "source_kind": "synthetic",
+                },
             )
-            expected = expected_followup_formal_synthetic_artifact_name(
-                phase="guarded-final",
-                trace=trace,
-                lineage=lineage,
-                scientific_profile=scientific_profile,
-                unit_attempt_ordinal=1,
-            )
-            inspection = inspect_followup_formal_synthetic_artifact(
-                _named(classified["formal-synthetic"], expected),
-                phase="guarded-final",
-                trace=trace,
-                lineage=lineage,
-                scientific_profile=scientific_profile,
-                machine_plan_bytes=machine_plan_bytes,
-                unit_attempt_ordinal=1,
-            )
-            inspections.append(inspection)
-            records.append(
-                _record(
-                    ordinal=len(records),
-                    unit_kind="formal-synthetic",
-                    inspection=inspection,
-                    scope={
-                        "formal_seed": formal_seed,
-                        "scale": scale,
-                        "shard_identity_sha256": inspection.inherited.shard_identity_sha256,
-                        "source_event_trace_sha256": trace.event_trace_sha256,
-                        "source_kind": "synthetic",
-                    },
-                )
-            )
+        )
 
     traces = {(trace.partition, trace.semantics): trace for trace in acquisition.traces}
     if set(traces) != {(0, "T1"), (0, "T2"), (1, "T1"), (1, "T2")}:
         raise FollowupTerminalAdmissionError("acquisition ordered trace matrix changed")
-    for partition in (0, 1):
-        for semantics in ("T1", "T2"):
-            trace = traces[(partition, semantics)]
-            expected = expected_followup_formal_ordered_artifact_name(
-                phase="guarded-final",
-                trace=trace,
-                lineage=lineage,
-                unit_attempt_ordinal=1,
+    for spec in specs[13:17]:
+        assert spec.partition is not None
+        assert spec.semantics is not None
+        ordinal = spec.ordinal
+        lineage = selected_lineage(ordinal)
+        trace = traces[(spec.partition, spec.semantics)]
+        expected = expected_followup_formal_ordered_artifact_name(
+            phase="guarded-final",
+            trace=trace,
+            lineage=lineage,
+            acquisition_provider_binding_sha256=(
+                acquisition_provider_binding.sha256
+            ),
+            **binding(ordinal),
+        )
+        inspection = inspect_followup_formal_ordered_artifact(
+            _named(classified["formal-ordered-event"], expected),
+            phase="guarded-final",
+            trace=trace,
+            lineage=lineage,
+            scientific_profile=scientific_profile,
+            machine_plan_bytes=machine_plan_bytes,
+            acquisition_provider_binding_sha256=(
+                acquisition_provider_binding.sha256
+            ),
+            **binding(ordinal),
+        )
+        inspections.append(inspection)
+        records.append(
+            _record(
+                ordinal=ordinal,
+                unit_kind="formal-ordered-event",
+                inspection=inspection,
+                selected=units[ordinal],
+                scope={
+                    "accepted_trace_sha256": trace.accepted_trace_sha256,
+                    "mapping_sha256": trace.mapping_sha256,
+                    "partition": spec.partition,
+                    "raw_object_sha256": trace.raw_object_sha256,
+                    "semantics": spec.semantics,
+                    "shard_identity_sha256": inspection.inherited.shard_identity_sha256,
+                    "source_event_trace_sha256": trace.event_trace_sha256,
+                    "source_kind": "snap-a2q",
+                },
             )
-            inspection = inspect_followup_formal_ordered_artifact(
-                _named(classified["formal-ordered-event"], expected),
-                phase="guarded-final",
-                trace=trace,
-                lineage=lineage,
-                scientific_profile=scientific_profile,
-                machine_plan_bytes=machine_plan_bytes,
-                unit_attempt_ordinal=1,
-            )
-            inspections.append(inspection)
-            records.append(
-                _record(
-                    ordinal=len(records),
-                    unit_kind="formal-ordered-event",
-                    inspection=inspection,
-                    scope={
-                        "accepted_trace_sha256": trace.accepted_trace_sha256,
-                        "mapping_sha256": trace.mapping_sha256,
-                        "partition": partition,
-                        "raw_object_sha256": trace.raw_object_sha256,
-                        "semantics": semantics,
-                        "shard_identity_sha256": inspection.inherited.shard_identity_sha256,
-                        "source_event_trace_sha256": trace.event_trace_sha256,
-                        "source_kind": "snap-a2q",
-                    },
-                )
-            )
+        )
     if len(records) != 17 or tuple(record.ordinal for record in records) != tuple(range(17)):
         raise AssertionError("formal artifact terminal order changed")
     documents = [record.document() for record in records]
@@ -364,25 +481,29 @@ def inspect_followup_formal_artifact_set(
         inspections=tuple(inspections),
         document_bytes=document_bytes,
         sha256=hashlib.sha256(document_bytes).hexdigest(),
+        campaign_selection_sha256=campaign_selection.sha256,
     )
 
 
 def _admission_document(
     artifact_set: FollowupFormalArtifactSet,
     *,
+    campaign_selection: FollowupCampaignSelection,
     lineage: RouteASyntheticSuiteLineage,
     timing_ledger: FollowupFormalTimingLedger,
 ) -> bytes:
+    replacement_used = campaign_selection.document.get("replacement_attempt_used")
     if (
         type(timing_ledger) is not FollowupFormalTimingLedger
-        or timing_ledger.document.get("formal_campaign_provider_run_id")
-        != lineage.provider_run_id
-        or timing_ledger.document.get("formal_campaign_provider_run_attempt")
-        != lineage.provider_run_attempt
+        or type(campaign_selection) is not FollowupCampaignSelection
+        or artifact_set.campaign_selection_sha256 != campaign_selection.sha256
+        or timing_ledger.document.get("campaign_selection_sha256")
+        != campaign_selection.sha256
+        or timing_ledger.document.get("campaign_id")
+        != campaign_selection.campaign_id
         or timing_ledger.document.get("formal_unit_count") != 17
-        or timing_ledger.document.get("provider_retry_used") is not False
-        or hashlib.sha256(timing_ledger.document_bytes).hexdigest()
-        != timing_ledger.sha256
+        or timing_ledger.document.get("provider_retry_used") is not replacement_used
+        or hashlib.sha256(timing_ledger.document_bytes).hexdigest() != timing_ledger.sha256
     ):
         raise FollowupTerminalAdmissionError(
             "formal timing ledger differs from the admitted campaign"
@@ -391,16 +512,18 @@ def _admission_document(
         {
             "artifacts": [record.document() for record in artifact_set.records],
             "authority": False,
+            "campaign_id": campaign_selection.campaign_id,
+            "campaign_selection_sha256": campaign_selection.sha256,
             "formal_artifact_count": 17,
             "formal_artifact_set_sha256": artifact_set.sha256,
-            "formal_campaign_provider_run_attempt": lineage.provider_run_attempt,
-            "formal_campaign_provider_run_id": lineage.provider_run_id,
             "formal_timing_ledger": timing_ledger.document,
             "formal_timing_ledger_sha256": timing_ledger.sha256,
             "publication_evidence_admitted": True,
-            "replacement_attempt_used": False,
+            "replacement_attempt_used": replacement_used,
             "schema_version": _ADMISSION_SCHEMA,
             "study_id": FOLLOWUP_STUDY_ID,
+            "terminal_provider_run_attempt": lineage.provider_run_attempt,
+            "terminal_provider_run_id": lineage.provider_run_id,
         }
     )
 
@@ -408,6 +531,7 @@ def _admission_document(
 def _identity(
     artifact_set: FollowupFormalArtifactSet,
     *,
+    campaign_selection: FollowupCampaignSelection,
     lineage: RouteASyntheticSuiteLineage,
     timing_ledger: FollowupFormalTimingLedger,
 ) -> tuple[bytes, str]:
@@ -415,15 +539,19 @@ def _identity(
         unit_kind="formal-terminal-admission",
         unit_attempt_ordinal=1,
         scope={
+            "campaign_id": campaign_selection.campaign_id,
+            "campaign_selection_sha256": campaign_selection.sha256,
             "compatibility_receipt_sha256": lineage.compatibility_receipt_sha256,
             "evidence_freeze_S2_sha": lineage.workflow_head_sha,
             "experiment_source_S1_sha": lineage.experiment_source_sha,
             "formal_artifact_count": 17,
             "formal_artifact_set_sha256": artifact_set.sha256,
-            "formal_campaign_provider_run_attempt": lineage.provider_run_attempt,
-            "formal_campaign_provider_run_id": lineage.provider_run_id,
             "formal_timing_ledger_sha256": timing_ledger.sha256,
-            "replacement_attempt_used": False,
+            "replacement_attempt_used": campaign_selection.document[
+                "replacement_attempt_used"
+            ],
+            "terminal_provider_run_attempt": lineage.provider_run_attempt,
+            "terminal_provider_run_id": lineage.provider_run_id,
         },
     )
 
@@ -443,6 +571,7 @@ def inspect_followup_terminal_admission(
     artifact_directory: Path,
     *,
     artifact_set: FollowupFormalArtifactSet,
+    campaign_selection: FollowupCampaignSelection,
     lineage: RouteASyntheticSuiteLineage,
     timing_ledger: FollowupFormalTimingLedger,
 ) -> FollowupTerminalAdmissionInspection:
@@ -460,6 +589,7 @@ def inspect_followup_terminal_admission(
         raise FollowupTerminalAdmissionError("terminal admission checksums changed")
     admission_bytes = _admission_document(
         artifact_set,
+        campaign_selection=campaign_selection,
         lineage=lineage,
         timing_ledger=timing_ledger,
     )
@@ -470,6 +600,7 @@ def inspect_followup_terminal_admission(
         raise FollowupTerminalAdmissionError("terminal admission is not an object")
     unit_bytes, unit_sha256 = _identity(
         artifact_set,
+        campaign_selection=campaign_selection,
         lineage=lineage,
         timing_ledger=timing_ledger,
     )
@@ -507,6 +638,7 @@ def produce_followup_terminal_admission(
     artifact_set: FollowupFormalArtifactSet,
     output_directory: Path,
     *,
+    campaign_selection: FollowupCampaignSelection,
     lineage: RouteASyntheticSuiteLineage,
     timing_ledger: FollowupFormalTimingLedger,
 ) -> FollowupTerminalAdmissionInspection:
@@ -519,11 +651,13 @@ def produce_followup_terminal_admission(
         raise FollowupTerminalAdmissionError("terminal admission set is incomplete")
     admission_bytes = _admission_document(
         artifact_set,
+        campaign_selection=campaign_selection,
         lineage=lineage,
         timing_ledger=timing_ledger,
     )
     unit_bytes, unit_sha256 = _identity(
         artifact_set,
+        campaign_selection=campaign_selection,
         lineage=lineage,
         timing_ledger=timing_ledger,
     )
@@ -555,6 +689,7 @@ def produce_followup_terminal_admission(
         return inspect_followup_terminal_admission(
             output_directory,
             artifact_set=artifact_set,
+            campaign_selection=campaign_selection,
             lineage=lineage,
             timing_ledger=timing_ledger,
         )

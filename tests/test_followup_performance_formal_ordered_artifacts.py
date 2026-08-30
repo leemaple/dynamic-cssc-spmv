@@ -9,7 +9,6 @@ import pytest
 import dynamic_cssc.followup_performance_formal_ordered_artifacts as ordered_artifacts
 import dynamic_cssc.route_a_snap as snap_module
 from dynamic_cssc.followup_performance_formal_ordered_artifacts import (
-    FollowupFormalOrderedArtifactError,
     inspect_followup_formal_ordered_artifact,
     produce_followup_formal_ordered_artifact,
 )
@@ -23,6 +22,12 @@ from dynamic_cssc.route_a_snap import (
 from dynamic_cssc.route_a_synthetic_suite import RouteASyntheticSuiteLineage
 
 SENTINEL_PLAN = b'{"formal_ordered_artifact_sentinel":true}\n'
+BINDING = {
+    "acquisition_provider_binding_sha256": "8" * 64,
+    "campaign_id": "6" * 64,
+    "campaign_run_admission_sha256": "7" * 64,
+    "formal_unit_ordinal": 13,
+}
 SENTINEL_PROFILE = RouteAScientificProfile(
     profile_id="formal-ordered-artifact-sentinel",
     qualification_seed=88_001,
@@ -117,6 +122,7 @@ def test_formal_ordered_wrapper_moves_and_reinspects_payload(
         lineage=lineage,
         scientific_profile=SENTINEL_PROFILE,
         machine_plan_bytes=SENTINEL_PLAN,
+        **BINDING,
     )
     inspected = inspect_followup_formal_ordered_artifact(
         output,
@@ -125,6 +131,7 @@ def test_formal_ordered_wrapper_moves_and_reinspects_payload(
         lineage=lineage,
         scientific_profile=SENTINEL_PROFILE,
         machine_plan_bytes=SENTINEL_PLAN,
+        **BINDING,
     )
 
     assert not payload.exists()
@@ -162,6 +169,7 @@ def test_formal_ordered_phase_and_semantics_have_distinct_identity(
         lineage=lineage,
         scientific_profile=SENTINEL_PROFILE,
         machine_plan_bytes=SENTINEL_PLAN,
+        **BINDING,
     )
     final = produce_followup_formal_ordered_artifact(
         final_payload,
@@ -171,6 +179,7 @@ def test_formal_ordered_phase_and_semantics_have_distinct_identity(
         lineage=lineage,
         scientific_profile=SENTINEL_PROFILE,
         machine_plan_bytes=SENTINEL_PLAN,
+        **BINDING,
     )
 
     assert producer.artifact_name != final.artifact_name
@@ -179,11 +188,20 @@ def test_formal_ordered_phase_and_semantics_have_distinct_identity(
     assert b'"publication_evidence_admitted":false' in final.envelope.inner_bytes
 
 
-def test_formal_ordered_replacement_attempt_fails_closed() -> None:
-    with pytest.raises(FollowupFormalOrderedArtifactError, match="replacement"):
-        ordered_artifacts.expected_followup_formal_ordered_artifact_name(
-            phase="private-handoff",
-            trace=_trace(),
-            lineage=_lineage(),
-            unit_attempt_ordinal=2,
-        )
+def test_formal_ordered_replacement_attempt_has_distinct_identity() -> None:
+    nominal = ordered_artifacts.expected_followup_formal_ordered_artifact_name(
+        phase="private-handoff",
+        trace=_trace(),
+        lineage=_lineage(),
+        **BINDING,
+        unit_attempt_ordinal=1,
+    )
+    replacement = ordered_artifacts.expected_followup_formal_ordered_artifact_name(
+        phase="private-handoff",
+        trace=_trace(),
+        lineage=_lineage(),
+        **BINDING,
+        unit_attempt_ordinal=2,
+    )
+
+    assert replacement != nominal

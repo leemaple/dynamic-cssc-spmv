@@ -11,10 +11,20 @@ from dynamic_cssc.route_a_scientific_profile import RouteAScientificProfile
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github/workflows"
 QUALIFICATION = WORKFLOWS / "followup-performance-qualification.yml"
-FORMAL = WORKFLOWS / "followup-performance-formal.yml"
+FORMAL = WORKFLOWS / "followup-performance-formal-unit.yml"
+TERMINAL = WORKFLOWS / "followup-performance-terminal.yml"
 ANALYSIS = WORKFLOWS / "followup-performance-analysis.yml"
 FORMAL_ACTION = ROOT / ".github/actions/followup-formal-unit/action.yml"
-AUTHORITY_ACTION = ROOT / ".github/actions/followup-provider-authority/action.yml"
+FORMAL_ADMISSION_ACTION = ROOT / ".github/actions/followup-campaign-run-admission/action.yml"
+QUALIFICATION_ADMISSION_ACTION = (
+    ROOT / ".github/actions/followup-qualification-run-admission/action.yml"
+)
+TERMINAL_ADMISSION_ACTION = (
+    ROOT / ".github/actions/followup-terminal-run-admission/action.yml"
+)
+ANALYSIS_ADMISSION_ACTION = (
+    ROOT / ".github/actions/followup-analysis-run-admission/action.yml"
+)
 CONTROL_WORKFLOWS = (
     WORKFLOWS / "followup-performance-ci.yml",
     WORKFLOWS / "followup-performance-pre-s1.yml",
@@ -48,8 +58,9 @@ def test_followup_qualification_is_manual_read_only_and_exactly_once() -> None:
     assert "schedule:" not in workflow
     assert "actions: read" in workflow
     assert "contents: read" in workflow
-    assert workflow.count("contents: write") == 1
+    assert "contents: write" not in workflow
     assert "expected_authority_claim_oid" in workflow
+    assert "./.github/actions/followup-qualification-run-admission" in workflow
     assert "cancel-in-progress: false" in workflow
     assert "rerun" not in workflow.lower()
     assert "continue-on-error" not in workflow
@@ -152,101 +163,110 @@ def test_formal_campaign_is_manual_one_shot_and_contains_no_registered_seed_lite
     assert "cancel-in-progress: false" in workflow
     assert "continue-on-error" not in workflow
     assert all(value not in workflow + action for value in REGISTERED_VALUES)
-    assert "expected_qualification_run_id" in workflow
-    assert "followup-performance-qualification.yml" in workflow
-    assert "    name: formal-launch-admission" in workflow
-    assert "formal-launch-binding" not in workflow
-    assert workflow.count("contents: write") == 1
-    assert "expected_authority_claim_oid" in workflow
+    assert "expected_campaign_id" in workflow
+    assert "expected_reservation_oid" in workflow
+    assert "formal_unit_ordinal" in workflow
+    assert "unit_attempt_ordinal" in workflow
+    assert "contents: write" not in workflow
+    assert "./.github/actions/followup-formal-unit" in workflow
 
 
-def test_provider_authority_uses_one_exact_compare_and_swap_before_science() -> None:
+def test_run_admission_actions_require_external_watch_binding_before_science() -> None:
     qualification = _text(QUALIFICATION)
     formal = _text(FORMAL)
-    action = _text(AUTHORITY_ACTION)
-    for token in (
-        "beforeOid:$before",
-        "afterOid:$after",
-        "force:false",
-        "test \"$GITHUB_RUN_ATTEMPT\" = 1",
-        "dynamic-cssc-followup-performance-qualification-authority-v1",
-        "dynamic-cssc-followup-performance-formal-authority-v1",
-        "dynamic-cssc-followup-performance-2026-08-30",
+    terminal = _text(TERMINAL)
+    analysis = _text(ANALYSIS)
+    qualification_action = _text(QUALIFICATION_ADMISSION_ACTION)
+    formal_action = _text(FORMAL_ADMISSION_ACTION)
+    terminal_action = _text(TERMINAL_ADMISSION_ACTION)
+    analysis_action = _text(ANALYSIS_ADMISSION_ACTION)
+    for action, authority_ref, verifier in (
+        (
+            qualification_action,
+            "dynamic-cssc-followup-performance-qualification-authority-v1",
+            "scripts/verify_followup_qualification_run_admission.py",
+        ),
+        (
+            formal_action,
+            "dynamic-cssc-followup-performance-formal-authority-v1",
+            "scripts/verify_followup_campaign_run_admission.py",
+        ),
+        (
+            terminal_action,
+            "dynamic-cssc-followup-performance-formal-terminal-v1",
+            "scripts/verify_followup_terminal_run_admission.py",
+        ),
+        (
+            analysis_action,
+            "dynamic-cssc-followup-performance-analysis-v1",
+            "scripts/verify_followup_analysis_run_admission.py",
+        ),
     ):
-        assert token in action
-    assert qualification.index("Bind this sole provider run") < qualification.index(
+        assert "test \"$GITHUB_RUN_ATTEMPT\" = 1" in action
+        assert authority_ref in action
+        assert verifier in action
+        assert "updateRefs" not in action
+        assert "contents: write" not in action
+    assert qualification.index(
+        "Require the external mandatory watcher before registered-seed execution"
+    ) < qualification.index(
         "Run q1 simulator producer"
     )
-    assert formal.index("Bind this sole formal provider run") < formal.index(
-        "formal-00-acquisition-producer"
+    assert formal.index("Check out exact S2 for provider admission") < formal.index(
+        "Execute the bound producer"
+    )
+    assert terminal.index("Verify terminal claim and externally armed watcher") < (
+        terminal.index("Independently admit the exact seventeen-unit set")
+    )
+    assert analysis.index("Verify analysis claim and externally armed watcher") < (
+        analysis.index("Reinspect evidence and produce bounded descriptive analysis")
     )
 
 
-def test_formal_campaign_has_exact_strictly_serial_thirty_four_unit_jobs() -> None:
+def test_formal_unit_workflow_is_one_bound_two_job_run_for_all_seventeen_specs() -> None:
     workflow = _text(FORMAL)
     specs = followup_formal_unit_specs(SENTINEL_PROFILE)
-    expected_names = [
-        name
-        for spec in specs
-        for name in (spec.producer_job_name, spec.guard_job_name)
-    ]
-    assert re.findall(
-        r"(?m)^    name: (formal-[0-9]{2}[^\n]+(?:producer|independent-replay-and-guard))$",
-        workflow,
-    ) == expected_names
-    for spec in specs:
-        producer = f"u{spec.ordinal:02d}_producer"
-        guard = f"u{spec.ordinal:02d}_guard"
-        predecessor = "launch" if spec.ordinal == 0 else f"u{spec.ordinal - 1:02d}_guard"
-        producer_needs = (
-            f"[{predecessor}, u00_guard]"
-            if spec.unit_kind == "formal-ordered-event"
-            else predecessor
-        )
-        guard_needs = (
-            f"[{producer}, u00_guard]"
-            if spec.unit_kind == "formal-ordered-event"
-            else producer
-        )
-        producer_match = re.search(
-            rf"(?ms)^  {producer}:\n(.*?)(?=^  \S|\Z)",
-            workflow,
-        )
-        guard_match = re.search(
-            rf"(?ms)^  {guard}:\n(.*?)(?=^  \S|\Z)",
-            workflow,
-        )
-        assert producer_match is not None
-        assert guard_match is not None
-        producer_block = producer_match.group(1)
-        guard_block = guard_match.group(1)
-        assert f"    needs: {producer_needs}" in producer_block
-        assert f"    needs: {guard_needs}" in guard_block
-        assert producer_block.count(f"    timeout-minutes: {spec.reservation_minutes}") == 1
-        assert guard_block.count(f"    timeout-minutes: {spec.reservation_minutes}") == 1
+    assert len(specs) == 17
+    assert tuple(spec.ordinal for spec in specs) == tuple(range(17))
+    assert re.findall(r"(?m)^  ([a-z]+):$", workflow) == ["producer", "guard"]
+    assert workflow.count(
+        "    timeout-minutes: ${{ inputs.expected_reservation_minutes }}"
+    ) == 2
+    assert max(spec.reservation_minutes for spec in specs) == 50
+    assert "    needs: producer" in workflow
+    assert workflow.count("expected_reservation_oid") >= 3
+    assert workflow.count("expected_reservation_minutes") >= 3
+    assert workflow.count("expected_job_token") >= 3
+    assert workflow.count("unit_attempt_ordinal") >= 3
 
 
-def test_formal_units_share_one_pinned_exact_s1_action_and_terminal_closure() -> None:
+def test_formal_unit_phases_share_one_pinned_exact_s1_action() -> None:
     workflow = _text(FORMAL)
     action = _text(FORMAL_ACTION)
-    assert workflow.count(CHECKOUT) == 37
+    assert workflow.count(CHECKOUT) == 2
+    assert action.count(CHECKOUT) == 1
     assert action.count(SETUP) == 1
     assert action.count(UPLOAD) == 1
     assert action.count(DOWNLOAD) == 2
     assert "scripts/run_followup_performance_formal_unit.py" in action
+    assert "./.github/actions/followup-formal-provider-deadline" in action
+    assert "scripts/verify_followup_formal_phase_deadline.py" in _text(
+        ROOT / ".github/actions/followup-formal-provider-deadline/action.yml"
+    )
+    assert action.count("timeout --signal=TERM --kill-after=10s") == 3
+    assert "checkpoint: before-formal-execution" in action
+    assert "checkpoint: before-phase-artifact-upload" in action
+    assert "checkpoint: after-phase-artifact-upload" in action
     assert "scripts/verify_followup_performance_lineage.py" in action
     assert "phase: private-handoff" in workflow
     assert "phase: guarded-final" in workflow
-    assert workflow.count("retention-days: '1'") == 17
-    assert workflow.count("retention-days: '90'") == 17
-    assert "name: formal-terminal-admission" in workflow
-    assert "scripts/run_followup_performance_terminal_admission.py" in workflow
-    assert "name: formal-aggregate" in workflow
-    assert "scripts/run_followup_performance_aggregate.py" in workflow
-    assert workflow.count("Download final formal unit ") == 34
+    assert "retention-days: '1'" in workflow
+    assert "retention-days: '90'" in workflow
+    assert "formal-terminal-admission" not in workflow
+    assert "formal-aggregate" not in workflow
 
 
-def test_analysis_is_manual_exact_s3_and_reinspects_one_successful_formal_run() -> None:
+def test_analysis_is_manual_exact_s3_and_rebinds_terminal_campaign_evidence() -> None:
     workflow = _text(ANALYSIS)
     assert re.search(r"(?m)^on:\n  workflow_dispatch:\n", workflow)
     assert "push:" not in workflow
@@ -257,13 +277,20 @@ def test_analysis_is_manual_exact_s3_and_reinspects_one_successful_formal_run() 
     assert "cancel-in-progress: false" in workflow
     assert CHECKOUT in workflow
     assert SETUP in workflow
-    assert DOWNLOAD in workflow
+    assert DOWNLOAD not in workflow
     assert UPLOAD in workflow
     assert all(value not in workflow for value in REGISTERED_VALUES)
     assert "ref: ${{ inputs.expected_s3_git_sha }}" in workflow
+    assert "expected_analysis_claim_oid" in workflow
+    assert "expected_campaign_id" in workflow
+    assert "./.github/actions/followup-analysis-run-admission" in workflow
     assert "scripts/verify_followup_performance_analysis_lineage.py" in workflow
-    assert ".github/workflows/followup-performance-formal.yml" in workflow
+    assert ".github/workflows/followup-performance-formal.yml" not in workflow
     assert "scripts/prepare_followup_performance_analysis_inputs.py" in workflow
     assert "scripts/run_followup_performance_analysis.py" in workflow
-    assert "merge-multiple: false" in workflow
+    assert "--campaign-evidence-root" in workflow
+    assert "--terminal-provider-run-id" in workflow
+    assert "timeout --signal=TERM --kill-after=10s" in workflow
+    assert "FOLLOWUP_ANALYSIS_PHASE_RECEIPT_V1=" in workflow
+    assert "timeout-minutes: 30" in workflow
     assert "retention-days: 90" in workflow

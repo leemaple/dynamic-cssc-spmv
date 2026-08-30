@@ -27,9 +27,17 @@ def _arguments(tmp_path: Path, *, phase: str) -> argparse.Namespace:
         compatibility_receipt_sha256="3" * 64,
         provider_run_id=202,
         provider_run_attempt=1,
+        campaign_id="4" * 64,
+        campaign_run_admission_sha256="5" * 64,
+        formal_unit_ordinal=13,
+        acquisition_provider_run_id=201,
+        acquisition_provider_artifact_id=301,
+        acquisition_provider_artifact_digest=f"sha256:{'7' * 64}",
+        acquisition_campaign_run_admission_sha256="6" * 64,
         partition=1,
         semantics="T2",
         unit_attempt_ordinal=1,
+        acquisition_unit_attempt_ordinal=1,
         scratch_root=scratch,
         output_directory=output_parent / "artifact",
         acquisition_artifact_directory=acquisition,
@@ -61,6 +69,11 @@ def common_mocks(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         cli_module,
         "inspect_followup_acquisition_artifact",
         lambda *_args, **_kwargs: SimpleNamespace(traces=(trace,)),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "build_followup_acquisition_provider_binding",
+        lambda *_args, **_kwargs: SimpleNamespace(sha256="8" * 64),
     )
     return SimpleNamespace(trace=trace, scientific=scientific)
 

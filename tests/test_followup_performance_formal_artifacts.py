@@ -8,7 +8,6 @@ import pytest
 
 import dynamic_cssc.followup_performance_formal_artifacts as formal_artifacts
 from dynamic_cssc.followup_performance_formal_artifacts import (
-    FollowupFormalArtifactError,
     inspect_followup_formal_synthetic_artifact,
     produce_followup_formal_synthetic_artifact,
 )
@@ -20,6 +19,11 @@ from dynamic_cssc.route_a_synthetic_suite import (
 from dynamic_cssc.route_a_workloads import generate_route_a_formal_trace
 
 SENTINEL_PLAN = b'{"formal_artifact_sentinel":true}\n'
+CAMPAIGN = {
+    "campaign_id": "6" * 64,
+    "campaign_run_admission_sha256": "7" * 64,
+    "formal_unit_ordinal": 7,
+}
 SENTINEL_PROFILE = RouteAScientificProfile(
     profile_id="formal-artifact-sentinel",
     qualification_seed=77_001,
@@ -77,6 +81,7 @@ def test_formal_synthetic_wrapper_moves_and_reinspects_exact_payload(
         lineage=lineage,
         scientific_profile=profile,
         machine_plan_bytes=scientific.machine_plan_bytes,
+        **CAMPAIGN,
     )
     inspected = inspect_followup_formal_synthetic_artifact(
         output,
@@ -85,6 +90,7 @@ def test_formal_synthetic_wrapper_moves_and_reinspects_exact_payload(
         lineage=lineage,
         scientific_profile=profile,
         machine_plan_bytes=scientific.machine_plan_bytes,
+        **CAMPAIGN,
     )
 
     assert not payload.exists()
@@ -124,6 +130,7 @@ def test_guarded_final_has_distinct_identity_but_no_terminal_admission(
         lineage=lineage,
         scientific_profile=profile,
         machine_plan_bytes=scientific.machine_plan_bytes,
+        **CAMPAIGN,
     )
     final = produce_followup_formal_synthetic_artifact(
         final_payload,
@@ -133,6 +140,7 @@ def test_guarded_final_has_distinct_identity_but_no_terminal_admission(
         lineage=lineage,
         scientific_profile=profile,
         machine_plan_bytes=scientific.machine_plan_bytes,
+        **CAMPAIGN,
     )
 
     assert producer.artifact_name != final.artifact_name
@@ -142,14 +150,34 @@ def test_guarded_final_has_distinct_identity_but_no_terminal_admission(
     assert final.envelope.document["authority"] is False
 
 
-def test_formal_synthetic_replacement_attempt_fails_closed() -> None:
+def test_formal_synthetic_replacement_gets_distinct_outer_and_inherited_identity() -> None:
     scientific, profile, lineage, trace = _scope()
+    nominal = formal_artifacts.expected_followup_formal_synthetic_artifact_name(
+        phase="private-handoff",
+        trace=trace,
+        lineage=lineage,
+        scientific_profile=profile,
+        **CAMPAIGN,
+        unit_attempt_ordinal=1,
+    )
+    replacement = formal_artifacts.expected_followup_formal_synthetic_artifact_name(
+        phase="private-handoff",
+        trace=trace,
+        lineage=lineage,
+        scientific_profile=profile,
+        **CAMPAIGN,
+        unit_attempt_ordinal=2,
+    )
 
-    with pytest.raises(FollowupFormalArtifactError, match="replacement"):
-        formal_artifacts.expected_followup_formal_synthetic_artifact_name(
-            phase="private-handoff",
-            trace=trace,
-            lineage=lineage,
-            scientific_profile=profile,
-            unit_attempt_ordinal=2,
-        )
+    assert replacement != nominal
+    assert route_a_synthetic_shard_identity(
+        trace,
+        lineage,
+        unit_attempt_ordinal=1,
+        scientific_profile=profile,
+    ) != route_a_synthetic_shard_identity(
+        trace,
+        lineage,
+        unit_attempt_ordinal=0,
+        scientific_profile=profile,
+    )

@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 
 from dynamic_cssc.followup_performance_contract import (
+    followup_inherited_unit_attempt_ordinal,
     materialize_followup_scientific_plan,
 )
 from dynamic_cssc.followup_performance_formal_artifacts import (
@@ -67,9 +68,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--compatibility-receipt-sha256", required=True)
     parser.add_argument("--provider-run-id", required=True, type=int)
     parser.add_argument("--provider-run-attempt", required=True, type=int, choices=(1,))
+    parser.add_argument("--campaign-id", required=True)
+    parser.add_argument("--campaign-run-admission-sha256", required=True)
+    parser.add_argument("--formal-unit-ordinal", required=True, type=int, choices=range(17))
     parser.add_argument("--scale", required=True, choices=("S", "M"))
     parser.add_argument("--formal-seed", required=True, type=int)
-    parser.add_argument("--unit-attempt-ordinal", type=int, default=1, choices=(1,))
+    parser.add_argument("--unit-attempt-ordinal", type=int, default=1, choices=(1, 2))
     parser.add_argument("--scratch-root", required=True, type=Path)
     parser.add_argument("--output-directory", required=True, type=Path)
     parser.add_argument("--producer-artifact-directory", type=Path)
@@ -109,6 +113,10 @@ def _main(arguments: argparse.Namespace) -> int:
         provider_run_id=arguments.provider_run_id,
         provider_run_attempt=arguments.provider_run_attempt,
     )
+    inherited_attempt = followup_inherited_unit_attempt_ordinal(
+        unit_kind="formal-synthetic",
+        unit_attempt_ordinal=arguments.unit_attempt_ordinal,
+    )
     payload_path = arguments.output_directory.parent / (
         f".{arguments.output_directory.name}-payload-{os.getpid()}.zip"
     )
@@ -124,6 +132,7 @@ def _main(arguments: argparse.Namespace) -> int:
                 machine_plan_bytes=scientific.machine_plan_bytes,
                 scratch_root=arguments.scratch_root,
                 output_path=payload_path,
+                unit_attempt_ordinal=inherited_attempt,
                 scientific_profile=profile,
             )
         else:
@@ -136,6 +145,11 @@ def _main(arguments: argparse.Namespace) -> int:
                 lineage=lineage,
                 scientific_profile=profile,
                 machine_plan_bytes=scientific.machine_plan_bytes,
+                campaign_id=arguments.campaign_id,
+                campaign_run_admission_sha256=(
+                    arguments.campaign_run_admission_sha256
+                ),
+                formal_unit_ordinal=arguments.formal_unit_ordinal,
                 unit_attempt_ordinal=arguments.unit_attempt_ordinal,
             )
             replay_and_guard_route_a_synthetic_suite(
@@ -145,6 +159,7 @@ def _main(arguments: argparse.Namespace) -> int:
                 producer_archive_path=producer.payload_path,
                 scratch_root=arguments.scratch_root,
                 output_path=payload_path,
+                unit_attempt_ordinal=inherited_attempt,
                 scientific_profile=profile,
             )
         inspection = produce_followup_formal_synthetic_artifact(
@@ -155,6 +170,9 @@ def _main(arguments: argparse.Namespace) -> int:
             lineage=lineage,
             scientific_profile=profile,
             machine_plan_bytes=scientific.machine_plan_bytes,
+            campaign_id=arguments.campaign_id,
+            campaign_run_admission_sha256=arguments.campaign_run_admission_sha256,
+            formal_unit_ordinal=arguments.formal_unit_ordinal,
             unit_attempt_ordinal=arguments.unit_attempt_ordinal,
         )
     finally:

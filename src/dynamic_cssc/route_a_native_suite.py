@@ -889,6 +889,7 @@ def compile_route_a_native_formal_case(
     shard = route_a_synthetic_shard_identity(
         trace,
         lineage,
+        unit_attempt_ordinal=unit_attempt_ordinal,
         scientific_profile=scientific_profile,
     )
     if machine_plan_bytes is None:

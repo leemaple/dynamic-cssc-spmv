@@ -87,9 +87,11 @@ def _aggregate_document(
         or len(artifact_set.inspections) != 17
         or terminal.formal_artifact_set_sha256 != artifact_set.sha256
         or terminal.document.get("publication_evidence_admitted") is not True
-        or terminal.document.get("formal_campaign_provider_run_id")
+        or terminal.document.get("campaign_selection_sha256")
+        != artifact_set.campaign_selection_sha256
+        or terminal.document.get("terminal_provider_run_id")
         != lineage.provider_run_id
-        or terminal.document.get("formal_campaign_provider_run_attempt")
+        or terminal.document.get("terminal_provider_run_attempt")
         != lineage.provider_run_attempt
     ):
         raise FollowupAggregateError("aggregate lacks one exact terminal admission")
@@ -182,12 +184,12 @@ def _aggregate_document(
                 "unit_identity_sha256": artifact_set.records[0].unit_identity_sha256,
             },
             "analysis_authority": False,
+            "campaign_id": terminal.document["campaign_id"],
+            "campaign_selection_sha256": artifact_set.campaign_selection_sha256,
             "formal_artifact_set_sha256": artifact_set.sha256,
             "formal_artifacts": [
                 record.document() for record in artifact_set.records
             ],
-            "formal_campaign_provider_run_attempt": lineage.provider_run_attempt,
-            "formal_campaign_provider_run_id": lineage.provider_run_id,
             "native_cases": native_rows,
             "publication_evidence_admitted": True,
             "schema_version": _AGGREGATE_SCHEMA,
@@ -196,6 +198,8 @@ def _aggregate_document(
             "terminal_admission_artifact_name": terminal.artifact_name,
             "terminal_admission_envelope_sha256": terminal.envelope.sha256,
             "terminal_admission_unit_identity_sha256": terminal.unit_identity_sha256,
+            "terminal_provider_run_attempt": lineage.provider_run_attempt,
+            "terminal_provider_run_id": lineage.provider_run_id,
         }
     )
 
@@ -212,14 +216,16 @@ def _identity(
         unit_attempt_ordinal=1,
         scope={
             "aggregate_sha256": hashlib.sha256(aggregate_bytes).hexdigest(),
+            "campaign_id": terminal.document["campaign_id"],
+            "campaign_selection_sha256": artifact_set.campaign_selection_sha256,
             "compatibility_receipt_sha256": lineage.compatibility_receipt_sha256,
             "evidence_freeze_S2_sha": lineage.workflow_head_sha,
             "experiment_source_S1_sha": lineage.experiment_source_sha,
             "formal_artifact_set_sha256": artifact_set.sha256,
-            "formal_campaign_provider_run_attempt": lineage.provider_run_attempt,
-            "formal_campaign_provider_run_id": lineage.provider_run_id,
             "terminal_admission_envelope_sha256": terminal.envelope.sha256,
             "terminal_admission_unit_identity_sha256": terminal.unit_identity_sha256,
+            "terminal_provider_run_attempt": lineage.provider_run_attempt,
+            "terminal_provider_run_id": lineage.provider_run_id,
         },
     )
 

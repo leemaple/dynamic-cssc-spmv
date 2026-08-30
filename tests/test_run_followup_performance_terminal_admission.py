@@ -16,13 +16,10 @@ def test_terminal_cli_binds_timing_and_artifact_set_before_admission(
 ) -> None:
     repository = (tmp_path / "repo").resolve()
     artifacts = (tmp_path / "artifacts").resolve()
+    campaign_root = (tmp_path / "campaign").resolve()
     output_parent = (tmp_path / "output").resolve()
-    for directory in (repository, artifacts, output_parent):
+    for directory in (repository, artifacts, campaign_root, output_parent):
         directory.mkdir()
-    run_json = (tmp_path / "run.json").resolve()
-    jobs_json = (tmp_path / "jobs.json").resolve()
-    run_json.write_bytes(b'{"run":true}\n')
-    jobs_json.write_bytes(b'{"jobs":true}\n')
     output = output_parent / "terminal"
     arguments = argparse.Namespace(
         repository_root=repository,
@@ -32,9 +29,8 @@ def test_terminal_cli_binds_timing_and_artifact_set_before_admission(
         provider_run_id=505,
         provider_run_attempt=1,
         expected_head_branch="main",
+        campaign_evidence_root=campaign_root,
         formal_artifact_root=artifacts,
-        run_json=run_json,
-        jobs_json=jobs_json,
         output_directory=output,
     )
     scientific = SimpleNamespace(
@@ -42,6 +38,14 @@ def test_terminal_cli_binds_timing_and_artifact_set_before_admission(
         machine_plan_bytes=b"sentinel-plan\n",
     )
     timing = SimpleNamespace(sha256="4" * 64)
+    selection = SimpleNamespace(
+        document={
+            "compatibility_receipt_sha256": "3" * 64,
+            "evidence_freeze_S2_sha": "2" * 40,
+            "experiment_source_S1_sha": "1" * 40,
+        }
+    )
+    campaign = SimpleNamespace(selection=selection, timing=timing)
     artifact_set = SimpleNamespace(sha256="5" * 64)
     observed: dict[str, object] = {}
     monkeypatch.setattr(cli_module, "_verify_exact_checkout", lambda *_args: None)
@@ -57,9 +61,9 @@ def test_terminal_cli_binds_timing_and_artifact_set_before_admission(
     )
     monkeypatch.setattr(
         cli_module,
-        "inspect_followup_formal_timing_prefix",
-        lambda run, jobs, **_kwargs: (
-            observed.update({"jobs": jobs, "run": run}) or timing
+        "inspect_followup_campaign_evidence_bundle",
+        lambda path, **_kwargs: (
+            observed.update({"campaign_root": path}) or campaign
         ),
     )
     monkeypatch.setattr(
@@ -82,8 +86,7 @@ def test_terminal_cli_binds_timing_and_artifact_set_before_admission(
     monkeypatch.setattr(cli_module, "produce_followup_terminal_admission", produce)
 
     assert cli_module._main(arguments) == 0
-    assert observed["run"] == b'{"run":true}\n'
-    assert observed["jobs"] == b'{"jobs":true}\n'
+    assert observed["campaign_root"] == campaign_root
     assert observed["artifact_set"] is artifact_set
     assert observed["timing"] is timing
     assert observed["target"] == output

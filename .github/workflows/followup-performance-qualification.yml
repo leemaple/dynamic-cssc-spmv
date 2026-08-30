@@ -43,10 +43,9 @@ jobs:
     timeout-minutes: 45
     permissions:
       actions: read
-      contents: write
+      contents: read
     outputs:
       artifact_name: ${{ steps.run.outputs.artifact_name }}
-      authority_binding_oid: ${{ steps.authority.outputs.binding_oid }}
     steps:
       - &validate-identities
         name: Validate closed dispatch identities before checkout
@@ -61,11 +60,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ inputs.expected_s2_git_sha }}
-      - name: Bind this sole provider run before registered-seed execution
-        id: authority
-        uses: ./.github/actions/followup-provider-authority
+      - name: Require the external mandatory watcher before registered-seed execution
+        id: admission
+        uses: ./.github/actions/followup-qualification-run-admission
         with:
-          authority-kind: qualification
           expected-claim-oid: ${{ inputs.expected_authority_claim_oid }}
           expected-s1: ${{ inputs.expected_s1_git_sha }}
           expected-s2: ${{ inputs.expected_s2_git_sha }}

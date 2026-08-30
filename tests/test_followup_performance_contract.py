@@ -19,6 +19,7 @@ from dynamic_cssc.followup_performance_contract import (
     admit_followup_control_inner_payload,
     build_followup_unit_identity,
     followup_artifact_name,
+    followup_inherited_unit_attempt_ordinal,
     inspect_followup_outer_envelope,
     inspect_followup_stage1,
     materialize_followup_scientific_plan,
@@ -236,6 +237,27 @@ def test_unit_attempt_domain_matches_the_single_formal_replacement_rule() -> Non
             unit_kind="formal-terminal-admission",
             unit_attempt_ordinal=2,
             scope={"sentinel": 99},
+        )
+
+
+def test_outer_attempts_map_once_onto_the_inherited_scientific_domain() -> None:
+    assert followup_inherited_unit_attempt_ordinal(
+        unit_kind="formal-acquisition",
+        unit_attempt_ordinal=1,
+    ) == 0
+    assert followup_inherited_unit_attempt_ordinal(
+        unit_kind="formal-synthetic",
+        unit_attempt_ordinal=2,
+    ) == 1
+    assert followup_inherited_unit_attempt_ordinal(
+        unit_kind="control-ci",
+        unit_attempt_ordinal=1,
+    ) == 0
+
+    with pytest.raises(FollowupContractError, match="retry domain"):
+        followup_inherited_unit_attempt_ordinal(
+            unit_kind="formal-terminal-admission",
+            unit_attempt_ordinal=2,
         )
 
 

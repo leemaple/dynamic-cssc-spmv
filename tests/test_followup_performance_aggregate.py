@@ -69,6 +69,12 @@ def _record(ordinal: int, kind: str) -> FollowupFormalArtifactRecord:
         unit_identity_sha256=f"{ordinal + 1:064x}",
         envelope_sha256=f"{ordinal + 101:064x}",
         inner_sha256=f"{ordinal + 201:064x}",
+        artifact_id=1_000 + ordinal,
+        artifact_provider_digest=f"sha256:{ordinal + 301:064x}",
+        campaign_run_admission_sha256=f"{ordinal + 401:064x}",
+        committed_state_sha256=f"{ordinal + 501:064x}",
+        provider_run_id=2_000 + ordinal,
+        unit_attempt_ordinal=1,
         scope={"ordinal": ordinal},
     )
 
@@ -146,6 +152,7 @@ def _artifact_set(tmp_path: Path) -> FollowupFormalArtifactSet:
         inspections=tuple(inspections),
         document_bytes=document_bytes,
         sha256=hashlib.sha256(document_bytes).hexdigest(),
+        campaign_selection_sha256="a" * 64,
     )
 
 
@@ -158,9 +165,11 @@ def _terminal(artifact_set: FollowupFormalArtifactSet) -> FollowupTerminalAdmiss
         unit_identity_sha256="6" * 64,
         envelope=_envelope("terminal"),
         document={
-            "formal_campaign_provider_run_attempt": 1,
-            "formal_campaign_provider_run_id": 303,
+            "campaign_id": "b" * 64,
+            "campaign_selection_sha256": "a" * 64,
             "publication_evidence_admitted": True,
+            "terminal_provider_run_attempt": 1,
+            "terminal_provider_run_id": 303,
         },
     )
 

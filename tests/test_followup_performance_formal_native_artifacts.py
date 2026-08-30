@@ -8,7 +8,6 @@ import pytest
 
 import dynamic_cssc.followup_performance_formal_native_artifacts as native_artifacts
 from dynamic_cssc.followup_performance_formal_native_artifacts import (
-    FollowupFormalNativeArtifactError,
     inspect_followup_formal_native_artifact,
     produce_followup_formal_native_artifact,
 )
@@ -24,6 +23,11 @@ PROFILE = RouteAScientificProfile(
     query_vector_seed=8_800_102,
     machine_plan_sha256=hashlib.sha256(PLAN_BYTES).hexdigest(),
 )
+BINDING = {
+    "campaign_id": "6" * 64,
+    "campaign_run_admission_sha256": "7" * 64,
+    "formal_unit_ordinal": 1,
+}
 
 
 def _lineage() -> RouteASyntheticSuiteLineage:
@@ -69,11 +73,13 @@ def test_native_wrapper_moves_tree_and_binds_outer_to_inner_attempt_mapping(
         source,
         output,
         phase="private-handoff",
+        **BINDING,
         **scope,
     )
     inspected = inspect_followup_formal_native_artifact(
         output,
         phase="private-handoff",
+        **BINDING,
         **scope,
     )
 
@@ -88,7 +94,7 @@ def test_native_wrapper_moves_tree_and_binds_outer_to_inner_attempt_mapping(
     assert inspected.envelope.document["authority"] is False
 
 
-def test_native_guarded_case_is_candidate_only_and_replacement_fails_closed(
+def test_native_guarded_case_is_candidate_only_and_replacement_is_distinct(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -131,6 +137,7 @@ def test_native_guarded_case_is_candidate_only_and_replacement_fails_closed(
         producer_source,
         producer_output,
         phase="private-handoff",
+        **BINDING,
         **scope,
     )
 
@@ -139,6 +146,7 @@ def test_native_guarded_case_is_candidate_only_and_replacement_fails_closed(
         (tmp_path / "output").resolve(),
         phase="guarded-final",
         producer_artifact_directory=producer_output,
+        **BINDING,
         **scope,
     )
 
@@ -150,9 +158,20 @@ def test_native_guarded_case_is_candidate_only_and_replacement_fails_closed(
         inspection.producer_observations_bytes
     )
     assert b'"serialized_package_bytes":' in inspection.producer_observations_bytes
-    with pytest.raises(FollowupFormalNativeArtifactError, match="replacement"):
-        native_artifacts.expected_followup_formal_native_artifact_name(
-            phase="private-handoff",
-            unit_attempt_ordinal=2,
-            **scope,
-        )
+    nominal = native_artifacts.expected_followup_formal_native_artifact_name(
+        phase="private-handoff",
+        unit_attempt_ordinal=1,
+        **BINDING,
+        **scope,
+    )
+    replacement = native_artifacts.expected_followup_formal_native_artifact_name(
+        phase="private-handoff",
+        unit_attempt_ordinal=2,
+        **BINDING,
+        **scope,
+    )
+    assert replacement != nominal
+    assert native_artifacts._case(
+        unit_attempt_ordinal=2,
+        **scope,
+    ).unit_attempt_ordinal == 1

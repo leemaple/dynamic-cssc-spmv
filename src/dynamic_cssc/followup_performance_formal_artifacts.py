@@ -17,6 +17,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from dynamic_cssc.followup_performance_campaign import (
+    followup_campaign_artifact_binding_scope,
+)
 from dynamic_cssc.followup_performance_contract import (
     FOLLOWUP_STUDY_ID,
     FollowupContractError,
@@ -26,6 +29,7 @@ from dynamic_cssc.followup_performance_contract import (
     _parse_ascii_json,
     build_followup_unit_identity,
     followup_artifact_name,
+    followup_inherited_unit_attempt_ordinal,
     inspect_followup_outer_envelope,
     seal_followup_inner_payload,
 )
@@ -201,6 +205,10 @@ def _scope(
     trace: RouteASyntheticTrace,
     lineage: RouteASyntheticSuiteLineage,
     scientific_profile: RouteAScientificProfile,
+    inherited_unit_attempt_ordinal: int,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
 ) -> tuple[dict[str, object], str]:
     trace = validate_route_a_synthetic_trace(
         trace,
@@ -213,24 +221,31 @@ def _scope(
     shard_identity = route_a_synthetic_shard_identity(
         trace,
         lineage,
+        unit_attempt_ordinal=inherited_unit_attempt_ordinal,
         scientific_profile=scientific_profile,
     )
-    return (
-        {
-            "artifact_phase": phase,
-            "compatibility_receipt_sha256": lineage.compatibility_receipt_sha256,
-            "evidence_freeze_S2_sha": lineage.workflow_head_sha,
-            "experiment_source_S1_sha": lineage.experiment_source_sha,
-            "formal_seed": trace.formal_seed,
-            "provider_run_attempt": lineage.provider_run_attempt,
-            "provider_run_id": lineage.provider_run_id,
-            "scale": trace.scale,
-            "shard_identity_sha256": shard_identity,
-            "source_event_trace_sha256": trace.event_trace_sha256,
-            "source_kind": "synthetic",
-        },
-        shard_identity,
+    scope = {
+        "artifact_phase": phase,
+        "compatibility_receipt_sha256": lineage.compatibility_receipt_sha256,
+        "evidence_freeze_S2_sha": lineage.workflow_head_sha,
+        "experiment_source_S1_sha": lineage.experiment_source_sha,
+        "formal_seed": trace.formal_seed,
+        "inherited_unit_attempt_ordinal": inherited_unit_attempt_ordinal,
+        "provider_run_attempt": lineage.provider_run_attempt,
+        "provider_run_id": lineage.provider_run_id,
+        "scale": trace.scale,
+        "shard_identity_sha256": shard_identity,
+        "source_event_trace_sha256": trace.event_trace_sha256,
+        "source_kind": "synthetic",
+    }
+    scope.update(
+        followup_campaign_artifact_binding_scope(
+            campaign_id=campaign_id,
+            campaign_run_admission_sha256=campaign_run_admission_sha256,
+            formal_unit_ordinal=formal_unit_ordinal,
+        )
     )
+    return scope, shard_identity
 
 
 def _identity(
@@ -240,16 +255,23 @@ def _identity(
     lineage: RouteASyntheticSuiteLineage,
     scientific_profile: RouteAScientificProfile,
     unit_attempt_ordinal: int,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
 ) -> tuple[bytes, str, str]:
-    if type(unit_attempt_ordinal) is not int or unit_attempt_ordinal != 1:
-        raise FollowupFormalArtifactError(
-            "formal synthetic replacement is unsupported and fails closed"
-        )
+    inherited_attempt = followup_inherited_unit_attempt_ordinal(
+        unit_kind="formal-synthetic",
+        unit_attempt_ordinal=unit_attempt_ordinal,
+    )
     scope, shard_identity = _scope(
         phase=phase,
         trace=trace,
         lineage=lineage,
         scientific_profile=scientific_profile,
+        inherited_unit_attempt_ordinal=inherited_attempt,
+        campaign_id=campaign_id,
+        campaign_run_admission_sha256=campaign_run_admission_sha256,
+        formal_unit_ordinal=formal_unit_ordinal,
     )
     unit_bytes, unit_sha256 = build_followup_unit_identity(
         unit_kind="formal-synthetic",
@@ -265,6 +287,9 @@ def expected_followup_formal_synthetic_artifact_name(
     trace: RouteASyntheticTrace,
     lineage: RouteASyntheticSuiteLineage,
     scientific_profile: RouteAScientificProfile,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
     unit_attempt_ordinal: int = 1,
 ) -> str:
     """Derive the exact provider name without executing one scientific cell."""
@@ -275,6 +300,9 @@ def expected_followup_formal_synthetic_artifact_name(
         lineage=lineage,
         scientific_profile=scientific_profile,
         unit_attempt_ordinal=unit_attempt_ordinal,
+        campaign_id=campaign_id,
+        campaign_run_admission_sha256=campaign_run_admission_sha256,
+        formal_unit_ordinal=formal_unit_ordinal,
     )
     return followup_artifact_name(
         unit_kind="formal-synthetic",
@@ -291,6 +319,7 @@ def _inspect_inherited(
     lineage: RouteASyntheticSuiteLineage,
     scientific_profile: RouteAScientificProfile,
     machine_plan_bytes: bytes,
+    inherited_unit_attempt_ordinal: int,
 ) -> RouteASyntheticSuiteProducerInspection | RouteASyntheticSuiteReplayInspection:
     if phase == "private-handoff":
         return inspect_route_a_synthetic_suite_handoff(
@@ -298,6 +327,7 @@ def _inspect_inherited(
             expected_trace=trace,
             expected_lineage=lineage,
             machine_plan_bytes=machine_plan_bytes,
+            unit_attempt_ordinal=inherited_unit_attempt_ordinal,
             scientific_profile=scientific_profile,
         )
     return inspect_route_a_synthetic_suite_replay(
@@ -305,6 +335,7 @@ def _inspect_inherited(
         expected_trace=trace,
         expected_lineage=lineage,
         machine_plan_bytes=machine_plan_bytes,
+        unit_attempt_ordinal=inherited_unit_attempt_ordinal,
         scientific_profile=scientific_profile,
     )
 
@@ -363,6 +394,9 @@ def inspect_followup_formal_synthetic_artifact(
     lineage: RouteASyntheticSuiteLineage,
     scientific_profile: RouteAScientificProfile,
     machine_plan_bytes: bytes,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
     unit_attempt_ordinal: int = 1,
 ) -> FollowupFormalSyntheticInspection:
     """Rehash the outer tree before independently decoding its inherited ZIP."""
@@ -397,6 +431,9 @@ def inspect_followup_formal_synthetic_artifact(
         lineage=lineage,
         scientific_profile=scientific_profile,
         unit_attempt_ordinal=unit_attempt_ordinal,
+        campaign_id=campaign_id,
+        campaign_run_admission_sha256=campaign_run_admission_sha256,
+        formal_unit_ordinal=formal_unit_ordinal,
     )
     expected_manifest = _manifest(
         phase=phase,
@@ -434,6 +471,10 @@ def inspect_followup_formal_synthetic_artifact(
         lineage=lineage,
         scientific_profile=scientific_profile,
         machine_plan_bytes=machine_plan_bytes,
+        inherited_unit_attempt_ordinal=followup_inherited_unit_attempt_ordinal(
+            unit_kind="formal-synthetic",
+            unit_attempt_ordinal=unit_attempt_ordinal,
+        ),
     )
     if inherited.shard_identity_sha256 != shard_identity:
         raise FollowupFormalArtifactError("formal synthetic inherited shard changed")
@@ -463,6 +504,9 @@ def produce_followup_formal_synthetic_artifact(
     lineage: RouteASyntheticSuiteLineage,
     scientific_profile: RouteAScientificProfile,
     machine_plan_bytes: bytes,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
     unit_attempt_ordinal: int = 1,
 ) -> FollowupFormalSyntheticInspection:
     """Validate and atomically move one fresh inherited ZIP into its outer tree."""
@@ -481,6 +525,10 @@ def produce_followup_formal_synthetic_artifact(
         lineage=lineage,
         scientific_profile=scientific_profile,
         machine_plan_bytes=machine_plan_bytes,
+        inherited_unit_attempt_ordinal=followup_inherited_unit_attempt_ordinal(
+            unit_kind="formal-synthetic",
+            unit_attempt_ordinal=unit_attempt_ordinal,
+        ),
     )
     payload_sha256, payload_bytes = _sha256_file(source_payload)
     unit_bytes, unit_sha256, shard_identity = _identity(
@@ -489,6 +537,9 @@ def produce_followup_formal_synthetic_artifact(
         lineage=lineage,
         scientific_profile=scientific_profile,
         unit_attempt_ordinal=unit_attempt_ordinal,
+        campaign_id=campaign_id,
+        campaign_run_admission_sha256=campaign_run_admission_sha256,
+        formal_unit_ordinal=formal_unit_ordinal,
     )
     manifest_bytes = _manifest(
         phase=phase,
@@ -535,6 +586,9 @@ def produce_followup_formal_synthetic_artifact(
             lineage=lineage,
             scientific_profile=scientific_profile,
             machine_plan_bytes=machine_plan_bytes,
+            campaign_id=campaign_id,
+            campaign_run_admission_sha256=campaign_run_admission_sha256,
+            formal_unit_ordinal=formal_unit_ordinal,
             unit_attempt_ordinal=unit_attempt_ordinal,
         )
     except BaseException:

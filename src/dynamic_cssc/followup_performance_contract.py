@@ -34,6 +34,7 @@ __all__ = (
     "admit_followup_control_inner_payload",
     "build_followup_unit_identity",
     "followup_artifact_name",
+    "followup_inherited_unit_attempt_ordinal",
     "inspect_followup_outer_envelope",
     "inspect_followup_stage1",
     "materialize_followup_scientific_plan",
@@ -585,6 +586,26 @@ def _require_attempt(unit_kind: str, unit_attempt_ordinal: object) -> int:
     if unit_attempt_ordinal not in allowed:
         raise FollowupContractError("unit attempt ordinal is outside its frozen retry domain")
     return unit_attempt_ordinal
+
+
+def followup_inherited_unit_attempt_ordinal(
+    *,
+    unit_kind: str,
+    unit_attempt_ordinal: int,
+) -> int:
+    """Map one outer follow-up attempt onto the inherited Route-A ordinal.
+
+    Follow-up envelopes deliberately use one-based ordinals (nominal ``1``,
+    the sole eligible replacement ``2``).  The inherited scientific contract
+    uses zero-based ordinals (nominal ``0``, replacement ``1``).  Keeping this
+    translation here makes every scientific caller share the same closed
+    retry domain.
+    """
+
+    if type(unit_kind) is not str or unit_kind not in _UNIT_ROLES:
+        raise FollowupContractError("unit kind is not in the closed follow-up domain")
+    outer_attempt = _require_attempt(unit_kind, unit_attempt_ordinal)
+    return outer_attempt - 1 if unit_kind in _RETRY_ELIGIBLE_UNIT_KINDS else 0
 
 
 def build_followup_unit_identity(

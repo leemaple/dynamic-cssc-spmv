@@ -7,10 +7,19 @@ from types import SimpleNamespace
 import pytest
 
 import dynamic_cssc.followup_performance_terminal as terminal_module
+from dynamic_cssc.followup_performance_campaign import (
+    arm_followup_campaign_watch,
+    bind_followup_campaign_run,
+    build_followup_campaign_selection,
+    commit_followup_campaign_unit,
+    open_followup_campaign_state,
+    reserve_followup_campaign_unit,
+)
 from dynamic_cssc.followup_performance_contract import (
     FollowupEvidenceEnvelope,
     _canonical_json_bytes,
 )
+from dynamic_cssc.followup_performance_formal_matrix import followup_formal_unit_specs
 from dynamic_cssc.followup_performance_formal_timing import FollowupFormalTimingLedger
 from dynamic_cssc.followup_performance_terminal import (
     inspect_followup_formal_artifact_set,
@@ -41,10 +50,10 @@ def _lineage() -> RouteASyntheticSuiteLineage:
     )
 
 
-def _timing() -> FollowupFormalTimingLedger:
+def _timing(selection) -> FollowupFormalTimingLedger:  # type: ignore[no-untyped-def]
     document = {
-        "formal_campaign_provider_run_attempt": 1,
-        "formal_campaign_provider_run_id": 303,
+        "campaign_id": selection.campaign_id,
+        "campaign_selection_sha256": selection.sha256,
         "formal_unit_count": 17,
         "provider_retry_used": False,
     }
@@ -88,19 +97,21 @@ def _inspection(root: Path, kind: str, identity_ordinal: int, **extra: object):
 def terminal_mocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ignore[no-untyped-def]
     root = (tmp_path / "inputs").resolve()
     root.mkdir()
-    acquisition_root = root / "acquisition-final"
+    acquisition_root = root / "followup-performance-v1-acquisition-final"
     native_names = {
-        (strategy, scale): f"native-{ordinal}-{scale}"
+        (strategy, scale): f"followup-performance-v1-native-{ordinal}-{scale}"
         for ordinal, strategy in enumerate(ROUTE_A_STRATEGY_CANDIDATES)
         for scale in ("S", "M")
     }
     synthetic_names = {
-        (scale, seed): f"synthetic-{scale}-{seed}"
+        (scale, seed): f"followup-performance-v1-synthetic-{scale}-{seed}"
         for scale in ("S", "M")
         for seed in PROFILE.formal_seeds
     }
     ordered_names = {
-        (partition, semantics): f"ordered-{partition}-{semantics}"
+        (partition, semantics): (
+            f"followup-performance-v1-ordered-{partition}-{semantics}"
+        )
         for partition in (0, 1)
         for semantics in ("T1", "T2")
     }
@@ -118,6 +129,65 @@ def terminal_mocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ig
         "formal-synthetic": {name: root / name for name in synthetic_names.values()},
         "formal-ordered-event": {name: root / name for name in ordered_names.values()},
     }
+    previous = open_followup_campaign_state(
+        experiment_source_s1_sha="1" * 40,
+        evidence_freeze_s2_sha="2" * 40,
+        compatibility_receipt_sha256="3" * 64,
+        qualification_run_id=7_001,
+        qualification_q6_artifact_id=8_001,
+        qualification_q6_artifact_digest=f"sha256:{'4' * 64}",
+        scientific_profile=PROFILE,
+    )
+    artifact_names = (
+        acquisition_root.name,
+        *native_names.values(),
+        *synthetic_names.values(),
+        *ordered_names.values(),
+    )
+    committed = []
+    admissions = []
+    kinds = (
+        "formal-acquisition",
+        *("formal-native" for _ in range(6)),
+        *("formal-synthetic" for _ in range(6)),
+        *("formal-ordered-event" for _ in range(4)),
+    )
+    for spec, artifact_name, kind in zip(
+        followup_formal_unit_specs(PROFILE),
+        artifact_names,
+        kinds,
+        strict=True,
+    ):
+        reserved = reserve_followup_campaign_unit(
+            previous,
+            spec,
+            unit_attempt_ordinal=1,
+        )
+        bound = bind_followup_campaign_run(
+            reserved,
+            provider_run_id=1_000 + spec.ordinal,
+        )
+        armed = arm_followup_campaign_watch(
+            bound,
+            watcher_session_sha256=f"{2_000 + spec.ordinal:064x}",
+        )
+        identity = f"{spec.ordinal + 1:064x}"
+        state = commit_followup_campaign_unit(
+            armed,
+            watcher_receipt_sha256=f"{3_000 + spec.ordinal:064x}",
+            artifact_id=4_000 + spec.ordinal,
+            artifact_name=artifact_name,
+            artifact_provider_digest=f"sha256:{5_000 + spec.ordinal:064x}",
+            unit_output_envelope_sha256=_envelope(kind, identity).sha256,
+        )
+        committed.append(state)
+        admissions.append(f"{6_000 + spec.ordinal:064x}")
+        previous = state
+    selection = build_followup_campaign_selection(
+        tuple(committed),
+        tuple(admissions),
+        scientific_profile=PROFILE,
+    )
     monkeypatch.setattr(
         terminal_module,
         "_classify_children",
@@ -158,6 +228,11 @@ def terminal_mocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ig
             transform=transform,
             traces=traces,
         ),
+    )
+    monkeypatch.setattr(
+        terminal_module,
+        "build_followup_acquisition_provider_binding",
+        lambda *_args, **_kwargs: SimpleNamespace(sha256="d" * 64),
     )
     monkeypatch.setattr(
         terminal_module,
@@ -226,17 +301,17 @@ def terminal_mocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # type: ig
             inherited=SimpleNamespace(shard_identity_sha256="c" * 64),
         ),
     )
-    return root
+    return SimpleNamespace(root=root, selection=selection)
 
 
 def test_terminal_admits_exact_ordered_seventeen_object_set(
     tmp_path: Path,
-    terminal_mocks: Path,
+    terminal_mocks: SimpleNamespace,
 ) -> None:
     artifact_set = inspect_followup_formal_artifact_set(
-        terminal_mocks,
+        terminal_mocks.root,
         repository_root=tmp_path.resolve(),
-        lineage=_lineage(),
+        campaign_selection=terminal_mocks.selection,
         scientific_profile=PROFILE,
         machine_plan_bytes=PLAN,
     )
@@ -246,14 +321,16 @@ def test_terminal_admits_exact_ordered_seventeen_object_set(
     produced = produce_followup_terminal_admission(
         artifact_set,
         output,
+        campaign_selection=terminal_mocks.selection,
         lineage=_lineage(),
-        timing_ledger=_timing(),
+        timing_ledger=_timing(terminal_mocks.selection),
     )
     inspected = inspect_followup_terminal_admission(
         output,
         artifact_set=artifact_set,
+        campaign_selection=terminal_mocks.selection,
         lineage=_lineage(),
-        timing_ledger=_timing(),
+        timing_ledger=_timing(terminal_mocks.selection),
     )
 
     assert len(artifact_set.records) == 17

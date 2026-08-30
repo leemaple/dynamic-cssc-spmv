@@ -16,14 +16,17 @@ def test_aggregate_cli_reinspects_terminal_before_raw_aggregation(
 ) -> None:
     repository = (tmp_path / "repo").resolve()
     artifacts = (tmp_path / "artifacts").resolve()
+    campaign_root = (tmp_path / "campaign").resolve()
     terminal_root = (tmp_path / "terminal").resolve()
     output_parent = (tmp_path / "output").resolve()
-    for directory in (repository, artifacts, terminal_root, output_parent):
+    for directory in (
+        repository,
+        artifacts,
+        campaign_root,
+        terminal_root,
+        output_parent,
+    ):
         directory.mkdir()
-    run_json = (tmp_path / "run.json").resolve()
-    jobs_json = (tmp_path / "jobs.json").resolve()
-    run_json.write_bytes(b'{"run":true}\n')
-    jobs_json.write_bytes(b'{"jobs":true}\n')
     output = output_parent / "aggregate"
     arguments = argparse.Namespace(
         repository_root=repository,
@@ -33,10 +36,9 @@ def test_aggregate_cli_reinspects_terminal_before_raw_aggregation(
         provider_run_id=505,
         provider_run_attempt=1,
         expected_head_branch="main",
+        campaign_evidence_root=campaign_root,
         formal_artifact_root=artifacts,
         terminal_artifact_directory=terminal_root,
-        run_json=run_json,
-        jobs_json=jobs_json,
         output_directory=output,
     )
     scientific = SimpleNamespace(
@@ -44,6 +46,14 @@ def test_aggregate_cli_reinspects_terminal_before_raw_aggregation(
         machine_plan_bytes=b"sentinel-plan\n",
     )
     timing = SimpleNamespace(sha256="4" * 64)
+    selection = SimpleNamespace(
+        document={
+            "compatibility_receipt_sha256": "3" * 64,
+            "evidence_freeze_S2_sha": "2" * 40,
+            "experiment_source_S1_sha": "1" * 40,
+        }
+    )
+    campaign = SimpleNamespace(selection=selection, timing=timing)
     artifact_set = SimpleNamespace(sha256="5" * 64)
     terminal = SimpleNamespace(unit_identity_sha256="6" * 64)
     observed: dict[str, object] = {}
@@ -60,9 +70,9 @@ def test_aggregate_cli_reinspects_terminal_before_raw_aggregation(
     )
     monkeypatch.setattr(
         cli_module,
-        "inspect_followup_formal_timing_prefix",
-        lambda run, jobs, **_kwargs: (
-            observed.update({"jobs": jobs, "run": run}) or timing
+        "inspect_followup_campaign_evidence_bundle",
+        lambda path, **_kwargs: (
+            observed.update({"campaign_root": path}) or campaign
         ),
     )
     monkeypatch.setattr(
@@ -101,8 +111,7 @@ def test_aggregate_cli_reinspects_terminal_before_raw_aggregation(
     monkeypatch.setattr(cli_module, "produce_followup_aggregate", produce)
 
     assert cli_module._main(arguments) == 0
-    assert observed["run"] == b'{"run":true}\n'
-    assert observed["jobs"] == b'{"jobs":true}\n'
+    assert observed["campaign_root"] == campaign_root
     assert observed["terminal_path"] == terminal_root
     assert observed["terminal_timing"] is timing
     assert observed["terminal_set"] is artifact_set

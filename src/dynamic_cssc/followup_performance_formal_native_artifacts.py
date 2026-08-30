@@ -17,6 +17,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from dynamic_cssc.followup_performance_campaign import (
+    followup_campaign_artifact_binding_scope,
+)
 from dynamic_cssc.followup_performance_contract import (
     FOLLOWUP_STUDY_ID,
     FollowupContractError,
@@ -26,6 +29,7 @@ from dynamic_cssc.followup_performance_contract import (
     _parse_ascii_json,
     build_followup_unit_identity,
     followup_artifact_name,
+    followup_inherited_unit_attempt_ordinal,
     inspect_followup_outer_envelope,
     seal_followup_inner_payload,
 )
@@ -192,17 +196,16 @@ def _case(
     machine_plan_bytes: bytes,
     unit_attempt_ordinal: int,
 ) -> RouteANativeCasePlan:
-    if type(unit_attempt_ordinal) is not int or unit_attempt_ordinal != 1:
-        raise FollowupFormalNativeArtifactError(
-            "formal native replacement is unsupported and fails closed"
-        )
     return compile_route_a_native_formal_case(
         repository_root,
         lineage,
         scale=scale,
         formal_seed=formal_seed,
         strategy_candidate_id=strategy_candidate_id,
-        unit_attempt_ordinal=0,
+        unit_attempt_ordinal=followup_inherited_unit_attempt_ordinal(
+            unit_kind="formal-native",
+            unit_attempt_ordinal=unit_attempt_ordinal,
+        ),
         scientific_profile=scientific_profile,
         machine_plan_bytes=machine_plan_bytes,
     )
@@ -214,6 +217,9 @@ def _identity(
     lineage: RouteASyntheticSuiteLineage,
     case: RouteANativeCasePlan,
     unit_attempt_ordinal: int,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
 ) -> tuple[bytes, str]:
     scope = {
         "artifact_phase": phase,
@@ -229,6 +235,13 @@ def _identity(
         "source_kind": "synthetic-native-snapshot",
         "strategy_candidate_id": case.strategy_candidate_id,
     }
+    scope.update(
+        followup_campaign_artifact_binding_scope(
+            campaign_id=campaign_id,
+            campaign_run_admission_sha256=campaign_run_admission_sha256,
+            formal_unit_ordinal=formal_unit_ordinal,
+        )
+    )
     return build_followup_unit_identity(
         unit_kind="formal-native",
         unit_attempt_ordinal=unit_attempt_ordinal,
@@ -246,6 +259,9 @@ def expected_followup_formal_native_artifact_name(
     strategy_candidate_id: str,
     scientific_profile: RouteAScientificProfile,
     machine_plan_bytes: bytes,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
     unit_attempt_ordinal: int = 1,
 ) -> str:
     """Derive the provider name for one exact native phase without execution."""
@@ -266,6 +282,9 @@ def expected_followup_formal_native_artifact_name(
         lineage=lineage,
         case=case,
         unit_attempt_ordinal=unit_attempt_ordinal,
+        campaign_id=campaign_id,
+        campaign_run_admission_sha256=campaign_run_admission_sha256,
+        formal_unit_ordinal=formal_unit_ordinal,
     )
     return followup_artifact_name(
         unit_kind="formal-native",
@@ -501,6 +520,9 @@ def inspect_followup_formal_native_artifact(
     strategy_candidate_id: str,
     scientific_profile: RouteAScientificProfile,
     machine_plan_bytes: bytes,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
     unit_attempt_ordinal: int = 1,
 ) -> FollowupFormalNativeInspection:
     """Rehash the outer tree before independently decoding inherited q3/q4."""
@@ -535,6 +557,9 @@ def inspect_followup_formal_native_artifact(
         lineage=lineage,
         case=case,
         unit_attempt_ordinal=unit_attempt_ordinal,
+        campaign_id=campaign_id,
+        campaign_run_admission_sha256=campaign_run_admission_sha256,
+        formal_unit_ordinal=formal_unit_ordinal,
     )
     if contents["unit-identity.json"] != unit_bytes:
         raise FollowupFormalNativeArtifactError("formal native unit identity changed")
@@ -619,6 +644,9 @@ def produce_followup_formal_native_artifact(
     strategy_candidate_id: str,
     scientific_profile: RouteAScientificProfile,
     machine_plan_bytes: bytes,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
     unit_attempt_ordinal: int = 1,
     producer_artifact_directory: Path | None = None,
 ) -> FollowupFormalNativeInspection:
@@ -668,6 +696,9 @@ def produce_followup_formal_native_artifact(
             strategy_candidate_id=strategy_candidate_id,
             scientific_profile=scientific_profile,
             machine_plan_bytes=machine_plan_bytes,
+            campaign_id=campaign_id,
+            campaign_run_admission_sha256=campaign_run_admission_sha256,
+            formal_unit_ordinal=formal_unit_ordinal,
             unit_attempt_ordinal=unit_attempt_ordinal,
         )
         if inherited.input_q3_manifest_sha256 != producer_wrapper.inherited.manifest_sha256:
@@ -691,6 +722,9 @@ def produce_followup_formal_native_artifact(
         lineage=lineage,
         case=case,
         unit_attempt_ordinal=unit_attempt_ordinal,
+        campaign_id=campaign_id,
+        campaign_run_admission_sha256=campaign_run_admission_sha256,
+        formal_unit_ordinal=formal_unit_ordinal,
     )
     _stage, role = _phase_stage(phase)
     admission = _issue_followup_inner_admission(
@@ -736,6 +770,9 @@ def produce_followup_formal_native_artifact(
             strategy_candidate_id=strategy_candidate_id,
             scientific_profile=scientific_profile,
             machine_plan_bytes=machine_plan_bytes,
+            campaign_id=campaign_id,
+            campaign_run_admission_sha256=campaign_run_admission_sha256,
+            formal_unit_ordinal=formal_unit_ordinal,
             unit_attempt_ordinal=unit_attempt_ordinal,
         )
     except BaseException:

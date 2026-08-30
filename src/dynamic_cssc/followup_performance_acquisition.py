@@ -16,6 +16,9 @@ from dynamic_cssc.followup_performance_artifacts import (
     _direct_directory,
     _tree_rows,
 )
+from dynamic_cssc.followup_performance_campaign import (
+    followup_campaign_artifact_binding_scope,
+)
 from dynamic_cssc.followup_performance_contract import (
     FOLLOWUP_STUDY_ID,
     FollowupContractError,
@@ -25,6 +28,7 @@ from dynamic_cssc.followup_performance_contract import (
     _parse_ascii_json,
     build_followup_unit_identity,
     followup_artifact_name,
+    followup_inherited_unit_attempt_ordinal,
     inspect_followup_outer_envelope,
     seal_followup_inner_payload,
 )
@@ -42,8 +46,10 @@ __all__ = (
     "FOLLOWUP_SNAP_SOURCE_URL",
     "FollowupAcquisitionArtifactError",
     "FollowupAcquisitionInspection",
+    "FollowupAcquisitionProviderBinding",
     "RouteASnapAcquisitionReceipt",
     "build_route_a_snap_acquisition_receipt",
+    "build_followup_acquisition_provider_binding",
     "guard_and_produce_followup_acquisition_artifact",
     "inspect_followup_acquisition_artifact",
     "produce_followup_acquisition_handoff",
@@ -330,11 +336,14 @@ def _identity(
     lineage: RouteASyntheticSuiteLineage,
     transform: RouteASnapTransform,
     unit_attempt_ordinal: int,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
 ) -> tuple[bytes, str]:
-    if type(unit_attempt_ordinal) is not int or unit_attempt_ordinal != 1:
-        raise FollowupAcquisitionArtifactError(
-            "acquisition replacement is unsupported and fails closed"
-        )
+    inherited_attempt = followup_inherited_unit_attempt_ordinal(
+        unit_kind="formal-acquisition",
+        unit_attempt_ordinal=unit_attempt_ordinal,
+    )
     scope = {
         "accepted_trace_sha256s": [
             partition.accepted_trace_sha256 for partition in transform.partitions
@@ -343,7 +352,7 @@ def _identity(
         "compatibility_receipt_sha256": lineage.compatibility_receipt_sha256,
         "evidence_freeze_S2_sha": lineage.workflow_head_sha,
         "experiment_source_S1_sha": lineage.experiment_source_sha,
-        "inherited_unit_attempt_ordinal": 0,
+        "inherited_unit_attempt_ordinal": inherited_attempt,
         "mapping_sha256s": [
             partition.mapping_sha256 for partition in transform.partitions
         ],
@@ -352,6 +361,13 @@ def _identity(
         "raw_object_sha256": transform.raw_object_sha256,
         "source_url": FOLLOWUP_SNAP_SOURCE_URL,
     }
+    scope.update(
+        followup_campaign_artifact_binding_scope(
+            campaign_id=campaign_id,
+            campaign_run_admission_sha256=campaign_run_admission_sha256,
+            formal_unit_ordinal=formal_unit_ordinal,
+        )
+    )
     return build_followup_unit_identity(
         unit_kind="formal-acquisition",
         unit_attempt_ordinal=unit_attempt_ordinal,
@@ -468,11 +484,61 @@ class FollowupAcquisitionInspection:
     envelope: FollowupEvidenceEnvelope
 
 
+@dataclass(frozen=True, slots=True)
+class FollowupAcquisitionProviderBinding:
+    document: dict[str, object]
+    document_bytes: bytes
+    sha256: str
+
+
+def build_followup_acquisition_provider_binding(
+    inspection: FollowupAcquisitionInspection,
+    *,
+    artifact_id: int,
+    artifact_provider_digest: str,
+) -> FollowupAcquisitionProviderBinding:
+    """Bind ordered units to the exact admitted acquisition provider object."""
+
+    if (
+        type(inspection) is not FollowupAcquisitionInspection
+        or inspection.phase != "guarded-final"
+        or type(artifact_id) is not int
+        or artifact_id <= 0
+        or type(artifact_provider_digest) is not str
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_provider_digest) is None
+    ):
+        raise FollowupAcquisitionArtifactError(
+            "acquisition provider binding identity changed"
+        )
+    document = {
+        "artifact_id": artifact_id,
+        "artifact_name": inspection.artifact_name,
+        "artifact_provider_digest": artifact_provider_digest,
+        "authority": False,
+        "publication_evidence_admitted": False,
+        "schema_version": (
+            "dynamic-cssc-followup-performance-acquisition-provider-binding-v1"
+        ),
+        "study_id": FOLLOWUP_STUDY_ID,
+        "unit_identity_sha256": inspection.unit_identity_sha256,
+        "unit_output_envelope_sha256": inspection.envelope.sha256,
+    }
+    document_bytes = _canonical_json_bytes(document)
+    return FollowupAcquisitionProviderBinding(
+        document=document,
+        document_bytes=document_bytes,
+        sha256=hashlib.sha256(document_bytes).hexdigest(),
+    )
+
+
 def inspect_followup_acquisition_artifact(
     artifact_directory: Path,
     *,
     phase: FollowupAcquisitionPhase,
     lineage: RouteASyntheticSuiteLineage,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
     unit_attempt_ordinal: int = 1,
 ) -> FollowupAcquisitionInspection:
     """Rehash and reconstruct one acquisition object without any raw source bytes."""
@@ -514,12 +580,16 @@ def inspect_followup_acquisition_artifact(
             )
         )
     )
+    inherited_attempt = followup_inherited_unit_attempt_ordinal(
+        unit_kind="formal-acquisition",
+        unit_attempt_ordinal=unit_attempt_ordinal,
+    )
     if (
-        producer_receipt.document["unit_attempt_ordinal"] != 0
+        producer_receipt.document["unit_attempt_ordinal"] != inherited_attempt
         or (
             guard_receipt is not None
             and (
-                guard_receipt.document["unit_attempt_ordinal"] != 0
+                guard_receipt.document["unit_attempt_ordinal"] != inherited_attempt
                 or guard_receipt.compressed_sha256 != producer_receipt.compressed_sha256
                 or guard_receipt.compressed_byte_count
                 != producer_receipt.compressed_byte_count
@@ -546,6 +616,9 @@ def inspect_followup_acquisition_artifact(
         lineage=lineage,
         transform=transform,
         unit_attempt_ordinal=unit_attempt_ordinal,
+        campaign_id=campaign_id,
+        campaign_run_admission_sha256=campaign_run_admission_sha256,
+        formal_unit_ordinal=formal_unit_ordinal,
     )
     if contents["unit-identity.json"] != unit_bytes:
         raise FollowupAcquisitionArtifactError("acquisition unit identity changed")
@@ -589,6 +662,9 @@ def _produce(
     producer_receipt: RouteASnapAcquisitionReceipt,
     guard_receipt: RouteASnapAcquisitionReceipt | None,
     unit_attempt_ordinal: int,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
 ) -> FollowupAcquisitionInspection:
     _direct_directory(output_directory.parent, label="acquisition output parent")
     if output_directory.exists() or output_directory.is_symlink():
@@ -628,6 +704,9 @@ def _produce(
             lineage=lineage,
             transform=transform,
             unit_attempt_ordinal=unit_attempt_ordinal,
+            campaign_id=campaign_id,
+            campaign_run_admission_sha256=campaign_run_admission_sha256,
+            formal_unit_ordinal=formal_unit_ordinal,
         )
         admission = _issue_followup_inner_admission(
             inner_role="formal-acquisition",
@@ -654,6 +733,9 @@ def _produce(
             output_directory,
             phase=phase,
             lineage=lineage,
+            campaign_id=campaign_id,
+            campaign_run_admission_sha256=campaign_run_admission_sha256,
+            formal_unit_ordinal=formal_unit_ordinal,
             unit_attempt_ordinal=unit_attempt_ordinal,
         )
     except BaseException:
@@ -670,6 +752,9 @@ def produce_followup_acquisition_handoff(
     output_directory: Path,
     *,
     lineage: RouteASyntheticSuiteLineage,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
     unit_attempt_ordinal: int = 1,
 ) -> FollowupAcquisitionInspection:
     """Produce the one-day non-evidence acquisition handoff without raw bytes."""
@@ -682,6 +767,9 @@ def produce_followup_acquisition_handoff(
         producer_receipt=producer_receipt,
         guard_receipt=None,
         unit_attempt_ordinal=unit_attempt_ordinal,
+        campaign_id=campaign_id,
+        campaign_run_admission_sha256=campaign_run_admission_sha256,
+        formal_unit_ordinal=formal_unit_ordinal,
     )
 
 
@@ -692,6 +780,9 @@ def guard_and_produce_followup_acquisition_artifact(
     output_directory: Path,
     *,
     lineage: RouteASyntheticSuiteLineage,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
     unit_attempt_ordinal: int = 1,
 ) -> FollowupAcquisitionInspection:
     """Compare an independent second download/transform and emit one candidate."""
@@ -700,6 +791,9 @@ def guard_and_produce_followup_acquisition_artifact(
         producer_artifact_directory,
         phase="private-handoff",
         lineage=lineage,
+        campaign_id=campaign_id,
+        campaign_run_admission_sha256=campaign_run_admission_sha256,
+        formal_unit_ordinal=formal_unit_ordinal,
         unit_attempt_ordinal=unit_attempt_ordinal,
     )
     producer_payloads, _producer_traces = _partition_payloads(producer.transform)
@@ -721,4 +815,7 @@ def guard_and_produce_followup_acquisition_artifact(
         producer_receipt=producer.producer_receipt,
         guard_receipt=guard_receipt,
         unit_attempt_ordinal=unit_attempt_ordinal,
+        campaign_id=campaign_id,
+        campaign_run_admission_sha256=campaign_run_admission_sha256,
+        formal_unit_ordinal=formal_unit_ordinal,
     )

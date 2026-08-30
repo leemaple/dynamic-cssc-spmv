@@ -13,12 +13,13 @@ from dynamic_cssc.followup_performance_aggregate import (
     FollowupAggregateError,
     produce_followup_aggregate,
 )
+from dynamic_cssc.followup_performance_campaign_bundle import (
+    FollowupCampaignEvidenceBundleError,
+    inspect_followup_campaign_evidence_bundle,
+)
 from dynamic_cssc.followup_performance_contract import (
     FollowupContractError,
     materialize_followup_scientific_plan,
-)
-from dynamic_cssc.followup_performance_formal_timing import (
-    inspect_followup_formal_timing_prefix,
 )
 from dynamic_cssc.followup_performance_lineage import (
     verify_followup_s1_s2_compatibility,
@@ -70,10 +71,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--provider-run-id", required=True, type=int)
     parser.add_argument("--provider-run-attempt", required=True, type=int, choices=(1,))
     parser.add_argument("--expected-head-branch", default="main")
+    parser.add_argument("--campaign-evidence-root", required=True, type=Path)
     parser.add_argument("--formal-artifact-root", required=True, type=Path)
     parser.add_argument("--terminal-artifact-directory", required=True, type=Path)
-    parser.add_argument("--run-json", required=True, type=Path)
-    parser.add_argument("--jobs-json", required=True, type=Path)
     parser.add_argument("--output-directory", required=True, type=Path)
     return parser
 
@@ -81,10 +81,9 @@ def _parser() -> argparse.ArgumentParser:
 def _main(arguments: argparse.Namespace) -> int:
     paths = (
         arguments.repository_root,
+        arguments.campaign_evidence_root,
         arguments.formal_artifact_root,
         arguments.terminal_artifact_directory,
-        arguments.run_json,
-        arguments.jobs_json,
         arguments.output_directory,
     )
     if any(not path.is_absolute() for path in paths):
@@ -105,25 +104,33 @@ def _main(arguments: argparse.Namespace) -> int:
         provider_run_id=arguments.provider_run_id,
         provider_run_attempt=arguments.provider_run_attempt,
     )
-    timing = inspect_followup_formal_timing_prefix(
-        arguments.run_json.read_bytes(),
-        arguments.jobs_json.read_bytes(),
-        lineage=lineage,
+    campaign = inspect_followup_campaign_evidence_bundle(
+        arguments.campaign_evidence_root,
         scientific_profile=scientific.scientific_profile,
         expected_head_branch=arguments.expected_head_branch,
     )
+    if (
+        campaign.selection.document["experiment_source_S1_sha"]
+        != arguments.experiment_source_sha
+        or campaign.selection.document["evidence_freeze_S2_sha"]
+        != arguments.workflow_head_sha
+        or campaign.selection.document["compatibility_receipt_sha256"]
+        != arguments.compatibility_receipt_sha256
+    ):
+        raise FollowupAggregateError("aggregate campaign evidence lineage changed")
     artifact_set = inspect_followup_formal_artifact_set(
         arguments.formal_artifact_root,
         repository_root=arguments.repository_root,
-        lineage=lineage,
+        campaign_selection=campaign.selection,
         scientific_profile=scientific.scientific_profile,
         machine_plan_bytes=scientific.machine_plan_bytes,
     )
     terminal = inspect_followup_terminal_admission(
         arguments.terminal_artifact_directory,
         artifact_set=artifact_set,
+        campaign_selection=campaign.selection,
         lineage=lineage,
-        timing_ledger=timing,
+        timing_ledger=campaign.timing,
     )
     inspection = produce_followup_aggregate(
         artifact_set,
@@ -150,6 +157,7 @@ def main() -> int:
         return _main(_parser().parse_args())
     except (
         FollowupAggregateError,
+        FollowupCampaignEvidenceBundleError,
         FollowupContractError,
         FollowupTerminalAdmissionError,
         OSError,

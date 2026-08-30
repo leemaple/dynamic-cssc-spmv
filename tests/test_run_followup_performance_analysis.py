@@ -16,12 +16,14 @@ def test_analysis_cli_reinspects_the_admitted_chain_at_exact_s3(
 ) -> None:
     repository = (tmp_path / "repo").resolve()
     artifacts = (tmp_path / "artifacts").resolve()
+    campaign_root = (tmp_path / "campaign").resolve()
     terminal_root = (tmp_path / "terminal").resolve()
     aggregate_root = (tmp_path / "aggregate").resolve()
     output_parent = (tmp_path / "output").resolve()
     for directory in (
         repository,
         artifacts,
+        campaign_root,
         terminal_root,
         aggregate_root,
         output_parent,
@@ -35,8 +37,9 @@ def test_analysis_cli_reinspects_the_admitted_chain_at_exact_s3(
         analysis_source_sha="3" * 40,
         registration_compatibility_receipt_sha256="4" * 64,
         analysis_compatibility_receipt_sha256="5" * 64,
-        formal_provider_run_id=606,
-        formal_provider_run_attempt=1,
+        terminal_provider_run_id=606,
+        terminal_provider_run_attempt=1,
+        campaign_evidence_root=campaign_root,
         formal_artifact_root=artifacts,
         terminal_artifact_directory=terminal_root,
         aggregate_artifact_directory=aggregate_root,
@@ -52,6 +55,14 @@ def test_analysis_cli_reinspects_the_admitted_chain_at_exact_s3(
     )
     artifact_set = SimpleNamespace(sha256="6" * 64)
     timing = SimpleNamespace(sha256="7" * 64)
+    selection = SimpleNamespace(
+        document={
+            "compatibility_receipt_sha256": "4" * 64,
+            "evidence_freeze_S2_sha": "2" * 40,
+            "experiment_source_S1_sha": "1" * 40,
+        }
+    )
+    campaign = SimpleNamespace(selection=selection, timing=timing)
     terminal = SimpleNamespace(unit_identity_sha256="8" * 64)
     aggregate = SimpleNamespace(aggregate_sha256="9" * 64)
     observed: dict[str, object] = {}
@@ -65,6 +76,13 @@ def test_analysis_cli_reinspects_the_admitted_chain_at_exact_s3(
         cli_module,
         "materialize_followup_scientific_plan",
         lambda _root: scientific,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "inspect_followup_campaign_evidence_bundle",
+        lambda path, **_kwargs: (
+            observed.update({"campaign_root": path}) or campaign
+        ),
     )
     monkeypatch.setattr(
         cli_module,
@@ -119,6 +137,7 @@ def test_analysis_cli_reinspects_the_admitted_chain_at_exact_s3(
 
     assert cli_module._main(arguments) == 0
     assert observed["timing_path"] == terminal_root
+    assert observed["campaign_root"] == campaign_root
     assert observed["terminal_path"] == terminal_root
     assert observed["terminal_set"] is artifact_set
     assert observed["terminal_timing"] is timing

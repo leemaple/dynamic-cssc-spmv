@@ -1,0 +1,139 @@
+name: Follow-up performance one bound formal unit
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_s1_git_sha:
+        required: true
+        type: string
+      expected_s2_git_sha:
+        required: true
+        type: string
+      expected_compatibility_receipt_sha256:
+        required: true
+        type: string
+      expected_campaign_id:
+        required: true
+        type: string
+      expected_reservation_oid:
+        required: true
+        type: string
+      expected_reservation_minutes:
+        required: true
+        type: number
+      formal_unit_ordinal:
+        required: true
+        type: string
+      unit_attempt_ordinal:
+        required: true
+        type: string
+      expected_job_token:
+        required: true
+        type: string
+      acquisition_artifact_name:
+        required: false
+        default: ''
+        type: string
+      acquisition_provider_run_id:
+        required: false
+        default: ''
+        type: string
+      acquisition_provider_artifact_id:
+        required: false
+        default: ''
+        type: string
+      acquisition_provider_artifact_digest:
+        required: false
+        default: ''
+        type: string
+      acquisition_campaign_run_admission_sha256:
+        required: false
+        default: ''
+        type: string
+      acquisition_unit_attempt_ordinal:
+        required: false
+        default: '1'
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: followup-performance-formal-campaign-${{ inputs.expected_campaign_id }}
+  cancel-in-progress: false
+
+jobs:
+  producer:
+    name: ${{ inputs.expected_job_token }}-producer
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ inputs.expected_reservation_minutes }}
+    steps:
+      - name: Check out exact S2 for provider admission
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.expected_s2_git_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          clean: true
+
+      - name: Execute the bound producer
+        id: unit
+        uses: ./.github/actions/followup-formal-unit
+        with:
+          expected-s1: ${{ inputs.expected_s1_git_sha }}
+          expected-s2: ${{ inputs.expected_s2_git_sha }}
+          expected-compatibility: ${{ inputs.expected_compatibility_receipt_sha256 }}
+          expected-campaign-id: ${{ inputs.expected_campaign_id }}
+          expected-reservation-oid: ${{ inputs.expected_reservation_oid }}
+          expected-reservation-minutes: ${{ inputs.expected_reservation_minutes }}
+          unit-ordinal: ${{ inputs.formal_unit_ordinal }}
+          unit-attempt-ordinal: ${{ inputs.unit_attempt_ordinal }}
+          expected-job-token: ${{ inputs.expected_job_token }}
+          phase: private-handoff
+          acquisition-artifact-name: ${{ inputs.acquisition_artifact_name }}
+          acquisition-provider-run-id: ${{ inputs.acquisition_provider_run_id }}
+          acquisition-provider-artifact-id: ${{ inputs.acquisition_provider_artifact_id }}
+          acquisition-provider-artifact-digest: ${{ inputs.acquisition_provider_artifact_digest }}
+          acquisition-campaign-run-admission-sha256: ${{ inputs.acquisition_campaign_run_admission_sha256 }}
+          acquisition-unit-attempt-ordinal: ${{ inputs.acquisition_unit_attempt_ordinal }}
+          retention-days: '1'
+
+    outputs:
+      artifact_name: ${{ steps.unit.outputs.artifact_name }}
+
+  guard:
+    name: ${{ inputs.expected_job_token }}-independent-replay-and-guard
+    needs: producer
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ inputs.expected_reservation_minutes }}
+    steps:
+      - name: Check out exact S2 for provider admission
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.expected_s2_git_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          clean: true
+
+      - name: Execute the bound independent replay and guard
+        uses: ./.github/actions/followup-formal-unit
+        with:
+          expected-s1: ${{ inputs.expected_s1_git_sha }}
+          expected-s2: ${{ inputs.expected_s2_git_sha }}
+          expected-compatibility: ${{ inputs.expected_compatibility_receipt_sha256 }}
+          expected-campaign-id: ${{ inputs.expected_campaign_id }}
+          expected-reservation-oid: ${{ inputs.expected_reservation_oid }}
+          expected-reservation-minutes: ${{ inputs.expected_reservation_minutes }}
+          unit-ordinal: ${{ inputs.formal_unit_ordinal }}
+          unit-attempt-ordinal: ${{ inputs.unit_attempt_ordinal }}
+          expected-job-token: ${{ inputs.expected_job_token }}
+          phase: guarded-final
+          producer-artifact-name: ${{ needs.producer.outputs.artifact_name }}
+          acquisition-artifact-name: ${{ inputs.acquisition_artifact_name }}
+          acquisition-provider-run-id: ${{ inputs.acquisition_provider_run_id }}
+          acquisition-provider-artifact-id: ${{ inputs.acquisition_provider_artifact_id }}
+          acquisition-provider-artifact-digest: ${{ inputs.acquisition_provider_artifact_digest }}
+          acquisition-campaign-run-admission-sha256: ${{ inputs.acquisition_campaign_run_admission_sha256 }}
+          acquisition-unit-attempt-ordinal: ${{ inputs.acquisition_unit_attempt_ordinal }}
+          retention-days: '90'

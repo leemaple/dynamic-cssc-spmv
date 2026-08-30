@@ -32,24 +32,42 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--compatibility-receipt-sha256", required=True)
     parser.add_argument("--provider-run-id", required=True, type=int)
     parser.add_argument("--provider-run-attempt", required=True, type=int, choices=(1,))
+    parser.add_argument("--campaign-id", required=True)
+    parser.add_argument("--campaign-run-admission-sha256", required=True)
+    parser.add_argument("--unit-attempt-ordinal", required=True, type=int, choices=(1, 2))
+    parser.add_argument(
+        "--acquisition-unit-attempt-ordinal",
+        type=int,
+        default=1,
+        choices=(1, 2),
+    )
     parser.add_argument("--scratch-root", required=True, type=Path)
     parser.add_argument("--output-directory", required=True, type=Path)
     parser.add_argument("--producer-artifact-directory", type=Path)
     parser.add_argument("--acquisition-artifact-directory", type=Path)
+    parser.add_argument("--acquisition-provider-run-id", type=int)
+    parser.add_argument("--acquisition-provider-artifact-id", type=int)
+    parser.add_argument("--acquisition-provider-artifact-digest")
+    parser.add_argument("--acquisition-campaign-run-admission-sha256")
     return parser
 
 
 def _common(arguments: argparse.Namespace) -> dict[str, object]:
     return {
         "compatibility_receipt_sha256": arguments.compatibility_receipt_sha256,
+        "campaign_id": arguments.campaign_id,
+        "campaign_run_admission_sha256": (
+            arguments.campaign_run_admission_sha256
+        ),
         "experiment_source_sha": arguments.experiment_source_sha,
+        "formal_unit_ordinal": arguments.formal_unit_ordinal,
         "output_directory": arguments.output_directory,
         "phase": arguments.phase,
         "producer_artifact_directory": arguments.producer_artifact_directory,
         "provider_run_attempt": arguments.provider_run_attempt,
         "provider_run_id": arguments.provider_run_id,
         "repository_root": arguments.repository_root,
-        "unit_attempt_ordinal": 1,
+        "unit_attempt_ordinal": arguments.unit_attempt_ordinal,
         "workflow_head_sha": arguments.workflow_head_sha,
     }
 
@@ -101,12 +119,32 @@ def _dispatch(
         )
     if arguments.acquisition_artifact_directory is None:
         raise FollowupContractError("ordered-event unit lacks the admitted acquisition")
+    if (
+        arguments.acquisition_provider_run_id is None
+        or arguments.acquisition_provider_artifact_id is None
+        or arguments.acquisition_provider_artifact_digest is None
+        or arguments.acquisition_campaign_run_admission_sha256 is None
+    ):
+        raise FollowupContractError(
+            "ordered-event unit lacks the acquisition provider binding"
+        )
     assert spec.partition is not None
     assert spec.semantics is not None
     return ordered_cli._main(
         argparse.Namespace(
             **common,
             acquisition_artifact_directory=arguments.acquisition_artifact_directory,
+            acquisition_campaign_run_admission_sha256=(
+                arguments.acquisition_campaign_run_admission_sha256
+            ),
+            acquisition_provider_artifact_digest=(
+                arguments.acquisition_provider_artifact_digest
+            ),
+            acquisition_provider_artifact_id=(
+                arguments.acquisition_provider_artifact_id
+            ),
+            acquisition_provider_run_id=arguments.acquisition_provider_run_id,
+            acquisition_unit_attempt_ordinal=arguments.acquisition_unit_attempt_ordinal,
             partition=spec.partition,
             scratch_root=arguments.scratch_root,
             semantics=spec.semantics,

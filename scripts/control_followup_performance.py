@@ -13,6 +13,16 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from urllib.parse import quote
 
+from dynamic_cssc.followup_performance_analysis_execution import (
+    execute_followup_analysis,
+)
+from dynamic_cssc.followup_performance_campaign import open_followup_campaign_state
+from dynamic_cssc.followup_performance_campaign_execution import (
+    execute_followup_formal_campaign,
+)
+from dynamic_cssc.followup_performance_contract import (
+    materialize_followup_scientific_plan,
+)
 from dynamic_cssc.followup_performance_controller import (
     FollowupArtifactSnapshot,
     FollowupControllerError,
@@ -29,10 +39,14 @@ from dynamic_cssc.followup_performance_controller import (
     FollowupRunSnapshot,
     authorize_followup_formal_campaign,
     authorize_followup_qualification_dispatch,
-    dispatch_followup_qualification,
-    open_followup_formal_campaign,
-    watch_followup_formal_campaign,
-    watch_followup_qualification,
+    consume_followup_formal_campaign_capability,
+)
+from dynamic_cssc.followup_performance_github import GitHubFollowupCampaignProvider
+from dynamic_cssc.followup_performance_qualification_execution import (
+    execute_followup_qualification,
+)
+from dynamic_cssc.followup_performance_terminal_execution import (
+    execute_followup_terminal,
 )
 from dynamic_cssc.route_a_controller import (
     RouteALiveJobSnapshot,
@@ -48,7 +62,7 @@ _CONTROL_KINDS = (
     "independent-review",
 )
 _QUALIFICATION_WORKFLOW = "followup-performance-qualification.yml"
-_FORMAL_WORKFLOW = "followup-performance-formal.yml"
+_FORMAL_WORKFLOW = "followup-performance-formal-unit.yml"
 _AUTHORITY_REFS = {
     "qualification": (
         "refs/tags/dynamic-cssc-followup-performance-qualification-authority-v1"
@@ -742,10 +756,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "command",
         choices=(
-            "dispatch-qualification",
-            "watch",
-            "dispatch-formal",
-            "watch-formal",
+            "execute-qualification",
+            "execute-formal",
+            "execute-analysis",
         ),
     )
     parser.add_argument("--repository-root", required=True, type=Path)
@@ -753,18 +766,34 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-s1-git-sha", required=True)
     parser.add_argument("--expected-s2-git-sha", required=True)
     parser.add_argument("--expected-compatibility-receipt-sha256", required=True)
-    parser.add_argument("--ci-run-id", required=True, type=int)
-    parser.add_argument("--pre-s1-run-id", required=True, type=int)
-    parser.add_argument("--registration-run-id", required=True, type=int)
-    parser.add_argument("--source-anchor-run-id", required=True, type=int)
-    parser.add_argument("--independent-review-run-id", required=True, type=int)
+    parser.add_argument("--ci-run-id", type=int)
+    parser.add_argument("--pre-s1-run-id", type=int)
+    parser.add_argument("--registration-run-id", type=int)
+    parser.add_argument("--source-anchor-run-id", type=int)
+    parser.add_argument("--independent-review-run-id", type=int)
     parser.add_argument("--qualification-run-id", type=int)
-    parser.add_argument("--formal-run-id", type=int)
+    parser.add_argument("--qualification-evidence-root", type=Path)
+    parser.add_argument("--campaign-evidence-root", type=Path)
+    parser.add_argument("--terminal-evidence-root", type=Path)
+    parser.add_argument("--expected-s3-git-sha")
+    parser.add_argument("--expected-analysis-compatibility-receipt-sha256")
+    parser.add_argument("--analysis-evidence-root", type=Path)
     parser.add_argument("--poll-interval-seconds", type=int, default=15)
     return parser
 
 
 def _prerequisites(arguments: argparse.Namespace) -> FollowupDispatchPrerequisites:
+    control_run_ids = (
+        arguments.ci_run_id,
+        arguments.pre_s1_run_id,
+        arguments.registration_run_id,
+        arguments.source_anchor_run_id,
+        arguments.independent_review_run_id,
+    )
+    if any(type(run_id) is not int or run_id <= 0 for run_id in control_run_ids):
+        raise FollowupControllerError(
+            "five positive control run IDs are required"
+        )
     return FollowupDispatchPrerequisites(
         expected_s1_git_sha=arguments.expected_s1_git_sha,
         expected_s2_git_sha=arguments.expected_s2_git_sha,
@@ -781,69 +810,213 @@ def _prerequisites(arguments: argparse.Namespace) -> FollowupDispatchPrerequisit
 
 def _main(arguments: argparse.Namespace) -> int:
     root = arguments.repository_root.resolve(strict=True)
+    if arguments.command == "execute-analysis":
+        if any(
+            value is not None
+            for value in (
+                arguments.ci_run_id,
+                arguments.pre_s1_run_id,
+                arguments.registration_run_id,
+                arguments.source_anchor_run_id,
+                arguments.independent_review_run_id,
+                arguments.qualification_run_id,
+                arguments.qualification_evidence_root,
+            )
+        ):
+            raise FollowupControllerError(
+                "pre-analysis control inputs are forbidden during analysis"
+            )
+        if (
+            arguments.campaign_evidence_root is None
+            or arguments.terminal_evidence_root is None
+            or arguments.analysis_evidence_root is None
+            or arguments.expected_s3_git_sha is None
+            or arguments.expected_analysis_compatibility_receipt_sha256 is None
+        ):
+            raise FollowupControllerError(
+                "campaign, terminal, S3, compatibility, and analysis evidence inputs are required"
+            )
+        provider = GitHubFollowupCampaignProvider(
+            repository=arguments.repository,
+            expected_s2_sha=arguments.expected_s2_git_sha,
+            poll_interval_seconds=arguments.poll_interval_seconds,
+        )
+        result = execute_followup_analysis(
+            repository_root=root,
+            campaign_evidence_root=arguments.campaign_evidence_root.resolve(
+                strict=True
+            ),
+            terminal_evidence_root=arguments.terminal_evidence_root.resolve(
+                strict=True
+            ),
+            analysis_source_s3_sha=arguments.expected_s3_git_sha,
+            expected_analysis_compatibility_receipt_sha256=(
+                arguments.expected_analysis_compatibility_receipt_sha256
+            ),
+            provider=provider,
+            evidence_root=arguments.analysis_evidence_root.resolve(),
+        )
+        watcher_document = _json_object(
+            result.watch_outcome.watcher_receipt_bytes,
+            label="analysis watcher receipt",
+        )
+        document = {
+            "analysis_runner_seconds_or_null": (
+                result.watch_outcome.runner_seconds_or_null
+            ),
+            "analysis_evidence_root": str(result.evidence_root),
+            "analysis_provider_run_id": result.provider_run_id,
+            "analysis_run_admission_sha256": result.run_admission.sha256,
+            "authority_persisted": False,
+            "decision": result.decision,
+            "terminal_segment_seconds_or_null": (
+                watcher_document.get("terminal_segment_seconds_or_null")
+            ),
+        }
+        print(json.dumps(document, sort_keys=True, separators=(",", ":")))
+        return 0
     prerequisites = _prerequisites(arguments)
     adapter = GitHubFollowupAdapter(repository=arguments.repository)
-    if arguments.command == "dispatch-qualification":
-        if arguments.qualification_run_id is not None or arguments.formal_run_id is not None:
-            raise FollowupControllerError("run IDs are forbidden before qualification dispatch")
+    if arguments.command == "execute-qualification":
+        if (
+            arguments.qualification_run_id is not None
+            or arguments.campaign_evidence_root is not None
+            or arguments.terminal_evidence_root is not None
+            or arguments.expected_s3_git_sha is not None
+            or arguments.expected_analysis_compatibility_receipt_sha256 is not None
+            or arguments.analysis_evidence_root is not None
+        ):
+            raise FollowupControllerError(
+                "formal inputs are forbidden during qualification execution"
+            )
+        if arguments.qualification_evidence_root is None:
+            raise FollowupControllerError(
+                "qualification evidence root is required"
+            )
         capability = authorize_followup_qualification_dispatch(
             root,
             adapter,
             prerequisites,
         )
-        run_id = dispatch_followup_qualification(capability, prerequisites, adapter)
+        live_provider = GitHubFollowupCampaignProvider(
+            repository=arguments.repository,
+            expected_s2_sha=prerequisites.expected_s2_git_sha,
+            poll_interval_seconds=arguments.poll_interval_seconds,
+        )
+        result = execute_followup_qualification(
+            capability,
+            prerequisites,
+            live_provider,
+            evidence_root=arguments.qualification_evidence_root.resolve(),
+        )
         document = {
             "authority_persisted": False,
-            "operation": "sole-qualification-dispatched",
-            "run_id": run_id,
+            "binding_oid": result.binding_oid,
+            "operation": "sole-qualification-executed-under-mandatory-watch",
+            "evidence_root": str(result.evidence_root),
+            "run_admission_sha256": result.run_admission.sha256,
+            "run_id": result.provider_run_id,
+            "watch": result.watch_result.document,
         }
     else:
+        if (
+            arguments.qualification_evidence_root is not None
+            or arguments.expected_s3_git_sha is not None
+            or arguments.expected_analysis_compatibility_receipt_sha256 is not None
+            or arguments.analysis_evidence_root is not None
+        ):
+            raise FollowupControllerError(
+                "qualification evidence root is forbidden during formal execution"
+            )
         if arguments.qualification_run_id is None:
             raise FollowupControllerError("qualification run ID is required")
         formal_request = FollowupFormalAdmissionRequest(
             prerequisites=prerequisites,
             qualification_run_id=arguments.qualification_run_id,
         )
-        if arguments.command == "watch":
-            if arguments.formal_run_id is not None:
-                raise FollowupControllerError("formal run ID is forbidden during qualification")
-            result = watch_followup_qualification(
-                adapter,
-                formal_request,
-                poll_interval_seconds=arguments.poll_interval_seconds,
+        if arguments.campaign_evidence_root is None:
+            raise FollowupControllerError(
+                "campaign evidence root is required for formal execution"
             )
-            document = result.document
-        elif arguments.command == "dispatch-formal":
-            if arguments.formal_run_id is not None:
-                raise FollowupControllerError("formal run ID is forbidden before formal dispatch")
-            capability = authorize_followup_formal_campaign(
-                root,
-                adapter,
-                adapter,
-                formal_request,
+        if arguments.terminal_evidence_root is None:
+            raise FollowupControllerError(
+                "terminal evidence root is required for formal execution"
             )
-            run_id = open_followup_formal_campaign(
-                capability,
-                formal_request,
-                adapter,
+        capability = authorize_followup_formal_campaign(
+            root,
+            adapter,
+            adapter,
+            formal_request,
+        )
+        opening = consume_followup_formal_campaign_capability(
+            capability,
+            formal_request,
+        )
+        scientific = materialize_followup_scientific_plan(root)
+        opened = open_followup_campaign_state(
+            experiment_source_s1_sha=opening.experiment_source_s1_sha,
+            evidence_freeze_s2_sha=opening.evidence_freeze_s2_sha,
+            compatibility_receipt_sha256=(
+                opening.compatibility_receipt_sha256
+            ),
+            qualification_run_id=opening.qualification_run_id,
+            qualification_q6_artifact_id=(
+                opening.qualification_q6_artifact_id
+            ),
+            qualification_q6_artifact_digest=(
+                opening.qualification_q6_artifact_digest
+            ),
+            scientific_profile=scientific.scientific_profile,
+        )
+        campaign_provider = GitHubFollowupCampaignProvider(
+            repository=arguments.repository,
+            expected_s2_sha=opening.evidence_freeze_s2_sha,
+            poll_interval_seconds=arguments.poll_interval_seconds,
+        )
+        progress_oid, evidence_tree_oid = campaign_provider.open_campaign(opened)
+        result = execute_followup_formal_campaign(
+            opened,
+            progress_oid=progress_oid,
+            evidence_tree_oid=evidence_tree_oid,
+            scientific_profile=scientific.scientific_profile,
+            provider=campaign_provider,
+            evidence_root=arguments.campaign_evidence_root.resolve(),
+        )
+        terminal = (
+            None
+            if result.decision != "ready-for-terminal"
+            else execute_followup_terminal(
+                result,
+                scientific_profile=scientific.scientific_profile,
+                provider=campaign_provider,
+                evidence_root=arguments.terminal_evidence_root.resolve(),
             )
-            document = {
-                "authority_persisted": False,
-                "operation": "sole-formal-campaign-opened",
-                "qualification_run_id": arguments.qualification_run_id,
-                "run_id": run_id,
-            }
-        else:
-            if arguments.formal_run_id is None:
-                raise FollowupControllerError("formal run ID is required")
-            result = watch_followup_formal_campaign(
-                root,
-                adapter,
-                formal_request,
-                arguments.formal_run_id,
-                poll_interval_seconds=arguments.poll_interval_seconds,
-            )
-            document = result.document
+        )
+        document = {
+            "authority_persisted": False,
+            "campaign_id": opened.document["campaign_id"],
+            "campaign_selection_sha256_or_null": (
+                None if result.selection is None else result.selection.sha256
+            ),
+            "decision": result.decision,
+            "evidence_root": str(result.evidence_root),
+            "qualification_run_id": arguments.qualification_run_id,
+            "timing_ledger_sha256_or_null": (
+                None if result.timing is None else result.timing.sha256
+            ),
+            "terminal_decision_or_null": (
+                None if terminal is None else terminal.decision
+            ),
+            "terminal_evidence_root_or_null": (
+                None if terminal is None else str(terminal.evidence_root)
+            ),
+            "terminal_provider_run_id_or_null": (
+                None if terminal is None else terminal.provider_run_id
+            ),
+            "terminal_run_admission_sha256_or_null": (
+                None if terminal is None else terminal.run_admission.sha256
+            ),
+        }
     print(json.dumps(document, sort_keys=True, separators=(",", ":")))
     return 0
 

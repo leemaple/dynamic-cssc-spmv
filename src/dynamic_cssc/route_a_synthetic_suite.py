@@ -325,6 +325,7 @@ def route_a_synthetic_shard_identity(
     trace: RouteASyntheticTrace,
     lineage: RouteASyntheticSuiteLineage,
     *,
+    unit_attempt_ordinal: int = 0,
     scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> str:
     """Derive the one shared simulator/native identity for a synthetic unit."""
@@ -335,6 +336,10 @@ def route_a_synthetic_shard_identity(
     )
     if type(lineage) is not RouteASyntheticSuiteLineage:
         raise TypeError("lineage must be an exact RouteASyntheticSuiteLineage")
+    if type(unit_attempt_ordinal) is not int or unit_attempt_ordinal not in {0, 1}:
+        raise RouteASyntheticSuiteError(
+            "Route A suite attempt is outside the inherited retry domain"
+        )
     return hashlib.sha256(
         canonical_route_a_document(
             {
@@ -350,7 +355,7 @@ def route_a_synthetic_shard_identity(
                 "source_event_trace_sha256": trace.event_trace_sha256,
                 "source_kind": "synthetic",
                 "suite_role": trace.suite_role,
-                "unit_attempt_ordinal": 0,
+                "unit_attempt_ordinal": unit_attempt_ordinal,
                 "workflow_head_sha": lineage.workflow_head_sha,
             }
         )
@@ -471,6 +476,7 @@ def produce_route_a_synthetic_suite_handoff(
     machine_plan_bytes: bytes,
     scratch_root: Path,
     output_path: Path,
+    unit_attempt_ordinal: int = 0,
     stage_observer: Callable[[str], None] | None = None,
     scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> None:
@@ -492,6 +498,7 @@ def produce_route_a_synthetic_suite_handoff(
     shard_identity = route_a_synthetic_shard_identity(
         trace,
         lineage,
+        unit_attempt_ordinal=unit_attempt_ordinal,
         scientific_profile=scientific_profile,
     )
     stages = _RegisteredStageSequence("q1", stage_observer)
@@ -512,7 +519,7 @@ def produce_route_a_synthetic_suite_handoff(
                     strategy_candidate_id=strategy,
                     rho=rho,
                     shard_identity_sha256=shard_identity,
-                    unit_attempt_ordinal=0,
+                    unit_attempt_ordinal=unit_attempt_ordinal,
                     machine_plan_bytes=machine_plan_bytes,
                     scratch_directory=cell_scratch,
                     scientific_profile=scientific_profile,
@@ -566,6 +573,7 @@ def inspect_route_a_synthetic_suite_handoff(
     expected_trace: RouteASyntheticTrace,
     expected_lineage: RouteASyntheticSuiteLineage,
     machine_plan_bytes: bytes,
+    unit_attempt_ordinal: int = 0,
     scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> RouteASyntheticSuiteProducerInspection:
     """Independently rehash and close one complete private producer suite."""
@@ -593,6 +601,7 @@ def inspect_route_a_synthetic_suite_handoff(
     shard_identity = route_a_synthetic_shard_identity(
         trace,
         lineage,
+        unit_attempt_ordinal=unit_attempt_ordinal,
         scientific_profile=scientific_profile,
     )
     cell_archives: list[tuple[str, Fraction, bytes]] = []
@@ -611,7 +620,7 @@ def inspect_route_a_synthetic_suite_handoff(
                 strategy_candidate_id=strategy,
                 rho=rho,
                 shard_identity_sha256=shard_identity,
-                unit_attempt_ordinal=0,
+                unit_attempt_ordinal=unit_attempt_ordinal,
                 scientific_profile=scientific_profile,
             )
             identity = inspection.cell_run.cell.document["identity"]
@@ -677,6 +686,7 @@ def replay_and_guard_route_a_synthetic_suite(
     producer_archive_path: Path,
     scratch_root: Path,
     output_path: Path,
+    unit_attempt_ordinal: int = 0,
     stage_observer: Callable[[str], None] | None = None,
     scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> None:
@@ -692,6 +702,7 @@ def replay_and_guard_route_a_synthetic_suite(
         expected_trace=trace,
         expected_lineage=lineage,
         machine_plan_bytes=machine_plan_bytes,
+        unit_attempt_ordinal=unit_attempt_ordinal,
         scientific_profile=scientific_profile,
     )
     archive_by_identity = {
@@ -715,7 +726,7 @@ def replay_and_guard_route_a_synthetic_suite(
                     strategy_candidate_id=strategy,
                     rho=rho,
                     shard_identity_sha256=producer.shard_identity_sha256,
-                    unit_attempt_ordinal=0,
+                    unit_attempt_ordinal=unit_attempt_ordinal,
                     scientific_profile=scientific_profile,
                 )
                 replay = replay_route_a_synthetic_cell(
@@ -787,6 +798,7 @@ def inspect_route_a_synthetic_suite_replay(
     expected_trace: RouteASyntheticTrace,
     expected_lineage: RouteASyntheticSuiteLineage,
     machine_plan_bytes: bytes,
+    unit_attempt_ordinal: int = 0,
     scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> RouteASyntheticSuiteReplayInspection:
     """Reinspect a redacted suite result without accepting any private payload."""
@@ -802,6 +814,7 @@ def inspect_route_a_synthetic_suite_replay(
     shard_identity = route_a_synthetic_shard_identity(
         trace,
         lineage,
+        unit_attempt_ordinal=unit_attempt_ordinal,
         scientific_profile=scientific_profile,
     )
     final_cells: list[RouteACanonicalStrategyCell] = []
@@ -825,7 +838,7 @@ def inspect_route_a_synthetic_suite_replay(
                 strategy_candidate_id=strategy,
                 rho=rho,
                 shard_identity_sha256=shard_identity,
-                unit_attempt_ordinal=0,
+                unit_attempt_ordinal=unit_attempt_ordinal,
                 scientific_profile=scientific_profile,
             )
             if (

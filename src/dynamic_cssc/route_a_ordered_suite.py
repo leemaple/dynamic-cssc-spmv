@@ -107,7 +107,16 @@ def _replay_paths() -> tuple[str, ...]:
     return tuple(paths)
 
 
-def _shard(trace: RouteASnapTrace, lineage: RouteASyntheticSuiteLineage) -> str:
+def _shard(
+    trace: RouteASnapTrace,
+    lineage: RouteASyntheticSuiteLineage,
+    *,
+    unit_attempt_ordinal: int,
+) -> str:
+    if type(unit_attempt_ordinal) is not int or unit_attempt_ordinal not in {0, 1}:
+        raise RouteAOrderedSuiteError(
+            "ordered suite attempt is outside the inherited retry domain"
+        )
     return route_a_snap_shard_identity(
         trace,
         experiment_source_sha=lineage.experiment_source_sha,
@@ -115,7 +124,7 @@ def _shard(trace: RouteASnapTrace, lineage: RouteASyntheticSuiteLineage) -> str:
         compatibility_receipt_sha256=lineage.compatibility_receipt_sha256,
         provider_run_id=lineage.provider_run_id,
         provider_run_attempt=lineage.provider_run_attempt,
-        unit_attempt_ordinal=0,
+        unit_attempt_ordinal=unit_attempt_ordinal,
     )
 
 
@@ -193,6 +202,7 @@ def produce_route_a_ordered_suite_handoff(
     machine_plan_bytes: bytes,
     scratch_root: Path,
     output_path: Path,
+    unit_attempt_ordinal: int = 0,
     scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> None:
     """Execute the six direct strategy/rho cells and retain private replay bytes."""
@@ -205,7 +215,11 @@ def produce_route_a_ordered_suite_handoff(
     except (TypeError, ValueError) as error:
         raise RouteAOrderedSuiteError("ordered suite machine plan changed") from error
     _require_empty_scratch(scratch_root)
-    shard = _shard(trace, lineage)
+    shard = _shard(
+        trace,
+        lineage,
+        unit_attempt_ordinal=unit_attempt_ordinal,
+    )
     members: list[tuple[str, bytes]] = [
         ("lineage.json", lineage.document_bytes),
         ("source-mapping.json", trace.mapping_bytes),
@@ -223,7 +237,7 @@ def produce_route_a_ordered_suite_handoff(
                     strategy_candidate_id=strategy,
                     rho=rho,
                     shard_identity_sha256=shard,
-                    unit_attempt_ordinal=0,
+                    unit_attempt_ordinal=unit_attempt_ordinal,
                     machine_plan_bytes=machine_plan_bytes,
                     scratch_directory=scratch,
                     scientific_profile=scientific_profile,
@@ -260,6 +274,7 @@ def inspect_route_a_ordered_suite_handoff(
     expected_trace: RouteASnapTrace,
     expected_lineage: RouteASyntheticSuiteLineage,
     machine_plan_bytes: bytes,
+    unit_attempt_ordinal: int = 0,
     scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> RouteAOrderedSuiteProducerInspection:
     """Rehash and close one complete private ordered producer suite."""
@@ -276,7 +291,11 @@ def inspect_route_a_ordered_suite_handoff(
         or members["source-trace.json"] != trace.event_trace_bytes
     ):
         raise RouteAOrderedSuiteError("ordered producer source or lineage changed")
-    shard = _shard(trace, lineage)
+    shard = _shard(
+        trace,
+        lineage,
+        unit_attempt_ordinal=unit_attempt_ordinal,
+    )
     cell_archives: list[tuple[str, Fraction, bytes]] = []
     for strategy_ordinal, strategy in enumerate(_STRATEGIES):
         for rho in _DIRECT_RHOS:
@@ -290,7 +309,7 @@ def inspect_route_a_ordered_suite_handoff(
                 strategy_candidate_id=strategy,
                 rho=rho,
                 shard_identity_sha256=shard,
-                unit_attempt_ordinal=0,
+                unit_attempt_ordinal=unit_attempt_ordinal,
             )
             identity = inspection.cell_run.cell.document["identity"]
             if (
@@ -336,6 +355,7 @@ def replay_and_guard_route_a_ordered_suite(
     producer_archive_path: Path,
     scratch_root: Path,
     output_path: Path,
+    unit_attempt_ordinal: int = 0,
     scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> None:
     """Replay all six cells read-only, guard them, and discard private bytes."""
@@ -347,6 +367,7 @@ def replay_and_guard_route_a_ordered_suite(
         expected_trace=trace,
         expected_lineage=lineage,
         machine_plan_bytes=machine_plan_bytes,
+        unit_attempt_ordinal=unit_attempt_ordinal,
         scientific_profile=scientific_profile,
     )
     archives = {
@@ -369,7 +390,7 @@ def replay_and_guard_route_a_ordered_suite(
                     strategy_candidate_id=strategy,
                     rho=rho,
                     shard_identity_sha256=producer.shard_identity_sha256,
-                    unit_attempt_ordinal=0,
+                    unit_attempt_ordinal=unit_attempt_ordinal,
                 )
                 replay = replay_route_a_ordered_event_cell(
                     trace,
@@ -419,6 +440,7 @@ def inspect_route_a_ordered_suite_replay(
     expected_trace: RouteASnapTrace,
     expected_lineage: RouteASyntheticSuiteLineage,
     machine_plan_bytes: bytes,
+    unit_attempt_ordinal: int = 0,
     scientific_profile: RouteAScientificProfile = PREDECESSOR_ROUTE_A_PROFILE,
 ) -> RouteAOrderedSuiteReplayInspection:
     """Reinspect one redacted ordered result without accepting private bytes."""
@@ -434,7 +456,11 @@ def inspect_route_a_ordered_suite_replay(
         or members["source-trace.json"] != trace.event_trace_bytes
     ):
         raise RouteAOrderedSuiteError("ordered replay source or lineage changed")
-    shard = _shard(trace, lineage)
+    shard = _shard(
+        trace,
+        lineage,
+        unit_attempt_ordinal=unit_attempt_ordinal,
+    )
     final_cells: list[RouteACanonicalStrategyCell] = []
     replay_receipts: list[bytes] = []
     guard_receipts: list[bytes] = []
@@ -463,7 +489,7 @@ def inspect_route_a_ordered_suite_replay(
                 strategy_candidate_id=strategy,
                 rho=rho,
                 shard_identity_sha256=shard,
-                unit_attempt_ordinal=0,
+                unit_attempt_ordinal=unit_attempt_ordinal,
             )
             if (
                 cell.document["identity"]["strategy_candidate_id"] != strategy

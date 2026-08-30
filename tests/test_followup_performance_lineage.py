@@ -132,17 +132,21 @@ def test_followup_behavior_inventory_is_exact_git_object_not_worktree(
     assert before == after
 
 
-def test_formal_behavior_set_closes_python_imports_and_native_build_inputs() -> None:
+@pytest.mark.parametrize("role", FOLLOWUP_BEHAVIOR_ROLES)
+def test_followup_behavior_set_closes_python_imports_and_native_build_inputs(
+    role: str,
+) -> None:
     registry = json.loads(
         (REPOSITORY_ROOT / "config/followup-performance-behavior-sets.json").read_text(
             encoding="ascii"
         )
     )
-    formal_paths = set(registry["roles"]["formal"]["paths"])
+    role_paths = set(registry["roles"][role]["paths"])
     stack = [
         Path(path)
-        for path in formal_paths
-        if path.startswith("scripts/") and path.endswith(".py")
+        for path in role_paths
+        if path.endswith(".py")
+        and (path.startswith("scripts/") or path.startswith("src/"))
     ]
     visited: set[Path] = set()
     while stack:
@@ -167,7 +171,7 @@ def test_formal_behavior_set_closes_python_imports_and_native_build_inputs() -> 
                 elif module.startswith("scripts."):
                     imported = Path(module.replace(".", "/")).with_suffix(".py")
                 if imported is not None and (REPOSITORY_ROOT / imported).is_file():
-                    assert imported.as_posix() in formal_paths
+                    assert imported.as_posix() in role_paths
                     stack.append(imported)
 
     native_build_inputs = {
@@ -182,7 +186,8 @@ def test_formal_behavior_set_closes_python_imports_and_native_build_inputs() -> 
         "scripts/bootstrap_openfhe.sh",
         "scripts/build_cpp.sh",
     }
-    assert native_build_inputs <= formal_paths
+    if role == "formal":
+        assert native_build_inputs <= role_paths
 
 
 def test_followup_registration_rejects_dirty_or_non_exact_s2_checkout(

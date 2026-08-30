@@ -10,6 +10,7 @@ import dynamic_cssc.route_a_snap as snap_module
 from dynamic_cssc.followup_performance_acquisition import (
     FOLLOWUP_SNAP_SOURCE_URL,
     FollowupAcquisitionArtifactError,
+    build_followup_acquisition_provider_binding,
     build_route_a_snap_acquisition_receipt,
     guard_and_produce_followup_acquisition_artifact,
     inspect_followup_acquisition_artifact,
@@ -21,6 +22,12 @@ from dynamic_cssc.route_a_snap import (
     RouteASnapTransform,
 )
 from dynamic_cssc.route_a_synthetic_suite import RouteASyntheticSuiteLineage
+
+BINDING = {
+    "campaign_id": "6" * 64,
+    "campaign_run_admission_sha256": "7" * 64,
+    "formal_unit_ordinal": 0,
+}
 
 
 def _lineage() -> RouteASyntheticSuiteLineage:
@@ -141,6 +148,7 @@ def test_two_download_acquisition_emits_candidate_without_raw_source_bytes(
         producer_receipt,
         producer_root,
         lineage=_lineage(),
+        **BINDING,
     )
     guard_receipt = _receipt(raw_path, second=2)
     final = guard_and_produce_followup_acquisition_artifact(
@@ -149,11 +157,13 @@ def test_two_download_acquisition_emits_candidate_without_raw_source_bytes(
         guard_receipt,
         final_root,
         lineage=_lineage(),
+        **BINDING,
     )
     reinspected = inspect_followup_acquisition_artifact(
         final_root,
         phase="guarded-final",
         lineage=_lineage(),
+        **BINDING,
     )
 
     assert producer.phase == "private-handoff"
@@ -169,6 +179,17 @@ def test_two_download_acquisition_emits_candidate_without_raw_source_bytes(
         for path in final_root.rglob("*")
         if path.is_file()
     )
+    binding = build_followup_acquisition_provider_binding(
+        reinspected,
+        artifact_id=123,
+        artifact_provider_digest=f"sha256:{'d' * 64}",
+    )
+    changed = build_followup_acquisition_provider_binding(
+        reinspected,
+        artifact_id=124,
+        artifact_provider_digest=f"sha256:{'d' * 64}",
+    )
+    assert binding.sha256 != changed.sha256
 
 
 def test_acquisition_guard_rejects_second_object_drift(tmp_path: Path) -> None:
@@ -179,6 +200,7 @@ def test_acquisition_guard_rejects_second_object_drift(tmp_path: Path) -> None:
         _receipt(raw_path),
         producer_root,
         lineage=_lineage(),
+        **BINDING,
     )
     different = (tmp_path / "different.gz").resolve()
     different.write_bytes(gzip.compress(b"different raw object\n", mtime=0))
@@ -190,6 +212,7 @@ def test_acquisition_guard_rejects_second_object_drift(tmp_path: Path) -> None:
             _receipt(different, second=2),
             (tmp_path / "final").resolve(),
             lineage=_lineage(),
+            **BINDING,
         )
 
 

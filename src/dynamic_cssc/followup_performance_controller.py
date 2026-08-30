@@ -51,7 +51,13 @@ from dynamic_cssc.followup_performance_lineage import (
     inspect_followup_registration_archive,
     verify_followup_s1_s2_compatibility,
 )
+from dynamic_cssc.followup_performance_qualification_binding import (
+    inspect_followup_qualification_watch_binding,
+)
 from dynamic_cssc.route_a_controller import (
+    RouteALiveJobSnapshot,
+    RouteALiveQualificationObservation,
+    RouteALiveRunSnapshot,
     RouteAQualificationRequest,
     RouteAQualificationWatchResult,
     watch_route_a_qualification,
@@ -67,6 +73,7 @@ __all__ = (
     "FollowupControllerError",
     "FollowupDispatchPrerequisites",
     "FollowupFormalAdmissionRequest",
+    "FollowupFormalCampaignOpening",
     "FollowupFormalCampaignDispatcher",
     "FollowupFormalDispatchCapability",
     "FollowupFormalLiveJobSnapshot",
@@ -80,6 +87,7 @@ __all__ = (
     "FollowupPrerequisiteProvider",
     "FollowupQualificationDispatchCapability",
     "FollowupQualificationDispatcher",
+    "FollowupQualificationOpening",
     "FollowupQualificationObservation",
     "FollowupQualificationProvider",
     "FollowupQualificationWatchResult",
@@ -88,7 +96,9 @@ __all__ = (
     "abandon_followup_qualification_capability",
     "authorize_followup_formal_campaign",
     "authorize_followup_qualification_dispatch",
+    "consume_followup_qualification_capability",
     "dispatch_followup_qualification",
+    "consume_followup_formal_campaign_capability",
     "open_followup_formal_campaign",
     "watch_followup_formal_campaign",
     "watch_followup_qualification",
@@ -267,6 +277,23 @@ class FollowupQualificationWatchResult:
     """Follow-up namespace wrapper around the unchanged stop-loss decision."""
 
     inherited: RouteAQualificationWatchResult
+    qualification_decision: Literal[
+        "qualification-go",
+        "qualification-no-go",
+        "q5-prefix-only",
+    ] = "q5-prefix-only"
+    q6_started_at: datetime | None = None
+    q6_completed_at: datetime | None = None
+    total_threshold_at: datetime | None = None
+    q6_wall_threshold_at: datetime | None = None
+    q6_controller_observed_at: datetime | None = None
+    q6_cancellation_requested_at: datetime | None = None
+    q6_cancellation_acknowledged_at: datetime | None = None
+    q6_provider_terminal_updated_at: datetime | None = None
+    q6_provider_terminal_conclusion: str | None = None
+    q6_watch_decided_at: datetime | None = None
+    q6_cancellation_error: str | None = None
+    final_reason: str | None = None
 
     @property
     def document(self) -> dict[str, object]:
@@ -283,11 +310,62 @@ class FollowupQualificationWatchResult:
         ).encode("ascii")
         return {
             "authority": False,
+            "final_reason_or_null": self.final_reason,
             "formal_execution_authorized": False,
             "inherited_stop_loss_record": inner,
             "inherited_stop_loss_record_sha256": hashlib.sha256(inner_bytes).hexdigest(),
-            "schema_version": "dynamic-cssc-followup-performance-live-stop-loss-v1",
+            "q6_cancellation_acknowledged_at_or_null": (
+                None
+                if self.q6_cancellation_acknowledged_at is None
+                else _render_time(self.q6_cancellation_acknowledged_at)
+            ),
+            "q6_cancellation_error_or_null": self.q6_cancellation_error,
+            "q6_cancellation_requested_at_or_null": (
+                None
+                if self.q6_cancellation_requested_at is None
+                else _render_time(self.q6_cancellation_requested_at)
+            ),
+            "q6_completed_at_or_null": (
+                None
+                if self.q6_completed_at is None
+                else _render_time(self.q6_completed_at)
+            ),
+            "q6_controller_observed_at_or_null": (
+                None
+                if self.q6_controller_observed_at is None
+                else _render_time(self.q6_controller_observed_at)
+            ),
+            "q6_provider_terminal_conclusion_or_null": (
+                self.q6_provider_terminal_conclusion
+            ),
+            "q6_provider_terminal_updated_at_or_null": (
+                None
+                if self.q6_provider_terminal_updated_at is None
+                else _render_time(self.q6_provider_terminal_updated_at)
+            ),
+            "q6_started_at_or_null": (
+                None
+                if self.q6_started_at is None
+                else _render_time(self.q6_started_at)
+            ),
+            "q6_wall_threshold_at_or_null": (
+                None
+                if self.q6_wall_threshold_at is None
+                else _render_time(self.q6_wall_threshold_at)
+            ),
+            "q6_watch_decided_at_or_null": (
+                None
+                if self.q6_watch_decided_at is None
+                else _render_time(self.q6_watch_decided_at)
+            ),
+            "qualification_decision": self.qualification_decision,
+            "schema_version": "dynamic-cssc-followup-performance-live-stop-loss-v2",
             "study_id": FOLLOWUP_STUDY_ID,
+            "total_threshold_at_or_null": (
+                None
+                if self.total_threshold_at is None
+                else _render_time(self.total_threshold_at)
+            ),
         }
 
 
@@ -345,6 +423,27 @@ class FollowupDispatchPrerequisites:
 class FollowupFormalAdmissionRequest:
     prerequisites: FollowupDispatchPrerequisites
     qualification_run_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class FollowupFormalCampaignOpening:
+    """Authority-false inputs left after the live capability is consumed."""
+
+    experiment_source_s1_sha: str
+    evidence_freeze_s2_sha: str
+    compatibility_receipt_sha256: str
+    qualification_run_id: int
+    qualification_q6_artifact_id: int
+    qualification_q6_artifact_digest: str
+
+
+@dataclass(frozen=True, slots=True)
+class FollowupQualificationOpening:
+    """Authority-false inputs left after qualification authority is consumed."""
+
+    experiment_source_s1_sha: str
+    evidence_freeze_s2_sha: str
+    compatibility_receipt_sha256: str
 
 
 class FollowupPrerequisiteProvider(Protocol):
@@ -508,6 +607,30 @@ def _validate_provider_authority_binding(
         or type(snapshot.commit_message) is not str
     ):
         raise FollowupControllerError("provider authority binding topology changed")
+    if kind == "qualification":
+        try:
+            watched = inspect_followup_qualification_watch_binding(
+                snapshot.commit_message.encode("ascii")
+            )
+        except (UnicodeEncodeError, ValueError) as error:
+            raise FollowupControllerError(
+                "provider qualification watch binding changed"
+            ) from error
+        document = watched.document
+        if (
+            document["experiment_source_S1_sha"] != expected_s1
+            or document["evidence_freeze_S2_sha"] != expected_s2
+            or document["claim_oid"] != expected_s2
+            or document["compatibility_receipt_sha256"] != expected_compatibility
+            or document["provider_run_id"] != expected_run_id
+            or not str(document["workflow_ref"]).endswith(
+                f"/{_QUALIFICATION_WORKFLOW}@refs/heads/main"
+            )
+        ):
+            raise FollowupControllerError(
+                "provider qualification watch binding content changed"
+            )
+        return
     try:
         document = json.loads(snapshot.commit_message)
     except (json.JSONDecodeError, UnicodeDecodeError) as error:
@@ -1034,19 +1157,13 @@ def dispatch_followup_qualification(
 ) -> int:
     """Atomically consume qualification authority and perform its sole dispatch."""
 
-    binding = _consume_capability(
-        capability,
-        expected_type=FollowupQualificationDispatchCapability,
-        expected_kind="qualification",
-    )
-    frozen = _freeze_prerequisites(request)
-    _validate_binding_claim(binding, frozen)
+    opening = consume_followup_qualification_capability(capability, request)
     try:
         run_id = dispatcher.dispatch_qualification(
-            expected_s1_git_sha=frozen.expected_s1_git_sha,
-            expected_s2_git_sha=frozen.expected_s2_git_sha,
+            expected_s1_git_sha=opening.experiment_source_s1_sha,
+            expected_s2_git_sha=opening.evidence_freeze_s2_sha,
             expected_compatibility_receipt_sha256=(
-                frozen.expected_compatibility_receipt_sha256
+                opening.compatibility_receipt_sha256
             ),
         )
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as error:
@@ -1058,6 +1175,144 @@ def dispatch_followup_qualification(
     return run_id
 
 
+def consume_followup_qualification_capability(
+    capability: FollowupQualificationDispatchCapability,
+    request: FollowupDispatchPrerequisites,
+) -> FollowupQualificationOpening:
+    """Consume live authority and return only watch-bindable qualification facts."""
+
+    binding = _consume_capability(
+        capability,
+        expected_type=FollowupQualificationDispatchCapability,
+        expected_kind="qualification",
+    )
+    frozen = _freeze_prerequisites(request)
+    _validate_binding_claim(binding, frozen)
+    return FollowupQualificationOpening(
+        experiment_source_s1_sha=frozen.expected_s1_git_sha,
+        evidence_freeze_s2_sha=frozen.expected_s2_git_sha,
+        compatibility_receipt_sha256=frozen.expected_compatibility_receipt_sha256,
+    )
+
+
+def _validate_followup_live_qualification(
+    observation: RouteALiveQualificationObservation,
+    *,
+    run_id: int,
+    expected_s2: str,
+    controller_now: datetime,
+) -> tuple[
+    RouteALiveRunSnapshot,
+    dict[str, RouteALiveJobSnapshot],
+    datetime,
+]:
+    if type(observation) is not RouteALiveQualificationObservation:
+        raise FollowupControllerError("follow-up qualification observation type changed")
+    _validate_fresh_observation(observation.observed_at, controller_now)
+    provider_now = _require_utc(
+        observation.provider_observed_at,
+        "qualification provider Date",
+    )
+    run = observation.run
+    if (
+        type(run) is not RouteALiveRunSnapshot
+        or run.database_id != run_id
+        or run.event != "workflow_dispatch"
+        or run.head_sha != expected_s2
+        or run.head_branch != "main"
+        or run.attempt != 1
+        or run.status not in {"queued", "in_progress", "completed"}
+        or (run.status == "completed") != (run.conclusion is not None)
+        or _require_utc(run.created_at, "qualification run createdAt")
+        > _require_utc(run.updated_at, "qualification run updatedAt")
+        or _require_utc(run.updated_at, "qualification run updatedAt")
+        > provider_now
+    ):
+        raise FollowupControllerError("follow-up qualification run identity changed")
+    jobs = observation.jobs
+    if type(jobs) is not tuple or any(
+        type(job) is not RouteALiveJobSnapshot for job in jobs
+    ):
+        raise FollowupControllerError("follow-up qualification job set changed")
+    names = tuple(job.name for job in jobs)
+    if names != _QUALIFICATION_JOB_NAMES[: len(names)] or len(names) != len(set(names)):
+        raise FollowupControllerError("follow-up qualification jobs are not one prefix")
+    by_name: dict[str, RouteALiveJobSnapshot] = {}
+    identifiers: set[int] = set()
+    previous_completed: datetime | None = None
+    for job in jobs:
+        started = (
+            None
+            if job.started_at is None
+            else _require_utc(job.started_at, f"{job.name} startedAt")
+        )
+        completed = (
+            None
+            if job.completed_at is None
+            else _require_utc(job.completed_at, f"{job.name} completedAt")
+        )
+        if (
+            type(job.database_id) is not int
+            or job.database_id <= 0
+            or job.database_id in identifiers
+            or job.status not in {"queued", "in_progress", "completed", "waiting", "pending"}
+            or (job.status != "completed" and job.conclusion is not None)
+            or (job.status == "completed")
+            != (completed is not None and job.conclusion is not None)
+            or (completed is not None and started is None)
+            or (started is not None and started > provider_now)
+            or (completed is not None and (completed < started or completed > provider_now))
+            or (
+                previous_completed is not None
+                and started is not None
+                and started < previous_completed
+            )
+        ):
+            raise FollowupControllerError(
+                "follow-up qualification job lifecycle changed"
+            )
+        identifiers.add(job.database_id)
+        by_name[job.name] = job
+        if completed is not None:
+            previous_completed = completed
+    return run, by_name, provider_now
+
+
+def _followup_qualification_result(
+    inherited: RouteAQualificationWatchResult,
+    *,
+    decision: Literal["qualification-go", "qualification-no-go"],
+    reason: str,
+    q6_started_at: datetime | None = None,
+    q6_completed_at: datetime | None = None,
+    total_threshold_at: datetime | None = None,
+    q6_wall_threshold_at: datetime | None = None,
+    q6_controller_observed_at: datetime | None = None,
+    q6_cancellation_requested_at: datetime | None = None,
+    q6_cancellation_acknowledged_at: datetime | None = None,
+    q6_provider_terminal_updated_at: datetime | None = None,
+    q6_provider_terminal_conclusion: str | None = None,
+    q6_watch_decided_at: datetime | None = None,
+    q6_cancellation_error: str | None = None,
+) -> FollowupQualificationWatchResult:
+    return FollowupQualificationWatchResult(
+        inherited=inherited,
+        qualification_decision=decision,
+        q6_started_at=q6_started_at,
+        q6_completed_at=q6_completed_at,
+        total_threshold_at=total_threshold_at,
+        q6_wall_threshold_at=q6_wall_threshold_at,
+        q6_controller_observed_at=q6_controller_observed_at,
+        q6_cancellation_requested_at=q6_cancellation_requested_at,
+        q6_cancellation_acknowledged_at=q6_cancellation_acknowledged_at,
+        q6_provider_terminal_updated_at=q6_provider_terminal_updated_at,
+        q6_provider_terminal_conclusion=q6_provider_terminal_conclusion,
+        q6_watch_decided_at=q6_watch_decided_at,
+        q6_cancellation_error=q6_cancellation_error,
+        final_reason=reason,
+    )
+
+
 def watch_followup_qualification(
     provider: object,
     request: FollowupFormalAdmissionRequest,
@@ -1065,29 +1320,261 @@ def watch_followup_qualification(
     poll_interval_seconds: int = 15,
     wait: Callable[[float], None] = time.sleep,
 ) -> FollowupQualificationWatchResult:
-    """Reuse the unchanged predecessor stop-loss for the new exact run identity."""
+    """Enforce the unchanged 45-minute prefix and the complete 55-minute gate."""
 
     if type(request) is not FollowupFormalAdmissionRequest:
         raise TypeError("request must be an exact FollowupFormalAdmissionRequest")
     frozen = _freeze_prerequisites(request.prerequisites)
-    if type(request.qualification_run_id) is not int or request.qualification_run_id <= 0:
+    run_id = request.qualification_run_id
+    if type(run_id) is not int or run_id <= 0:
         raise FollowupControllerError("qualification run ID is invalid")
     try:
-        return FollowupQualificationWatchResult(
-            inherited=watch_route_a_qualification(
-                provider,  # type: ignore[arg-type]
-                RouteAQualificationRequest(
-                    run_id=request.qualification_run_id,
-                    expected_s2_git_sha=frozen.expected_s2_git_sha,
-                    expected_head_branch="main",
-                    expected_run_attempt=1,
-                ),
-                poll_interval_seconds=poll_interval_seconds,
-                wait=wait,
-            )
+        inherited = watch_route_a_qualification(
+            provider,  # type: ignore[arg-type]
+            RouteAQualificationRequest(
+                run_id=run_id,
+                expected_s2_git_sha=frozen.expected_s2_git_sha,
+                expected_head_branch="main",
+                expected_run_attempt=1,
+            ),
+            poll_interval_seconds=poll_interval_seconds,
+            wait=wait,
         )
     except (RuntimeError, TypeError, ValueError) as error:
-        raise FollowupControllerError("follow-up qualification stop-loss failed closed") from error
+        raise FollowupControllerError(
+            "follow-up qualification 45-minute stop-loss failed closed"
+        ) from error
+    if inherited.decision != "combined-guard-success-before-threshold":
+        return _followup_qualification_result(
+            inherited,
+            decision="qualification-no-go",
+            q6_completed_at=None,
+            total_threshold_at=(
+                None
+                if inherited.q1_started_at is None
+                else inherited.q1_started_at + _TOTAL_PATH_LIMIT
+            ),
+            reason=inherited.decision,
+        )
+    if inherited.q1_started_at is None or inherited.q5_completed_at is None:
+        raise FollowupControllerError(
+            "successful qualification prefix lacks q1/q5 timestamps"
+        )
+    q1_started = _require_utc(inherited.q1_started_at, "qualification q1 startedAt")
+    q5_completed = _require_utc(
+        inherited.q5_completed_at,
+        "qualification q5 completedAt",
+    )
+    total_threshold = q1_started + _TOTAL_PATH_LIMIT
+    q6_wall_threshold = q5_completed + _Q6_WALL_LIMIT
+    local_fail_safe: datetime | None = None
+    cancellation_requested = False
+    cancellation_requested_at: datetime | None = None
+    cancellation_acknowledged_at: datetime | None = None
+    cancellation_deadline: datetime | None = None
+    last_q6_started_at: datetime | None = None
+    last_q6_completed_at: datetime | None = None
+    reason = "qualification q6 did not close"
+    while True:
+        try:
+            observation = provider.read_live_qualification(run_id)  # type: ignore[attr-defined]
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            controller_now = _require_utc(
+                _utc_now(),
+                "qualification controller failed observation",
+            )
+            if (
+                not cancellation_requested
+                and local_fail_safe is not None
+                and controller_now < local_fail_safe
+            ):
+                wait(
+                    min(
+                        float(poll_interval_seconds),
+                        (local_fail_safe - controller_now).total_seconds(),
+                    )
+                )
+                continue
+            run = None
+            by_name: dict[str, RouteALiveJobSnapshot] = {}
+            provider_now = None
+            reason = "qualification provider observation failed after q5"
+        else:
+            controller_now = _require_utc(
+                _utc_now(),
+                "qualification controller observation",
+            )
+            run, by_name, provider_now = _validate_followup_live_qualification(
+                observation,
+                run_id=run_id,
+                expected_s2=frozen.expected_s2_git_sha,
+                controller_now=controller_now,
+            )
+            q1 = by_name.get(_QUALIFICATION_JOB_NAMES[0])
+            q5 = by_name.get(_QUALIFICATION_JOB_NAMES[4])
+            q6 = by_name.get(_QUALIFICATION_JOB_NAMES[5])
+            if q6 is not None:
+                last_q6_started_at = q6.started_at
+                last_q6_completed_at = q6.completed_at
+            if (
+                q1 is None
+                or q1.started_at != q1_started
+                or q5 is None
+                or q5.completed_at != q5_completed
+                or q5.conclusion != "success"
+            ):
+                raise FollowupControllerError(
+                    "qualification q1/q5 identity changed after prefix success"
+                )
+            provider_deadline = min(total_threshold, q6_wall_threshold)
+            if q6 is not None and q6.started_at is not None:
+                provider_deadline = min(
+                    provider_deadline,
+                    q6.started_at + _Q6_JOB_LIMIT,
+                )
+            remaining = max(timedelta(0), provider_deadline - provider_now)
+            candidate_local = controller_now + remaining
+            if local_fail_safe is None or candidate_local < local_fail_safe:
+                local_fail_safe = candidate_local
+            q6_success = (
+                q6 is not None
+                and q6.status == "completed"
+                and q6.conclusion == "success"
+                and q6.started_at is not None
+                and q6.completed_at is not None
+                and q6.completed_at - q6.started_at <= _Q6_JOB_LIMIT
+                and q6.completed_at <= q6_wall_threshold
+                and q6.completed_at <= total_threshold
+            )
+            six_success = len(by_name) == 6 and all(
+                job.status == "completed" and job.conclusion == "success"
+                for job in by_name.values()
+            )
+            if run.status == "completed":
+                if run.conclusion == "success" and q6_success and six_success:
+                    assert q6 is not None and q6.completed_at is not None
+                    return _followup_qualification_result(
+                        inherited,
+                        decision="qualification-go",
+                        q6_started_at=q6.started_at,
+                        q6_completed_at=q6.completed_at,
+                        total_threshold_at=total_threshold,
+                        q6_wall_threshold_at=q6_wall_threshold,
+                        q6_controller_observed_at=controller_now,
+                        q6_provider_terminal_updated_at=run.updated_at,
+                        q6_provider_terminal_conclusion=run.conclusion,
+                        q6_watch_decided_at=controller_now,
+                        reason="q1-through-q6 succeeded inside both frozen gates",
+                    )
+                return _followup_qualification_result(
+                    inherited,
+                    decision="qualification-no-go",
+                    q6_started_at=None if q6 is None else q6.started_at,
+                    q6_completed_at=None if q6 is None else q6.completed_at,
+                    total_threshold_at=total_threshold,
+                    q6_wall_threshold_at=q6_wall_threshold,
+                    q6_controller_observed_at=controller_now,
+                    q6_cancellation_requested_at=cancellation_requested_at,
+                    q6_cancellation_acknowledged_at=(
+                        cancellation_acknowledged_at
+                    ),
+                    q6_provider_terminal_updated_at=run.updated_at,
+                    q6_provider_terminal_conclusion=run.conclusion,
+                    q6_watch_decided_at=controller_now,
+                    reason=(
+                        reason
+                        if cancellation_requested
+                        else "qualification terminal state did not close q6 GO"
+                    ),
+                )
+            failed = any(
+                job.status == "completed" and job.conclusion != "success"
+                for job in by_name.values()
+            )
+            if not failed and provider_now < provider_deadline and (
+                local_fail_safe is None or controller_now < local_fail_safe
+            ):
+                wait(
+                    min(
+                        float(poll_interval_seconds),
+                        (provider_deadline - provider_now).total_seconds(),
+                        (
+                            float(poll_interval_seconds)
+                            if local_fail_safe is None
+                            else (local_fail_safe - controller_now).total_seconds()
+                        ),
+                    )
+                )
+                continue
+            reason = (
+                "qualification q6 failed"
+                if failed
+                else "qualification 55-minute or q6 gate reached"
+            )
+        if not cancellation_requested:
+            cancellation_requested_at = controller_now
+            try:
+                provider.cancel_qualification(run_id)  # type: ignore[attr-defined]
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                cancellation_failed_at = _require_utc(
+                    _utc_now(),
+                    "qualification q6 failed cancellation decision",
+                )
+                return _followup_qualification_result(
+                    inherited,
+                    decision="qualification-no-go",
+                    q6_started_at=last_q6_started_at,
+                    q6_completed_at=last_q6_completed_at,
+                    total_threshold_at=total_threshold,
+                    q6_wall_threshold_at=q6_wall_threshold,
+                    q6_controller_observed_at=controller_now,
+                    q6_cancellation_requested_at=cancellation_requested_at,
+                    q6_watch_decided_at=cancellation_failed_at,
+                    q6_cancellation_error="provider-cancel-request-failed",
+                    reason=f"{reason}; cancellation request failed",
+                )
+            cancellation_requested = True
+            cancellation_acknowledged_at = _require_utc(
+                _utc_now(),
+                "qualification q6 cancellation acknowledgement",
+            )
+            cancellation_deadline = (
+                cancellation_acknowledged_at + timedelta(minutes=10)
+            )
+        if run is not None and run.status == "completed":
+            return _followup_qualification_result(
+                inherited,
+                decision="qualification-no-go",
+                q6_started_at=last_q6_started_at,
+                q6_completed_at=last_q6_completed_at,
+                total_threshold_at=total_threshold,
+                q6_wall_threshold_at=q6_wall_threshold,
+                q6_controller_observed_at=controller_now,
+                q6_cancellation_requested_at=cancellation_requested_at,
+                q6_cancellation_acknowledged_at=cancellation_acknowledged_at,
+                q6_provider_terminal_updated_at=run.updated_at,
+                q6_provider_terminal_conclusion=run.conclusion,
+                q6_watch_decided_at=controller_now,
+                reason=reason,
+            )
+        if cancellation_deadline is not None and controller_now >= cancellation_deadline:
+            return _followup_qualification_result(
+                inherited,
+                decision="qualification-no-go",
+                q6_started_at=last_q6_started_at,
+                q6_completed_at=last_q6_completed_at,
+                total_threshold_at=total_threshold,
+                q6_wall_threshold_at=q6_wall_threshold,
+                q6_controller_observed_at=controller_now,
+                q6_cancellation_requested_at=cancellation_requested_at,
+                q6_cancellation_acknowledged_at=cancellation_acknowledged_at,
+                q6_watch_decided_at=controller_now,
+                q6_cancellation_error=(
+                    "provider-terminal-state-not-observed-within-ten-minutes"
+                ),
+                reason=f"{reason}; provider terminal state was not observed",
+            )
+        wait(float(poll_interval_seconds))
 
 
 def _validate_qualification_jobs(
@@ -1344,12 +1831,11 @@ def authorize_followup_formal_campaign(
     return capability
 
 
-def open_followup_formal_campaign(
+def consume_followup_formal_campaign_capability(
     capability: FollowupFormalDispatchCapability,
     request: FollowupFormalAdmissionRequest,
-    dispatcher: FollowupFormalCampaignDispatcher,
-) -> int:
-    """Atomically consume formal authority and open exactly one campaign controller."""
+) -> FollowupFormalCampaignOpening:
+    """Consume live authority and return only CAS-bound opening facts."""
 
     binding = _consume_capability(
         capability,
@@ -1370,14 +1856,32 @@ def open_followup_formal_campaign(
         or _PROVIDER_DIGEST.fullmatch(binding.q6_artifact_digest) is None
     ):
         raise FollowupControllerError("formal capability qualification binding changed")
+    return FollowupFormalCampaignOpening(
+        experiment_source_s1_sha=frozen.expected_s1_git_sha,
+        evidence_freeze_s2_sha=frozen.expected_s2_git_sha,
+        compatibility_receipt_sha256=frozen.expected_compatibility_receipt_sha256,
+        qualification_run_id=request.qualification_run_id,
+        qualification_q6_artifact_id=binding.q6_artifact_id,
+        qualification_q6_artifact_digest=binding.q6_artifact_digest,
+    )
+
+
+def open_followup_formal_campaign(
+    capability: FollowupFormalDispatchCapability,
+    request: FollowupFormalAdmissionRequest,
+    dispatcher: FollowupFormalCampaignDispatcher,
+) -> int:
+    """Legacy one-run adapter retained until callers migrate to campaign CAS."""
+
+    opening = consume_followup_formal_campaign_capability(capability, request)
     try:
         run_id = dispatcher.open_formal_campaign(
-            expected_s1_git_sha=frozen.expected_s1_git_sha,
-            expected_s2_git_sha=frozen.expected_s2_git_sha,
+            expected_s1_git_sha=opening.experiment_source_s1_sha,
+            expected_s2_git_sha=opening.evidence_freeze_s2_sha,
             expected_compatibility_receipt_sha256=(
-                frozen.expected_compatibility_receipt_sha256
+                opening.compatibility_receipt_sha256
             ),
-            qualification_run_id=request.qualification_run_id,
+            qualification_run_id=opening.qualification_run_id,
         )
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as error:
         raise FollowupControllerError("formal campaign dispatch failed or is ambiguous") from error

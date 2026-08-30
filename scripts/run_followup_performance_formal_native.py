@@ -12,6 +12,7 @@ from pathlib import Path
 
 from dynamic_cssc.followup_performance_contract import (
     FollowupContractError,
+    followup_inherited_unit_attempt_ordinal,
     materialize_followup_scientific_plan,
 )
 from dynamic_cssc.followup_performance_formal_native_artifacts import (
@@ -70,10 +71,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--compatibility-receipt-sha256", required=True)
     parser.add_argument("--provider-run-id", required=True, type=int)
     parser.add_argument("--provider-run-attempt", required=True, type=int, choices=(1,))
+    parser.add_argument("--campaign-id", required=True)
+    parser.add_argument("--campaign-run-admission-sha256", required=True)
+    parser.add_argument("--formal-unit-ordinal", required=True, type=int, choices=range(17))
     parser.add_argument("--scale", required=True, choices=("S", "M"))
     parser.add_argument("--formal-seed", required=True, type=int)
     parser.add_argument("--strategy-candidate-id", required=True)
-    parser.add_argument("--unit-attempt-ordinal", type=int, default=1, choices=(1,))
+    parser.add_argument("--unit-attempt-ordinal", type=int, default=1, choices=(1, 2))
     parser.add_argument("--scratch-parent", required=True, type=Path)
     parser.add_argument("--output-directory", required=True, type=Path)
     parser.add_argument("--producer-artifact-directory", type=Path)
@@ -117,7 +121,10 @@ def _main(arguments: argparse.Namespace) -> int:
         scale=arguments.scale,
         formal_seed=arguments.formal_seed,
         strategy_candidate_id=arguments.strategy_candidate_id,
-        unit_attempt_ordinal=0,
+        unit_attempt_ordinal=followup_inherited_unit_attempt_ordinal(
+            unit_kind="formal-native",
+            unit_attempt_ordinal=arguments.unit_attempt_ordinal,
+        ),
         scientific_profile=profile,
         machine_plan_bytes=scientific.machine_plan_bytes,
     )
@@ -143,6 +150,9 @@ def _main(arguments: argparse.Namespace) -> int:
             strategy_candidate_id=arguments.strategy_candidate_id,
             scientific_profile=profile,
             machine_plan_bytes=scientific.machine_plan_bytes,
+            campaign_id=arguments.campaign_id,
+            campaign_run_admission_sha256=arguments.campaign_run_admission_sha256,
+            formal_unit_ordinal=arguments.formal_unit_ordinal,
             unit_attempt_ordinal=arguments.unit_attempt_ordinal,
         )
         producer_inner = producer.inner_directory
@@ -187,6 +197,9 @@ def _main(arguments: argparse.Namespace) -> int:
             strategy_candidate_id=arguments.strategy_candidate_id,
             scientific_profile=profile,
             machine_plan_bytes=scientific.machine_plan_bytes,
+            campaign_id=arguments.campaign_id,
+            campaign_run_admission_sha256=arguments.campaign_run_admission_sha256,
+            formal_unit_ordinal=arguments.formal_unit_ordinal,
             unit_attempt_ordinal=arguments.unit_attempt_ordinal,
             producer_artifact_directory=(
                 arguments.producer_artifact_directory

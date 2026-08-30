@@ -9,17 +9,22 @@ still only a candidate until the complete seventeen-unit set is admitted.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from dynamic_cssc.followup_performance_campaign import (
+    followup_campaign_artifact_binding_scope,
+)
 from dynamic_cssc.followup_performance_contract import (
     FollowupEvidenceEnvelope,
     _issue_followup_inner_admission,
     build_followup_unit_identity,
     followup_artifact_name,
+    followup_inherited_unit_attempt_ordinal,
     inspect_followup_outer_envelope,
     seal_followup_inner_payload,
 )
@@ -81,6 +86,8 @@ def _phase_role(phase: FollowupFormalOrderedPhase) -> str:
 def _shard_identity(
     trace: RouteASnapTrace,
     lineage: RouteASyntheticSuiteLineage,
+    *,
+    inherited_unit_attempt_ordinal: int,
 ) -> str:
     trace = validate_route_a_snap_trace(trace)
     if type(lineage) is not RouteASyntheticSuiteLineage:
@@ -92,7 +99,7 @@ def _shard_identity(
         compatibility_receipt_sha256=lineage.compatibility_receipt_sha256,
         provider_run_id=lineage.provider_run_id,
         provider_run_attempt=lineage.provider_run_attempt,
-        unit_attempt_ordinal=0,
+        unit_attempt_ordinal=inherited_unit_attempt_ordinal,
     )
 
 
@@ -102,33 +109,56 @@ def _identity(
     trace: RouteASnapTrace,
     lineage: RouteASyntheticSuiteLineage,
     unit_attempt_ordinal: int,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
+    acquisition_provider_binding_sha256: str,
 ) -> tuple[bytes, str, str]:
-    if type(unit_attempt_ordinal) is not int or unit_attempt_ordinal != 1:
+    inherited_attempt = followup_inherited_unit_attempt_ordinal(
+        unit_kind="formal-ordered-event",
+        unit_attempt_ordinal=unit_attempt_ordinal,
+    )
+    if re.fullmatch(r"[0-9a-f]{64}", acquisition_provider_binding_sha256) is None:
         raise FollowupFormalOrderedArtifactError(
-            "formal ordered-event replacement is unsupported and fails closed"
+            "acquisition provider binding is not one lowercase SHA-256"
         )
     trace = validate_route_a_snap_trace(trace)
-    shard_identity = _shard_identity(trace, lineage)
+    shard_identity = _shard_identity(
+        trace,
+        lineage,
+        inherited_unit_attempt_ordinal=inherited_attempt,
+    )
+    scope = {
+        "acquisition_provider_binding_sha256": (
+            acquisition_provider_binding_sha256
+        ),
+        "accepted_trace_sha256": trace.accepted_trace_sha256,
+        "artifact_phase": phase,
+        "compatibility_receipt_sha256": lineage.compatibility_receipt_sha256,
+        "evidence_freeze_S2_sha": lineage.workflow_head_sha,
+        "experiment_source_S1_sha": lineage.experiment_source_sha,
+        "inherited_unit_attempt_ordinal": inherited_attempt,
+        "mapping_sha256": trace.mapping_sha256,
+        "partition": trace.partition,
+        "provider_run_attempt": lineage.provider_run_attempt,
+        "provider_run_id": lineage.provider_run_id,
+        "raw_object_sha256": trace.raw_object_sha256,
+        "semantics": trace.semantics,
+        "shard_identity_sha256": shard_identity,
+        "source_event_trace_sha256": trace.event_trace_sha256,
+        "source_kind": "snap-a2q",
+    }
+    scope.update(
+        followup_campaign_artifact_binding_scope(
+            campaign_id=campaign_id,
+            campaign_run_admission_sha256=campaign_run_admission_sha256,
+            formal_unit_ordinal=formal_unit_ordinal,
+        )
+    )
     unit_bytes, unit_sha256 = build_followup_unit_identity(
         unit_kind="formal-ordered-event",
         unit_attempt_ordinal=unit_attempt_ordinal,
-        scope={
-            "accepted_trace_sha256": trace.accepted_trace_sha256,
-            "artifact_phase": phase,
-            "compatibility_receipt_sha256": lineage.compatibility_receipt_sha256,
-            "evidence_freeze_S2_sha": lineage.workflow_head_sha,
-            "experiment_source_S1_sha": lineage.experiment_source_sha,
-            "inherited_unit_attempt_ordinal": 0,
-            "mapping_sha256": trace.mapping_sha256,
-            "partition": trace.partition,
-            "provider_run_attempt": lineage.provider_run_attempt,
-            "provider_run_id": lineage.provider_run_id,
-            "raw_object_sha256": trace.raw_object_sha256,
-            "semantics": trace.semantics,
-            "shard_identity_sha256": shard_identity,
-            "source_event_trace_sha256": trace.event_trace_sha256,
-            "source_kind": "snap-a2q",
-        },
+        scope=scope,
     )
     return unit_bytes, unit_sha256, shard_identity
 
@@ -138,6 +168,10 @@ def expected_followup_formal_ordered_artifact_name(
     phase: FollowupFormalOrderedPhase,
     trace: RouteASnapTrace,
     lineage: RouteASyntheticSuiteLineage,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
+    acquisition_provider_binding_sha256: str,
     unit_attempt_ordinal: int = 1,
 ) -> str:
     """Derive the exact provider name without executing the ordered cells."""
@@ -147,6 +181,10 @@ def expected_followup_formal_ordered_artifact_name(
         trace=trace,
         lineage=lineage,
         unit_attempt_ordinal=unit_attempt_ordinal,
+        campaign_id=campaign_id,
+        campaign_run_admission_sha256=campaign_run_admission_sha256,
+        formal_unit_ordinal=formal_unit_ordinal,
+        acquisition_provider_binding_sha256=acquisition_provider_binding_sha256,
     )
     return followup_artifact_name(
         unit_kind="formal-ordered-event",
@@ -163,6 +201,7 @@ def _inspect_inherited(
     lineage: RouteASyntheticSuiteLineage,
     scientific_profile: RouteAScientificProfile,
     machine_plan_bytes: bytes,
+    inherited_unit_attempt_ordinal: int,
 ) -> RouteAOrderedSuiteProducerInspection | RouteAOrderedSuiteReplayInspection:
     if phase == "private-handoff":
         return inspect_route_a_ordered_suite_handoff(
@@ -170,6 +209,7 @@ def _inspect_inherited(
             expected_trace=trace,
             expected_lineage=lineage,
             machine_plan_bytes=machine_plan_bytes,
+            unit_attempt_ordinal=inherited_unit_attempt_ordinal,
             scientific_profile=scientific_profile,
         )
     if phase == "guarded-final":
@@ -178,6 +218,7 @@ def _inspect_inherited(
             expected_trace=trace,
             expected_lineage=lineage,
             machine_plan_bytes=machine_plan_bytes,
+            unit_attempt_ordinal=inherited_unit_attempt_ordinal,
             scientific_profile=scientific_profile,
         )
     raise FollowupFormalOrderedArtifactError(
@@ -206,6 +247,10 @@ def inspect_followup_formal_ordered_artifact(
     lineage: RouteASyntheticSuiteLineage,
     scientific_profile: RouteAScientificProfile,
     machine_plan_bytes: bytes,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
+    acquisition_provider_binding_sha256: str,
     unit_attempt_ordinal: int = 1,
 ) -> FollowupFormalOrderedInspection:
     """Rehash the outer tree before decoding its inherited ordered ZIP."""
@@ -237,6 +282,10 @@ def inspect_followup_formal_ordered_artifact(
         trace=trace,
         lineage=lineage,
         unit_attempt_ordinal=unit_attempt_ordinal,
+        campaign_id=campaign_id,
+        campaign_run_admission_sha256=campaign_run_admission_sha256,
+        formal_unit_ordinal=formal_unit_ordinal,
+        acquisition_provider_binding_sha256=acquisition_provider_binding_sha256,
     )
     manifest_bytes = _manifest(
         phase=phase,
@@ -273,6 +322,10 @@ def inspect_followup_formal_ordered_artifact(
         lineage=lineage,
         scientific_profile=scientific_profile,
         machine_plan_bytes=machine_plan_bytes,
+        inherited_unit_attempt_ordinal=followup_inherited_unit_attempt_ordinal(
+            unit_kind="formal-ordered-event",
+            unit_attempt_ordinal=unit_attempt_ordinal,
+        ),
     )
     if inherited.shard_identity_sha256 != shard_identity:
         raise FollowupFormalOrderedArtifactError(
@@ -304,6 +357,10 @@ def produce_followup_formal_ordered_artifact(
     lineage: RouteASyntheticSuiteLineage,
     scientific_profile: RouteAScientificProfile,
     machine_plan_bytes: bytes,
+    campaign_id: str,
+    campaign_run_admission_sha256: str,
+    formal_unit_ordinal: int,
+    acquisition_provider_binding_sha256: str,
     unit_attempt_ordinal: int = 1,
 ) -> FollowupFormalOrderedInspection:
     """Validate and atomically move one ordered ZIP into its outer tree."""
@@ -324,6 +381,10 @@ def produce_followup_formal_ordered_artifact(
         lineage=lineage,
         scientific_profile=scientific_profile,
         machine_plan_bytes=machine_plan_bytes,
+        inherited_unit_attempt_ordinal=followup_inherited_unit_attempt_ordinal(
+            unit_kind="formal-ordered-event",
+            unit_attempt_ordinal=unit_attempt_ordinal,
+        ),
     )
     payload_sha256, payload_bytes = _sha256_file(source_payload)
     unit_bytes, unit_sha256, shard_identity = _identity(
@@ -331,6 +392,10 @@ def produce_followup_formal_ordered_artifact(
         trace=trace,
         lineage=lineage,
         unit_attempt_ordinal=unit_attempt_ordinal,
+        campaign_id=campaign_id,
+        campaign_run_admission_sha256=campaign_run_admission_sha256,
+        formal_unit_ordinal=formal_unit_ordinal,
+        acquisition_provider_binding_sha256=acquisition_provider_binding_sha256,
     )
     manifest_bytes = _manifest(
         phase=phase,
@@ -374,6 +439,12 @@ def produce_followup_formal_ordered_artifact(
             lineage=lineage,
             scientific_profile=scientific_profile,
             machine_plan_bytes=machine_plan_bytes,
+            campaign_id=campaign_id,
+            campaign_run_admission_sha256=campaign_run_admission_sha256,
+            formal_unit_ordinal=formal_unit_ordinal,
+            acquisition_provider_binding_sha256=(
+                acquisition_provider_binding_sha256
+            ),
             unit_attempt_ordinal=unit_attempt_ordinal,
         )
     except BaseException:
