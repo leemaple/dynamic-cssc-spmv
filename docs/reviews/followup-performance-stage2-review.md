@@ -1,10 +1,10 @@
 # Follow-up performance Stage-2 implementation review
 
-> **Current gate:** implementation PASS at exact object `37d5e5a`.  ChatGPT Pro
-> and ZCode independently report zero P0/P1 findings, and exact-head Linux CI
-> succeeded.  The next object may change only this review record and must
-> receive exact-object CI and a short fidelity re-review before merge.  No
-> qualification or formal seed is authorized by this document.
+> **Current gate:** the post-merge S1/S2 closure and Git-mode repair passed
+> exact review and exact-head Linux CI at object `7c52925`.  This
+> review-record-only successor must still pass its own exact-head CI and short
+> exact-object fidelity review before merge.  No qualification or formal seed
+> is authorized by this document.
 
 ## Review lineage
 
@@ -310,6 +310,151 @@ must preserve the exact implementation tree outside this path, pass exact-head
 CI, and receive a short exact-object fidelity review before it can become S1.
 Neither this verdict nor that mechanical successor mints qualification,
 formal, analysis, or publication authority.
+
+## Post-merge S1/S2 closure defect and exact `ad7ce05` / `7c52925` repair
+
+PR #43 merged the reviewed Stage-2 tree as commit
+`d73668f7f10f4305898308a24f04f3c3b60583a7`.  Before any workflow or seed
+dispatch, a dry-run construction of its deterministic data-only S2 exposed a
+real fail-closed incompatibility.  The local direct child
+`b190509ed78c9b8262597029e459e723355c308d` changed only
+`config/followup-performance-registration-anchors.json`, but the production
+verifier rejected it with:
+
+```text
+follow-up control-registration Behavior Set changed across S1/S2
+```
+
+That child was never pushed, and no control, qualification, formal, analysis,
+registered-seed, or publication workflow was dispatched from it.  It minted no
+capability and produced no experiment evidence.
+
+The exact inventory comparison identified one cause: the data-only anchor was
+also listed as a `control-registration` behavior path.  S1 correctly required
+that anchor to be empty, while S2 correctly required the deterministic nonempty
+builder output, so the behavior projection made every legitimate S2
+self-incompatible.  All other role entries were byte-equal.  Removing only the
+anchor entry made the two behavior projections equal; the dedicated lineage
+rules still require an exact direct child, one changed path, an empty S1 anchor,
+and S2 bytes equal to the exact-S1 deterministic builder output.
+
+The reviewed repair candidate is:
+
+- commit `ad7ce058ad1126b45119896513e4bdedce484805`;
+- tree `ddfde3984c58e3f25cb9c5a3473ea00dffd5a5ee`;
+- sole parent `d73668f7f10f4305898308a24f04f3c3b60583a7`;
+- parent-to-candidate binary diff SHA-256
+  `139e942c34934b95bf975fcfe2cb24d5798926df2ba94808df3d39b81e995011`;
+  and
+- common review packet SHA-256
+  `8554003b1711562e143c62baa64650d8924ac5c6d3c456cdb67128169bd915ea`.
+
+The delta contains exactly two paths, 55 additions, and 2 deletions.  It
+removes the data anchor from the only role that listed it, advances only the
+affected control-registration Behavior Set from v4 to v5, and adds two
+regressions: a direct all-role exclusion invariant and a production-registry
+S1/S2 round trip using the real builder and verifier.  No source verifier,
+workflow, controller, seed, workload, rho, matrix, estimator, threshold,
+dependency, artifact schema, scientific payload, or claim rule changes.
+
+Local red/green evidence records the invariant failing before the registry fix
+and the production-registry round trip reproducing the same production error.
+After the fix, the invariant passed in 0.02 seconds, the production round trip
+passed in 45.74 seconds, the complete lineage file passed 14 tests in 65.37
+seconds, the bounded contract/lineage/workflow selection passed 41 tests in
+66.46 seconds, and the expanded follow-up selection passed 190 tests with
+2,429 deselected in 138.11 seconds.  Ruff and `git diff --check` passed.
+
+ZCode GLM-5.3 Max independently returned **PASS, P0=0, P1=0, P2=0**.  It
+recomputed every packet and Git identity, reproduced the exact failure against
+the real unpushed `b190509` child, proved that the per-role difference was only
+the anchor entry, reran the candidate lineage suite at 14 passed, and accepted
+all five review axes.  It concluded that excluding the data record from
+executable behavior hides no behavior because the unchanged dedicated anchor
+checks bind the exact bytes and all five role inventory hashes.
+
+ChatGPT Pro independently agreed with the data/behavior separation, regression
+fidelity, scoped v5 bump, scientific boundary, and authority boundary, but
+returned **AMEND, P0=0, P1=1, P2=0**.  Its blocking counterexample kept exact
+deterministic anchor bytes while changing the anchor Git mode from `100644` to
+`100755`.  `_read_blob()` admits both modes, while the dedicated anchor path at
+`ad7ce05` inspected only `.content`; after exclusion from all Behavior Sets,
+no remaining check rejected the executable-mode S2.  Pro correctly classified
+this as a lineage P1 rather than scientific or authority misgrant.
+
+Exact-head push CI run
+[`33315414172`](https://github.com/leemaple/dynamic-cssc-spmv/actions/runs/33315414172):
+completed successfully on exact `ad7ce05`.  P-1 and syntax passed; unit tests
+recorded **2,617 passed, 2 skipped in 1,740.59 seconds**; predicted smoke and
+R0 packaging passed.  The sole artifact is ID `9733673397`,
+`r0-freeze-ad7ce058ad1126b45119896513e4bdedce484805`, 8,911,726 bytes,
+provider digest
+`sha256:231a8a825d3af0f3ec66ec48f18275ef7f919c4ff848ef0169383b8ac342eb82`,
+expiring 2026-09-29.  This historical green run cannot close Pro's P1 or
+transfer to a changed successor.
+
+The exact P1-closure candidate is:
+
+- commit `7c52925182603889d78425ae57ab145665bb6d70`;
+- tree `e97dec8598d9cdb638db3a91736556da1dc9037b`;
+- sole parent `ad7ce058ad1126b45119896513e4bdedce484805`;
+- parent-to-candidate binary diff SHA-256
+  `4615d9c569aefde7fa846de4200d62439da670cb3da4a17dcefb081afcc5d956`;
+  and
+- common review packet SHA-256
+  `67435bf465399651fa69b30eaed6f9915ed81f15c6718c095d2290cac4297629`.
+
+The three-path delta requires both exact S1 and exact S2 anchors to be ordinary
+`100644` blobs before their existing byte checks, adds isolated `100755` S1 and
+S2 negative regressions, and advances all five roles importing the changed
+lineage verifier: acquisition v2 to v3, analyzer v4 to v5,
+control-registration v5 to v6, formal v4 to v5, and qualification v2 to v3.
+The fixed mode is a source invariant, so the closed receipt schema remains
+unchanged.
+
+Before the source fix the two exact mode regressions returned **2 failed** in
+6.38 seconds because neither raised.  After the fix they returned **2 passed**
+in 4.23 seconds, and again **2 passed** in 4.06 seconds after adding an explicit
+assertion that the S1-mode case's S2 is regular.  The complete lineage file
+passed 16 tests in 71.83 seconds; the contract/lineage/workflow selection passed
+43 tests in 72.64 seconds; Ruff, JSON parsing, debug cleanup, and
+`git diff --check` passed.
+
+Exact `7c52925` ChatGPT Pro verdict:
+**PASS, P0=0, P1=0, P2=0**.  It recomputed the 160-line, 7,182-byte
+packet and every exact Git identity, closed its own prior P1 on both S1 and S2,
+and verified that the two real-Git regressions isolate the two sides.  Its
+counterexample analysis confirmed that executable anchors, mixed executable
+and regular anchors, mode-only empty S2, and non-blob entries all reject before
+a compatibility receipt can be produced.  It also accepted the five exact
+role-version advances, the unchanged receipt schema, the retained parent/path/
+content/inventory/builder checks, and the unchanged scientific and authority
+boundary.
+Exact `7c52925` ZCode GLM-5.3 Max verdict:
+**PASS, P0=0, P1=0, P2=0**.  It independently recomputed the packet,
+candidate, tree, parent, binary-diff, changed-blob, remote-ref, and historical
+CI/artifact identities.  Its editable environment initially resolved the
+parent implementation and therefore independently reproduced the expected red
+counterexample (2 failed, 14 deselected); forcing the exact candidate source
+then produced 16 passed in 88.15 seconds.  It confirmed that the two checks are
+at the only anchor-admission seam, both registration archive paths and S3
+analysis transit that seam, all and only the five importing roles advance, and
+the closed receipt grammar need not change because the only admitted mode is
+now fixed to `100644`.
+Exact-head push CI run
+[`33316814482`](https://github.com/leemaple/dynamic-cssc-spmv/actions/runs/33316814482):
+completed successfully on exact head `7c52925`.  P-1 and syntax passed; unit
+tests recorded **2,619 passed, 2 skipped in 1,759.54 seconds**.  Both skips are
+the ordinary/strong parametrizations requiring the real OpenFHE query runner
+that ordinary CI deliberately does not build.  Predicted-only smoke, R0 bundle
+creation, and upload all passed.  The run exposed exactly one artifact: ID
+`9734091071`,
+`r0-freeze-7c52925182603889d78425ae57ab145665bb6d70`, 480 files,
+8,912,242 bytes, provider digest
+`sha256:05eef26f1e7a7fbfa80f927bbcf9dd95b8f6405c317932e57ace13ca7c1b9f26`,
+expiring 2026-09-29.  Review and CI remain authority-false controls.  This
+review-record-only successor must receive its own exact-head CI and short
+fidelity review before it may enter a PR as the replacement S1 tree.
 
 ## Dispatch boundary
 
