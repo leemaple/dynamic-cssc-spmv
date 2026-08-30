@@ -506,3 +506,35 @@ form.  Qualification, formal execution, analysis, and registered-seed values
 remain untouched.  A new reviewed S1, a new deterministic direct-child
 data-only S2, and all five fresh authority-false controls are required before
 the existing dispatch boundary can be reconsidered.
+
+## Post-replacement dedicated-CI static-gate failure
+
+The replacement lineage then closed its generic push CI and four dedicated
+authority-false controls, but the first dedicated exact-head Linux CI run
+[`33327887418`](https://github.com/leemaple/dynamic-cssc-spmv/actions/runs/33327887418)
+failed before emitting its control receipt.  The run was bound to replacement
+S1 `ecdc1e248e1d54d473510ab9c61a40af81777c79`, data-only S2
+`b3541edf5519fd64debb56ec697f7c6dd879418d`, and compatibility receipt
+`ce45f1a9a50fa42a7e430ec54e8280371ca7f81b14e6fd1579b61c15f89a93d7`.
+Its identity, detached-S1 checkout, S1/S2 compatibility, compilation, and full
+test suite all succeeded; the suite reported **2620 passed, 2 expected
+runner-dependent skips in 1702.98 seconds**.
+
+The subsequent Ruff command failed on exactly eight static findings in
+`scripts/build_route_c_paper_docx.py`: one import-layout finding, six line-length
+findings, and one nested-condition simplification.  Bash fail-fast therefore
+did not execute the following `git diff --check`.  Receipt packaging and upload
+were skipped, and the provider artifact API returned zero artifacts.  No
+qualification tag, qualification run, formal capability, or experimental
+artifact was created.
+
+This is a deterministic source-tree hygiene defect exposed by the dedicated
+control, not a provider transient or scientific outcome.  The failed run must
+not be rerun or used as one of the five controls.  The narrow repair changes
+only Python layout: it organizes the import boundary, wraps signatures, tuples,
+and literal strings without changing their values, and combines two equivalent
+nested conditions.  It does not change a workflow, scientific plan, seed,
+artifact schema, claim, or Behavior Set.  The repair nevertheless changes the
+exact S1 tree, so it requires a new reviewed replacement S1, a new deterministic
+direct-child data-only S2, and five fresh authority-false controls before the
+external controller may reconsider qualification dispatch.
