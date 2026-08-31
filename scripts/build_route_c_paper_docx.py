@@ -22,6 +22,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
+from docx.text.paragraph import Paragraph
 
 REPO = Path(__file__).resolve().parents[1]
 PAPER = REPO / "docs" / "paper"
@@ -33,7 +34,9 @@ BIB = PAPER / "references.bib"
 
 EN_SHORT = "VERSION-BOUND MUTABLE CSSC SPMV • ROUTE C WORKING MANUSCRIPT"
 ZH_SHORT = "DYNAMIC CSSC SPMV • ROUTE C 技术说明"
-ZH_FONT = "Hiragino Sans GB"
+# Use a system-wide Unicode TTF rather than a user-profile font or TTC.  The
+# renderer gives LibreOffice an isolated HOME, so per-user fonts are invisible.
+ZH_FONT = "Arial Unicode MS"
 EN_CORE_TITLE = (
     "Version-Bound Maintenance for Mutable Homomorphic Sparse Matrix–Vector "
     "Multiplication: A Fail-Closed Evaluation Boundary"
@@ -400,6 +403,14 @@ def _format_tables(doc: Document, *, font: str) -> None:
                             run.bold = True
 
 
+def _space_paragraphs_after_tables(doc: Document) -> None:
+    """Keep body text visually separate from the preceding table border."""
+    for table in doc.tables:
+        next_element = table._tbl.getnext()
+        if next_element is not None and next_element.tag == qn("w:p"):
+            Paragraph(next_element, table._parent).paragraph_format.space_before = Pt(8)
+
+
 def _configure_numbering(doc: Document) -> None:
     try:
         root = doc.part.numbering_part.element
@@ -504,6 +515,8 @@ def _remove_empty_trailing_paragraphs(doc: Document) -> None:
 
 def _build_english(raw: Path, target: Path) -> None:
     doc = Document(raw)
+    doc.core_properties.author = ""
+    doc.core_properties.last_modified_by = ""
     doc.core_properties.title = EN_CORE_TITLE
     doc.core_properties.subject = "Route C methods and evidence-boundary working manuscript"
     doc.core_properties.keywords = (
@@ -517,6 +530,7 @@ def _build_english(raw: Path, target: Path) -> None:
         _set_header_footer(section, EN_SHORT, font="Calibri", first_label="")
     _configure_numbering(doc)
     _format_tables(doc, font="Calibri")
+    _space_paragraphs_after_tables(doc)
     _format_figures_and_alt_text(doc, language="en")
     _style_block_quotes(doc)
     _apply_font_everywhere(doc, "Calibri")
@@ -526,12 +540,15 @@ def _build_english(raw: Path, target: Path) -> None:
 
 def _build_chinese(raw: Path, target: Path) -> None:
     doc = Document(raw)
+    doc.core_properties.author = ""
+    doc.core_properties.last_modified_by = ""
     doc.core_properties.subject = "Route C 方法、证据边界与完整技术路线"
     doc.core_properties.keywords = "同态加密；稀疏矩阵向量乘法；可变稀疏矩阵；可复现评估"
     for section in doc.sections:
         _configure_page(section, letter=False)
         _set_header_footer(section, ZH_SHORT, font=ZH_FONT)
     _format_tables(doc, font=ZH_FONT)
+    _space_paragraphs_after_tables(doc)
     _format_figures_and_alt_text(doc, language="zh")
     _apply_font_everywhere(doc, ZH_FONT)
     _remove_empty_trailing_paragraphs(doc)
