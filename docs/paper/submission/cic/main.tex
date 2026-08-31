@@ -1,0 +1,80 @@
+\documentclass[version=submission]{iacrcc}
+
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{calc}
+\usepackage{longtable}
+
+\graphicspath{{./}}
+% Tectonic uses XeTeX; the current class's default bibliography anchor uses a
+% pdfTeX-only primitive. This preview-only override changes the bookmark anchor,
+% not the bibliography style or content. Remove it on the IACR build service.
+\ifdefined\XeTeXversion
+  \renewcommand{\refname}{\hypertarget{references}{}References}
+\fi
+
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+
+% Give narrow submission columns enough flexibility to break long technical
+% identifiers and citation-dense prose without protruding into the margins.
+\setlength{\emergencystretch}{3em}
+
+\title[
+  running = {Version-Bound Mutable Homomorphic SpMV},
+]{Version-Bound Maintenance for Mutable Homomorphic Sparse Matrix--Vector
+Multiplication: A Fail-Closed Evaluation Boundary}
+
+\documentdate{2026-09-01}
+
+\begin{document}
+
+\maketitle
+
+\keywords{homomorphic encryption, sparse matrix--vector multiplication,
+mutable sparse matrices, cryptographic engineering, reproducible evaluation}
+
+\begin{abstract}
+Compressed sparse layouts make homomorphic sparse matrix--vector multiplication
+practical for static patterns, but updates also change value placement, query
+reorganization metadata, and encrypted-output-to-row mappings. Full
+recompression at each freshness boundary requires base-wide work; auxiliary
+components trade publication work for query work and observable structure.
+
+We present an update-aware layer around the published Compressed Sparse Sorted
+Column representation. Freshness-bounded Publication Windows bind each query to
+an immutable matrix version, global-column metadata, and a private
+RowMap-sensitive reconstruction plan. For multi-component layouts, the plan
+distinguishes overlaps from disjoint blocks and drives overlap-scoped one-time
+zero-sum masking with persistent no-reuse bindings. A fixed-segment delta lets
+the Cloud execute a public page-wide schedule while the client privately merges
+segment leaders. A typed bundle binds the base, delta, operands, routes, and
+operation graph and fails closed on version or plan substitution.
+
+Our frozen evaluation protocol specified three maintenance mechanisms under the
+same versioned event streams, query schedules, public parameters, and initial
+states. The primary preregistered qualification did not reach its combined guard
+within the frozen deadline. A separately preregistered follow-up passed five
+authority-false controls but its sole provider run stopped during hosted-runner
+setup before checkout, seed admission, scientific execution, or artifact
+creation. Both one-shot paths therefore terminated without formal-dispatch
+authority and the formal campaign was not started. A distinct current-source
+functional replication subsequently passed an eight-case, 35-record contract
+and one fixed pinned-OpenFHE whole-query witness, whose decrypted sparse output
+matched two independent plaintext oracles. We report the protocol, its
+definition-level obligations, the fail-closed evidence boundaries, and this
+narrow version-bound conformance result. We do not convert partial execution,
+runner setup, controls, or the witness into comparative-performance evidence.
+\end{abstract}
+
+\input{body}
+
+\section*{Use of Generative AI}
+Generative-AI systems assisted literature discovery, implementation and test
+generation, adversarial review, and manuscript drafting. The human authors are
+responsible for independently reviewing every cited source, code path, evidence
+record, and final claim. No AI system is an author.
+
+\bibliography{references}
+
+\end{document}
