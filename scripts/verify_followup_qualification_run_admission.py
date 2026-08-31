@@ -11,6 +11,9 @@ import stat
 import subprocess
 from pathlib import Path
 
+from dynamic_cssc.followup_performance_github_message import (
+    canonical_json_from_github_commit_message,
+)
 from dynamic_cssc.followup_performance_qualification_binding import (
     FollowupQualificationBindingError,
     build_followup_qualification_run_admission,
@@ -139,12 +142,7 @@ def _main(arguments: argparse.Namespace) -> int:
         raise FollowupQualificationBindingError(
             "qualification binding commit topology changed"
         )
-    try:
-        binding_bytes = message.encode("ascii")
-    except UnicodeEncodeError as error:
-        raise FollowupQualificationBindingError(
-            "qualification binding commit message is not ASCII"
-        ) from error
+    binding_bytes = canonical_json_from_github_commit_message(message)
     binding = inspect_followup_qualification_watch_binding(binding_bytes)
     if (
         binding.document["claim_oid"] != arguments.expected_claim_oid

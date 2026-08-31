@@ -9,6 +9,9 @@ import json
 import os
 from pathlib import Path
 
+from dynamic_cssc.followup_performance_github_message import (
+    canonical_json_from_github_commit_message,
+)
 from dynamic_cssc.followup_performance_terminal_binding import (
     FollowupTerminalBindingError,
     build_followup_terminal_run_admission,
@@ -97,8 +100,12 @@ def _main(arguments: argparse.Namespace) -> int:
     binding_message = binding_commit.get("message")
     if type(claim_message) is not str or type(binding_message) is not str:
         raise FollowupTerminalBindingError("terminal commit message changed")
-    claim = inspect_followup_terminal_claim(claim_message.encode("ascii"))
-    binding = inspect_followup_terminal_watch_binding(binding_message.encode("ascii"))
+    claim = inspect_followup_terminal_claim(
+        canonical_json_from_github_commit_message(claim_message)
+    )
+    binding = inspect_followup_terminal_watch_binding(
+        canonical_json_from_github_commit_message(binding_message)
+    )
     if (
         _parent(claim_commit, label="terminal claim")
         != claim.document["final_progress_oid"]

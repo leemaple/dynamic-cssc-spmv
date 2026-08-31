@@ -15,6 +15,9 @@ from dynamic_cssc.followup_performance_analysis_binding import (
     inspect_followup_analysis_claim,
     inspect_followup_analysis_watch_binding,
 )
+from dynamic_cssc.followup_performance_github_message import (
+    canonical_json_from_github_commit_message,
+)
 
 
 def _pairs(rows: list[tuple[str, object]]) -> dict[str, object]:
@@ -103,9 +106,11 @@ def _main(arguments: argparse.Namespace) -> int:
     binding_message = binding_commit.get("message")
     if type(claim_message) is not str or type(binding_message) is not str:
         raise FollowupAnalysisBindingError("analysis commit message changed")
-    claim = inspect_followup_analysis_claim(claim_message.encode("ascii"))
+    claim = inspect_followup_analysis_claim(
+        canonical_json_from_github_commit_message(claim_message)
+    )
     binding = inspect_followup_analysis_watch_binding(
-        binding_message.encode("ascii")
+        canonical_json_from_github_commit_message(binding_message)
     )
     if (
         _parent(claim_commit, label="analysis claim")

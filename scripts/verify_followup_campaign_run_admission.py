@@ -21,6 +21,9 @@ from dynamic_cssc.followup_performance_contract import (
     materialize_followup_scientific_plan,
 )
 from dynamic_cssc.followup_performance_formal_matrix import followup_formal_unit_specs
+from dynamic_cssc.followup_performance_github_message import (
+    canonical_json_from_github_commit_message,
+)
 
 _LOWER_GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
 _LOWER_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -89,10 +92,7 @@ def _commit(
         or type(message) is not str
     ):
         raise FollowupCampaignError(f"{label} provider topology changed")
-    try:
-        return message.encode("ascii")
-    except UnicodeEncodeError as error:
-        raise FollowupCampaignError(f"{label} message is not ASCII") from error
+    return canonical_json_from_github_commit_message(message)
 
 
 def _git(repository_root: Path, *arguments: str) -> str:
