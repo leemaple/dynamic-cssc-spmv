@@ -1,0 +1,259 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/dynamic-cssc/validation-scaling-study-v1.schema.json",
+  "additionalProperties": false,
+  "properties": {
+    "analysis": {
+      "type": "object"
+    },
+    "artifacts": {
+      "const": {
+        "aggregate": "validation-scaling-aggregate-v1",
+        "artifact_count": 7,
+        "producer_per_seed": "validation-scaling-producer-seed-{seed_ordinal}-v1",
+        "replay_per_seed": "validation-scaling-replay-seed-{seed_ordinal}-v1",
+        "retention_days": 90,
+        "safe_archive_rules": "regular-files-only-no-links-no-duplicates-exact-order-exact-manifest-sha256-and-byte-count-rehash"
+      }
+    },
+    "claims": {
+      "type": "object"
+    },
+    "execution": {
+      "properties": {
+        "aggregate_job_timeout_minutes": {
+          "const": 20
+        },
+        "formal_dispatch_count": {
+          "const": 1
+        },
+        "seed_job_timeout_minutes": {
+          "const": 40
+        },
+        "workflow": {
+          "const": ".github/workflows/validation-scaling-study.yml"
+        }
+      },
+      "required": [
+        "aggregate_job_timeout_minutes",
+        "formal_dispatch_count",
+        "seed_job_timeout_minutes",
+        "workflow"
+      ],
+      "type": "object"
+    },
+    "interface": {
+      "properties": {
+        "module_path": {
+          "const": "src/dynamic_cssc/validation_scaling_study.py"
+        },
+        "producer_operation": {
+          "const": "produce_validation_scaling_seed_shard(*,plan_bytes,seed_ordinal,scratch_root)"
+        },
+        "public_operation_count": {
+          "const": 2
+        },
+        "replay_operation": {
+          "const": "replay_validation_scaling_seed_shard(*,plan_bytes,producer_package_bytes,seed_ordinal,scratch_root)"
+        },
+        "semantic_projection_fields": {
+          "const": [
+            "schema_version",
+            "identity",
+            "evaluation",
+            "counts",
+            "window_query_counts",
+            "primitive_counts",
+            "rotation_inventory",
+            "serialized_object_multiplicities",
+            "serialized_bytes",
+            "correctness",
+            "bindings"
+          ]
+        }
+      },
+      "required": [
+        "module_path",
+        "producer_operation",
+        "public_operation_count",
+        "replay_operation",
+        "semantic_projection_fields"
+      ],
+      "type": "object"
+    },
+    "matrix": {
+      "additionalProperties": true,
+      "properties": {
+        "direct_rhos": {
+          "const": [
+            "1/100",
+            "1/10",
+            "1"
+          ]
+        },
+        "expected_query_counts": {
+          "const": [
+            5,
+            51,
+            512
+          ]
+        },
+        "formal_seeds": {
+          "const": [
+            {
+              "derivation_sha256": "23ea050059f9cd247b134c4e3bcbc24965e3044169c38afb35d98a3f0ab5616f",
+              "ordinal": 1,
+              "rho_order": [
+                "1/100",
+                "1/10",
+                "1"
+              ],
+              "seed": 602539264,
+              "strategy_order": [
+                "periodic-repack/windows=1",
+                "padding-reuse",
+                "packed-coo-cloud-segmented-delta/segment-width=128"
+              ]
+            },
+            {
+              "derivation_sha256": "660e7501e62f4aace24772c58fe2d410f6391e51e9f5c15e04fb9f8389bec99e",
+              "ordinal": 2,
+              "rho_order": [
+                "1/10",
+                "1",
+                "1/100"
+              ],
+              "seed": 1712223489,
+              "strategy_order": [
+                "padding-reuse",
+                "packed-coo-cloud-segmented-delta/segment-width=128",
+                "periodic-repack/windows=1"
+              ]
+            },
+            {
+              "derivation_sha256": "31bf12db59aa04fb7455d6c8403003420c915638e57096d1b2481ebf1d8c45ab",
+              "ordinal": 3,
+              "rho_order": [
+                "1",
+                "1/100",
+                "1/10"
+              ],
+              "seed": 834605787,
+              "strategy_order": [
+                "packed-coo-cloud-segmented-delta/segment-width=128",
+                "periodic-repack/windows=1",
+                "padding-reuse"
+              ]
+            }
+          ]
+        },
+        "measurement_roles": {
+          "const": [
+            "producer",
+            "independent-replay"
+          ]
+        },
+        "observed_cell_count": {
+          "const": 54
+        },
+        "scale": {
+          "const": "S"
+        },
+        "strategies": {
+          "const": [
+            "periodic-repack/windows=1",
+            "padding-reuse",
+            "packed-coo-cloud-segmented-delta/segment-width=128"
+          ]
+        }
+      },
+      "required": [
+        "direct_rhos",
+        "expected_query_counts",
+        "formal_seeds",
+        "measurement_roles",
+        "observed_cell_count",
+        "query_vector_seed",
+        "scale",
+        "strategies"
+      ],
+      "type": "object"
+    },
+    "research_question": {
+      "const": "For the current semantics-preserving deep lifecycle interface, how do producer and independent-replay validation-bearing lifecycle durations scale with exact query count while canonical outputs and compile-depth bounds remain invariant?"
+    },
+    "schema_version": {
+      "const": "dynamic-cssc-validation-scaling-study-v1"
+    },
+    "measurements": {
+      "type": "object"
+    },
+    "pilot_disclosure": {
+      "type": "object"
+    },
+    "predecessor_disposition": {
+      "type": "object"
+    },
+    "scientific_source": {
+      "properties": {
+        "source_tag": {
+          "const": "validation-scaling-source-v1"
+        },
+        "stage0_tag": {
+          "const": "validation-scaling-stage0-v1"
+        }
+      },
+      "required": [
+        "source_tag",
+        "stage0_tag"
+      ],
+      "type": "object"
+    },
+    "source_change_control": {
+      "const": {
+        "allowed_descendant_paths": [
+          ".github/workflows/validation-scaling-study.yml",
+          "docs/reviews/validation-scaling-stage1-review.md",
+          "schemas/validation-scaling-evidence-v1.schema.json",
+          "scripts/run_validation_scaling_study.py",
+          "scripts/validate_validation_scaling_study.py",
+          "src/dynamic_cssc/validation_scaling_study.py",
+          "tests/test_validation_scaling_study.py",
+          "tests/test_validation_scaling_workflow.py"
+        ],
+        "all_other_changed_paths_rejected": true,
+        "comparison": "git-diff-name-only-and-exact-byte-comparison-against-annotated-validation-scaling-stage0-v1",
+        "schema_validation_is_sufficient": false,
+        "stage0_objects_must_remain_byte_identical": true
+      }
+    },
+    "status": {
+      "const": "stage0-preregistered-not-implemented-not-dispatched"
+    },
+    "stopping": {
+      "type": "object"
+    },
+    "study_id": {
+      "const": "dynamic-cssc-validation-scaling-2026-09-01"
+    }
+  },
+  "required": [
+    "analysis",
+    "artifacts",
+    "claims",
+    "execution",
+    "interface",
+    "matrix",
+    "measurements",
+    "pilot_disclosure",
+    "predecessor_disposition",
+    "research_question",
+    "schema_version",
+    "scientific_source",
+    "source_change_control",
+    "status",
+    "stopping",
+    "study_id"
+  ],
+  "type": "object"
+}

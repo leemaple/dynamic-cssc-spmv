@@ -1,0 +1,245 @@
+{
+  "analysis": {
+    "cell_timing_summary": "for-each-strategy-role-and-rho-report-the-three-seed-operation-wall-and-process-seconds-and-their-median-minimum-and-maximum-plus-the-registered-supporting-stage-fields",
+    "compile_count_gate": "for-every-cell-require-query_count<=compile_query_call_count<=2*query_count",
+    "completeness_gate": "all-54-cells-and-all-producer-replay-semantic-checks-must-pass-or-no-timing-result-is-reportable",
+    "fit": "for-each-strategy-and-role-fit-operation_wall_seconds=alpha+beta*query_count-by-unweighted-ordinary-least-squares-to-the-three-rho-medians-and-report-alpha-beta-r_squared-without-a-pass-threshold-labeling-alpha-as-an-extrapolated-descriptive-intercept-not-an-observed-fixed-cost",
+    "multiple_comparisons": "none-no-null-hypothesis-tests-no-p-values",
+    "primary_unit": "one-exact-strategy-rho-seed-role-cell",
+    "reporting_order": "strategy-id-then-role-then-rho-then-seed-ordinal"
+  },
+  "artifacts": {
+    "aggregate": "validation-scaling-aggregate-v1",
+    "artifact_count": 7,
+    "producer_per_seed": "validation-scaling-producer-seed-{seed_ordinal}-v1",
+    "replay_per_seed": "validation-scaling-replay-seed-{seed_ordinal}-v1",
+    "retention_days": 90,
+    "safe_archive_rules": "regular-files-only-no-links-no-duplicates-exact-order-exact-manifest-sha256-and-byte-count-rehash"
+  },
+  "claims": {
+    "allowed": [
+      "exact-source-semantic-conformance-for-the-complete-registered-matrix",
+      "exact-compile-query-call-count-bounds-for-each-observed-cell",
+      "descriptive-github-hosted-runner-wall-and-process-time-scaling-for-the-current-source-validation-bearing-lifecycle",
+      "producer-and-independent-replay-stage-costs-reported-separately"
+    ],
+    "forbidden": [
+      "strategy-winner-ranking-or-superiority",
+      "reopening-or-reinterpreting-either-terminal-performance-no-go",
+      "qualification-or-formal-campaign-go",
+      "speedup-versus-an-unmeasured-or-historical-source",
+      "openfhe-native-performance",
+      "deployment-throughput-or-latency",
+      "formal-security-or-general-correctness"
+    ]
+  },
+  "execution": {
+    "aggregate_job_timeout_minutes": 20,
+    "artifact_handoff": "producer-and-replay-run-in-distinct-github-jobs-and-replay-consumes-only-the-provider-uploaded-producer-artifact",
+    "dependency_install": "python-m-pip-install-require-hashes-requirements-ci.txt",
+    "formal_dispatch_count": 1,
+    "job_topology": "three-producer-matrix-jobs-then-three-replay-matrix-jobs-then-one-aggregate-job",
+    "python_version": "3.12.13",
+    "runner": "ubuntu-24.04",
+    "seed_job_timeout_minutes": 40,
+    "thread_environment": {
+      "MKL_NUM_THREADS": "1",
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "PYTHONHASHSEED": "0"
+    },
+    "workflow": ".github/workflows/validation-scaling-study.yml"
+  },
+  "interface": {
+    "compile_counter_scope": "install-before-cell-clocks-remove-after-cell-clocks-preserve-real-compile-query-arguments-and-return-value-exclude-adapter-setup-and-removal-include-per-call-counter-increment",
+    "module_path": "src/dynamic_cssc/validation_scaling_study.py",
+    "producer_operation": "produce_validation_scaling_seed_shard(*,plan_bytes,seed_ordinal,scratch_root)",
+    "producer_timing_scope": "operation-clocks-immediately-around-evaluate_route_a_synthetic_cell-return-excluding-trace-generation-scratch-creation-counter-installation-cell-archive-seed-package-provider-upload-and-queue",
+    "public_operation_count": 2,
+    "replay_operation": "replay_validation_scaling_seed_shard(*,plan_bytes,producer_package_bytes,seed_ordinal,scratch_root)",
+    "replay_timing_scope": "operation-clocks-immediately-around-replay_route_a_synthetic_cell-return-including-input-archive-inspection-target-validation-read-only-reexecution-oracle-semantic-comparison-final-cell-and-receipt-serialization-and-excluding-provider-download-trace-generation-scratch-creation-counter-installation-seed-package-provider-upload-and-queue",
+    "semantic_projection_fields": [
+      "schema_version",
+      "identity",
+      "evaluation",
+      "counts",
+      "window_query_counts",
+      "primitive_counts",
+      "rotation_inventory",
+      "serialized_object_multiplicities",
+      "serialized_bytes",
+      "correctness",
+      "bindings"
+    ],
+    "semantic_projection_serialization": "dynamic_cssc.route_a_results.canonical_route_a_document-sorted-keys-compact-ascii-json-no-floats-one-terminal-lf",
+    "strict_inputs": "exact-stage0-plan-bytes-seed-ordinal-in-1-2-3-fresh-empty-operation-owned-scratch-root-and-for-replay-exact-provider-producer-package-only"
+  },
+  "matrix": {
+    "direct_rhos": [
+      "1/100",
+      "1/10",
+      "1"
+    ],
+    "expected_query_counts": [
+      5,
+      51,
+      512
+    ],
+    "formal_seeds": [
+      {
+        "derivation_sha256": "23ea050059f9cd247b134c4e3bcbc24965e3044169c38afb35d98a3f0ab5616f",
+        "ordinal": 1,
+        "seed": 602539264,
+        "rho_order": [
+          "1/100",
+          "1/10",
+          "1"
+        ],
+        "strategy_order": [
+          "periodic-repack/windows=1",
+          "padding-reuse",
+          "packed-coo-cloud-segmented-delta/segment-width=128"
+        ]
+      },
+      {
+        "derivation_sha256": "660e7501e62f4aace24772c58fe2d410f6391e51e9f5c15e04fb9f8389bec99e",
+        "ordinal": 2,
+        "seed": 1712223489,
+        "rho_order": [
+          "1/10",
+          "1",
+          "1/100"
+        ],
+        "strategy_order": [
+          "padding-reuse",
+          "packed-coo-cloud-segmented-delta/segment-width=128",
+          "periodic-repack/windows=1"
+        ]
+      },
+      {
+        "derivation_sha256": "31bf12db59aa04fb7455d6c8403003420c915638e57096d1b2481ebf1d8c45ab",
+        "ordinal": 3,
+        "seed": 834605787,
+        "rho_order": [
+          "1",
+          "1/100",
+          "1/10"
+        ],
+        "strategy_order": [
+          "packed-coo-cloud-segmented-delta/segment-width=128",
+          "periodic-repack/windows=1",
+          "padding-reuse"
+        ]
+      }
+    ],
+    "measurement_roles": [
+      "producer",
+      "independent-replay"
+    ],
+    "observed_cell_count": 54,
+    "query_vector_seed": 1832337970,
+    "query_vector_seed_derivation_sha256": "6d374232ca5867d81caa6289bfc6d9fc57b5738a0c011bbee1467244abd4f66a",
+    "ordering_balance": "strategy-block-order-and-within-strategy-rho-order-are-both-three-seed-cyclic-rotations-so-each-strategy-and-each-query-count-occupies-each-corresponding-position-once",
+    "scale": "S",
+    "seed_derivation": "int.from_bytes(sha256(ascii('dynamic-cssc-validation-scaling-v1|formal-{ordinal}')).digest()[0:4],'big')&0x7fffffff",
+    "strategies": [
+      "periodic-repack/windows=1",
+      "padding-reuse",
+      "packed-coo-cloud-segmented-delta/segment-width=128"
+    ]
+  },
+  "measurements": {
+    "cell_fields": [
+      "strategy_candidate_id",
+      "rho",
+      "formal_seed",
+      "seed_ordinal",
+      "role",
+      "query_count",
+      "compile_query_call_count",
+      "operation_wall_nanoseconds",
+      "operation_process_nanoseconds",
+      "producer_cell_archive_wall_nanoseconds_or_null",
+      "producer_cell_archive_process_nanoseconds_or_null",
+      "producer_state_transition_nanoseconds_or_null",
+      "producer_result_assembly_nanoseconds_or_null",
+      "replay_elapsed_nanoseconds_or_null",
+      "semantic_projection_sha256",
+      "source_trace_sha256",
+      "machine_plan_sha256"
+    ],
+    "clock": "python-time-perf_counter_ns-and-process_time_ns-around-the-deep-cell-interface",
+    "job_fields": [
+      "runner_os",
+      "runner_arch",
+      "python_version",
+      "github_run_id",
+      "github_run_attempt",
+      "github_job",
+      "source_git_sha",
+      "job_started_utc",
+      "job_finished_utc",
+      "seed_package_wall_nanoseconds",
+      "seed_package_process_nanoseconds",
+      "process_peak_rss_bytes_or_null"
+    ],
+    "primary_fit_field": "operation_wall_nanoseconds",
+    "producer_cell_archive_scope": "per-cell-clocks-immediately-around-produce_route_a_synthetic_cell_archive-and-null-for-replay",
+    "seed_package_scope": "one-per-job-clock-for-canonical-provider-artifact-construction-never-a-cell-row-or-fit-input",
+    "stage_field_conversion": "convert-the-canonical-nine-decimal-seconds-strings-producer_state_transition_seconds-producer_result_assembly_seconds-and-replay_seconds-exactly-to-integer-nanoseconds-null-for-inapplicable-role",
+    "timing_authority": "descriptive-current-source-validation-bearing-lifecycle-only"
+  },
+  "pilot_disclosure": {
+    "historical_source": "docs/reviews/route-a-followup-performance-diagnosis-2026-08-30.md",
+    "known_current-source_s_rho1_seconds": {
+      "packed-coo-cloud-segmented-delta/segment-width=128": "27.055",
+      "padding-reuse": "10.976",
+      "periodic-repack/windows=1": "12.009"
+    },
+    "restriction": "pilot-values-motivated-the-question-but-are-not-study-observations-baselines-or-fit-inputs"
+  },
+  "predecessor_disposition": {
+    "followup_run_id": 33348855548,
+    "followup_status": "terminal-no-go-before-checkout-or-seed-admission",
+    "primary_run_id": 33261434612,
+    "primary_status": "terminal-no-go-at-frozen-45-minute-gate",
+    "relationship": "independent-validation-scaling-question-not-a-third-same-estimand-study"
+  },
+  "research_question": "For the current semantics-preserving deep lifecycle interface, how do producer and independent-replay validation-bearing lifecycle durations scale with exact query count while canonical outputs and compile-depth bounds remain invariant?",
+  "schema_version": "dynamic-cssc-validation-scaling-study-v1",
+  "scientific_source": {
+    "machine_plan_path": "config/route-a-publication-plan.json",
+    "machine_plan_sha256": "ce09c1c9c82032ba8439188ce20d4cd8d6310a386efbe2d436595fd779b7268c",
+    "source_commit_rule": "source-must-descend-from-annotated-validation-scaling-stage0-v1-all-five-stage0-object-bytes-must-remain-identical-and-every-changed-path-must-belong-to-the-exact-source-change-control-whitelist",
+    "source_tag": "validation-scaling-source-v1",
+    "source_tag_must_be_annotated_and_immutable": true,
+    "stage0_tag": "validation-scaling-stage0-v1",
+    "stage0_tag_must_be_annotated_and_immutable": true,
+    "stage0_base_commit": "f706e17ef82d818b914273d97dfbafd47b48c2c7"
+  },
+  "source_change_control": {
+    "allowed_descendant_paths": [
+      ".github/workflows/validation-scaling-study.yml",
+      "docs/reviews/validation-scaling-stage1-review.md",
+      "schemas/validation-scaling-evidence-v1.schema.json",
+      "scripts/run_validation_scaling_study.py",
+      "scripts/validate_validation_scaling_study.py",
+      "src/dynamic_cssc/validation_scaling_study.py",
+      "tests/test_validation_scaling_study.py",
+      "tests/test_validation_scaling_workflow.py"
+    ],
+    "all_other_changed_paths_rejected": true,
+    "comparison": "git-diff-name-only-and-exact-byte-comparison-against-annotated-validation-scaling-stage0-v1",
+    "schema_validation_is_sufficient": false,
+    "stage0_objects_must_remain_byte_identical": true
+  },
+  "status": "stage0-preregistered-not-implemented-not-dispatched",
+  "stopping": {
+    "all_attempts_reporting": "provider-inventory-must-show-exactly-one-workflow-run-for-the-source-tag-and-attempt-one",
+    "failure_rule": "any-missing-extra-failed-cancelled-or-timed-out-job-or-artifact-makes-the-study-terminal-no-go-and-no-timing-fit-reportable",
+    "no_rerun": true,
+    "no_threshold_relaxation": true,
+    "provider_action": "do-not-delete-cancel-or-rerun-after-dispatch-unless-a-safety-emergency-requires-cancellation-which-is-terminal-no-go"
+  },
+  "study_id": "dynamic-cssc-validation-scaling-2026-09-01"
+}
