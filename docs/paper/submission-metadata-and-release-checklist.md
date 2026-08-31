@@ -1,12 +1,14 @@
 # Route C submission metadata and release checklist
 
-Status date: 2026-08-30
+Status date: 2026-08-31
 
 This checklist separates technical work that is already complete from
-author-owned facts that must not be guessed by an AI system. It applies to the
-Route C methods/evidence-boundary paper bound by
-`route-c-external-review-v1`, exact commit
-`f4fe461ace07bceaf674a9cad61f98bd74f67531`.
+author-owned facts that must not be guessed by an AI system. The immutable tag
+`route-c-external-review-v1` remains the reviewed 2026-08-30 baseline. The
+current successor begins at exact S2
+`e1e488f177dc8a469c6132a29537b041fbf1430b` and adds only the 2026-08-31
+terminal follow-up disclosure and regenerated document outputs; it requires a
+new exact-object review tag before submission.
 
 ## Technically complete
 
@@ -19,6 +21,19 @@ Route C methods/evidence-boundary paper bound by
 - [x] ZCode GLM-5.3 Max review: P0 = 0, P1 = 0.
 - [x] ChatGPT Pro successor review: PASS, P0 = 0, P1 = 0, external
   circulation ready.
+
+## 2026-08-31 terminal-outcome successor
+
+- [x] Exact provider state, zero-artifact boundary, and frozen one-shot
+  disposition independently checked by ChatGPT Pro and ZCode GLM-5.3 Max.
+- [x] Additive terminal-NO-GO record and English/Chinese source updates drafted
+  without changing preregistration, study plan, anchor, behavior registry, or
+  claim ledgers.
+- [x] Rebuild both DOCX files and verify editable OMML equations.
+- [x] Render and inspect every English and Chinese page after the rebuild.
+- [ ] Obtain same-packet Pro/ZCode review with no unresolved manuscript P0/P1
+  on the exact successor object.
+- [ ] Close exact-head CI and create a new immutable external-review tag.
 
 ## Human facts required before submission
 
@@ -55,18 +70,21 @@ minted one.
 
 > Source code, frozen protocol definitions, verification tests, the
 > claim--evidence ledger, the primary-source citation audit, and the exact
-> external-review manuscript packet are publicly available at the immutable Git
-> tag `route-c-external-review-v1` in
+> external-review manuscript packet will be publicly available at the new
+> immutable successor tag recorded before submission in
 > <https://github.com/leemaple/dynamic-cssc-spmv>. The experiment-source and
-> evidence-freeze snapshots are Git commits
+> evidence-freeze snapshots for the primary lineage are Git commits
 > `ee58627bb5752c6ac1ee2c5132c6574f9cb66552` and
-> `c7ff6820d9323f1850c1c5c57fd9070db88db120`, respectively. The sole
-> preregistered qualification selected the stop route before formal dispatch;
-> consequently no admitted synthetic, ordered-event, native OpenFHE, terminal,
-> aggregate, or analysis artifact exists. Its transient q1 handoff was
-> designated non-evidence and is not distributed as a paper result. The public
-> SNAP source object was not acquired into the formal lineage and is not
-> redistributed by this paper.
+> `c7ff6820d9323f1850c1c5c57fd9070db88db120`. Its sole qualification selected
+> the stop route before formal dispatch; its transient q1 handoff was designated
+> non-evidence. A separately preregistered follow-up used S1
+> `f8d89d6f98f289dc2e0c3414f7b4ed59b5d30f52` and direct-child data-only S2
+> `e1e488f177dc8a469c6132a29537b041fbf1430b`. Its sole qualification run
+> `33348855548` was cancelled during hosted-runner setup before repository
+> checkout or seed admission and produced zero artifacts. Consequently no
+> admitted synthetic, ordered-event, native OpenFHE, terminal, aggregate, or
+> analysis artifact exists. The public SNAP source object was not acquired into
+> the formal lineage and is not redistributed by this paper.
 
 ## Proposed generative-AI disclosure
 
@@ -131,6 +149,10 @@ Do not submit if any of the following is true:
 - the selected venue requires an empirical result that this Route C paper does
   not have;
 - the manuscript describes q1/q2 qualification fragments as performance data;
+- the manuscript treats follow-up runner setup, prerequisite controls, or the
+  unknown watcher-admission subfailure as scientific or performance evidence;
+- the successor terminal-NO-GO record, rebuilt DOCX files, exact review packet,
+  CI, and immutable review tag have not all closed;
 - a moving branch is cited in place of the immutable packet;
 - a DOI, license, or artifact is claimed before it exists;
 - citation keys remain unresolved or a newly public SparseE record has not been

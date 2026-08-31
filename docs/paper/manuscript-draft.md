@@ -1,10 +1,10 @@
 # Version-Bound Maintenance for Mutable Homomorphic Sparse Matrix--Vector Multiplication: A Fail-Closed Evaluation Boundary
 
-> **Manuscript status:** Route C methods/boundary working draft. The frozen
-> engineering lineage is complete, but the one-shot qualification selected the
-> preregistered stop route. No comparative performance, complete-reference,
-> security, or end-to-end claim is released. Evidence status last synchronized:
-> 2026-08-30.
+> **Manuscript status:** Route C methods/boundary working draft. The primary
+> one-shot qualification and a later, separately preregistered follow-up both
+> selected their frozen stop routes. No comparative performance,
+> complete-reference, security, or end-to-end claim is released. Evidence
+> status last synchronized: 2026-08-31.
 
 ## Abstract
 
@@ -35,14 +35,19 @@ OpenFHE cases. Independent replay and terminal admission would have had to
 accept exactly the resulting 17 pre-aggregate artifacts before analysis could
 release any empirical sentence.
 
-The sole preregistered, permanently non-admissible qualification did not reach
-its combined guard within the frozen computational deadline. The external
-controller cancelled only that exact run, no formal-dispatch capability was
-created, and the acquisition and 16-unit formal campaign were therefore not
-started. We report the protocol, its definition-level functional obligations,
-the source/evidence separation, and this fail-closed evaluation boundary. We do
-not convert partial qualification execution into strategy-cost or native-
-OpenFHE performance evidence.
+The primary preregistered, permanently non-admissible qualification did not
+reach its combined guard within the frozen computational deadline. A later,
+separately preregistered follow-up passed five exact-S2 authority-false
+controls, but its sole provider run was cancelled during hosted-runner setup
+after the external controller could not establish the watcher-admission
+binding. No repository checkout, registered-seed step, scientific stage, or
+artifact occurred. Under the frozen one-shot rules, both paths terminated
+without a formal-dispatch capability; the acquisition and 16-unit formal
+campaign were not started. We report the protocol, its definition-level
+functional obligations, the source/evidence separation, and these fail-closed
+evaluation boundaries. We do not convert partial qualification execution,
+runner setup, or prerequisite controls into strategy-cost or native-OpenFHE
+performance evidence.
 
 **Keywords:** homomorphic encryption; sparse matrix--vector multiplication;
 mutable sparse matrices; cryptographic engineering; reproducible evaluation
@@ -515,6 +520,18 @@ Route C, so the formal campaign, terminal admission, aggregate, and analysis
 chain were deliberately not run. No statement in this section is empirical
 evidence for a maintenance strategy.
 
+A later, separately preregistered follow-up repaired a pre-dispatch capability-
+lease defect without changing the estimand, resource thresholds, or scientific
+matrix. Its replacement experiment source S1 was
+`f8d89d6f98f289dc2e0c3414f7b4ed59b5d30f52`, and its direct-child, data-only S2
+was `e1e488f177dc8a469c6132a29537b041fbf1430b`. Exact-head CI, PRE-S1,
+descriptive registration, source-anchor, and independent-review controls all
+passed at exact S2 with authority false. The sole subsequent qualification run
+was cancelled before checkout or seed admission when the controller could not
+install its watcher-admission binding. It produced zero artifacts and no
+scientific observation. The frozen one-shot rule therefore closed the follow-up
+as terminal NO-GO and barred a repaired-lineage rerun.
+
 Generative-AI systems assisted literature discovery, code and test generation,
 adversarial review, and drafting during development. Their outputs are neither
 source authority nor experimental evidence. Human authors must independently
@@ -524,9 +541,10 @@ artifacts, and accept responsibility for every claim and released result.
 ## 6. Evaluation Methodology
 
 Sections 6.1--6.6 preserve the frozen counterfactual execution and reporting
-protocol. Because qualification failed, none of the acquisitions, formal cells,
-native cases, measurements, or reports specified below occurred. The protocol
-was frozen before any formal artifact could be inspected. It specified no
+protocol. Because neither qualification path produced a GO, none of the
+acquisitions, formal cells, native cases, measurements, or reports specified
+below occurred. The protocol was frozen before any formal artifact could be
+inspected. It specified no
 trained selector, winner chosen on a tuning prefix, or held-out oracle. Every
 strategy would have owned an independent persistent state and consumed the same
 ordered event groups, publication boundaries, queries, initial logical matrix,
@@ -757,7 +775,7 @@ Figure 2 records the evidence boundary rather than a performance curve. Green
 and blue boxes are engineering or workflow observations at their exact source
 identities; none is promoted into the absent formal result set.
 
-![Figure 2. Exact source freeze, one-shot qualification stop, and the resulting Route C evidence boundary.](assets/route-c-evidence-boundary.png){width=6.3in}
+![Figure 2. Primary exact-source freeze, one-shot qualification stop, and the resulting Route C evidence boundary; the later follow-up is recorded separately in Section 7.5.](assets/route-c-evidence-boundary.png){width=6.3in}
 
 **Table 3. What each evidence layer proves and does not prove.**
 
@@ -766,6 +784,8 @@ identities; none is promoted into the absent formal result set.
 | S1 CI and PRE-S1 | Passed at exact S1 `ee58627b…` | Registered tests, source build, and ordinary/strong smoke execution at that identity | Strategy costs, complete-reference coverage, or formal artifact admission |
 | Registration and S2 | Descriptive archive reinspected; data-only anchor installed at `c7ff6820…` | Exact S1/S2 identity and closed-Behavior-Set compatibility | Qualification GO or a replayable dispatch authority |
 | Qualification | One exact run; q1 completed, q2 was cancelled at the frozen stop, q5 never started | Preregistered Route C decision and fail-closed provenance | Any simulator/native performance estimator or partial formal result |
+| Follow-up controls | Five fresh controls passed at follow-up S2 `e1e488f…`, all authority false | Exact follow-up source/anchor identity and prerequisite closure | Qualification GO, formal authority, or scientific execution |
+| Follow-up qualification | One exact run was cancelled during hosted-runner setup before checkout or seed admission; zero artifacts | Terminal one-shot disposition and a control-plane failure chronology | Strategy behavior, performance, a 45/55-minute timeout, or a precise watcher/CAS root cause |
 | Formal campaign | Not dispatched | The absence of unauthorized execution | Strategy ranking, speedup, ordered-event findings, or native resource claims |
 
 **Table 4. Compact standalone provenance for the Route C stopping outcome.**
@@ -777,6 +797,16 @@ identities; none is promoted into the absent formal result set.
 | Evidence freeze | Registration run `33259894587`; S2 `c7ff6820d9323f1850c1c5c57fd9070db88db120` | Descriptive authority false; S2 CI run `33260167517` passed |
 | One-shot qualification | Run `33261434612` | `cancelled`; q1 completed, q2 stopped at the frozen gate, q3--q6 did not run, and q5 never started |
 | Sole provider object | Artifact ID `9717884587`, digest `sha256:51cbfc2a…2c008` | One-day q1 handoff; permanently non-evidence; no formal artifact exists |
+
+**Table 5. Separately preregistered follow-up chronology.**
+
+| Object or gate | Exact identity | Terminal disposition |
+|---|---|---|
+| Follow-up experiment source and evidence freeze | S1 `f8d89d6f98f289dc2e0c3414f7b4ed59b5d30f52`; S2 `e1e488f177dc8a469c6132a29537b041fbf1430b`; compatibility receipt `c163974a…7e24` | Direct-child data-only transition; all authority fields false |
+| Five fresh controls | Runs `33347586537`, `33347586567`, `33347586568`, `33347586620`, and `33347586569` | All completed successfully on exact S2; prerequisite evidence only |
+| Sole follow-up qualification | Run `33348855548` | `completed/cancelled`; only GitHub `Set up job` began; no checkout, registered seed, q1--q6 scientific stage, or artifact |
+| Claim and evidence state | Qualification claim ref remains at exact S2; artifact API `total_count=0`; evidence root empty | Watch-binding candidate absent; no formal/campaign/terminal/analysis ref and no reportable result |
+| Independent disposition | Same exact packet received two adversarial read-only reviews | Both returned `TERMINAL-NO-GO`; no second qualification or repaired-lineage continuation |
 
 The version-bound `claim-ledger-draft.md` supplement records the full provider
 digest, exact authority states, and the closed claim mapping. It is part of the
@@ -808,6 +838,32 @@ This provider-boundary anomaly did not create a false GO and did not cause the
 deadline failure. It is recorded as an implementation limitation for any future
 lineage, not as permission to modify S1 and repeat this one-shot attempt.
 
+### 7.5 Separately preregistered follow-up disposition
+
+The follow-up was designed after the primary stop to answer a narrower
+feasibility question without relaxing the original scientific matrix. Before
+its sole qualification, exact-S2 CI, PRE-S1, descriptive registration,
+source-anchor, and independent-review controls all completed successfully. One
+production controller call then consumed the nonserialized capability, created
+the qualification claim, and dispatched exact-S2 run `33348855548`.
+
+The controller failed closed while establishing the watcher-admission binding
+and cancelled the run. GitHub recorded only its internal `Set up job` step; no
+repository checkout, identity check, seed normalization, registered-seed
+computation, producer, replay, guard, or native stage ran. The other five jobs
+had zero steps, the artifact inventory was empty, and the claim ref remained at
+exact S2 rather than a watch-binding commit.
+
+The frozen attempt definition attaches to the sole authorized provider dispatch,
+not to the first scientific step. The run's terminal non-success therefore
+exhausted the follow-up. Independent disposition reviews agreed that a direct
+rerun or a repaired watcher followed by replacement S1/S2 would be an
+impermissible outcome-informed second attempt. The exact failing substep remains
+unknown because the controller did not persist its nested exception chain; the
+unchanged ref alone cannot distinguish initial live-read construction,
+message-commit creation, or compare-and-swap failure. This uncertainty is a
+control-plane limitation, not evidence about a maintenance strategy.
+
 ## 8. Limitations
 
 The threat model is narrow and provides no formal security theorem. Client B
@@ -823,6 +879,11 @@ or noise safety, and type-derived byte bounds are not observed ciphertext sizes.
 The present boundary is operational rather than a comparative strategy result:
 the formal matrix was never authorized. Post-outcome retuning, threshold
 changes, and selective reuse of qualification fragments are prohibited.
+The later follow-up also ended before repository or seed execution. It exposes a
+watcher-admission observability defect because the nested provider exception was
+not retained; it does not identify the failing substep, demonstrate a scientific
+timeout, or justify another attempt. Future independent studies should exercise
+and log that control-plane seam before consuming a one-shot capability.
 
 ## 9. Conclusion
 
@@ -830,24 +891,28 @@ Mutable encrypted sparse computation requires more than an updatable container:
 matrix state, query reorganization, encrypted execution, and reconstruction must
 commit to the same version and be evaluated under complete causal costs. This
 work supplies that explicit contract around CSSC, three fixed maintenance
-mechanisms, and a fail-closed paired evaluation. The bounded attempt also shows
-the consequence of treating feasibility gates as real falsifiers: when the sole
-qualification did not reach its combined guard by the frozen deadline, the
-system produced no authority and the formal campaign did not run. The resulting
-Route C manuscript therefore makes protocol and evidence-boundary claims, not
-comparative performance claims.
+mechanisms, and a fail-closed paired evaluation. The primary bounded attempt
+shows the consequence of treating feasibility gates as real falsifiers: when
+the qualification did not reach its combined guard by the frozen deadline, the
+system produced no authority and the formal campaign did not run. A separately
+preregistered follow-up later passed its prerequisite controls but failed while
+arming the one-shot watcher before scientific execution; its provider run and
+zero-artifact record likewise terminated without formal authority. The
+resulting Route C manuscript therefore makes protocol and evidence-boundary
+claims, not comparative performance claims.
 
 ## Data and code availability
 
-The Route C package will identify exact S1 and S2; the closed Behavior Sets and
-compatibility receipt; exact-head CI, PRE-S1, and descriptive-registration run
-identities; the qualification workflow disposition; the frozen schemas,
-functional propositions, source-conformance record, and verification code. It
-will explicitly state that the one-day q1 handoff was non-evidence and that no
-acquisition, formal, terminal, aggregate, or analysis artifact was created. No
-empirical artifact or archival DOI is claimed by this working draft. This
-section must be replaced with the accepted repository release and archival DOI
-before submission.
+The Route C package will identify the primary and follow-up S1/S2 pairs; their
+closed Behavior Sets and compatibility receipts; exact-head CI, PRE-S1,
+descriptive-registration, source-anchor, and independent-review identities; both
+qualification dispositions; the frozen schemas, functional propositions,
+source-conformance record, and verification code. It will explicitly state that
+the primary one-day q1 handoff was non-evidence, the follow-up produced no
+artifact at all, and no acquisition, formal, terminal, aggregate, or analysis
+artifact was created. No empirical artifact or archival DOI is claimed by this
+working draft. This section must be replaced with the accepted repository
+release and archival DOI before submission.
 
 ## Statements and declarations
 

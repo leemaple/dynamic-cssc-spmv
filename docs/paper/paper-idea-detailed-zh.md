@@ -1,8 +1,8 @@
 ---
 title: "Dynamic CSSC SpMV：论文核心 Idea 与完整技术路线"
 subtitle: "面向可变稀疏矩阵同态矩阵—向量乘法的版本绑定维护、私有重构与可审计评估"
-author: "项目技术说明（Route C 边界稿；正式策略结果未产生）"
-date: "2026-08-30"
+author: ""
+date: "2026-08-31"
 lang: zh-CN
 numbersections: true
 ---
@@ -18,6 +18,8 @@ numbersections: true
 截至 2026-08-30，项目已经完成 Route A 的工程冻结链，也已经得到一次性资格运行的终局裁决。最终候选 `baefc8cc183816c51ce42573bafde8178173044d` 经 ChatGPT Pro 与 ZCode GLM-5.3 Max 独立终审均无 P0/P1；Fable 5 的 Terminal 调用因 provider 返回 `403 账户余额不足`而只记录为 unavailable，不构成裁决。该候选经 PR #39 合入 tree-identical 的 Experiment Source Snapshot S1 `ee58627bb5752c6ac1ee2c5132c6574f9cb66552`。S1 main CI `33258436732` 与 exact-main PRE-S1 `33259569284` 均成功；前者记录 `2403 passed, 2 skipped`，后者执行固定 OpenFHE 1.5.1 ordinary/strong 两路真实 smoke、`583 passed`、Ruff 全绿且 artifact 数为 0。描述性 registration run `33259894587` 成功后，只增加 registration data anchor，形成 Evidence-Freeze Snapshot S2 `c7ff6820d9323f1850c1c5c57fd9070db88db120`；S2 main CI `33260167517` 也成功。
 
 唯一允许的一次 NON-ADMISSIBLE qualification run `33261434612` 随后从 exact S2 启动，但在冻结的 45 分钟 computational deadline 到达时，q2 independent replay 仍在运行，q5 combined guard 从未开始。外部 controller 因此只取消该 exact run；最终状态为 `completed/cancelled`，只留下一个一天保留、永久不可进入论文结果的 q1 handoff。没有 q5 guard、没有 q6 record、没有不可序列化 dispatch capability，也没有任何 formal artifact。按预注册，Route A 已明确选择 **Route C**：不得重跑 qualification，不得启动 acquisition 或 16 个 formal shards，不得把 q1/q2 的运行片段包装成策略性能结果。终态复核还发现 GitHub 为两个未真正执行的下游 cancelled jobs 返回了 `completedAt` 早于 `startedAt` 一秒的反常元数据；controller 因此 fail-closed 拒绝终态读取。这一控制器审计缺口没有造成假 GO，也不是资格失败原因；在本次冻结尝试中不会通过修改 S1 后偷换身份再跑一次。
+
+2026-08-31，项目又完成了一项单独预注册的 follow-up。replacement S1 `f8d89d6f98f289dc2e0c3414f7b4ed59b5d30f52` 与 data-only S2 `e1e488f177dc8a469c6132a29537b041fbf1430b` 的五条 fresh、authority-false controls 全部通过；但唯一一次 qualification run `33348855548` 在 GitHub hosted-runner 的 `Set up job` 阶段被取消，因为外部 controller 未能建立 watcher-admission binding。没有 checkout、没有 registered seed、没有 q1--q6 科学步骤、没有 artifact。ChatGPT Pro 与 ZCode GLM-5.3 Max 对同一材料包都裁决为 **TERMINAL-NO-GO**：provider run 已创建且一次性 capability 已消费，因此不得直接重跑，也不得修复 watcher 后更换 S1/S2 再做第二次资格。底层究竟失败在初始 live read、message commit 还是 ref CAS，目前证据不足，论文只能写“具体子原因未知”。
 
 # 一句话概括论文 idea
 
@@ -789,7 +791,7 @@ Route A 会被以下任一事实否证并转为 Route C：
 
 三者不要求 SHA 完全相同，但差异必须由仓库拥有的 Behavior Set 和 compatibility receipt 证明只发生在允许的证据路径。普通 ancestor 关系、producer 自报文件清单或一个布尔 `verified=true` 都不够。
 
-## Route A 的 S1 与 S2 已冻结，资格已选择 Route C
+## Route A 与独立 follow-up 均已关闭，论文继续 Route C
 
 旧 Day 1A lineage 的 S1/S2 没有被继承为 Route A 的实验权威。Route A 已从不含旧诊断 anchor 的新 ancestry 完成：
 
@@ -803,6 +805,8 @@ Route A 会被以下任一事实否证并转为 Route C：
 最终 S1 是 `ee58627bb5752c6ac1ee2c5132c6574f9cb66552`，其 tree 与双专家审过的 `baefc8cc…` 完全相同；最终 S2 是只增加 registration anchor 的 `c7ff6820d9323f1850c1c5c57fd9070db88db120`。compatibility receipt 证明 S1 到 S2 的封闭 Behavior Set 未漂移。父系和早期候选的成功 CI/PRE-S1 只保留为工程历史，没有被冒充成当前身份的证据。
 
 workflow 控制面从 exact S2 dispatch，并从 fresh detached exact-S1 checkout 执行 qualification computation。该身份分离已经在唯一 qualification 中兑现；但资格没有产生 GO，所以 acquisition 与 formal producer/replay/guard 均被永久禁止在本次预注册下启动。
+
+后续单独预注册的 follow-up 重新建立了 exact S1/S2 和五条 fresh controls，只用于回答更窄的可运行性问题。它的唯一 provider run `33348855548` 在 repository checkout 与 seed admission 之前，因为 watcher-admission binding 未建立而被取消；artifact 数为 0。冻结规则把 attempt 绑定到唯一授权 dispatch，而不是第一条科学计算，所以该 follow-up 也已经终局 NO-GO。修复控制器后再跑一次会改变“一次尝试”的事后定义，不被允许。
 
 ## 四个执行层级
 
@@ -887,9 +891,9 @@ $$
 
 # 当前进度与剩余工作
 
-以下状态以 2026 年 8 月 30 日的精确仓库与 GitHub 记录为准。这里必须区分“方法已经实现”“工程门禁已经通过”“一次性资格是否通过”和“论文经验结果是否产生”四件事；任何前一层都不能替代后一层。
+以下状态以 2026 年 8 月 31 日的精确仓库与 GitHub 记录为准。这里必须区分“方法已经实现”“工程门禁已经通过”“一次性资格是否通过”和“论文经验结果是否产生”四件事；任何前一层都不能替代后一层。
 
-![图 2：S1/S2 工程证据、一次性资格停止点与 Route C 证据边界。](assets/route-c-evidence-boundary.png){width=6.3in}
+![图 2：primary S1/S2 工程证据、一次性资格停止点与 Route C 证据边界；后续 follow-up 终态在正文中单独记录。](assets/route-c-evidence-boundary.png){width=6.3in}
 
 已经完成或建立的主要内容包括：
 
@@ -898,6 +902,7 @@ $$
 - 旧 Day 1A 路线的两次可审计 NO-GO。run `33099397289` 在 300 分钟时 replay 尚未完成；修复后的 run `33130154591` 仍在 producer 291.92 分钟后只剩约 8 分钟，replay 仅完成 $\rho=0.01$ 单元便触及止损，guard 被跳过。两次都按原门槛取消，没有被包装为成功，也没有再授权第三次诊断；
 - 最终行为候选 `baefc8cc…` 的 Pro/ZCode 双 PASS、PR #39、S1 `ee58627…`、S2 `c7ff682…`、S1/S2 exact-head CI、两次 non-authorizing PRE-S1、描述性 registration 与 compatibility receipt 均已闭合；
 - Route A 的一次性资格 q1--q6 已真实启动且按冻结规则终止。run `33261434612` 中 q1 成功，q2 在 replay 中被取消，q3--q6 未执行；45 分钟门槛到达时 q5 未成功，因此裁决为 Route C。唯一 artifact 是 621,877,534-byte 的 `q1-simulator-pre-replay-handoff`，保留一天、永久 NON-ADMISSIBLE；没有 formal artifact 或 dispatch capability；
+- 单独预注册的 follow-up 在 S1 `f8d89d6…`、S2 `e1e488f…` 上完成五条 fresh authority-false controls 后，只 dispatch 了一次 qualification run `33348855548`。该 run 在 hosted-runner setup 阶段取消，只有 GitHub `Set up job` 开始；checkout、registered seed、q1--q6 与 native 路径均未执行，artifact API 为 0。Pro 与 ZCode 一致裁决 TERMINAL-NO-GO，禁止 direct rerun 或修复后 replacement-S1/S2 第二次资格；
 - controller 的止损动作正确且只作用于 exact run。取消后的 GitHub API 为两个空下游 jobs 返回了反常终态时间戳，导致最后一次读取 fail-closed；这是一项需要在未来新 lineage 中修复的 provider-boundary 兼容问题，但没有造成假接受，也不能成为本次重跑资格的理由；
 - q3/q4 的 retained build/package 绑定、zero-KeyGen/zero-Encrypt replay、跨 lane 不同 request/query/preparation/key identity，以及“producer 与 replay 只在同一 package 内相等”的反欺骗约束；
 - q5 对 provider artifact id/name/digest/size/head/run 的二次校验、安全 ZIP 解包、probe 与六个 formal structural vectors 的重算。operation counts 和 type-derived maximum bytes 只是一项必要 planning screen，明确不是 wall-time theorem；
@@ -906,14 +911,14 @@ $$
 
 接下来的关键路径改为 Route C：
 
-1. 冻结资格 NO-GO 的 provider 元数据、唯一 non-evidence artifact 元数据、controller cancel 记录和终态异常说明，形成可核验但不冒充 formal performance evidence 的 provenance；
-2. 把英文 manuscript 从“等待结果的 skeleton”改成“version-bound protocol + functional propositions + fail-closed evaluation boundary”的 methods/boundary paper，删除会让读者期待正式策略胜负的占位句；
-3. 只把 S1/S2 CI、PRE-S1、registration、source-conformance、proof obligations 和资格裁决放进各自允许的证据层；不把 q1/q2 片段用于 strategy-cost、speedup 或 OpenFHE 性能结论；
-4. 补齐协议图、版本/查询/重构图、correctness/fail-closed matrix、证据边界表和资格 DAG/停止点时间线；不生成伪造的性能曲线；
-5. 让 ChatGPT Pro 与 ZCode 对 Route C 完整稿做同包反审，清掉 P0/P1，再生成带可编辑公式的 Word/PDF 和投稿附件；
-6. 由作者选择适合 methods/protocol、negative result 或 reproducibility 的 workshop/short-paper 目标，并补 funding、CRediT、利益冲突和最终 AI disclosure。
+1. 把 primary qualification 与 follow-up 的终态分别记录，明确 primary 有一个永久 non-evidence q1 handoff，而 follow-up artifact 数为 0；
+2. 在英文稿和本中文 companion 中加入 follow-up 的控制面时间线、一次性裁决与“精确子原因未知”边界；
+3. 只把 S1/S2 CI、PRE-S1、registration、source-conformance、proof obligations 和两次资格裁决放进各自允许的证据层；不把 q1/q2、runner setup 或 controls 用于 strategy-cost、speedup 或 OpenFHE 性能结论；
+4. 重新生成带可编辑公式的 Word，逐页检查英文稿和中文 companion；
+5. 让 ChatGPT Pro 与 ZCode 对同一个 exact 文档候选做材料门终审，清掉文档中的 P0/P1，再冻结新的 immutable review tag；
+6. 由作者选择 methods/protocol、evidence-boundary 或 negative-results 友好的目标 venue，并在正式提交前补 funding、CRediT、利益冲突和最终 AI disclosure；作者姓名可以在匿名稿阶段继续留空。
 
-按当前已完成程度，**工程/审计链约为 95%--100%**，但原定正向经验结果链为 **0% 且已关闭**；以 Route C 可投稿稿为新目标，整体约为 **65%--75%**。在不新增实验 lineage 的前提下，形成一版结构完整、可供专家逐段审稿的 Route C 稿预计还需 **5--10 个日历日**；完成图表、引用核验、双专家终审、Word/PDF 视觉检查和投稿材料，较可信的窗口是 **2--4 周**。如果坚持必须得到正向策略性能结果，则需要新的研究问题、预算和预注册 lineage；这不是本次任务的“续跑”，保守看至少另需 **3--6 周**，而且仍不保证结果为正。以上是形成投稿稿的估计，不是录用时间承诺。
+按当前已完成程度，**工程/审计链已经闭合**，但原定正向经验结果链为 **0% 且在本 publication lineage 内永久关闭**。以 Route C 可投稿稿为目标，正文、公式、引用和基础 Word 包已经存在；新增终态披露、逐页视觉复核、同包双专家终审与新 immutable tag 预计还需 **3--6 个专注工作日**。若选择 CSA/JCEN 一类期刊 Word 路线，匿名投稿包通常可在约 **1 周**内收口；若选择 CiC 并改成 20 页 LaTeX，预计约 **5--8 个专注工作日**。如果坚持必须得到正向策略性能结果，就必须提出真正不同的研究问题与阈值并建立独立 lineage；它不能支持本稿，保守看至少另需数周，而且仍不保证结果为正。以上是形成投稿稿的估计，不是录用时间承诺。
 
 # 最终理解
 
