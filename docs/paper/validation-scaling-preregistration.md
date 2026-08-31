@@ -1,9 +1,18 @@
 # Preregistration: current-source validation-depth scaling
 
-Status: **Stage 0 frozen candidate; no implementation or study dispatch is
-authorized by this document.**
+Status: **Stage-0 v2 amendment candidate; no implementation or study dispatch
+is authorized by this document.**
 
 Study ID: `dynamic-cssc-validation-scaling-2026-09-01`.
+
+Version 2 preserves the research question, estimand, 54-cell matrix, formal
+seeds, query-vector seed, ordering, two-operation public interface, timeouts,
+one-dispatch rule, and claim boundary from immutable v1. Before any registered
+seed was executed, it closes five implementation ambiguities found by direct
+source inspection: private-artifact retention, complete `compile_query`
+instrumentation, provider-terminal timestamp ownership, sentinel-only testing,
+and exact OLS serialization. Immutable v1 remains an audit ancestor and is not
+relabelled as v2.
 
 ## 1. Why this is a different study
 
@@ -96,11 +105,18 @@ cleanup remain behind the seam. Callers cannot pass a `skip_validation`, success
 Boolean, timing result, seed value, rho, strategy, order, or caller-selected
 matrix.
 
-The compile-count adapter is installed before either cell clock starts and is
-removed after it stops. It calls the real `compile_query` with byte-for-byte
-identical arguments and returns the real result. Adapter setup and removal are
-excluded from timing; the constant per-call counter increment is intentionally
-included in every measured cell.
+The compile-count adapter owns exactly two live bindings:
+`dynamic_cssc.query_compiler.compile_query` and
+`dynamic_cssc.simulator.compile_query`. Before installation it requires both
+bindings to be the same original function. It installs one shared wrapper in
+both locations before either cell clock starts, increments once per wrapper
+entry, calls the original function with byte-for-byte identical arguments, and
+preserves its return value or exception. Both bindings are restored in `finally`
+after the clocks stop. The dynamic strong path imports the wrapped
+query-compiler binding. Adapter setup and removal are excluded from timing; the
+constant per-call counter increment is intentionally included in every measured
+cell. Tests must prove that omitting either binding is detected rather than
+silently accepted as an exact count.
 
 For a producer cell, `operation_wall_nanoseconds` and
 `operation_process_nanoseconds` start immediately before calling
@@ -131,6 +147,18 @@ The existing canonical cell fields `producer_state_transition_seconds`,
 to integer nanoseconds and reported as supporting stage observations, with null
 used for the inapplicable role. The primary fit uses only operation wall time.
 
+Production public operations are never executed successfully by tests because
+they derive the registered formal seed internally. The module contains one
+private, non-exported engine over an exact internal domain. A named test-only
+factory may construct only a disjoint sentinel domain and must reject all three
+formal seeds and the registered query-vector seed. Full successful package,
+replay, cleanup, counter, and synthetic-clock tests use that private domain.
+Public-operation tests cover strict inputs and failure paths that terminate
+before production trace generation. A repository sweep rejects registered
+seeds outside the four Stage-0 objects and the single production-domain
+constructor. No public seed, strategy, rho, order, matrix, clock, or validation
+override is added.
+
 The semantic document for both roles is the closed projection of the canonical
 cell over exactly `schema_version`, `identity`, `evaluation`, `counts`,
 `window_query_counts`, `primitive_counts`, `rotation_inventory`,
@@ -153,8 +181,8 @@ count. This is a structural validation-depth gate, not a wall-time theorem.
 
 ## 5. Execution and evidence chain
 
-The Stage-0 tag is the fixed annotated tag `validation-scaling-stage0-v1`; the
-source tag is the fixed annotated tag `validation-scaling-source-v1`. All five
+The Stage-0 tag is the fixed annotated tag `validation-scaling-stage0-v2`; the
+source tag is the fixed annotated tag `validation-scaling-source-v2`. All five
 Stage-0 objects must remain byte-identical between those tags. The source tag is
 made only after implementation, tests, exact-source CI, and independent
 material review pass. From Stage 0 to the source tag, changed paths are limited
@@ -181,6 +209,17 @@ One workflow dispatch creates exactly:
 - three independent replay artifacts, one per seed; and
 - one aggregate artifact after all six seed jobs succeed.
 
+Each producer artifact contains the exact private cell handoffs required by
+`replay_route_a_synthetic_cell`; its provider retention is therefore exactly one
+day, matching the nested handoff manifests. Each replay artifact and the
+aggregate have 90-day retention. A replay artifact is redacted and must not
+contain a private preparation document, ledger snapshot, producer-cell archive,
+or nested replay-cell archive. It contains only the closed timing rows, final
+cells, semantic projections, replay receipts, exact producer bindings, and its
+canonical manifest. The aggregate consumes all six seed artifacts in the same
+run before any producer expires. It does not extend, delete, or reupload a
+private producer handoff.
+
 Producer and replay jobs have 40-minute safety timeouts; aggregate has 20
 minutes. These are operational ceilings, not acceptance thresholds and not
 derived from either predecessor's 45/55-minute gates. The aggregate job must
@@ -188,6 +227,15 @@ independently rehash every provider-downloaded object, validate exact
 run/ref/head/attempt identity, require all 54 cells, verify producer/replay
 semantic equality and every compile-depth gate, and reject missing, extra,
 duplicate, reordered, unsafe, or noncanonical members.
+
+Seed packages record process-owned `operation_started_utc` and
+`package_finished_utc`; these are not GitHub terminal times. After all six
+dependency jobs are terminal, the aggregate reads the provider Jobs API and
+records each dependency job's database ID, exact name, `startedAt`,
+`completedAt`, and success conclusion. It rejects a missing, future, reversed,
+non-success, or identity-mismatched interval. It never claims to contain its own
+terminal `completedAt` or conclusion. The final independent result audit reads
+the aggregate job and workflow terminal metadata after the run completes.
 
 The formal inventory is exactly one workflow run at attempt 1 for the source
 tag. Any second dispatch, rerun attempt, job non-success, timeout, missing or
@@ -205,6 +253,17 @@ T(Q)=\alpha+\beta Q
 \]
 
 by unweighted ordinary least squares to the three rho-level median wall times.
+Every source observation remains a strict integer number of nanoseconds; the
+three-seed median is the middle integer after stable numeric sorting. The fit is
+computed with exact rational arithmetic over integer \(Q\) and those median
+nanoseconds. \(\alpha\), \(\beta\), and \(R^2\) are each serialized as a closed
+object containing a reduced signed strict-integer numerator and a strict
+positive denominator; JSON floats are forbidden. If total sum of squares is
+zero, residual sum of squares must also be zero and \(R^2\) is exactly `1/1`.
+Otherwise \(R^2=1-\mathrm{SSE}/\mathrm{SST}\). Human seconds and
+seconds-per-query strings are derived only after evidence validation with
+decimal round-half-even at nine places and never feed a statistic or digest.
+
 Report \(\alpha\), \(\beta\), and \(R^2\) without a pass threshold, p-value, or
 claim of asymptotic complexity. Because no zero-query cell exists, \(\alpha\)
 is labeled an extrapolated descriptive intercept and never an observed fixed
@@ -232,11 +291,12 @@ single-fixture functional result.
 
 ## 8. Freeze sequence
 
-1. Freeze this preregistration, the machine-readable study plan, claim ledger,
-   JSON schema, and detached Stage-0 manifest; commit them without implementation
-   and create the annotated `validation-scaling-stage0-v1` tag.
-2. Obtain ChatGPT Pro review now and ZCode GLM-5.3 Max review when the shared
-   weekly quota resets; resolve every P0/P1 before implementation freeze.
+1. Freeze this v2 preregistration, the machine-readable study plan, claim
+   ledger, JSON schema, and detached Stage-0 manifest; commit them without
+   implementation and create the annotated `validation-scaling-stage0-v2` tag.
+2. Obtain ChatGPT Pro and ZCode GLM-5.3 Max same-packet review after the shared
+   weekly quota resets; resolve every P0/P1 before implementation freeze. The v1
+   review and amendment audit remain attached history, not authority for v2.
 3. Implement the two-operation module, workflow, validator, and sentinel-only
    tests without changing this matrix, estimand, claims, or timeouts.
 4. Obtain exact-source CI and same-packet independent review; create the

@@ -3,17 +3,24 @@
     "cell_timing_summary": "for-each-strategy-role-and-rho-report-the-three-seed-operation-wall-and-process-seconds-and-their-median-minimum-and-maximum-plus-the-registered-supporting-stage-fields",
     "compile_count_gate": "for-every-cell-require-query_count<=compile_query_call_count<=2*query_count",
     "completeness_gate": "all-54-cells-and-all-producer-replay-semantic-checks-must-pass-or-no-timing-result-is-reportable",
-    "fit": "for-each-strategy-and-role-fit-operation_wall_seconds=alpha+beta*query_count-by-unweighted-ordinary-least-squares-to-the-three-rho-medians-and-report-alpha-beta-r_squared-without-a-pass-threshold-labeling-alpha-as-an-extrapolated-descriptive-intercept-not-an-observed-fixed-cost",
+    "fit": "for-each-strategy-and-role-fit-operation_wall_nanoseconds=alpha_nanoseconds+beta_nanoseconds_per_query*query_count-by-unweighted-ordinary-least-squares-to-the-three-rho-median-integer-nanoseconds-and-report-exact-reduced-rationals-without-a-pass-threshold-labeling-alpha-as-an-extrapolated-descriptive-intercept-not-an-observed-fixed-cost",
+    "fit_arithmetic": "python-fractions-Fraction-over-strict-integer-query-counts-and-the-middle-of-three-stably-numerically-sorted-integer-nanosecond-observations",
+    "fit_serialization": "each-alpha-beta-and-r_squared-is-one-closed-object-with-a-signed-strict-integer-numerator-and-a-strict-positive-denominator-reduced-to-coprime-terms-no-json-floats",
+    "human_rendering": "derive-seconds-and-seconds-per-query-from-the-validated-rationals-only-after-evidence-validation-using-Decimal-ROUND_HALF_EVEN-at-nine-decimal-places-never-use-rendered-text-as-fit-input",
     "multiple_comparisons": "none-no-null-hypothesis-tests-no-p-values",
     "primary_unit": "one-exact-strategy-rho-seed-role-cell",
-    "reporting_order": "strategy-id-then-role-then-rho-then-seed-ordinal"
+    "reporting_order": "strategy-id-then-role-then-rho-then-seed-ordinal",
+    "zero_variance_rule": "if-SST-is-zero-require-SSE-zero-and-serialize-r_squared-as-1-over-1-otherwise-r_squared-is-1-minus-SSE-over-SST"
   },
   "artifacts": {
     "aggregate": "validation-scaling-aggregate-v1",
     "artifact_count": 7,
+    "aggregate_retention_days": 90,
     "producer_per_seed": "validation-scaling-producer-seed-{seed_ordinal}-v1",
+    "producer_retention_days": 1,
     "replay_per_seed": "validation-scaling-replay-seed-{seed_ordinal}-v1",
-    "retention_days": 90,
+    "replay_private_material_rule": "replay-packages-must-exclude-private-preparation-documents-ledger-snapshots-producer-cell-archives-and-nested-replay-cell-archives",
+    "replay_retention_days": 90,
     "safe_archive_rules": "regular-files-only-no-links-no-duplicates-exact-order-exact-manifest-sha256-and-byte-count-rehash"
   },
   "claims": {
@@ -35,7 +42,8 @@
   },
   "execution": {
     "aggregate_job_timeout_minutes": 20,
-    "artifact_handoff": "producer-and-replay-run-in-distinct-github-jobs-and-replay-consumes-only-the-provider-uploaded-producer-artifact",
+    "artifact_handoff": "producer-and-replay-run-in-distinct-github-jobs-replay-consumes-only-the-provider-uploaded-one-day-private-producer-artifact-and-aggregate-consumes-all-six-seed-artifacts-before-producer-expiry",
+    "aggregate_provider_job_observation": "after-all-six-dependency-jobs-are-terminal-the-aggregate-uses-the-provider-jobs-API-to-record-and-validate-each-dependency-job-database-id-name-startedAt-completedAt-and-success-conclusion-never-its-own-terminal-state",
     "dependency_install": "python-m-pip-install-require-hashes-requirements-ci.txt",
     "formal_dispatch_count": 1,
     "job_topology": "three-producer-matrix-jobs-then-three-replay-matrix-jobs-then-one-aggregate-job",
@@ -51,7 +59,11 @@
     "workflow": ".github/workflows/validation-scaling-study.yml"
   },
   "interface": {
-    "compile_counter_scope": "install-before-cell-clocks-remove-after-cell-clocks-preserve-real-compile-query-arguments-and-return-value-exclude-adapter-setup-and-removal-include-per-call-counter-increment",
+    "compile_counter_bindings": [
+      "dynamic_cssc.query_compiler.compile_query",
+      "dynamic_cssc.simulator.compile_query"
+    ],
+    "compile_counter_scope": "require-both-bindings-identical-before-install-install-one-shared-wrapper-in-both-bindings-before-cell-clocks-increment-once-per-wrapper-entry-preserve-exact-arguments-return-and-exception-restore-both-in-finally-after-cell-clocks-exclude-adapter-setup-and-removal-include-per-call-counter-increment",
     "module_path": "src/dynamic_cssc/validation_scaling_study.py",
     "producer_operation": "produce_validation_scaling_seed_shard(*,plan_bytes,seed_ordinal,scratch_root)",
     "producer_timing_scope": "operation-clocks-immediately-around-evaluate_route_a_synthetic_cell-return-excluding-trace-generation-scratch-creation-counter-installation-cell-archive-seed-package-provider-upload-and-queue",
@@ -72,7 +84,8 @@
       "bindings"
     ],
     "semantic_projection_serialization": "dynamic_cssc.route_a_results.canonical_route_a_document-sorted-keys-compact-ascii-json-no-floats-one-terminal-lf",
-    "strict_inputs": "exact-stage0-plan-bytes-seed-ordinal-in-1-2-3-fresh-empty-operation-owned-scratch-root-and-for-replay-exact-provider-producer-package-only"
+    "sentinel_test_engine": "one-private-non-exported-engine-accepts-an-exact-internal-domain-tests-obtain-only-a-test-factory-domain-that-rejects-all-production-formal-and-query-vector-seeds-public-success-paths-are-never-executed-by-tests",
+    "strict_inputs": "exact-stage0-v2-plan-bytes-seed-ordinal-in-1-2-3-fresh-empty-operation-owned-scratch-root-and-for-replay-exact-provider-producer-package-only"
   },
   "matrix": {
     "direct_rhos": [
@@ -169,7 +182,14 @@
       "machine_plan_sha256"
     ],
     "clock": "python-time-perf_counter_ns-and-process_time_ns-around-the-deep-cell-interface",
-    "job_fields": [
+    "provider_dependency_job_fields": [
+      "github_job_database_id",
+      "github_job_name",
+      "github_job_started_at",
+      "github_job_completed_at",
+      "github_job_conclusion"
+    ],
+    "seed_package_fields": [
       "runner_os",
       "runner_arch",
       "python_version",
@@ -177,8 +197,8 @@
       "github_run_attempt",
       "github_job",
       "source_git_sha",
-      "job_started_utc",
-      "job_finished_utc",
+      "operation_started_utc",
+      "package_finished_utc",
       "seed_package_wall_nanoseconds",
       "seed_package_process_nanoseconds",
       "process_peak_rss_bytes_or_null"
@@ -206,14 +226,14 @@
     "relationship": "independent-validation-scaling-question-not-a-third-same-estimand-study"
   },
   "research_question": "For the current semantics-preserving deep lifecycle interface, how do producer and independent-replay validation-bearing lifecycle durations scale with exact query count while canonical outputs and compile-depth bounds remain invariant?",
-  "schema_version": "dynamic-cssc-validation-scaling-study-v1",
+  "schema_version": "dynamic-cssc-validation-scaling-study-v2",
   "scientific_source": {
     "machine_plan_path": "config/route-a-publication-plan.json",
     "machine_plan_sha256": "ce09c1c9c82032ba8439188ce20d4cd8d6310a386efbe2d436595fd779b7268c",
-    "source_commit_rule": "source-must-descend-from-annotated-validation-scaling-stage0-v1-all-five-stage0-object-bytes-must-remain-identical-and-every-changed-path-must-belong-to-the-exact-source-change-control-whitelist",
-    "source_tag": "validation-scaling-source-v1",
+    "source_commit_rule": "source-must-descend-from-annotated-validation-scaling-stage0-v2-all-five-stage0-object-bytes-must-remain-identical-and-every-changed-path-must-belong-to-the-exact-source-change-control-whitelist",
+    "source_tag": "validation-scaling-source-v2",
     "source_tag_must_be_annotated_and_immutable": true,
-    "stage0_tag": "validation-scaling-stage0-v1",
+    "stage0_tag": "validation-scaling-stage0-v2",
     "stage0_tag_must_be_annotated_and_immutable": true,
     "stage0_base_commit": "f706e17ef82d818b914273d97dfbafd47b48c2c7"
   },
@@ -229,17 +249,24 @@
       "tests/test_validation_scaling_workflow.py"
     ],
     "all_other_changed_paths_rejected": true,
-    "comparison": "git-diff-name-only-and-exact-byte-comparison-against-annotated-validation-scaling-stage0-v1",
+    "comparison": "git-diff-name-only-and-exact-byte-comparison-against-annotated-validation-scaling-stage0-v2",
     "schema_validation_is_sufficient": false,
     "stage0_objects_must_remain_byte_identical": true
   },
-  "status": "stage0-preregistered-not-implemented-not-dispatched",
+  "status": "stage0-v2-preregistered-not-implemented-not-dispatched",
   "stopping": {
     "all_attempts_reporting": "provider-inventory-must-show-exactly-one-workflow-run-for-the-source-tag-and-attempt-one",
     "failure_rule": "any-missing-extra-failed-cancelled-or-timed-out-job-or-artifact-makes-the-study-terminal-no-go-and-no-timing-fit-reportable",
     "no_rerun": true,
     "no_threshold_relaxation": true,
     "provider_action": "do-not-delete-cancel-or-rerun-after-dispatch-unless-a-safety-emergency-requires-cancellation-which-is-terminal-no-go"
+  },
+  "testing": {
+    "formal_seed_execution_in_tests": "forbidden",
+    "production_public_success_path_execution_in_tests": "forbidden",
+    "public_operation_test_scope": "strict-input-scratch-package-and-failure-paths-that-fail-before-production-trace-generation",
+    "registered_seed_sweep": "reject-every-production-formal-seed-and-query-vector-seed-outside-the-four-stage0-objects-and-the-single-production-domain-constructor",
+    "sentinel_full_path_scope": "private-engine-only-with-disjoint-sentinel-domain-synthetic-clocks-and-no-observed-study-timing"
   },
   "study_id": "dynamic-cssc-validation-scaling-2026-09-01"
 }

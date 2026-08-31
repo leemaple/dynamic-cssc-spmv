@@ -1,18 +1,37 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.invalid/dynamic-cssc/validation-scaling-study-v1.schema.json",
+  "$id": "https://example.invalid/dynamic-cssc/validation-scaling-study-v2.schema.json",
   "additionalProperties": false,
   "properties": {
     "analysis": {
+      "properties": {
+        "fit_arithmetic": {
+          "const": "python-fractions-Fraction-over-strict-integer-query-counts-and-the-middle-of-three-stably-numerically-sorted-integer-nanosecond-observations"
+        },
+        "fit_serialization": {
+          "const": "each-alpha-beta-and-r_squared-is-one-closed-object-with-a-signed-strict-integer-numerator-and-a-strict-positive-denominator-reduced-to-coprime-terms-no-json-floats"
+        },
+        "zero_variance_rule": {
+          "const": "if-SST-is-zero-require-SSE-zero-and-serialize-r_squared-as-1-over-1-otherwise-r_squared-is-1-minus-SSE-over-SST"
+        }
+      },
+      "required": [
+        "fit_arithmetic",
+        "fit_serialization",
+        "zero_variance_rule"
+      ],
       "type": "object"
     },
     "artifacts": {
       "const": {
         "aggregate": "validation-scaling-aggregate-v1",
+        "aggregate_retention_days": 90,
         "artifact_count": 7,
         "producer_per_seed": "validation-scaling-producer-seed-{seed_ordinal}-v1",
+        "producer_retention_days": 1,
         "replay_per_seed": "validation-scaling-replay-seed-{seed_ordinal}-v1",
-        "retention_days": 90,
+        "replay_private_material_rule": "replay-packages-must-exclude-private-preparation-documents-ledger-snapshots-producer-cell-archives-and-nested-replay-cell-archives",
+        "replay_retention_days": 90,
         "safe_archive_rules": "regular-files-only-no-links-no-duplicates-exact-order-exact-manifest-sha256-and-byte-count-rehash"
       }
     },
@@ -21,6 +40,9 @@
     },
     "execution": {
       "properties": {
+        "aggregate_provider_job_observation": {
+          "const": "after-all-six-dependency-jobs-are-terminal-the-aggregate-uses-the-provider-jobs-API-to-record-and-validate-each-dependency-job-database-id-name-startedAt-completedAt-and-success-conclusion-never-its-own-terminal-state"
+        },
         "aggregate_job_timeout_minutes": {
           "const": 20
         },
@@ -35,6 +57,7 @@
         }
       },
       "required": [
+        "aggregate_provider_job_observation",
         "aggregate_job_timeout_minutes",
         "formal_dispatch_count",
         "seed_job_timeout_minutes",
@@ -44,6 +67,15 @@
     },
     "interface": {
       "properties": {
+        "compile_counter_bindings": {
+          "const": [
+            "dynamic_cssc.query_compiler.compile_query",
+            "dynamic_cssc.simulator.compile_query"
+          ]
+        },
+        "compile_counter_scope": {
+          "const": "require-both-bindings-identical-before-install-install-one-shared-wrapper-in-both-bindings-before-cell-clocks-increment-once-per-wrapper-entry-preserve-exact-arguments-return-and-exception-restore-both-in-finally-after-cell-clocks-exclude-adapter-setup-and-removal-include-per-call-counter-increment"
+        },
         "module_path": {
           "const": "src/dynamic_cssc/validation_scaling_study.py"
         },
@@ -70,14 +102,20 @@
             "correctness",
             "bindings"
           ]
+        },
+        "sentinel_test_engine": {
+          "const": "one-private-non-exported-engine-accepts-an-exact-internal-domain-tests-obtain-only-a-test-factory-domain-that-rejects-all-production-formal-and-query-vector-seeds-public-success-paths-are-never-executed-by-tests"
         }
       },
       "required": [
+        "compile_counter_bindings",
+        "compile_counter_scope",
         "module_path",
         "producer_operation",
         "public_operation_count",
         "replay_operation",
-        "semantic_projection_fields"
+        "semantic_projection_fields",
+        "sentinel_test_engine"
       ],
       "type": "object"
     },
@@ -183,9 +221,40 @@
       "const": "For the current semantics-preserving deep lifecycle interface, how do producer and independent-replay validation-bearing lifecycle durations scale with exact query count while canonical outputs and compile-depth bounds remain invariant?"
     },
     "schema_version": {
-      "const": "dynamic-cssc-validation-scaling-study-v1"
+      "const": "dynamic-cssc-validation-scaling-study-v2"
     },
     "measurements": {
+      "properties": {
+        "provider_dependency_job_fields": {
+          "const": [
+            "github_job_database_id",
+            "github_job_name",
+            "github_job_started_at",
+            "github_job_completed_at",
+            "github_job_conclusion"
+          ]
+        },
+        "seed_package_fields": {
+          "const": [
+            "runner_os",
+            "runner_arch",
+            "python_version",
+            "github_run_id",
+            "github_run_attempt",
+            "github_job",
+            "source_git_sha",
+            "operation_started_utc",
+            "package_finished_utc",
+            "seed_package_wall_nanoseconds",
+            "seed_package_process_nanoseconds",
+            "process_peak_rss_bytes_or_null"
+          ]
+        }
+      },
+      "required": [
+        "provider_dependency_job_fields",
+        "seed_package_fields"
+      ],
       "type": "object"
     },
     "pilot_disclosure": {
@@ -197,10 +266,10 @@
     "scientific_source": {
       "properties": {
         "source_tag": {
-          "const": "validation-scaling-source-v1"
+          "const": "validation-scaling-source-v2"
         },
         "stage0_tag": {
-          "const": "validation-scaling-stage0-v1"
+          "const": "validation-scaling-stage0-v2"
         }
       },
       "required": [
@@ -222,16 +291,25 @@
           "tests/test_validation_scaling_workflow.py"
         ],
         "all_other_changed_paths_rejected": true,
-        "comparison": "git-diff-name-only-and-exact-byte-comparison-against-annotated-validation-scaling-stage0-v1",
+        "comparison": "git-diff-name-only-and-exact-byte-comparison-against-annotated-validation-scaling-stage0-v2",
         "schema_validation_is_sufficient": false,
         "stage0_objects_must_remain_byte_identical": true
       }
     },
     "status": {
-      "const": "stage0-preregistered-not-implemented-not-dispatched"
+      "const": "stage0-v2-preregistered-not-implemented-not-dispatched"
     },
     "stopping": {
       "type": "object"
+    },
+    "testing": {
+      "const": {
+        "formal_seed_execution_in_tests": "forbidden",
+        "production_public_success_path_execution_in_tests": "forbidden",
+        "public_operation_test_scope": "strict-input-scratch-package-and-failure-paths-that-fail-before-production-trace-generation",
+        "registered_seed_sweep": "reject-every-production-formal-seed-and-query-vector-seed-outside-the-four-stage0-objects-and-the-single-production-domain-constructor",
+        "sentinel_full_path_scope": "private-engine-only-with-disjoint-sentinel-domain-synthetic-clocks-and-no-observed-study-timing"
+      }
     },
     "study_id": {
       "const": "dynamic-cssc-validation-scaling-2026-09-01"
@@ -253,6 +331,7 @@
     "source_change_control",
     "status",
     "stopping",
+    "testing",
     "study_id"
   ],
   "type": "object"
