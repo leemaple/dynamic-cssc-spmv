@@ -59,7 +59,8 @@ immutably tagged as `route-c-current-source-e4-review-v1` at
   only English findings are 26 low-severity raw-URL labels in the bibliography.
 - [x] Tag the exact accepted result/manuscript packet as
   `route-c-current-source-e4-review-v1`.
-- [ ] Merge the review-record-only successor to `main`.
+- [x] Merge the review-record-only successor to `main`. The accepted packet is
+  present in `main` at `f706e17ef82d818b914273d97dfbafd47b48c2c7`.
 
 ## Human facts required before submission
 

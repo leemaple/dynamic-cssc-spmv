@@ -123,6 +123,7 @@ are part of the research record.
 - [`docs/paper/claim-ledger-draft.md`](docs/paper/claim-ledger-draft.md): sentence-level claim/evidence permissions
 - [`docs/paper/references.bib`](docs/paper/references.bib): primary-source bibliography
 - [`docs/reviews/route-c-external-review-packet-2026-08-30.md`](docs/reviews/route-c-external-review-packet-2026-08-30.md): exact packet hashes and QA record
+- [`docs/reviews/publication-completion-matrix-2026-09-01.md`](docs/reviews/publication-completion-matrix-2026-09-01.md): current completion, remaining submission gates, and optional validation-scaling path
 - [`docs/reviews/chatgpt-pro-route-c-manuscript-review-2026-08-30.md`](docs/reviews/chatgpt-pro-route-c-manuscript-review-2026-08-30.md): initial commit-bound manuscript review
 - [`docs/reviews/zcode-glm53-max-route-c-manuscript-review-2026-08-30.md`](docs/reviews/zcode-glm53-max-route-c-manuscript-review-2026-08-30.md): independent GLM-5.3 Max review
 - [`docs/reviews/followup-performance-qualification-terminal-no-go-2026-08-31.md`](docs/reviews/followup-performance-qualification-terminal-no-go-2026-08-31.md): separately preregistered follow-up terminal disposition
