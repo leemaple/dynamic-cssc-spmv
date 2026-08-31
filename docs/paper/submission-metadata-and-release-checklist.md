@@ -7,8 +7,10 @@ author-owned facts that must not be guessed by an AI system. The immutable tag
 `route-c-external-review-v1` remains the reviewed 2026-08-30 baseline. The
 current successor begins at exact S2
 `e1e488f177dc8a469c6132a29537b041fbf1430b` and adds only the 2026-08-31
-terminal follow-up disclosure and regenerated document outputs; it requires a
-new exact-object review tag before submission.
+terminal follow-up disclosure, the current-source E4 bounded conformance
+result, and regenerated document outputs. The exact reviewed packet is now
+immutably tagged as `route-c-current-source-e4-review-v1` at
+`a757cf429f6457f4beac9ae9b0790a74e7d1ff7a`.
 
 ## Technically complete
 
@@ -31,9 +33,11 @@ new exact-object review tag before submission.
   claim ledgers.
 - [x] Rebuild both DOCX files and verify editable OMML equations.
 - [x] Render and inspect every English and Chinese page after the rebuild.
-- [ ] Obtain same-packet Pro/ZCode review with no unresolved manuscript P0/P1
+- [x] Obtain same-packet Pro/ZCode review with no unresolved manuscript P0/P1
   on the exact successor object.
-- [ ] Close exact-head CI and create a new immutable external-review tag.
+- [x] Close exact-head CI and create a new immutable external-review tag.
+  Exact-head run `33391930451` succeeded; the tag is
+  `route-c-current-source-e4-review-v1`.
 
 ## 2026-08-31 current-source functional addendum
 
@@ -45,7 +49,7 @@ new exact-object review tag before submission.
   complete workflow inventory, and detached-source provenance.
 - [x] Record the bounded 35/35 contract result and one-fixture OpenFHE oracle
   match in the Markdown manuscript and claim ledger.
-- [ ] Obtain same-packet Pro/ZCode review of the raw-result audit and exact
+- [x] Obtain same-packet Pro/ZCode review of the raw-result audit and exact
   manuscript diff with no unresolved P0/P1.
 - [x] Rebuild the editable-equation DOCX/PDF and complete page-by-page visual,
   equation, package, and accessibility QA. The accepted render has 26 English
@@ -53,7 +57,9 @@ new exact-object review tag before submission.
   retain editable OMML, and have blank creator/last-modifier fields. The
   accessibility audit reports zero high or medium findings in either file; its
   only English findings are 26 low-severity raw-URL labels in the bibliography.
-- [ ] Merge and tag the exact accepted result/manuscript packet.
+- [x] Tag the exact accepted result/manuscript packet as
+  `route-c-current-source-e4-review-v1`.
+- [ ] Merge the review-record-only successor to `main`.
 
 ## Human facts required before submission
 
