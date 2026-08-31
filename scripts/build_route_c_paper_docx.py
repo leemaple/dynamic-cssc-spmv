@@ -504,6 +504,16 @@ def _apply_font_everywhere(doc: Document, font: str) -> None:
                     _set_run_font(run, font)
 
 
+def _left_align_long_identifier_paragraphs(doc: Document) -> None:
+    """Avoid stretched word spacing around immutable IDs and provider digests."""
+    body_styles = {"Normal", "Body Text", "First Paragraph"}
+    for paragraph in doc.paragraphs:
+        if paragraph.style.name not in body_styles:
+            continue
+        if any(len(token) >= 32 for token in paragraph.text.split()):
+            paragraph.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+
 def _remove_empty_trailing_paragraphs(doc: Document) -> None:
     while (
         doc.paragraphs
@@ -548,6 +558,7 @@ def _build_english(raw: Path, target: Path) -> None:
     _format_figures_and_alt_text(doc, language="en")
     _style_block_quotes(doc)
     _apply_font_everywhere(doc, "Calibri")
+    _left_align_long_identifier_paragraphs(doc)
     _remove_empty_trailing_paragraphs(doc)
     _drop_unreferenced_document_images(doc)
     doc.save(target)

@@ -86,6 +86,26 @@ The active Route C ledger is:
 The two earlier cancelled diagnostics and the sole qualification's q1/q2 timing
 attribution are permanently excluded from RA-E1--RA-E3.
 
+## Current-source E4 conformance replication — 2026-08-31
+
+This is a separately preregistered deterministic functional replication, not a
+reopening of legacy empirical claim E4 or either stopped performance lineage.
+The immutable source is lightweight tag
+`current-source-e4-conformance-20260831-v1` at
+`844fb062d78f5095f14599c6c71a27cb6034f001`. The sole current run is
+`33386130654`; the sole artifact is `9755741401`, with raw provider digest
+`sha256:5978b7d9f75048939c9761243e224abb588ed82c2abc64e051523a7a598a1383`.
+The independent audit verified exact provider identity, all-success steps, the
+complete workflow inventory, the create-once tag, the exact 19-file ZIP,
+strict checksums, every machine-plan JSON pointer, and detached-source
+PROVENANCE rehashing.
+
+| ID | Permitted wording | Minimum evidence | Current state |
+|---|---|---|---|
+| CS-E4-C1 | At the exact tagged source, all 35 records in the prespecified eight-case deterministic property contract passed. | Run `33386130654`; artifact `9755741401`; strict raw-ZIP audit; property evidence with seed `20260822`, 35 records, and zero failures | RELEASED for that exact source and deterministic corpus only |
+| CS-E4-C2 | At the exact tagged source, the prespecified pinned-OpenFHE whole-query witness for one fixed 4096-by-8193 CSSC-base-plus-strong-delta fixture decrypted to `[(0, 128), (4095, 5)]` and matched both independent plaintext oracles. | Same run/artifact/raw digest; valid decryptions; exact vector; typed-oracle and direct-SpMV matches; exact source/provenance rehash | RELEASED for one fixed fixture, one segment width, and OpenFHE 1.5.1 at the recorded commit only |
+| CS-E4-N1 | No candidate admission, complete-reference, mixed-circuit-safety, security, deployment, performance, speedup, ranking, population, or universal-correctness conclusion follows from CS-E4-C1/C2. | Artifact authority flags all false; preregistered claim boundary; preserved terminal performance dispositions | PERMANENT NON-CLAIM |
+
 ## Design and attribution claims
 
 | ID | Permitted wording | Minimum evidence | Current state |

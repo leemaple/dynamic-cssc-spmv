@@ -21,6 +21,8 @@ numbersections: true
 
 2026-08-31，项目又完成了一项单独预注册的 follow-up。replacement S1 `f8d89d6f98f289dc2e0c3414f7b4ed59b5d30f52` 与 data-only S2 `e1e488f177dc8a469c6132a29537b041fbf1430b` 的五条 fresh、authority-false controls 全部通过；但唯一一次 qualification run `33348855548` 在 GitHub hosted-runner 的 `Set up job` 阶段被取消，因为外部 controller 未能建立 watcher-admission binding。没有 checkout、没有 registered seed、没有 q1--q6 科学步骤、没有 artifact。ChatGPT Pro 与 ZCode GLM-5.3 Max 对同一材料包都裁决为 **TERMINAL-NO-GO**：provider run 已创建且一次性 capability 已消费，因此不得直接重跑，也不得修复 watcher 后更换 S1/S2 再做第二次资格。底层究竟失败在初始 live read、message commit 还是 ref CAS，目前证据不足，论文只能写“具体子原因未知”。
 
+同日，项目在不重开两条性能 lineage 的前提下完成了另一项严格分离的当前源码功能一致性复现。经 Pro 与 ZCode 对同一预注册候选完成 P0/P1 全零的外部门禁后，轻量 tag `current-source-e4-conformance-20260831-v1` 被一次性固定到 source `844fb062d78f5095f14599c6c71a27cb6034f001`。唯一运行 `33386130654` 全步骤成功；唯一 artifact `9755741401` 的 GitHub 原始 ZIP digest 为 `sha256:5978b7d9f75048939c9761243e224abb588ed82c2abc64e051523a7a598a1383`。独立审计核验了 19/19 文件、严格校验和、RFC 6901 指针与 detached-source PROVENANCE。八个固定输入 case 的 35 条 contract records 全部通过；OpenFHE 1.5.1 固定 whole-query fixture 解密为 `[(0, 128), (4095, 5)]`，并同时匹配 typed plaintext oracle 与 direct SpMV oracle。这只是一条 exact-source、single-fixture 的功能一致性结果，不是性能、候选准入、安全性或普适正确性结论。
+
 # 一句话概括论文 idea
 
 这篇论文不是发明一种新的同态加密算法，也不是重新发明静态 CSSC 稀疏格式。它提出的是一个围绕静态 CSSC 的**可变矩阵维护层**：
@@ -330,7 +332,7 @@ $$
 
 这里的关键贡献不是“有查询向量重排”——静态 CSSC 已经有这一思想——而是要求列元数据、对齐查询、组件、版本和最终重构计划形成一个不可替换的 typed bundle。
 
-# 核心设计三：OutputPlan 统一重叠、拼接和隐式零
+# 核心设计三：OutputPlan 的重叠、拼接与隐式零
 
 ## 为什么不能把所有返回密文直接相加
 
@@ -903,22 +905,23 @@ $$
 - 最终行为候选 `baefc8cc…` 的 Pro/ZCode 双 PASS、PR #39、S1 `ee58627…`、S2 `c7ff682…`、S1/S2 exact-head CI、两次 non-authorizing PRE-S1、描述性 registration 与 compatibility receipt 均已闭合；
 - Route A 的一次性资格 q1--q6 已真实启动且按冻结规则终止。run `33261434612` 中 q1 成功，q2 在 replay 中被取消，q3--q6 未执行；45 分钟门槛到达时 q5 未成功，因此裁决为 Route C。唯一 artifact 是 621,877,534-byte 的 `q1-simulator-pre-replay-handoff`，保留一天、永久 NON-ADMISSIBLE；没有 formal artifact 或 dispatch capability；
 - 单独预注册的 follow-up 在 S1 `f8d89d6…`、S2 `e1e488f…` 上完成五条 fresh authority-false controls 后，只 dispatch 了一次 qualification run `33348855548`。该 run 在 hosted-runner setup 阶段取消，只有 GitHub `Set up job` 开始；checkout、registered seed、q1--q6 与 native 路径均未执行，artifact API 为 0。Pro 与 ZCode 一致裁决 TERMINAL-NO-GO，禁止 direct rerun 或修复后 replacement-S1/S2 第二次资格；
+- 单独预注册的 current-source E4 conformance 已在轻量 tag `current-source-e4-conformance-20260831-v1` 上只 dispatch 一次。run `33386130654`、artifact `9755741401`、raw digest `sha256:5978b7d9…a1383` 通过独立 19-file/校验和/JSON pointer/PROVENANCE 审计；35/35 deterministic records 通过，固定 OpenFHE witness 得到 `[(0, 128), (4095, 5)]` 并匹配两套 plaintext oracle。所有 admission、performance 与 security authority flag 仍为 false；
 - controller 的止损动作正确且只作用于 exact run。取消后的 GitHub API 为两个空下游 jobs 返回了反常终态时间戳，导致最后一次读取 fail-closed；这是一项需要在未来新 lineage 中修复的 provider-boundary 兼容问题，但没有造成假接受，也不能成为本次重跑资格的理由；
 - q3/q4 的 retained build/package 绑定、zero-KeyGen/zero-Encrypt replay、跨 lane 不同 request/query/preparation/key identity，以及“producer 与 replay 只在同一 package 内相等”的反欺骗约束；
 - q5 对 provider artifact id/name/digest/size/head/run 的二次校验、安全 ZIP 解包、probe 与六个 formal structural vectors 的重算。operation counts 和 type-derived maximum bytes 只是一项必要 planning screen，明确不是 wall-time theorem；
 
-本次 Route A 的工程执行已经完成，但**正式经验结果仍为零**。这不是“再等几个小时实验就会出来”：预注册明确禁止重跑 qualification，也禁止在没有 GO capability 时启动 acquisition、6 个 synthetic shards、4 个 ordered-event shards、6 个 OpenFHE cases、terminal aggregate 或 S3 accepted analysis。因而原来的正向结果稿路线在本次 lineage 内已经关闭。
+本次 Route A 的工程执行已经完成，**正式比较性能结果仍为零**；与此同时，单独预注册的 current-source E4 已产生一条严格限定的功能一致性结果。这不是“再等几个小时性能实验就会出来”：预注册明确禁止重跑 qualification，也禁止在没有 GO capability 时启动 acquisition、6 个 synthetic shards、4 个 ordered-event shards、6 个正式 OpenFHE cases、terminal aggregate 或 S3 accepted analysis。因而原来的正向性能结果稿路线在本次 lineage 内已经关闭；E4 只能支持 exact-source、single-fixture 的 correctness/conformance 句子，不能替代性能矩阵。
 
 接下来的关键路径改为 Route C：
 
-1. 把 primary qualification 与 follow-up 的终态分别记录，明确 primary 有一个永久 non-evidence q1 handoff，而 follow-up artifact 数为 0；
-2. 在英文稿和本中文 companion 中加入 follow-up 的控制面时间线、一次性裁决与“精确子原因未知”边界；
-3. 只把 S1/S2 CI、PRE-S1、registration、source-conformance、proof obligations 和两次资格裁决放进各自允许的证据层；不把 q1/q2、runner setup 或 controls 用于 strategy-cost、speedup 或 OpenFHE 性能结论；
-4. 重新生成带可编辑公式的 Word，逐页检查英文稿和中文 companion；
-5. 让 ChatGPT Pro 与 ZCode 对同一个 exact 文档候选做材料门终审，清掉文档中的 P0/P1，再冻结新的 immutable review tag；
+1. 保留 primary qualification 与 follow-up 的终态记录，明确 primary 只有一个永久 non-evidence q1 handoff，而 follow-up artifact 数为 0；
+2. 把 current-source E4 的 exact tag/run/artifact/raw digest、35/35 contract 与 single-fixture oracle match 写入英文稿、中文 companion 和 claim ledger，同时保留全部禁止外推；
+3. 只把 S1/S2 CI、PRE-S1、registration、source-conformance、proof obligations、两次资格裁决与 E4 功能证据放进各自允许的证据层；不把 q1/q2、runner setup、controls 或 E4 provider 时间用于 strategy-cost、speedup 或 OpenFHE 性能结论；
+4. 让 ChatGPT Pro 与 ZCode 对“原始工件审计 + exact 文档 diff”这一同包候选做材料门终审，清掉 P0/P1；
+5. 重新生成带可编辑公式的 Word/PDF，逐页检查英文稿和中文 companion，再冻结新的 immutable result/review tag；
 6. 由作者选择 methods/protocol、evidence-boundary 或 negative-results 友好的目标 venue，并在正式提交前补 funding、CRediT、利益冲突和最终 AI disclosure；作者姓名可以在匿名稿阶段继续留空。
 
-按当前已完成程度，**工程/审计链已经闭合**，但原定正向经验结果链为 **0% 且在本 publication lineage 内永久关闭**。以 Route C 可投稿稿为目标，正文、公式、引用和基础 Word 包已经存在；新增终态披露、逐页视觉复核、同包双专家终审与新 immutable tag 预计还需 **3--6 个专注工作日**。若选择 CSA/JCEN 一类期刊 Word 路线，匿名投稿包通常可在约 **1 周**内收口；若选择 CiC 并改成 20 页 LaTeX，预计约 **5--8 个专注工作日**。如果坚持必须得到正向策略性能结果，就必须提出真正不同的研究问题与阈值并建立独立 lineage；它不能支持本稿，保守看至少另需数周，而且仍不保证结果为正。以上是形成投稿稿的估计，不是录用时间承诺。
+按当前已完成程度，**工程/原始证据审计已经闭合，且现在有一条可报告的当前源功能一致性结果**；原定正向策略性能结果链仍为 **0% 且在本 publication lineage 内永久关闭**。以 Route C 可投稿稿为目标，剩余工作集中在同包双专家结果解释审查、Word/PDF 重建与逐页 QA、合并/tag，以及作者与 venue 元数据。若本轮审查没有新的 P0/P1，技术稿预计还需 **1--3 个专注工作日**；匿名 Word 投稿包约 **2--4 个专注工作日**，若改成 CiC 20 页 LaTeX 则约 **4--7 个专注工作日**。如果坚持必须得到正向策略性能结果，就必须提出真正不同的研究问题与阈值并建立独立 lineage；它不能支持本稿，保守看至少另需数周，而且仍不保证结果为正。以上是形成投稿稿的估计，不是录用时间承诺。
 
 # 最终理解
 
