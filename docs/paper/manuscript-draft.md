@@ -4,7 +4,9 @@
 > one-shot qualification and a later, separately preregistered follow-up both
 > selected their frozen stop routes. No comparative performance,
 > complete-reference, security, or end-to-end claim is released. Evidence
-> status last synchronized: 2026-08-31.
+> status last synchronized: 2026-08-31. A separately preregistered
+> current-source deterministic conformance replication passed for one exact
+> source and one fixed OpenFHE fixture; its scope is stated below.
 
 ## Abstract
 
@@ -43,10 +45,16 @@ after the external controller could not establish the watcher-admission
 binding. No repository checkout, registered-seed step, scientific stage, or
 artifact occurred. Under the frozen one-shot rules, both paths terminated
 without a formal-dispatch capability; the acquisition and 16-unit formal
-campaign were not started. We report the protocol, its definition-level
+campaign were not started. Without reopening either performance lineage, a
+separately preregistered current-source functional replication subsequently
+passed its eight-case, 35-record deterministic contract and one fixed pinned-
+OpenFHE whole-query witness. The witness decrypted to the prespecified sparse
+vector and matched two independent plaintext oracles. We report the protocol,
+its definition-level
 functional obligations, the source/evidence separation, and these fail-closed
-evaluation boundaries. We do not convert partial qualification execution,
-runner setup, or prerequisite controls into strategy-cost or native-OpenFHE
+evaluation boundaries, plus that version-bound single-fixture result. We do
+not convert partial qualification execution, runner setup, prerequisite
+controls, or the conformance witness into strategy-cost or native-OpenFHE
 performance evidence.
 
 **Keywords:** homomorphic encryption; sparse matrix--vector multiplication;
@@ -470,6 +478,16 @@ dummy F1-M operands, and equality with both typed and direct plaintext oracles.
 Its GitHub Actions artifact-wrapper SHA-256 digest is recorded in the
 version-bound claim-ledger supplement (`c5f44b0c…4711afe`).
 
+The separately preregistered current-source replication retained that exact
+fixture, expected output, OpenFHE pin, and witness specification while binding
+them to reviewed source `844fb062d78f5095f14599c6c71a27cb6034f001` through
+lightweight tag `current-source-e4-conformance-20260831-v1`. Its only current-
+source run, `33386130654`, completed successfully and produced artifact
+`9755741401`. A clean controller independently verified the raw provider ZIP,
+the exact 19-file set, strict internal checksums, literal RFC 6901 pointer
+expectations, and every source digest in `PROVENANCE.json` against a fresh
+detached tag checkout. Section 7.6 states the bounded result and its exclusions.
+
 This evidence is deliberately narrow. It does not establish complete candidate
 costs, candidate registration, mixed-circuit parameter safety, security,
 performance, or an end-to-end deployment.
@@ -752,6 +770,29 @@ data-dependent or scientific outcome. Terminal admission would have rejected
 missing, extra, duplicated, wrong-attempt, or wrong-kind objects before
 aggregation and compatible detached analysis.
 
+### 6.7 Current-source deterministic conformance replication
+
+After both performance lineages were terminal, a separate preregistration
+froze a functional question that neither estimates nor rescues their performance
+estimand. The immutable source was lightweight tag
+`current-source-e4-conformance-20260831-v1`, pointing directly to reviewed
+commit `844fb062d78f5095f14599c6c71a27cb6034f001`. The single default dispatch
+used `.github/workflows/strong-whole-query-witness.yml`, CPython 3.12, a
+120-minute job timeout, two build threads, and OpenFHE 1.5.1 at commit
+`1306d14f8c26bb6150d3e6ad54f28dfe1007689e`.
+
+The deterministic property corpus froze seed `20260822`, eight input cases,
+and 35 contract records. The encrypted witness froze one 4096-by-8193
+CSSC-base-plus-strong-delta fixture, segment width 128, active payload 127,
+padding offset 127, global column 8192, and sparse expected output
+`[(0, 128), (4095, 5)]`. PASS required exact run/ref/head/attempt identity,
+success for every provider step, one success-named 30-day artifact, exactly 19
+regular files, a raw ZIP digest equal to the provider digest, strict internal
+checksums, literal RFC 6901 checks, and detached-source PROVENANCE rehashing.
+The rerun button was forbidden; a replacement could exist only for a
+provider-only null attempt proven to have executed no job step and produced no
+artifact. No replacement was needed or dispatched.
+
 ## 7. Evidence Outcome
 
 ### 7.1 Evidence status
@@ -786,6 +827,7 @@ identities; none is promoted into the absent formal result set.
 | Qualification | One exact run; q1 completed, q2 was cancelled at the frozen stop, q5 never started | Preregistered Route C decision and fail-closed provenance | Any simulator/native performance estimator or partial formal result |
 | Follow-up controls | Five fresh controls passed at follow-up S2 `e1e488f…`, all authority false | Exact follow-up source/anchor identity and prerequisite closure | Qualification GO, formal authority, or scientific execution |
 | Follow-up qualification | One exact run was cancelled during hosted-runner setup before checkout or seed admission; zero artifacts | Terminal one-shot disposition and a control-plane failure chronology | Strategy behavior, performance, a 45/55-minute timeout, or a precise watcher/CAS root cause |
+| Current-source E4 conformance | One exact tagged run and independently rehashed 19-file artifact passed | Version-bound eight-case/35-record contract outcome and one fixed OpenFHE whole-query vector | Candidate admission, complete-reference status, security, deployment, performance, speedup, or general correctness |
 | Formal campaign | Not dispatched | The absence of unauthorized execution | Strategy ranking, speedup, ordered-event findings, or native resource claims |
 
 **Table 4. Compact standalone provenance for the Route C stopping outcome.**
@@ -864,6 +906,39 @@ unchanged ref alone cannot distinguish initial live-read construction,
 message-commit creation, or compare-and-swap failure. This uncertainty is a
 control-plane limitation, not evidence about a maintenance strategy.
 
+### 7.6 Current-source deterministic conformance outcome
+
+The independent controller audit accepted run `33386130654` at exact source
+`844fb062d78f5095f14599c6c71a27cb6034f001`, attempt 1. Every provider-visible
+step succeeded. The only artifact was `9755741401`, named
+`strong-whole-query-witness-success-844fb062d78f5095f14599c6c71a27cb6034f001`,
+with raw provider digest
+`sha256:5978b7d9f75048939c9761243e224abb588ed82c2abc64e051523a7a598a1383`.
+The downloaded ZIP independently reproduced that digest, contained exactly the
+19 prespecified files, passed all strict checksums and JSON-pointer checks, and
+rehashed every provenance-listed source against a fresh detached checkout of
+the immutable tag.
+
+At that exact source, the prespecified OpenFHE 1.5.1 whole-query witness for one
+fixed 4096-by-8193 CSSC-base-plus-strong-delta fixture decrypted to the
+prespecified sparse vector `[(0, 128), (4095, 5)]` and matched both independent
+plaintext oracles; all 35 records in the eight-case deterministic contract
+corpus passed. This is a single-source, single-fixture, version-bound functional
+observation. It is not candidate admission, a complete-reference claim,
+mixed-circuit safety, a security result, a deployment result, a performance
+measurement, or evidence that the stopped strategy comparison would have
+succeeded.
+
+**Table 6. Current-source E4 conformance provenance.**
+
+| Object | Exact identity | Accepted observation |
+|---|---|---|
+| Immutable source | Tag `current-source-e4-conformance-20260831-v1`; commit `844fb062d78f5095f14599c6c71a27cb6034f001` | Direct and peeled tag refs matched before dispatch and after completion |
+| Provider run | `33386130654`; job `99469043424`; attempt 1 | `completed/success`; all 15 visible steps succeeded |
+| Provider artifact | `9755741401`; 32,598 bytes; raw digest `sha256:5978b7d9…a1383` | One 30-day artifact; exact run/ref/head binding; 19/19 files and strict checksums passed |
+| Property contract | Seed `20260822`; eight input cases; 35 records | 35 passed, zero failed; all authority flags remained false |
+| OpenFHE witness | 1.5.1 at `1306d14f…`; fixed 4096-by-8193 fixture | Valid decryptions; `[(0, 128), (4095, 5)]`; typed and direct oracle matches true |
+
 ## 8. Limitations
 
 The threat model is narrow and provides no formal security theorem. Client B
@@ -884,6 +959,10 @@ watcher-admission observability defect because the nested provider exception was
 not retained; it does not identify the failing substep, demonstrate a scientific
 timeout, or justify another attempt. Future independent studies should exercise
 and log that control-plane seam before consuming a one-shot capability.
+The separate current-source conformance result covers only one reviewed source,
+one fixed fixture, one segment width, and a deterministic eight-case corpus. It
+does not generalize across matrices, parameters, implementations, workloads, or
+security adversaries, and its provider timestamps are not performance data.
 
 ## 9. Conclusion
 
@@ -897,9 +976,12 @@ the qualification did not reach its combined guard by the frozen deadline, the
 system produced no authority and the formal campaign did not run. A separately
 preregistered follow-up later passed its prerequisite controls but failed while
 arming the one-shot watcher before scientific execution; its provider run and
-zero-artifact record likewise terminated without formal authority. The
-resulting Route C manuscript therefore makes protocol and evidence-boundary
-claims, not comparative performance claims.
+zero-artifact record likewise terminated without formal authority. A distinct,
+preregistered current-source conformance replication did pass one fixed
+OpenFHE whole-query fixture and its eight-case deterministic contract at an
+exact source identity. The resulting Route C manuscript therefore makes
+protocol, evidence-boundary, and narrowly version-bound functional claims, not
+comparative performance claims.
 
 ## Data and code availability
 
@@ -907,12 +989,16 @@ The Route C package will identify the primary and follow-up S1/S2 pairs; their
 closed Behavior Sets and compatibility receipts; exact-head CI, PRE-S1,
 descriptive-registration, source-anchor, and independent-review identities; both
 qualification dispositions; the frozen schemas, functional propositions,
-source-conformance record, and verification code. It will explicitly state that
+source-conformance record, current-source E4 run `33386130654`, artifact
+`9755741401`, raw digest
+`sha256:5978b7d9f75048939c9761243e224abb588ed82c2abc64e051523a7a598a1383`,
+and verification code. It will explicitly state that
 the primary one-day q1 handoff was non-evidence, the follow-up produced no
 artifact at all, and no acquisition, formal, terminal, aggregate, or analysis
-artifact was created. No empirical artifact or archival DOI is claimed by this
-working draft. This section must be replaced with the accepted repository
-release and archival DOI before submission.
+artifact was created. The E4 artifact is functional conformance evidence, not a
+performance artifact. No archival DOI is claimed by this working draft. This
+section must be replaced with the accepted repository release and archival DOI
+before submission.
 
 ## Statements and declarations
 

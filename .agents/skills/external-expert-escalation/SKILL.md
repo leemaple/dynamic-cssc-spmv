@@ -27,6 +27,22 @@ Quota loss is an availability fact, not a reason to weaken a gate. Record the
 reviewer, model/mode when visible, channel, exact packet identity, and final
 verdict alongside the local evidence.
 
+All ZCode windows, projects, and local agents consume the same BigModel Coding
+Plan quota. When availability affects routing, use the signed-in Ego Lite
+session to read `https://bigmodel.cn/coding-plan/personal/usage` and record the
+page refresh time, five-hour usage, weekly usage, MCP monthly usage, and their
+displayed reset times. A quota check is read-only and never justifies an actual
+ZCode request.
+
+Treat a five-hour or weekly exhausted quota as unavailable until the page shows
+that it has reset. At weekly usage of 90% or more, reserve ZCode for one bounded
+final gate packet: use repository evidence and ChatGPT Pro for interim questions,
+and avoid exploratory rounds, duplicate submissions, and retries except after a
+verified transport failure. Starting another ZCode conversation, project, API
+token, or parallel agent does not create an independent allowance. Restore the
+ordinary material-gate review cadence only after the same usage page confirms
+the reset.
+
 Use Fable 5 only as the escalation reviewer described below.
 
 ## Trigger
