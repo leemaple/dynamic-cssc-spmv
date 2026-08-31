@@ -32,10 +32,12 @@ from dynamic_cssc.followup_performance_controller import (
     FollowupFormalLiveObservation,
     FollowupFormalLiveRunSnapshot,
     FollowupJobSnapshot,
+    FollowupOneShotInventoryObservation,
     FollowupPrerequisiteObservation,
     FollowupProviderAuthoritySnapshot,
     FollowupQualificationObservation,
     FollowupRunSnapshot,
+    FollowupWorkflowInventoryObservation,
     authorize_followup_formal_campaign,
     authorize_followup_qualification_dispatch,
     consume_followup_formal_campaign_capability,
@@ -264,10 +266,15 @@ class GitHubFollowupAdapter:
         )
         return _string(workflow.get("path"), "workflow.path")
 
-    def _terminal_run(self, document: dict[str, object]) -> FollowupRunSnapshot:
+    def _run_snapshot(
+        self,
+        document: dict[str, object],
+        *,
+        workflow_path: str,
+    ) -> FollowupRunSnapshot:
         return FollowupRunSnapshot(
             database_id=_integer(document.get("id"), "run.id"),
-            workflow_path=self._workflow_path(document),
+            workflow_path=workflow_path,
             event=_string(document.get("event"), "run.event"),
             head_sha=_string(document.get("head_sha"), "run.head_sha"),
             head_branch=_string(document.get("head_branch"), "run.head_branch"),
@@ -276,6 +283,12 @@ class GitHubFollowupAdapter:
             conclusion=_string(document.get("conclusion"), "run.conclusion"),
             created_at=_timestamp(document.get("created_at"), "run.created_at"),
             updated_at=_timestamp(document.get("updated_at"), "run.updated_at"),
+        )
+
+    def _terminal_run(self, document: dict[str, object]) -> FollowupRunSnapshot:
+        return self._run_snapshot(
+            document,
+            workflow_path=self._workflow_path(document),
         )
 
     def _jobs_document(self, run_id: int) -> dict[str, object]:
@@ -357,7 +370,10 @@ class GitHubFollowupAdapter:
             maximum_bytes=maximum_bytes,
         )
 
-    def _workflow_run_ids(self, workflow: str) -> tuple[int, ...]:
+    def _workflow_run_rows(
+        self,
+        workflow: str,
+    ) -> tuple[dict[str, object], ...]:
         encoded = quote(workflow, safe="")
         document = self._api_json(
             f"/repos/{self._repository}/actions/workflows/{encoded}/runs?per_page=100"
@@ -370,7 +386,25 @@ class GitHubFollowupAdapter:
             or any(type(row) is not dict for row in rows)
         ):
             raise FollowupControllerError("GitHub workflow-run inventory is incomplete")
-        return tuple(_integer(row.get("id"), "workflow_run.id") for row in rows)
+        return tuple(rows)
+
+    def _workflow_run_ids(self, workflow: str) -> tuple[int, ...]:
+        return tuple(
+            _integer(row.get("id"), "workflow_run.id")
+            for row in self._workflow_run_rows(workflow)
+        )
+
+    def _workflow_inventory_runs(
+        self,
+        workflow: str,
+    ) -> tuple[FollowupRunSnapshot, ...]:
+        return tuple(
+            self._run_snapshot(
+                row,
+                workflow_path=_string(row.get("path"), "workflow_run.path"),
+            )
+            for row in self._workflow_run_rows(workflow)
+        )
 
     def _authority_binding(
         self,
@@ -461,6 +495,24 @@ class GitHubFollowupAdapter:
             controls=tuple(controls),
             qualification_run_ids=qualification_run_ids,
             formal_run_ids=formal_run_ids,
+        )
+
+    def read_one_shot_inventory(self) -> FollowupOneShotInventoryObservation:
+        """Reread only mutable workflow inventories after heavy byte validation."""
+
+        qualification_runs = self._workflow_inventory_runs(_QUALIFICATION_WORKFLOW)
+        qualification_observed_at = self._provider_observed_at()
+        formal_runs = self._workflow_inventory_runs(_FORMAL_WORKFLOW)
+        formal_observed_at = self._provider_observed_at()
+        return FollowupOneShotInventoryObservation(
+            qualification=FollowupWorkflowInventoryObservation(
+                observed_at=qualification_observed_at,
+                runs=qualification_runs,
+            ),
+            formal=FollowupWorkflowInventoryObservation(
+                observed_at=formal_observed_at,
+                runs=formal_runs,
+            ),
         )
 
     def read_qualification(self, run_id: int) -> FollowupQualificationObservation:

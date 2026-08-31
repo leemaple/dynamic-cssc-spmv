@@ -81,6 +81,8 @@ __all__ = (
     "FollowupFormalLiveRunSnapshot",
     "FollowupFormalWatchResult",
     "FollowupJobSnapshot",
+    "FollowupOneShotInventoryObservation",
+    "FollowupWorkflowInventoryObservation",
     "FollowupPrerequisiteObservation",
     "FollowupProviderAuthoritySnapshot",
     "FollowupPrerequisiteProvider",
@@ -256,6 +258,22 @@ class FollowupPrerequisiteObservation:
     controls: tuple[FollowupControlObservation, ...]
     qualification_run_ids: tuple[int, ...]
     formal_run_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FollowupWorkflowInventoryObservation:
+    """One workflow inventory paired with its own provider observation time."""
+
+    observed_at: datetime
+    runs: tuple[FollowupRunSnapshot, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FollowupOneShotInventoryObservation:
+    """Both mutable workflow inventories reread after immutable validation."""
+
+    qualification: FollowupWorkflowInventoryObservation
+    formal: FollowupWorkflowInventoryObservation
 
 
 @dataclass(frozen=True, slots=True)
@@ -447,6 +465,8 @@ class FollowupPrerequisiteProvider(Protocol):
         self,
         run_ids: tuple[int, ...],
     ) -> FollowupPrerequisiteObservation: ...
+
+    def read_one_shot_inventory(self) -> FollowupOneShotInventoryObservation: ...
 
 
 class FollowupQualificationProvider(Protocol):
@@ -1012,6 +1032,98 @@ def _read_prerequisites(
     return observation
 
 
+def _read_one_shot_inventory(
+    provider: FollowupPrerequisiteProvider,
+) -> FollowupOneShotInventoryObservation:
+    try:
+        observation = provider.read_one_shot_inventory()
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as error:
+        raise FollowupControllerError(
+            "one-shot provider inventory observation failed"
+        ) from error
+    if type(observation) is not FollowupOneShotInventoryObservation:
+        raise FollowupControllerError(
+            "one-shot provider inventory returned the wrong snapshot type"
+        )
+    return observation
+
+
+def _validate_one_shot_inventory(
+    observation: FollowupOneShotInventoryObservation,
+    controller_now: datetime,
+    *,
+    expected_qualification_runs: tuple[FollowupRunSnapshot, ...],
+) -> None:
+    if type(observation) is not FollowupOneShotInventoryObservation:
+        raise FollowupControllerError(
+            "one-shot provider inventory snapshot type changed"
+        )
+    if (
+        type(observation.qualification) is not FollowupWorkflowInventoryObservation
+        or type(observation.formal) is not FollowupWorkflowInventoryObservation
+    ):
+        raise FollowupControllerError(
+            "one-shot provider inventory endpoint type changed"
+        )
+    _validate_one_shot_inventory_times(observation, controller_now)
+    for values in (
+        observation.qualification.runs,
+        observation.formal.runs,
+        expected_qualification_runs,
+    ):
+        if (
+            type(values) is not tuple
+            or any(type(run) is not FollowupRunSnapshot for run in values)
+            or any(run.database_id <= 0 for run in values)
+            or len({run.database_id for run in values}) != len(values)
+        ):
+            raise FollowupControllerError(
+                "one-shot provider inventory identity changed"
+            )
+    if (
+        observation.qualification.runs != expected_qualification_runs
+        or observation.formal.runs
+    ):
+        raise FollowupControllerError(
+            "one-shot provider run inventory changed before capability mint"
+        )
+
+
+def _validate_one_shot_inventory_times(
+    observation: FollowupOneShotInventoryObservation,
+    controller_now: datetime,
+) -> None:
+    """Validate each sequential provider read without timestamp masking."""
+
+    qualification_at = _require_utc(
+        observation.qualification.observed_at,
+        "qualification workflow inventory observation",
+    )
+    formal_at = _require_utc(
+        observation.formal.observed_at,
+        "formal workflow inventory observation",
+    )
+    if qualification_at > formal_at:
+        raise FollowupControllerError(
+            "one-shot provider inventory observation moved backwards"
+        )
+    _validate_fresh_observation(qualification_at, controller_now)
+    _validate_fresh_observation(formal_at, controller_now)
+
+
+def _capability_issue_time_after_inventory_validation(
+    observation: FollowupOneShotInventoryObservation,
+    validation_started_at: datetime,
+) -> datetime:
+    """Start the lease only after bounded shape validation has completed."""
+
+    issued_at = _require_utc(_utc_now(), "follow-up capability issue time")
+    if issued_at < validation_started_at:
+        raise FollowupControllerError("follow-up controller clock moved backwards")
+    _validate_one_shot_inventory_times(observation, issued_at)
+    return issued_at
+
+
 def _discard_capability(
     capability_id: int,
     capability_ref: weakref.ReferenceType[object],
@@ -1085,13 +1197,30 @@ def authorize_followup_qualification_dispatch(
     frozen = _freeze_prerequisites(request)
     local = _inspect_local_authority(repository_root, frozen)
     observation = _read_prerequisites(provider, frozen)
-    now = _require_utc(_utc_now(), "qualification controller observation")
+    validation_started_at = _require_utc(
+        _utc_now(),
+        "qualification controller observation",
+    )
     _validate_prerequisite_observation(
         repository_root.resolve(strict=True),
         observation,
         frozen,
-        now,
+        validation_started_at,
         expected_qualification_run_ids=(),
+    )
+    inventory = _read_one_shot_inventory(provider)
+    inventory_validation_started_at = _require_utc(
+        _utc_now(),
+        "qualification inventory validation time",
+    )
+    _validate_one_shot_inventory(
+        inventory,
+        inventory_validation_started_at,
+        expected_qualification_runs=(),
+    )
+    issued_at = _capability_issue_time_after_inventory_validation(
+        inventory,
+        inventory_validation_started_at,
     )
     capability = _mint_capability(
         FollowupQualificationDispatchCapability,
@@ -1100,9 +1229,8 @@ def authorize_followup_qualification_dispatch(
             prerequisites=frozen,
             qualification_run_id=None,
             scientific_plan_sha256=local.scientific.machine_plan_sha256,
-            controller_observed_at=now,
-            expires_at=_require_utc(observation.observed_at, "prerequisite observation")
-            + _MAX_OBSERVATION_AGE,
+            controller_observed_at=issued_at,
+            expires_at=issued_at + _MAX_OBSERVATION_AGE,
             q6_artifact_id=None,
             q6_artifact_digest=None,
         ),
@@ -1738,19 +1866,26 @@ def authorize_followup_formal_campaign(
     root = repository_root.resolve(strict=True)
     local = _inspect_local_authority(root, frozen)
     prerequisite_observation = _read_prerequisites(prerequisite_provider, frozen)
+    prerequisite_validation_started_at = _require_utc(
+        _utc_now(),
+        "formal prerequisite controller observation",
+    )
+    _validate_prerequisite_observation(
+        root,
+        prerequisite_observation,
+        frozen,
+        prerequisite_validation_started_at,
+        expected_qualification_run_ids=(request.qualification_run_id,),
+    )
     try:
         qualification_observation = qualification_provider.read_qualification(
             request.qualification_run_id
         )
     except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as error:
         raise FollowupControllerError("qualification provider observation failed") from error
-    now = _require_utc(_utc_now(), "formal controller observation")
-    _validate_prerequisite_observation(
-        root,
-        prerequisite_observation,
-        frozen,
-        now,
-        expected_qualification_run_ids=(request.qualification_run_id,),
+    qualification_validation_started_at = _require_utc(
+        _utc_now(),
+        "formal qualification controller observation",
     )
     q6 = _validate_qualification_observation(
         root,
@@ -1758,12 +1893,22 @@ def authorize_followup_formal_campaign(
         request,
         frozen,
         local,
-        now,
+        qualification_validation_started_at,
     )
-    expires_at = min(
-        _require_utc(prerequisite_observation.observed_at, "prerequisite observation"),
-        _require_utc(qualification_observation.observed_at, "qualification observation"),
-    ) + _MAX_OBSERVATION_AGE
+    inventory = _read_one_shot_inventory(prerequisite_provider)
+    inventory_validation_started_at = _require_utc(
+        _utc_now(),
+        "formal inventory validation time",
+    )
+    _validate_one_shot_inventory(
+        inventory,
+        inventory_validation_started_at,
+        expected_qualification_runs=(qualification_observation.run,),
+    )
+    issued_at = _capability_issue_time_after_inventory_validation(
+        inventory,
+        inventory_validation_started_at,
+    )
     capability = _mint_capability(
         FollowupFormalDispatchCapability,
         _CapabilityBinding(
@@ -1771,8 +1916,8 @@ def authorize_followup_formal_campaign(
             prerequisites=frozen,
             qualification_run_id=request.qualification_run_id,
             scientific_plan_sha256=local.scientific.machine_plan_sha256,
-            controller_observed_at=now,
-            expires_at=expires_at,
+            controller_observed_at=issued_at,
+            expires_at=issued_at + _MAX_OBSERVATION_AGE,
             q6_artifact_id=q6.database_id,
             q6_artifact_digest=q6.digest,
         ),
