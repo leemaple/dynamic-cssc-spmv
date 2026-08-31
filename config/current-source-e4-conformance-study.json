@@ -1,0 +1,283 @@
+{
+  "analysis_and_claims": {
+    "allowed_on_pass": [
+      "the exact reviewed current-source commit passed the prespecified deterministic property-contract corpus",
+      "the exact reviewed current-source commit executed the one prespecified pinned-OpenFHE whole-query fixture and its decrypted sparse output matched both prespecified plaintext oracles"
+    ],
+    "allowed_on_no_go": [
+      "the exact current-source conformance replication failed under the preregistered rule, with the exact executed prefix and provider disposition reported"
+    ],
+    "forbidden": [
+      "candidate registration",
+      "comparative performance",
+      "cost calibration",
+      "end-to-end deployment correctness",
+      "formal or simulation-based security",
+      "mixed-circuit parameter safety",
+      "population inference",
+      "strategy ranking or superiority",
+      "universal implementation correctness"
+    ],
+    "result_sentence_scope": "one-exact-source-one-fixed-fixture-and-eight-case-deterministic-contract-corpus-only"
+  },
+  "artifact_acceptance": {
+    "archive_path_rule": "required-file-paths-are-relative-to-the-zip-root-directory-entries-do-not-count-and-every-regular-file-must-be-listed",
+    "artifact_count": 1,
+    "artifact_name": "strong-whole-query-witness-success-<exact-source-git-sha>",
+    "expected_regular_file_count": 19,
+    "independent_audit": [
+      "provider-run-event-ref-head-and-attempt-match-the-frozen-dispatch",
+      "provider-artifact-id-name-size-digest-and-run-binding-are-recorded",
+      "downloaded-provider-zip-sha256-equals-provider-digest",
+      "archive-extracts-to-exactly-the-required-file-set-with-no-extra-regular-files",
+      "SHA256SUMS-verifies-strictly",
+      "PROVENANCE-source-hashes-match-a-fresh-detached-checkout-of-the-exact-source",
+      "all-machine-readable-success-criteria-below-hold"
+    ],
+    "required_files": [
+      "PROVENANCE.json",
+      "RUN_STATUS.json",
+      "SHA256SUMS",
+      "binding-generation.log",
+      "binding-values.txt",
+      "bindings.json",
+      "config/params_manifest.json",
+      "openfhe-build.log",
+      "property-contract/case-records.json",
+      "property-contract/evidence.json",
+      "property-contract/junit.xml",
+      "property-contract/manifest.json",
+      "property-generation.log",
+      "property-validation.log",
+      "validation.log",
+      "witness-build.log",
+      "witness.json",
+      "witness.json.sha256",
+      "witness.log"
+    ],
+    "retention_days": 30
+  },
+  "attempt_policy": {
+    "default_dispatch_count": 1,
+    "maximum_provider_run_count": 2,
+    "provider_only_replacement": {
+      "allowed": true,
+      "conditions_all_required": [
+        "first-run-terminal-non-success",
+        "checkout-step-never-completed-successfully",
+        "property-contract-step-never-started",
+        "provider-jobs-api-shows-no-job-step-ever-entered-in-progress-or-completed",
+        "provider-artifact-total-count-equals-zero",
+        "replacement-uses-the-identical-tag-workflow-plan-and-code",
+        "no-file-threshold-seed-fixture-or-claim-change"
+      ],
+      "effect": "record-the-first-run-as-a-provider-only-null-attempt-and-dispatch-exactly-one-replacement",
+      "effective_scope": "provider-failure-before-any-job-step-executes-as-proven-directly-by-the-provider-jobs-api-not-inferred-from-artifact-count-or-finalizer-behavior",
+      "job_step_receipt": {
+        "api": "GET-/repos/{owner}/{repo}/actions/runs/{run_id}/jobs?filter=all-with-all-pages-collected",
+        "completeness_rule": "provider-total_count-equals-the-number-of-collected-jobs",
+        "eligibility_rule": "no-returned-step-has-status-in_progress-or-completed-and-every-returned-step-has-null-started_at-and-completed_at",
+        "fail_closed_rule": "missing-partial-inconsistent-or-unavailable-jobs-or-steps-data-forbids-replacement"
+      }
+    },
+    "replacement_forbidden_after": "checkout-step-success-or-any-scientific-step-start",
+    "rerun_button_forbidden": true
+  },
+  "deterministic_contract": {
+    "case_count": 8,
+    "case_ids": [
+      "base-only-global-ci",
+      "mixed-multiwave-tombstone",
+      "c128-boundary-127",
+      "c128-boundary-128",
+      "c128-boundary-129",
+      "c128-multipage-257",
+      "persistent-strong-transition",
+      "seeded-extension"
+    ],
+    "contract_record_count": 35,
+    "seed": 20260822
+  },
+  "historical_context": {
+    "historical_same_workflow_path_runs": [
+      {
+        "artifact_digest": "sha256:010997ec7afdff79dd894044304f05eedfe4d0d9b584f7dcc49cf87ddb858aaa",
+        "artifact_id": 9474520924,
+        "decrypted_centered_output_sparse": [
+          [
+            0,
+            123
+          ],
+          [
+            4095,
+            20
+          ]
+        ],
+        "outcome": "pass",
+        "role": "earlier-witness-specification-not-the-current-fixed-fixture",
+        "run_id": 32567669739,
+        "source_git_sha": "fbd9712fc15e687489a58655b6e5faa7a7e43ec3"
+      },
+      {
+        "artifact_digest": "sha256:c5f44b0c9475a66d49b48332e335cb58811cf4eec579ebff631123c4e4711afe",
+        "artifact_id": 9477963854,
+        "decrypted_centered_output_sparse": [
+          [
+            0,
+            128
+          ],
+          [
+            4095,
+            5
+          ]
+        ],
+        "outcome": "pass",
+        "role": "historical-evidence-anchor-for-the-current-fixed-fixture",
+        "run_id": 32581653504,
+        "source_git_sha": "fcb00e0d7f111f3ab5003c111b124df83ae11813"
+      }
+    ],
+    "historical_specification_transition": {
+      "earlier_to_later_query_changes": [
+        "column-1-value-2-to-1",
+        "column-7-value-4-to-1",
+        "global-column-8192-value-minus-3-to-minus-1"
+      ],
+      "later_anchor_rule": "the-current-workflow-fixed-witness-specification-seed-fixture-and-expected-vector-are-unchanged-from-fcb00e0d7f111f3ab5003c111b124df83ae11813-through-the-candidate",
+      "scope": "the-two-runs-share-the-workflow-id-and-path-but-not-byte-identical-workflow-or-witness-specifications"
+    },
+    "outcome_informed_deltas": [
+      "the-two-performance-lineages-are-closed-and-this-study-abandons-their-performance-estimand",
+      "both-historical-same-workflow-path-successes-and-their-different-witness-specifications-are-known-but-the-current-source-replication-result-is-not",
+      "nine-provenance-listed-property-or-runtime-sources-changed-after-the-historical-witness",
+      "the-current-deterministic-seed-cases-fixture-workflow-openfhe-pin-and-success-vector-are-frozen-from-the-later-fcb00e0d-anchor-forward"
+    ],
+    "prior_terminal_no_go_chain": [
+      {
+        "disposition": "terminal-no-go-at-frozen-qualification-deadline",
+        "lineage": "route-a-primary-performance",
+        "run_id": 33261434612
+      },
+      {
+        "disposition": "terminal-no-go-before-checkout-with-zero-artifacts-under-the-frozen-one-shot-rule",
+        "lineage": "separately-preregistered-followup-performance",
+        "run_id": 33348855548
+      }
+    ],
+    "scientific_independence": "This study asks a deterministic current-source functional-conformance question. It has no runtime, resource, ranking, speedup, or admission estimand and cannot reopen either performance lineage."
+  },
+  "identity": {
+    "candidate_parent_git_sha": "187347f80ad4333749528229891bd65b8f3a518b",
+    "candidate_source_binding": "the-exact-reviewed-candidate-commit-named-by-the-immutable-tag-and-external-review-record",
+    "preregistered_date": "2026-08-31",
+    "schema_version": "dynamic-cssc-current-source-e4-conformance-study-v1",
+    "source_tag": "current-source-e4-conformance-20260831-v1",
+    "source_tag_kind": "lightweight-ref-pointing-directly-to-the-candidate-commit",
+    "source_tag_rule": "create-once-after-both-external-passes-never-force-update-and-reject-annotated-tags",
+    "source_tag_verification": {
+      "direct_ref_command": "git rev-parse refs/tags/current-source-e4-conformance-20260831-v1",
+      "peeled_commit_command": "git rev-parse refs/tags/current-source-e4-conformance-20260831-v1^{commit}",
+      "required_value": "the-exact-reviewed-candidate-commit-sha",
+      "when": [
+        "immediately-before-dispatch",
+        "after-provider-completion"
+      ]
+    },
+    "status": "preregistered-before-dispatch",
+    "study_id": "current-source-e4-conformance-replication-20260831-v1"
+  },
+  "machine_success_criteria": {
+    "property_contract": {
+      "artifact_path": "property-contract/evidence.json",
+      "json_pointer_expectations": {
+        "/case_set/id": "phase2-strong-whole-query-property-cases",
+        "/case_set/input_case_count": 8,
+        "/evidence_scope": "builder-property-contract-only",
+        "/gate_status": "pass",
+        "/seed": 20260822,
+        "/summary/failed": 0,
+        "/summary/record_count": 35
+      },
+      "pointer_semantics": "RFC-6901"
+    },
+    "run": {
+      "artifact_upload_step": "success",
+      "conclusion": "success",
+      "event": "workflow_dispatch",
+      "head_branch": "current-source-e4-conformance-20260831-v1",
+      "head_sha_rule": "equals-the-candidate-commit-addressed-directly-by-the-lightweight-source-tag",
+      "job_conclusion": "success",
+      "status": "completed",
+      "workflow_attempt": 1,
+      "workflow_path": ".github/workflows/strong-whole-query-witness.yml"
+    },
+    "run_status": {
+      "artifact_path": "RUN_STATUS.json",
+      "json_pointer_expectations": {
+        "/binding_generation_outcome": "success",
+        "/build_outcome": "success",
+        "/evidence_valid": true,
+        "/expected_openfhe_commit": "1306d14f8c26bb6150d3e6ad54f28dfe1007689e",
+        "/property_contract_outcome": "success",
+        "/source_git_ref": "refs/tags/current-source-e4-conformance-20260831-v1",
+        "/status": "pass",
+        "/witness_validation_outcome": "success"
+      },
+      "json_pointer_rules": {
+        "/github_run_id": "equals-provider-run-database-id-in-decimal",
+        "/source_git_sha": "equals-the-candidate-commit-addressed-directly-by-the-lightweight-source-tag-and-equals-provider-head-sha"
+      },
+      "pointer_semantics": "RFC-6901"
+    },
+    "witness": {
+      "artifact_path": "witness.json",
+      "json_pointer_expectations": {
+        "/correctness/decrypted_centered_output_sparse": [
+          [
+            0,
+            128
+          ],
+          [
+            4095,
+            5
+          ]
+        ],
+        "/correctness/decryptions_valid": true,
+        "/correctness/matches_python_direct_spmv": true,
+        "/correctness/matches_python_typed_plaintext_oracle": true,
+        "/fixture/active_delta_payload": 127,
+        "/fixture/cols": 8193,
+        "/fixture/global_column_index": 8192,
+        "/fixture/kind": "actual-cssc-base-plus-strong-delta",
+        "/fixture/padding_offset": 127,
+        "/fixture/rows": 4096,
+        "/fixture/segment_width": 128,
+        "/status": "pass"
+      },
+      "pointer_semantics": "RFC-6901"
+    }
+  },
+  "no_go_rule": {
+    "action": "retain-the-exact-run-and-artifact-prefix-record-no-correctness-release-and-do-not-repair-or-repeat-within-this-study",
+    "trigger": "any-required-identity-step-file-checksum-provenance-contract-or-witness-criterion-is-not-exactly-satisfied"
+  },
+  "scientific_question": "At the exact reviewed current source, does the prespecified deterministic property-contract corpus pass and does the one fixed real OpenFHE BFVRNS CSSC-base-plus-strong-delta whole-query fixture decrypt to the prespecified sparse vector matching both independent plaintext oracles?",
+  "source_and_runtime": {
+    "fixed_files": {
+      ".github/workflows/strong-whole-query-witness.yml": "81a34751d4ec39c1328632df8374957403bfa114c4637a6e2b8f8cd96ee4fcb0",
+      "cpp/strong_whole_query_witness.cpp": "354ec1e614b31e2e087b7de0d029240dba9f067b0298bf15393a474c8b3a0dfa",
+      "scripts/make_strong_whole_query_witness_binding.py": "d8a5256b6f5a9d1ffec124ac5f4a06e8a9ff9f2290a75136a9cf7321d7c2152b",
+      "scripts/property_contract_spec.py": "f296517037eca7f78b64188dfb6578447e99b9ce78cd8a7fb20d04d0a433b149",
+      "scripts/validate_strong_whole_query_witness.py": "b77a10a78b06146b5efa829e789fd4a1d6055d7e84e275beda3297b5e8eb6cc2"
+    },
+    "github_hosted_runner": "ubuntu-latest",
+    "openfhe": {
+      "commit": "1306d14f8c26bb6150d3e6ad54f28dfe1007689e",
+      "scheme": "BFVRNS",
+      "version": "1.5.1"
+    },
+    "timeout_minutes": 120,
+    "workflow_dispatch_command": "gh workflow run strong-whole-query-witness.yml --ref current-source-e4-conformance-20260831-v1",
+    "workflow_path": ".github/workflows/strong-whole-query-witness.yml"
+  }
+}
