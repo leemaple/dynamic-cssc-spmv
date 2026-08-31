@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -74,6 +75,55 @@ _MAX_JSON_BYTES = 8 * 1024 * 1024
 _MAX_CONTROL_ARCHIVE_BYTES = 32 * 1024 * 1024
 _MAX_Q6_ARCHIVE_BYTES = 32 * 1024 * 1024
 _MAX_HTTP_HEADER_BYTES = 64 * 1024
+_MAX_FAILURE_CHAIN_DEPTH = 8
+_MAX_FAILURE_MESSAGE_CHARACTERS = 2048
+_SECRET_PATTERNS = (
+    re.compile(r"(?i)(authorization\s*:\s*(?:bearer|token)\s+)[^\s;,]+"),
+    re.compile(r"(?i)((?:access_?token|client_?secret|token)\s*[=:]\s*)[^\s;,]+"),
+    re.compile(r"(?i)\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]+"),
+)
+
+
+def _redacted_failure_message(error: BaseException) -> str:
+    message = " ".join(str(error).split())
+    for pattern in _SECRET_PATTERNS:
+        message = pattern.sub(
+            lambda match: (
+                f"{match.group(1)}<REDACTED>"
+                if match.lastindex
+                else "<REDACTED>"
+            ),
+            message,
+        )
+    return message[:_MAX_FAILURE_MESSAGE_CHARACTERS]
+
+
+def _failure_chain_lines(error: BaseException) -> tuple[str, ...]:
+    """Render a bounded cause chain without exposing provider credentials."""
+
+    lines: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    depth = 0
+    while current is not None and depth < _MAX_FAILURE_CHAIN_DEPTH:
+        identity = id(current)
+        if identity in seen:
+            lines.append(f"cause[{depth}]: cycle detected")
+            break
+        seen.add(identity)
+        lines.append(
+            f"cause[{depth}]: {type(current).__name__}: "
+            f"{_redacted_failure_message(current)}"
+        )
+        current = (
+            current.__cause__
+            if current.__cause__ is not None
+            else current.__context__
+        )
+        depth += 1
+    if current is not None and depth == _MAX_FAILURE_CHAIN_DEPTH:
+        lines.append(f"cause[{depth}]: truncated")
+    return tuple(lines)
 
 
 def _reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -929,7 +979,9 @@ def main() -> int:
     try:
         return _main(_parser().parse_args())
     except (OSError, RuntimeError, subprocess.SubprocessError, TypeError, ValueError) as error:
-        print(f"follow-up controller failed closed: {error}", file=os.sys.stderr)
+        print("follow-up controller failed closed", file=os.sys.stderr)
+        for line in _failure_chain_lines(error):
+            print(line, file=os.sys.stderr)
         return 2
 
 

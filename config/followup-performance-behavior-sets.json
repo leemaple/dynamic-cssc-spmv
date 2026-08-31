@@ -32,6 +32,7 @@
         "src/dynamic_cssc/followup_performance_formal_artifacts.py",
         "src/dynamic_cssc/followup_performance_formal_deadline.py",
         "src/dynamic_cssc/followup_performance_formal_matrix.py",
+        "src/dynamic_cssc/followup_performance_github_message.py",
         "src/dynamic_cssc/followup_performance_github_transport.py",
         "src/dynamic_cssc/followup_performance_lineage.py",
         "src/dynamic_cssc/mask_ledger.py",
@@ -78,7 +79,7 @@
         "src/dynamic_cssc/strong_execution.py",
         "src/dynamic_cssc/strong_packed_coo.py"
       ],
-      "schema_version": "dynamic-cssc-followup-performance-acquisition-behavior-set-v3"
+      "schema_version": "dynamic-cssc-followup-performance-acquisition-behavior-set-v4"
     },
     "analyzer": {
       "paths": [
@@ -122,6 +123,7 @@
         "src/dynamic_cssc/followup_performance_formal_native_artifacts.py",
         "src/dynamic_cssc/followup_performance_formal_ordered_artifacts.py",
         "src/dynamic_cssc/followup_performance_formal_timing.py",
+        "src/dynamic_cssc/followup_performance_github_message.py",
         "src/dynamic_cssc/followup_performance_lineage.py",
         "src/dynamic_cssc/followup_performance_provider_artifacts.py",
         "src/dynamic_cssc/followup_performance_qualification_binding.py",
@@ -176,7 +178,7 @@
         "src/dynamic_cssc/strong_execution.py",
         "src/dynamic_cssc/strong_packed_coo.py"
       ],
-      "schema_version": "dynamic-cssc-followup-performance-analyzer-behavior-set-v6"
+      "schema_version": "dynamic-cssc-followup-performance-analyzer-behavior-set-v7"
     },
     "control-registration": {
       "paths": [
@@ -224,6 +226,7 @@
         "src/dynamic_cssc/followup_performance_formal_matrix.py",
         "src/dynamic_cssc/followup_performance_formal_timing.py",
         "src/dynamic_cssc/followup_performance_github.py",
+        "src/dynamic_cssc/followup_performance_github_message.py",
         "src/dynamic_cssc/followup_performance_github_transport.py",
         "src/dynamic_cssc/followup_performance_lineage.py",
         "src/dynamic_cssc/followup_performance_qualification_binding.py",
@@ -278,7 +281,7 @@
         "src/dynamic_cssc/strong_execution.py",
         "src/dynamic_cssc/strong_packed_coo.py"
       ],
-      "schema_version": "dynamic-cssc-followup-performance-control-registration-behavior-set-v8"
+      "schema_version": "dynamic-cssc-followup-performance-control-registration-behavior-set-v9"
     },
     "formal": {
       "paths": [
@@ -338,6 +341,7 @@
         "src/dynamic_cssc/followup_performance_formal_native_artifacts.py",
         "src/dynamic_cssc/followup_performance_formal_ordered_artifacts.py",
         "src/dynamic_cssc/followup_performance_formal_timing.py",
+        "src/dynamic_cssc/followup_performance_github_message.py",
         "src/dynamic_cssc/followup_performance_github_transport.py",
         "src/dynamic_cssc/followup_performance_lineage.py",
         "src/dynamic_cssc/followup_performance_provider_artifacts.py",
@@ -389,7 +393,7 @@
         "src/dynamic_cssc/strong_execution.py",
         "src/dynamic_cssc/strong_packed_coo.py"
       ],
-      "schema_version": "dynamic-cssc-followup-performance-formal-behavior-set-v5"
+      "schema_version": "dynamic-cssc-followup-performance-formal-behavior-set-v6"
     },
     "qualification": {
       "paths": [
@@ -417,6 +421,7 @@
         "src/dynamic_cssc/evidence_compatibility.py",
         "src/dynamic_cssc/followup_performance_artifacts.py",
         "src/dynamic_cssc/followup_performance_contract.py",
+        "src/dynamic_cssc/followup_performance_github_message.py",
         "src/dynamic_cssc/followup_performance_lineage.py",
         "src/dynamic_cssc/followup_performance_qualification_binding.py",
         "src/dynamic_cssc/mask_ledger.py",
@@ -463,7 +468,7 @@
         "src/dynamic_cssc/strong_execution.py",
         "src/dynamic_cssc/strong_packed_coo.py"
       ],
-      "schema_version": "dynamic-cssc-followup-performance-qualification-behavior-set-v3"
+      "schema_version": "dynamic-cssc-followup-performance-qualification-behavior-set-v4"
     }
   },
   "schema_version": "dynamic-cssc-followup-performance-behavior-set-registry-v1",

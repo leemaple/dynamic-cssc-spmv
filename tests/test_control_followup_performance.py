@@ -256,6 +256,37 @@ def test_controller_exposes_no_legacy_positive_authority_consumers() -> None:
     assert all(not hasattr(controller, name) for name in forbidden)
 
 
+def test_controller_failure_reports_a_redacted_nested_cause_chain(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A pre-seed arm failure must remain diagnosable without leaking secrets."""
+
+    parser = SimpleNamespace(parse_args=lambda: object())
+    monkeypatch.setattr(control, "_parser", lambda: parser)
+
+    def fail(_arguments: object) -> int:
+        try:
+            raise OSError(
+                "GitHub updateRefs rejected the candidate; "
+                "Authorization: Bearer ghp_TEST_ONLY_SECRET"
+            )
+        except OSError as cause:
+            raise FollowupControllerError(
+                "qualification watcher could not be armed before seed admission"
+            ) from cause
+
+    monkeypatch.setattr(control, "_main", fail)
+
+    assert control.main() == 2
+    error = capsys.readouterr().err
+    assert "qualification watcher could not be armed before seed admission" in error
+    assert "OSError" in error
+    assert "GitHub updateRefs rejected the candidate" in error
+    assert "<REDACTED>" in error
+    assert "ghp_TEST_ONLY_SECRET" not in error
+
+
 def test_analysis_command_needs_no_preanalysis_control_run_ids(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

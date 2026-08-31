@@ -319,7 +319,7 @@ def test_campaign_admission_script_rebuilds_reserve_bind_watch_chain(
     reservation_path = write(
         "reservation.json",
         {
-            "message": reserved.document_bytes.decode("ascii"),
+            "message": reserved.document_bytes.decode("ascii").removesuffix("\n"),
             "parents": [{"sha": "d" * 40}],
             "sha": reservation_oid,
             "tree": {"sha": tree_oid},
@@ -328,7 +328,7 @@ def test_campaign_admission_script_rebuilds_reserve_bind_watch_chain(
     binding_path = write(
         "binding.json",
         {
-            "message": bound.document_bytes.decode("ascii"),
+            "message": bound.document_bytes.decode("ascii").removesuffix("\n"),
             "parents": [{"sha": reservation_oid}],
             "sha": binding_oid,
             "tree": {"sha": tree_oid},
@@ -337,7 +337,7 @@ def test_campaign_admission_script_rebuilds_reserve_bind_watch_chain(
     watch_path = write(
         "watch.json",
         {
-            "message": armed.document_bytes.decode("ascii"),
+            "message": armed.document_bytes.decode("ascii").removesuffix("\n"),
             "parents": [{"sha": binding_oid}],
             "sha": watch_oid,
             "tree": {"sha": tree_oid},

@@ -151,7 +151,7 @@ def test_terminal_admission_script_rebuilds_claim_binding_and_transport(
         claim_commit_json=write(
             "claim.json",
             {
-                "message": claim.document_bytes.decode("ascii"),
+                "message": claim.document_bytes.decode("ascii").removesuffix("\n"),
                 "parents": [{"sha": "5" * 40}],
                 "sha": claim_oid,
                 "tree": {"sha": tree_oid},
@@ -160,7 +160,7 @@ def test_terminal_admission_script_rebuilds_claim_binding_and_transport(
         binding_commit_json=write(
             "binding.json",
             {
-                "message": binding.document_bytes.decode("ascii"),
+                "message": binding.document_bytes.decode("ascii").removesuffix("\n"),
                 "parents": [{"sha": claim_oid}],
                 "sha": binding_oid,
                 "tree": {"sha": tree_oid},

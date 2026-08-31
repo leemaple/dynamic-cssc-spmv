@@ -81,7 +81,7 @@ def _arguments(tmp_path: Path, *, parent: str = "d" * 40) -> argparse.Namespace:
         claim_commit_json=_write(
             tmp_path / "claim.json",
             {
-                "message": claim.document_bytes.decode("ascii"),
+                "message": claim.document_bytes.decode("ascii").removesuffix("\n"),
                 "parents": [{"sha": parent}],
                 "sha": "a" * 40,
                 "tree": {"sha": "c" * 40},
@@ -90,7 +90,7 @@ def _arguments(tmp_path: Path, *, parent: str = "d" * 40) -> argparse.Namespace:
         binding_commit_json=_write(
             tmp_path / "binding.json",
             {
-                "message": binding.document_bytes.decode("ascii"),
+                "message": binding.document_bytes.decode("ascii").removesuffix("\n"),
                 "parents": [{"sha": "a" * 40}],
                 "sha": "b" * 40,
                 "tree": {"sha": "c" * 40},

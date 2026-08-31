@@ -148,15 +148,27 @@ def test_followup_production_registry_accepts_data_only_s2_round_trip(
     _git(repository, "config", "user.name", "Followup Test")
     _git(repository, "config", "user.email", "followup@example.invalid")
     registry_path = "config/followup-performance-behavior-sets.json"
+    github_message_path = (
+        "src/dynamic_cssc/followup_performance_github_message.py"
+    )
     (repository / registry_path).write_bytes(
         (REPOSITORY_ROOT / registry_path).read_bytes()
+    )
+    (repository / github_message_path).write_bytes(
+        (REPOSITORY_ROOT / github_message_path).read_bytes()
     )
     (repository / FOLLOWUP_REGISTRATION_ANCHOR_PATH).write_text(
         '{"anchors":[],"schema_version":'
         '"dynamic-cssc-followup-performance-registration-anchor-set-v1"}\n',
         encoding="ascii",
     )
-    _git(repository, "add", registry_path, FOLLOWUP_REGISTRATION_ANCHOR_PATH)
+    _git(
+        repository,
+        "add",
+        registry_path,
+        github_message_path,
+        FOLLOWUP_REGISTRATION_ANCHOR_PATH,
+    )
     _git(repository, "commit", "--allow-empty", "-m", "synthetic production S1")
     s1 = _git(repository, "rev-parse", "HEAD")
     (repository / FOLLOWUP_REGISTRATION_ANCHOR_PATH).write_bytes(

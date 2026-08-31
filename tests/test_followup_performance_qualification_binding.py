@@ -98,7 +98,7 @@ def test_qualification_admission_script_rebuilds_the_provider_binding(
     commit_path.write_text(
         json.dumps(
             {
-                "message": binding.document_bytes.decode("ascii"),
+                "message": binding.document_bytes.decode("ascii").removesuffix("\n"),
                 "parents": [{"sha": "2" * 40}],
                 "sha": binding_oid,
                 "tree": {"sha": tree_oid},

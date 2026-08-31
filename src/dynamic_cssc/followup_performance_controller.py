@@ -47,6 +47,9 @@ from dynamic_cssc.followup_performance_formal_matrix import (
     FollowupFormalUnitSpec,
     followup_formal_unit_specs,
 )
+from dynamic_cssc.followup_performance_github_message import (
+    canonical_json_from_github_commit_message,
+)
 from dynamic_cssc.followup_performance_lineage import (
     inspect_followup_registration_archive,
     verify_followup_s1_s2_compatibility,
@@ -605,9 +608,11 @@ def _validate_provider_authority_binding(
     if kind == "qualification":
         try:
             watched = inspect_followup_qualification_watch_binding(
-                snapshot.commit_message.encode("ascii")
+                canonical_json_from_github_commit_message(
+                    snapshot.commit_message
+                )
             )
-        except (UnicodeEncodeError, ValueError) as error:
+        except ValueError as error:
             raise FollowupControllerError(
                 "provider qualification watch binding changed"
             ) from error
@@ -627,16 +632,13 @@ def _validate_provider_authority_binding(
             )
         return
     try:
-        document = json.loads(snapshot.commit_message)
-    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        canonical_bytes = canonical_json_from_github_commit_message(
+            snapshot.commit_message
+        )
+        document = json.loads(canonical_bytes)
+    except (json.JSONDecodeError, ValueError) as error:
         raise FollowupControllerError("provider authority binding is not JSON") from error
-    canonical = json.dumps(
-        document,
-        allow_nan=False,
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
+    canonical = canonical_bytes[:-1].decode("ascii")
     workflow = _QUALIFICATION_WORKFLOW if kind == "qualification" else _FORMAL_WORKFLOW
     expected = {
         "authority": False,

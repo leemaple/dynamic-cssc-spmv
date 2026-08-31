@@ -9,18 +9,18 @@ CSSC and OpenFHE BFV.
 The active paper is a **Route C methods and evidence-boundary manuscript**. It
 does not report a comparative performance winner.
 
-- External-review packet: [`route-c-external-review-v1`](https://github.com/leemaple/dynamic-cssc-spmv/tree/route-c-external-review-v1)
-- Exact reviewed commit: `f4fe461ace07bceaf674a9cad61f98bd74f67531`
-- Independent final review marker: [`route-c-external-review-v1-pro-pass`](https://github.com/leemaple/dynamic-cssc-spmv/tree/route-c-external-review-v1-pro-pass)
-- ChatGPT Pro narrow closure verdict: `PASS`, P0 = 0, P1 = 0, external circulation ready
-- ZCode GLM-5.3 Max manuscript verdict: `PASS`, P0 = 0, P1 = 0
+- External-review packet: [`route-c-external-review-v2`](https://github.com/leemaple/dynamic-cssc-spmv/tree/route-c-external-review-v2)
+- Exact reviewed content commit: `6973ba451fac7636b58b364fb0a67ca79e37c0c1`
+- Tree-identical merge on `main`: `8d3bcad050ea0945133c2096ac0667d0de57af96`
+- ChatGPT Pro closure verdict: `PASS`, P0 = 0, P1 = 0, P2 = 0
+- ZCode GLM-5.3 Max closure verdict: `PASS`, P0 = 0, P1 = 0, P2 = 0
 
 The reviewed manuscript makes protocol, conditional functional-correctness,
 source-conformance, reproducibility, and fail-closed evidence-boundary claims.
 It makes no formal-security, end-to-end admission, comparative-performance, or
 state-of-the-art superiority claim.
 
-## Authoritative experiment outcome
+## Authoritative experiment outcomes
 
 The final implementation candidate
 `baefc8cc183816c51ce42573bafde8178173044d` entered `main` as the tree-identical
@@ -49,6 +49,24 @@ OpenFHE result.
 Under the frozen preregistration, this outcome selected Route C. The
 qualification may not be rerun in this lineage, and partial q1/q2 observations
 may not be repackaged as paper performance evidence.
+
+A separately preregistered follow-up also reached terminal NO-GO. Its fresh
+Experiment Source S1 was
+`f8d89d6f98f289dc2e0c3414f7b4ed59b5d30f52`; its data-only S2 was
+`e1e488f177dc8a469c6132a29537b041fbf1430b`. All five exact-S2,
+authority-false controls passed. The sole follow-up qualification run
+`33348855548` was then cancelled during hosted-runner setup after the external
+controller failed to install its watcher-admission binding. No repository
+checkout, registered seed, q1--q6 scientific stage, or artifact occurred. The
+frozen one-shot rule therefore forbids a rerun, replacement-lineage
+continuation, or formal campaign for that study.
+
+An authority-false post-outcome drill subsequently reproduced a deterministic
+provider-boundary defect: GitHub's create-commit response omitted the canonical
+JSON message's final line feed, while the adapter required byte identity. The
+same drill proved the production GraphQL `updateRefs` compare-and-swap path
+works. This high-confidence same-code-path diagnosis does not recover the
+missing historical nested exception and cannot reopen either study.
 
 ## What the repository contributes
 
@@ -107,6 +125,8 @@ are part of the research record.
 - [`docs/reviews/route-c-external-review-packet-2026-08-30.md`](docs/reviews/route-c-external-review-packet-2026-08-30.md): exact packet hashes and QA record
 - [`docs/reviews/chatgpt-pro-route-c-manuscript-review-2026-08-30.md`](docs/reviews/chatgpt-pro-route-c-manuscript-review-2026-08-30.md): initial commit-bound manuscript review
 - [`docs/reviews/zcode-glm53-max-route-c-manuscript-review-2026-08-30.md`](docs/reviews/zcode-glm53-max-route-c-manuscript-review-2026-08-30.md): independent GLM-5.3 Max review
+- [`docs/reviews/followup-performance-qualification-terminal-no-go-2026-08-31.md`](docs/reviews/followup-performance-qualification-terminal-no-go-2026-08-31.md): separately preregistered follow-up terminal disposition
+- [`docs/reviews/followup-provider-cas-diagnosis-2026-08-31.md`](docs/reviews/followup-provider-cas-diagnosis-2026-08-31.md): authority-false provider message/CAS diagnosis
 - [`docs/research/route-c-manuscript-citation-audit-2026-08-30.md`](docs/research/route-c-manuscript-citation-audit-2026-08-30.md): all-used-key primary-source citation audit
 - [`docs/research/route-c-submission-venue-review-2026-08-30.md`](docs/research/route-c-submission-venue-review-2026-08-30.md): current official-source venue, deadline, format, and fee comparison
 - [`docs/paper/submission-metadata-and-release-checklist.md`](docs/paper/submission-metadata-and-release-checklist.md): remaining author-owned metadata, licensing, release, and submission stop conditions
@@ -118,11 +138,12 @@ packet.
 
 | Layer | Exact object | What it can establish |
 |---|---|---|
-| S1 | `ee58627bb5752c6ac1ee2c5132c6574f9cb66552` | Experiment source, frozen behaviors, source conformance, and conditional functional propositions |
-| S2 | `c7ff6820d9323f1850c1c5c57fd9070db88db120` | Data-only registration anchor and exact pre-execution freeze |
-| Qualification | Run `33261434612` | The frozen deadline was missed, no authority was minted, and Route C was selected |
-| Formal campaign | Not dispatched | No synthetic, ordered-event, native, terminal, aggregate, or S3 performance result exists |
-| Review packet | Tag `route-c-external-review-v1` | Exact manuscript, Word documents, bibliography, figures, ledger, audits, and hashes |
+| Original S1/S2 | `ee58627b…` / `c7ff6820…` | Frozen original experiment source and data-only registration anchor |
+| Original qualification | Run `33261434612` | The 45-minute deadline was missed; no authority was minted |
+| Follow-up S1/S2 | `f8d89d6f…` / `e1e488f…` | Separately frozen source and data-only anchor after five clean controls |
+| Follow-up qualification | Run `33348855548` | Cancelled before checkout/seed after watcher binding failed; zero artifacts |
+| Formal campaigns | Not dispatched | No admitted synthetic, ordered-event, native, terminal, aggregate, or S3 performance result exists |
+| Review packet | Tag `route-c-external-review-v2` | Exact manuscript, Word documents, bibliography, figures, ledger, audits, and hashes |
 
 Historical R0/P0a and implementation evidence remains in the repository for
 provenance. It is not current empirical evidence. The earlier R0/P0a bundle is

@@ -56,6 +56,9 @@ from dynamic_cssc.followup_performance_controller import (
     watch_followup_qualification,
 )
 from dynamic_cssc.followup_performance_formal_matrix import FollowupFormalUnitSpec
+from dynamic_cssc.followup_performance_github_message import (
+    github_commit_message_from_canonical_json,
+)
 from dynamic_cssc.followup_performance_github_transport import (
     FollowupGitHubTransport as _GitHubTransport,
 )
@@ -331,14 +334,17 @@ class GitHubFollowupCampaignProvider:
         *,
         parent_oid: str,
         tree_oid: str,
-        message: str,
+        document_bytes: bytes,
     ) -> str:
+        try:
+            message = github_commit_message_from_canonical_json(document_bytes)
+        except ValueError as error:
+            raise FollowupCampaignControlError(
+                "campaign state commit input changed"
+            ) from error
         if (
             _LOWER_GIT_SHA.fullmatch(parent_oid) is None
             or _LOWER_GIT_SHA.fullmatch(tree_oid) is None
-            or type(message) is not str
-            or not message
-            or len(message.encode("utf-8")) > 64 * 1024
         ):
             raise FollowupCampaignControlError("campaign state commit input changed")
         commit, _response = self._json(
@@ -380,7 +386,7 @@ class GitHubFollowupCampaignProvider:
         return self._create_message_commit(
             parent_oid=parent_oid,
             tree_oid=tree_oid,
-            message=state.document_bytes.decode("ascii"),
+            document_bytes=state.document_bytes,
         )
 
     def open_campaign(
@@ -654,7 +660,7 @@ class GitHubFollowupCampaignProvider:
         candidate_oid = self._create_message_commit(
             parent_oid=expected_claim_oid,
             tree_oid=expected_tree_oid,
-            message=binding.document_bytes.decode("ascii"),
+            document_bytes=binding.document_bytes,
         )
         return self._compare_and_swap_ref(
             ref_name=_QUALIFICATION_PROGRESS_REF,
@@ -933,7 +939,7 @@ class GitHubFollowupCampaignProvider:
         claim_oid = self._create_message_commit(
             parent_oid=final_progress_oid,
             tree_oid=tree_oid,
-            message=claim.document_bytes.decode("ascii"),
+            document_bytes=claim.document_bytes,
         )
         created, _created_response = self._json(
             "POST",
@@ -1018,7 +1024,7 @@ class GitHubFollowupCampaignProvider:
         candidate_oid = self._create_message_commit(
             parent_oid=expected_claim_oid,
             tree_oid=expected_tree_oid,
-            message=binding.document_bytes.decode("ascii"),
+            document_bytes=binding.document_bytes,
         )
         return self._compare_and_swap_ref(
             ref_name=_TERMINAL_PROGRESS_REF,
@@ -1090,7 +1096,7 @@ class GitHubFollowupCampaignProvider:
         candidate_oid = self._create_message_commit(
             parent_oid=expected_binding_oid,
             tree_oid=expected_tree_oid,
-            message=outcome.watcher_receipt_bytes.decode("ascii"),
+            document_bytes=outcome.watcher_receipt_bytes,
         )
         return self._compare_and_swap_ref(
             ref_name=_TERMINAL_PROGRESS_REF,
@@ -1178,7 +1184,7 @@ class GitHubFollowupCampaignProvider:
         claim_oid = self._create_message_commit(
             parent_oid=terminal_outcome_oid,
             tree_oid=tree_oid,
-            message=claim.document_bytes.decode("ascii"),
+            document_bytes=claim.document_bytes,
         )
         created, _created_response = self._json(
             "POST",
@@ -1327,7 +1333,7 @@ class GitHubFollowupCampaignProvider:
         candidate_oid = self._create_message_commit(
             parent_oid=expected_claim_oid,
             tree_oid=expected_tree_oid,
-            message=binding.document_bytes.decode("ascii"),
+            document_bytes=binding.document_bytes,
         )
         return self._compare_and_swap_ref(
             ref_name=_ANALYSIS_PROGRESS_REF,
@@ -1355,7 +1361,7 @@ class GitHubFollowupCampaignProvider:
         candidate_oid = self._create_message_commit(
             parent_oid=expected_binding_oid,
             tree_oid=expected_tree_oid,
-            message=outcome.watcher_receipt_bytes.decode("ascii"),
+            document_bytes=outcome.watcher_receipt_bytes,
         )
         return self._compare_and_swap_ref(
             ref_name=_ANALYSIS_PROGRESS_REF,

@@ -696,3 +696,42 @@ advance.  This review-record-only successor must receive its own exact-head CI
 and short external fidelity review before it may enter the merge-only PR for a
 replacement S1.  None of the reviews or CI above authorizes qualification,
 formal execution, registered-seed use, analysis, or publication.
+
+## Post-outcome GitHub commit-message boundary repair
+
+The sole later follow-up qualification run `33348855548` reached terminal
+NO-GO before checkout or seed admission after the controller reported that its
+watcher could not be armed. The frozen one-shot disposition remains final and
+is not amended by this section.
+
+An authority-false production-adapter drill on dedicated ref
+`refs/tags/dynamic-cssc-provider-cas-drill-authority-false-20260831-v1`
+isolated a deterministic provider representation mismatch. Internal receipt
+messages are canonical ASCII JSON ending in one line feed. GitHub accepted the
+422-byte request but returned the same message in 421 bytes with exactly that
+final line feed omitted. The adapter therefore rejected its own successfully
+created commit before reaching CAS. A resumed drill installed exact candidate
+`422fda82867d4159c46e1328206b588aedc21f6b` through the production GraphQL
+`updateRefs` compare-and-swap path, proving that the authenticated CAS path
+itself works. The candidate is a direct child of main
+`8d3bcad050ea0945133c2096ac0667d0de57af96`, preserves tree
+`f367ee43c380d52155d423b1f187f22a7084f210`, and grants no authority.
+
+The prospective repair adds one shared GitHub-message boundary. It removes
+only the required final line feed before commit creation and restores exactly
+one before existing canonical receipt inspectors run. Duplicate keys,
+noncanonical whitespace, nonfinite values, non-ASCII content, missing or extra
+line feeds, topology changes, and CAS mismatches remain rejected. The CLI also
+prints a bounded redacted exception chain instead of discarding the provider
+cause. Production-faithful red tests exposed 12 failures across qualification,
+campaign, terminal, and analysis paths; the repaired focused suite closed with
+101 passes.
+
+Because the boundary is transitively imported by every follow-up role, the
+prospective Behavior Set schemas advance as follows: acquisition v3 to v4,
+analyzer v6 to v7, control-registration v8 to v9, formal v5 to v6, and
+qualification v3 to v4. This is an implementation-behavior change only; it
+does not change a scientific plan, seed, estimand, threshold, serialized
+receipt schema, or frozen historical anchor. Any future use requires a new,
+scientifically independent preregistration and fresh lineage. It cannot refund
+or repeat the closed follow-up study.

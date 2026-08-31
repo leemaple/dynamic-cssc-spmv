@@ -320,7 +320,8 @@ class _FakeGitHubTransport:
                 201,
                 _json_bytes(
                     {
-                        "message": request["message"],
+                        # GitHub's Git commit API removes the canonical final LF.
+                        "message": request["message"].removesuffix("\n"),
                         "parents": [{"sha": request["parents"][0]}],
                         "sha": candidate,
                         "tree": {"sha": request["tree"]},
