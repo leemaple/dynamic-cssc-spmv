@@ -1,12 +1,12 @@
 {
   "schema_version": "dynamic-cssc-validation-scaling-stage0-manifest-v2",
   "study_id": "dynamic-cssc-validation-scaling-2026-09-01",
-  "state": "stage0-v2-self-reference-free-timing-envelope-outer-order-payload-input-and-freeze-sequence-closed-detached-preregistration-manifest-non-authorizing",
+  "state": "stage0-v2-self-reference-free-timing-envelope-outer-order-payload-input-freeze-sequence-and-fable5-reviewer-substitution-closed-detached-preregistration-manifest-non-authorizing",
   "base_commit": "f706e17ef82d818b914273d97dfbafd47b48c2c7",
   "entry_order": "ascending-binary-UTF8-relative-path",
   "file_sha256_scope": "exact-file-bytes",
   "object_set_digest_algorithm": "SHA256-of-ASCII-canonical-JSON-of-the-objects-array-with-lexicographically-sorted-object-keys-compact-comma-colon-separators-allow_nan_false-and-one-terminal-LF",
-  "object_set_sha256": "3b26b41ec26d342a4e56782cc2c298d3b0f227dc78ceede0ab30c11cdfd93108",
+  "object_set_sha256": "fafa6e680d571c0c4b544cdf85d34d2fbc40c62fa772dd28186b35fe9a768c7e",
   "self_reference_rule": "this-detached-manifest-does-not-list-or-hash-itself;the-immutable-stage0-Git-tree-and-review-record-bind-this-manifest-file",
   "authority": false,
   "implementation_authorized": false,
@@ -29,9 +29,9 @@
     {
       "path": "docs/paper/validation-scaling-preregistration.md",
       "role": "human-readable-preregistration",
-      "sha256": "e3853ac18d7839271595548745ba87d5f7ad9516faebe18225063837aa3bea09",
-      "byte_count": 19458,
-      "line_count": 344
+      "sha256": "a92b810918d910317c68cc49de31382b13fcaf9059c108373e6adcfaa461c027",
+      "byte_count": 19549,
+      "line_count": 345
     },
     {
       "path": "schemas/validation-scaling-study-v2.schema.json",

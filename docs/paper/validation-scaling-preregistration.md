@@ -325,13 +325,14 @@ single-fixture functional result.
 1. Commit the exact v2 preregistration, machine-readable study plan, claim
    ledger, JSON schema, and detached Stage-0 manifest as one untagged candidate
    without implementation. Do not create the fixed Stage-0 tag yet.
-2. Obtain ChatGPT Pro and ZCode GLM-5.3 Max same-packet reviews of that exact
-   committed candidate; ZCode may run only after its shared weekly quota visibly
-   resets, but the two reviews need not begin at the same time. If either review
-   reports any P0/P1, or if any Stage-0 byte changes, create a new untagged
-   candidate and repeat both reviews until both report P0=0/P1=0 on the same
-   exact packet. The v1 review and amendment audits remain attached history,
-   not authority for changed v2 bytes.
+2. Obtain ChatGPT Pro Extra High and Claude Fable 5 (`claude-fable-5`) at
+   `max` effort through AIGoCode's official Claude Code channel as same-packet
+   reviews of that exact committed candidate. Fable 5 may be invoked exactly
+   once for this Stage-0 gate, but the two reviews need not begin at the same
+   time. If either review reports any P0/P1, or if any Stage-0 byte changes,
+   create a new untagged candidate and repeat both reviews until both report
+   P0=0/P1=0 on the same exact packet. The v1 review and amendment audits remain
+   attached history, not authority for changed v2 bytes.
 3. Only after both reviews pass, create the immutable annotated
    `validation-scaling-stage0-v2` tag pointing to the exact reviewed commit;
    verify the tag target and byte equality of all five Stage-0 objects. If those
