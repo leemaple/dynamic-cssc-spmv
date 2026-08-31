@@ -37,7 +37,7 @@ release any empirical sentence.
 
 The primary preregistered, permanently non-admissible qualification did not
 reach its combined guard within the frozen computational deadline. A later,
-separately preregistered follow-up passed five exact-source authority-false
+separately preregistered follow-up passed five exact-S2 authority-false
 controls, but its sole provider run was cancelled during hosted-runner setup
 after the external controller could not establish the watcher-admission
 binding. No repository checkout, registered-seed step, scientific stage, or

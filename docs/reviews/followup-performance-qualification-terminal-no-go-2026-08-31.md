@@ -22,6 +22,8 @@ infrastructure failure and does not authorize a second qualification.
   `f14d25967a0e069c9a09ce926e10ee0378bfe9f6`
 - S1-to-S2 compatibility receipt:
   `c163974a0c3d382f0a5e47fc998da8ff42a879c08b6e70e678b9a37f4ed87e24`
+- Independent-disposition packet:
+  `docs/reviews/followup-qualification-watch-arm-failure-review-packet-2026-08-31.md`
 - Independent-disposition packet SHA-256:
   `2201aafe9a604c1fd4795c64f67b56bf9099567c4e64c9b0b86742b099ff6ea9`
 

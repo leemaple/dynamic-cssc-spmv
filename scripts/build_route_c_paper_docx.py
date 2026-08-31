@@ -19,6 +19,7 @@ from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
@@ -513,6 +514,19 @@ def _remove_empty_trailing_paragraphs(doc: Document) -> None:
         paragraph._element.getparent().remove(paragraph._element)
 
 
+def _drop_unreferenced_document_images(doc: Document) -> None:
+    """Remove media inherited from a reference DOCX but unused by the body."""
+    referenced = {
+        relationship_id
+        for element in doc.element.iter()
+        for attribute in (qn("r:embed"), qn("r:link"))
+        if (relationship_id := element.get(attribute)) is not None
+    }
+    for relationship_id, relationship in list(doc.part.rels.items()):
+        if relationship.reltype == RT.IMAGE and relationship_id not in referenced:
+            doc.part.drop_rel(relationship_id)
+
+
 def _build_english(raw: Path, target: Path) -> None:
     doc = Document(raw)
     doc.core_properties.author = ""
@@ -535,6 +549,7 @@ def _build_english(raw: Path, target: Path) -> None:
     _style_block_quotes(doc)
     _apply_font_everywhere(doc, "Calibri")
     _remove_empty_trailing_paragraphs(doc)
+    _drop_unreferenced_document_images(doc)
     doc.save(target)
 
 
@@ -552,6 +567,7 @@ def _build_chinese(raw: Path, target: Path) -> None:
     _format_figures_and_alt_text(doc, language="zh")
     _apply_font_everywhere(doc, ZH_FONT)
     _remove_empty_trailing_paragraphs(doc)
+    _drop_unreferenced_document_images(doc)
     doc.save(target)
 
 
