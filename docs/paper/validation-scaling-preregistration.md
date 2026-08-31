@@ -220,7 +220,10 @@ One workflow dispatch creates exactly:
 
 Every producer or replay provider artifact contains exactly two regular files:
 `payload.zip` and `execution-receipt.json`. Provider-generated ZIP member order
-is nonauthoritative; the validator compares the binary-UTF-8-sorted path set.
+is nonauthoritative; the validator compares the binary-UTF-8-sorted path set
+and rejects a missing, extra, duplicate, linked, or unsafe outer entry. Exact
+canonical member order applies only inside `payload.zip` and any canonical
+nested archive, never to the provider-generated outer two-file ZIP.
 The public operation
 returns the complete canonical payload bytes. Only after that return does the
 runner serialize the canonical receipt and bind the payload filename, byte
@@ -245,7 +248,10 @@ derived from either predecessor's 45/55-minute gates. The aggregate job must
 independently rehash every provider-downloaded object, validate exact
 run/ref/head/attempt identity, require all 54 cells, verify producer/replay
 semantic equality and every compile-depth gate, and reject missing, extra,
-duplicate, reordered, unsafe, or noncanonical members.
+duplicate, reordered, unsafe, or noncanonical members inside canonical
+`payload.zip` and canonical nested archives. For the outer provider ZIP it
+instead enforces the exact two-file sorted path set above and treats physical
+member order as nonauthoritative.
 
 For each producer or replay seed, `execution-receipt.json` records the closed
 fields `schema_version`, `artifact_role`, `seed_ordinal`, runner OS and

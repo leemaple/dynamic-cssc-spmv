@@ -1,12 +1,12 @@
 {
   "schema_version": "dynamic-cssc-validation-scaling-stage0-manifest-v2",
   "study_id": "dynamic-cssc-validation-scaling-2026-09-01",
-  "state": "stage0-v2-self-reference-free-timing-envelope-amended-detached-preregistration-manifest-non-authorizing",
+  "state": "stage0-v2-self-reference-free-timing-envelope-outer-order-and-payload-input-closed-detached-preregistration-manifest-non-authorizing",
   "base_commit": "f706e17ef82d818b914273d97dfbafd47b48c2c7",
   "entry_order": "ascending-binary-UTF8-relative-path",
   "file_sha256_scope": "exact-file-bytes",
   "object_set_digest_algorithm": "SHA256-of-ASCII-canonical-JSON-of-the-objects-array-with-lexicographically-sorted-object-keys-compact-comma-colon-separators-allow_nan_false-and-one-terminal-LF",
-  "object_set_sha256": "d5e3a10a9542ad856c4f86f54fb22e343d8675e8f613f212b8af558d82291329",
+  "object_set_sha256": "f7c63bea9cd3b98f6605d2dab21e6e86a102e2033465f1badc196ffc3cca6fff",
   "self_reference_rule": "this-detached-manifest-does-not-list-or-hash-itself;the-immutable-stage0-Git-tree-and-review-record-bind-this-manifest-file",
   "authority": false,
   "implementation_authorized": false,
@@ -15,8 +15,8 @@
     {
       "path": "config/validation-scaling-study.json",
       "role": "machine-readable-study-plan",
-      "sha256": "3c68c5a0821df7b6338899a981de2a3ffb14ada49f86b17ac115033a9c86379c",
-      "byte_count": 15695,
+      "sha256": "337de174c6cc445fe9ab54c64dda74b0e9fb6d070e7b5478e09def8940a3b712",
+      "byte_count": 15927,
       "line_count": 285
     },
     {
@@ -29,16 +29,16 @@
     {
       "path": "docs/paper/validation-scaling-preregistration.md",
       "role": "human-readable-preregistration",
-      "sha256": "23cedde0ffa6c55c413d6d16cebf6e7671f23b782baa6d65d598ef7be9de08d2",
-      "byte_count": 18471,
-      "line_count": 330
+      "sha256": "e81ecebd0b743c1a6b0cbbfa69df9df21ad9f02a1a630e180f02e56da104c793",
+      "byte_count": 18894,
+      "line_count": 336
     },
     {
       "path": "schemas/validation-scaling-study-v2.schema.json",
       "role": "study-plan-structural-schema",
-      "sha256": "ba9ba364f209eed32f0a15cfa2381c9b1f60b448e1b92b684a279821b5c4bf66",
-      "byte_count": 12750,
-      "line_count": 358
+      "sha256": "15bd495a5c2bdf79e18c9e0abfb818d90e97379cbb2b1e925470f18bcd721615",
+      "byte_count": 13208,
+      "line_count": 362
     }
   ]
 }

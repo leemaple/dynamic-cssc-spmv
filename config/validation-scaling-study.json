@@ -21,7 +21,7 @@
     "replay_per_seed": "validation-scaling-replay-seed-{seed_ordinal}-v1",
     "replay_private_material_rule": "replay-packages-must-exclude-private-preparation-documents-ledger-snapshots-producer-cell-archives-and-nested-replay-cell-archives",
     "replay_retention_days": 90,
-    "safe_archive_rules": "regular-files-only-no-links-no-duplicates-exact-order-exact-manifest-sha256-and-byte-count-rehash",
+    "safe_archive_rules": "canonical-payload.zip-and-canonical-nested-archives-only-regular-files-only-no-links-no-duplicates-exact-order-exact-manifest-sha256-and-byte-count-rehash-outer-provider-artifact-member-order-is-excluded-and-governed-only-by-seed_provider_artifact_rule",
     "seed_provider_artifact_member_count": 2,
     "seed_provider_artifact_member_paths_after_binary_utf8_sort": [
       "execution-receipt.json",
@@ -91,7 +91,7 @@
     ],
     "semantic_projection_serialization": "dynamic_cssc.route_a_results.canonical_route_a_document-sorted-keys-compact-ascii-json-no-floats-one-terminal-lf",
     "sentinel_test_engine": "one-private-non-exported-engine-accepts-an-exact-internal-domain-tests-obtain-only-a-test-factory-domain-that-rejects-all-production-formal-and-query-vector-seeds-public-success-paths-are-never-executed-by-tests",
-    "strict_inputs": "exact-stage0-v2-plan-bytes-seed-ordinal-in-1-2-3-fresh-empty-operation-owned-scratch-root-and-for-replay-exact-provider-producer-package-only"
+    "strict_inputs": "exact-stage0-v2-plan-bytes-seed-ordinal-in-1-2-3-fresh-empty-operation-owned-scratch-root-and-for-replay-only-the-byte-exact-payload.zip-extracted-from-a-successfully-validated-exact-two-file-producer-provider-artifact"
   },
   "matrix": {
     "direct_rhos": [
