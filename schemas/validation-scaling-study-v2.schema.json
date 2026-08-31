@@ -32,7 +32,13 @@
         "replay_per_seed": "validation-scaling-replay-seed-{seed_ordinal}-v1",
         "replay_private_material_rule": "replay-packages-must-exclude-private-preparation-documents-ledger-snapshots-producer-cell-archives-and-nested-replay-cell-archives",
         "replay_retention_days": 90,
-        "safe_archive_rules": "regular-files-only-no-links-no-duplicates-exact-order-exact-manifest-sha256-and-byte-count-rehash"
+        "safe_archive_rules": "regular-files-only-no-links-no-duplicates-exact-order-exact-manifest-sha256-and-byte-count-rehash",
+        "seed_provider_artifact_member_count": 2,
+        "seed_provider_artifact_member_paths_after_binary_utf8_sort": [
+          "execution-receipt.json",
+          "payload.zip"
+        ],
+        "seed_provider_artifact_rule": "for-each-producer-or-replay-seed-job-the-public-operation-returns-exactly-payload.zip-and-the-runner-after-return-creates-execution-receipt.json-these-are-the-only-two-regular-files-in-the-one-provider-artifact-for-that-seed-provider-zip-member-order-is-nonauthoritative-and-the-validator-compares-the-binary-utf8-sorted-path-set"
       }
     },
     "claims": {
@@ -234,8 +240,11 @@
             "github_job_conclusion"
           ]
         },
-        "seed_package_fields": {
+        "seed_execution_receipt_fields": {
           "const": [
+            "schema_version",
+            "artifact_role",
+            "seed_ordinal",
             "runner_os",
             "runner_arch",
             "python_version",
@@ -247,13 +256,24 @@
             "package_finished_utc",
             "seed_package_wall_nanoseconds",
             "seed_package_process_nanoseconds",
-            "process_peak_rss_bytes_or_null"
+            "process_peak_rss_bytes_or_null",
+            "payload_filename",
+            "payload_byte_count",
+            "payload_sha256"
           ]
+        },
+        "seed_execution_receipt_placement": {
+          "const": "the-four-process-owned-time-fields-and-payload-filename-byte-count-and-sha256-are-members-only-of-canonical-execution-receipt.json-never-payload.zip-receipt-serialization-and-provider-upload-occur-after-the-measured-interval"
+        },
+        "seed_package_scope": {
+          "const": "one-per-seed-job-interval-starting-immediately-before-public-seed-shard-operation-invocation-and-ending-immediately-after-complete-canonical-payload.zip-bytes-return-including-all-nine-cell-work-and-payload-construction-and-excluding-execution-receipt-serialization-provider-upload-and-queue-never-a-cell-row-or-fit-input"
         }
       },
       "required": [
         "provider_dependency_job_fields",
-        "seed_package_fields"
+        "seed_execution_receipt_fields",
+        "seed_execution_receipt_placement",
+        "seed_package_scope"
       ],
       "type": "object"
     },

@@ -1,12 +1,12 @@
 {
   "schema_version": "dynamic-cssc-validation-scaling-stage0-manifest-v2",
   "study_id": "dynamic-cssc-validation-scaling-2026-09-01",
-  "state": "stage0-v2-amended-detached-preregistration-manifest-non-authorizing",
+  "state": "stage0-v2-self-reference-free-timing-envelope-amended-detached-preregistration-manifest-non-authorizing",
   "base_commit": "f706e17ef82d818b914273d97dfbafd47b48c2c7",
   "entry_order": "ascending-binary-UTF8-relative-path",
   "file_sha256_scope": "exact-file-bytes",
   "object_set_digest_algorithm": "SHA256-of-ASCII-canonical-JSON-of-the-objects-array-with-lexicographically-sorted-object-keys-compact-comma-colon-separators-allow_nan_false-and-one-terminal-LF",
-  "object_set_sha256": "15d40589f07537d64588cccf7c2e848951d10ca66598d0339f9fd9c327d9db15",
+  "object_set_sha256": "d5e3a10a9542ad856c4f86f54fb22e343d8675e8f613f212b8af558d82291329",
   "self_reference_rule": "this-detached-manifest-does-not-list-or-hash-itself;the-immutable-stage0-Git-tree-and-review-record-bind-this-manifest-file",
   "authority": false,
   "implementation_authorized": false,
@@ -15,30 +15,30 @@
     {
       "path": "config/validation-scaling-study.json",
       "role": "machine-readable-study-plan",
-      "sha256": "95f5b930760c3f7a9f54ee43916875c322ea7d7780d6c6afc2f51b203bd53ecc",
-      "byte_count": 14389,
-      "line_count": 272
+      "sha256": "3c68c5a0821df7b6338899a981de2a3ffb14ada49f86b17ac115033a9c86379c",
+      "byte_count": 15695,
+      "line_count": 285
     },
     {
       "path": "docs/paper/validation-scaling-claim-ledger.md",
       "role": "claim-release-and-failure-boundary",
-      "sha256": "6b97139b62150e495cb822d8305db7fe4fd2a2c521837d85d36c1a03c3cac29c",
-      "byte_count": 2177,
+      "sha256": "a4e0f7759d7ec4b602c89e67af1497fd0340eb53c7b513f4a45c0d6c72c2bc7e",
+      "byte_count": 2287,
       "line_count": 20
     },
     {
       "path": "docs/paper/validation-scaling-preregistration.md",
       "role": "human-readable-preregistration",
-      "sha256": "2b25adb1b5b471393a89cfa411ee6a8c69ef0cd29e2293d6ce9c83403989fd16",
-      "byte_count": 16703,
-      "line_count": 305
+      "sha256": "23cedde0ffa6c55c413d6d16cebf6e7671f23b782baa6d65d598ef7be9de08d2",
+      "byte_count": 18471,
+      "line_count": 330
     },
     {
       "path": "schemas/validation-scaling-study-v2.schema.json",
       "role": "study-plan-structural-schema",
-      "sha256": "be611ac124b39b09f5f374ba8453ffb19744c6452660d3053d4cc3982be8d1a0",
-      "byte_count": 11219,
-      "line_count": 338
+      "sha256": "ba9ba364f209eed32f0a15cfa2381c9b1f60b448e1b92b684a279821b5c4bf66",
+      "byte_count": 12750,
+      "line_count": 358
     }
   ]
 }

@@ -8,11 +8,11 @@ Study ID: `dynamic-cssc-validation-scaling-2026-09-01`.
 Version 2 preserves the research question, estimand, 54-cell matrix, formal
 seeds, query-vector seed, ordering, two-operation public interface, timeouts,
 one-dispatch rule, and claim boundary from immutable v1. Before any registered
-seed was executed, it closes five implementation ambiguities found by direct
+seed was executed, it closes six implementation ambiguities found by direct
 source inspection: private-artifact retention, complete `compile_query`
 instrumentation, provider-terminal timestamp ownership, sentinel-only testing,
-and exact OLS serialization. Immutable v1 remains an audit ancestor and is not
-relabelled as v2.
+exact OLS serialization, and self-reference-free seed payload/receipt timing.
+Immutable v1 remains an audit ancestor and is not relabelled as v2.
 
 ## 1. Why this is a different study
 
@@ -82,7 +82,9 @@ label `dynamic-cssc-validation-scaling-v1|query-vector`, with digest
 
 There are 27 producer cells and 27 independent-replay cells: 54 measured cells
 in total. Producer and replay execute in distinct GitHub jobs. Replay may read
-only the exact provider-uploaded producer package for its seed.
+only the exact provider-uploaded producer artifact for its seed. It must first
+validate that artifact's exact two-file layout and execution receipt, and then
+pass only the byte-exact `payload.zip` bytes as `producer_package_bytes`.
 
 ## 4. Deep module and measurement seam
 
@@ -100,10 +102,12 @@ strict integer 1, 2, or 3, and `scratch_root` must be a fresh empty directory
 owned and destroyed by the operation. The operation derives every seed,
 strategy, rho, order, target, and expected artifact identity internally. Matrix
 iteration, exact profile construction, `compile_query` counting, scratch
-ownership, canonical archive construction, checksums, stage clocks, and failure
-cleanup remain behind the seam. Callers cannot pass a `skip_validation`, success
-Boolean, timing result, seed value, rho, strategy, order, or caller-selected
-matrix.
+ownership, canonical payload-ZIP construction, checksums, cell and cell-archive
+stage clocks, and failure cleanup remain behind the seam. The thin runner owns
+only the per-seed operation-through-payload-return interval and its post-return
+execution receipt described below. Callers cannot pass a `skip_validation`,
+success Boolean, timing result, seed value, rho, strategy, order, or
+caller-selected matrix.
 
 The compile-count adapter owns exactly two live bindings:
 `dynamic_cssc.query_compiler.compile_query` and
@@ -140,8 +144,13 @@ inside the replay operation and is not claimed as a separate timer.
 
 Producer-cell archive construction is measured outside the producer operation
 with its own per-cell wall and process nanoseconds; its two fields are null for
-replay cells. Construction of the single provider artifact for a seed is a
-per-job wall/process observation and never appears in a cell row or an OLS fit.
+replay cells. Each seed job also records one wall/process interval beginning
+immediately before invocation of its public seed-shard operation and ending
+immediately after that operation returns the complete canonical `payload.zip`
+bytes. This interval includes all nine cell executions and payload construction;
+it excludes execution-receipt serialization, provider upload, and queue time.
+It is a supporting per-seed observation and never appears in a cell row or an
+OLS fit.
 The existing canonical cell fields `producer_state_transition_seconds`,
 `producer_result_assembly_seconds`, and `replay_seconds` are converted exactly
 to integer nanoseconds and reported as supporting stage observations, with null
@@ -209,16 +218,26 @@ One workflow dispatch creates exactly:
 - three independent replay artifacts, one per seed; and
 - one aggregate artifact after all six seed jobs succeed.
 
-Each producer artifact contains the exact private cell handoffs required by
-`replay_route_a_synthetic_cell`; its provider retention is therefore exactly one
-day, matching the nested handoff manifests. Each replay artifact and the
-aggregate have 90-day retention. A replay artifact is redacted and must not
-contain a private preparation document, ledger snapshot, producer-cell archive,
-or nested replay-cell archive. It contains only the closed timing rows, final
-cells, semantic projections, replay receipts, exact producer bindings, and its
-canonical manifest. The aggregate consumes all six seed artifacts in the same
-run before any producer expires. It does not extend, delete, or reupload a
-private producer handoff.
+Every producer or replay provider artifact contains exactly two regular files:
+`payload.zip` and `execution-receipt.json`. Provider-generated ZIP member order
+is nonauthoritative; the validator compares the binary-UTF-8-sorted path set.
+The public operation
+returns the complete canonical payload bytes. Only after that return does the
+runner serialize the canonical receipt and bind the payload filename, byte
+count, and SHA-256. Receipt serialization and provider upload are outside the
+per-seed interval. The two files remain one provider artifact; this rule does
+not create an eighth artifact.
+
+Each producer `payload.zip` contains the exact private cell handoffs required by
+`replay_route_a_synthetic_cell`; its provider artifact retention is therefore
+exactly one day, matching the nested handoff manifests. Each replay artifact and
+the aggregate have 90-day retention. A replay `payload.zip` is redacted and must
+not contain a private preparation document, ledger snapshot, producer-cell
+archive, or nested replay-cell archive. It contains only the closed timing rows,
+final cells, semantic projections, replay receipts, exact producer bindings,
+and its canonical manifest. The aggregate consumes all six two-file seed
+artifacts in the same run before any producer expires. It does not extend,
+delete, or reupload a private producer handoff.
 
 Producer and replay jobs have 40-minute safety timeouts; aggregate has 20
 minutes. These are operational ceilings, not acceptance thresholds and not
@@ -228,14 +247,20 @@ run/ref/head/attempt identity, require all 54 cells, verify producer/replay
 semantic equality and every compile-depth gate, and reject missing, extra,
 duplicate, reordered, unsafe, or noncanonical members.
 
-Seed packages record process-owned `operation_started_utc` and
-`package_finished_utc`; these are not GitHub terminal times. After all six
-dependency jobs are terminal, the aggregate reads the provider Jobs API and
-records each dependency job's database ID, exact name, `startedAt`,
-`completedAt`, and success conclusion. It rejects a missing, future, reversed,
-non-success, or identity-mismatched interval. It never claims to contain its own
-terminal `completedAt` or conclusion. The final independent result audit reads
-the aggregate job and workflow terminal metadata after the run completes.
+For each producer or replay seed, `execution-receipt.json` records the closed
+fields `schema_version`, `artifact_role`, `seed_ordinal`, runner OS and
+architecture, Python version, GitHub run ID/attempt/job, source Git SHA,
+process-owned `operation_started_utc` and `package_finished_utc`, the per-seed
+wall/process nanoseconds, optional process peak RSS, `payload_filename`, payload
+byte count, and payload SHA-256. The four process-owned time fields are never
+members of `payload.zip`; they use exactly the interval frozen above and are not
+GitHub terminal times. After all six dependency jobs are terminal, the aggregate
+reads the provider Jobs API and records each dependency job's database ID, exact
+name, `startedAt`, `completedAt`, and success conclusion. It rejects a missing,
+future, reversed, non-success, or identity-mismatched interval. It never claims
+to contain its own terminal `completedAt` or conclusion. The final independent
+result audit reads the aggregate job and workflow terminal metadata after the
+run completes.
 
 The formal inventory is exactly one workflow run at attempt 1 for the source
 tag. Any second dispatch, rerun attempt, job non-success, timeout, missing or
