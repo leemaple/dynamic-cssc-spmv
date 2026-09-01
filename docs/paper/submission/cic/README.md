@@ -45,12 +45,13 @@ Two clean builds with that epoch produced byte-identical PDFs. The expected
 preview properties are:
 
 - 21 A4 pages;
-- bibliography begins on page 19, so the manuscript body occupies pages 1--18
-  and remains inside the regular-paper 20-page body limit;
+- the numbered scientific body ends on page 18; the AI-use disclosure and
+  bibliography begin on page 19, so non-bibliography content occupies 19 pages
+  and remains inside the regular-paper 20-page limit;
 - PDF `Author` metadata is `hidden for submission`;
 - no unresolved citations and no overfull boxes;
 - expected PDF SHA-256:
-  `5a07fb4e4b88831f8b2531d51ece93796f19286f15cd395eab843d5774ef7ade`.
+  `f2bb890a2a669a9e4a4b1e341b46afa7f66d50f6163f79f5c570347364287e18`.
 
 The current Tectonic bundle emits invalid-UTF-8 warnings while reading comments
 inside its cached `listofitems.tex`; extracted manuscript text contains no

@@ -113,8 +113,9 @@ setup, trace generation, and artifact transport are excluded.
 
 For each path and role, unweighted ordinary least squares fits the three median
 wall observations to `T(Q) = alpha + beta Q`. Fractions below are reduced and
-remain in nanosecond units. The intercept is extrapolated and is not an
-observed fixed cost. No fit has a pass threshold.
+use the units shown in the table: alpha is in nanoseconds, beta is in
+nanoseconds/query, and R-squared is dimensionless. The intercept is
+extrapolated and is not an observed fixed cost. No fit has a pass threshold.
 
 | Path | Role | alpha (ns) | beta (ns/query) | R-squared |
 |---|---:|---|---|---|
@@ -125,9 +126,10 @@ observed fixed cost. No fit has a pass threshold.
 | Seg-128 | P | 60589749990449/235843 | 32013194866572/235843 | 341614881855037284294343728/341616481792529494809979753 |
 | Seg-128 | R | 68137993060350/235843 | 67458964938927/471686 | 1516903983543794088279970443/1516906634867297005550755852 |
 
-Nine-decimal second renderings of the median [minimum, maximum] summaries are
-tabulated above. Table 5 of the manuscript and its surrounding text give the
-compact three-decimal summaries used in the paper. The fitted slopes span
+The integer-nanosecond observations above determine the exact nine-decimal
+second renderings of the median [minimum, maximum] summaries. Table 5 of the
+manuscript and its surrounding text give the compact three-decimal summaries
+used in the paper. The fitted slopes span
 0.058114350--0.143016678 seconds/query; descriptive R-squared values span
 0.999981650--0.999998252.
 
