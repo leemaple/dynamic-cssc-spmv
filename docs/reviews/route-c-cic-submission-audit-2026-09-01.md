@@ -1,5 +1,16 @@
 # Route C anonymous CiC current-source submission audit — 2026-09-01
 
+> **Historical audit — superseded.** This record audits the pre-validation-
+> scaling Route C candidate and preserves its then-correct findings. It is not
+> the current publication status. The current final manuscript is commit
+> `78444ee1d8011c3a9268fd99e920e557ca92c2d4`, includes the completed
+> preregistered 54-cell validation-scaling study, and has dual terminal
+> `PASS — P0=0 / P1=0 / P2=0` reviews. The official homepage lists Issue 4 on
+> 2026-10-26, while the live CFP/submit link still exposes only the closed Issue
+> 3 portal; the Issue 4 exact cutoff remains to be confirmed. See
+> `publication-completion-matrix-2026-09-01.md` and
+> `../paper/submission-metadata-and-release-checklist.md` for the current state.
+
 ## Verdict
 
 **LOCAL PACKAGE PASS; SUBMISSION-DRAFT EXTERNAL REVIEW HOLD.**

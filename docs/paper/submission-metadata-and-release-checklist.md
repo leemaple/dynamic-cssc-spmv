@@ -1,194 +1,114 @@
-# Route C submission metadata and release checklist
+# CiC submission metadata and release checklist
 
-Status date: 2026-08-31
+Status date: 2026-09-01 (Asia/Shanghai)
+Technical manuscript state: **complete and anonymously frozen**
+Portal state: **Issue 4 submission date 2026-10-26; portal not yet open**
 
-This checklist separates technical work that is already complete from
-author-owned facts that must not be guessed by an AI system. The immutable tag
-`route-c-external-review-v1` remains the reviewed 2026-08-30 baseline. The
-current successor begins at exact S2
-`e1e488f177dc8a469c6132a29537b041fbf1430b` and adds only the 2026-08-31
-terminal follow-up disclosure, the current-source E4 bounded conformance
-result, and regenerated document outputs. The exact reviewed packet is now
-immutably tagged as `route-c-current-source-e4-review-v1` at
-`a757cf429f6457f4beac9ae9b0790a74e7d1ff7a`.
+This checklist separates completed technical work from author-owned facts that
+must not be inferred by an AI system.
+
+## Exact frozen submission object
+
+- reviewed source commit:
+  `78444ee1d8011c3a9268fd99e920e557ca92c2d4`
+- reviewed tree: `a953b27148e7774d0c725f504b92584a8fa141de`
+- repository merge commit:
+  `3dfdaff617bb1a118ba68d3ac58cf3ee2e72e02b`
+- PDF SHA-256:
+  `c3a8c6d4e85323587c8336886367ca0527f1f9b211d79047b012851e9a4e9112`
+- source archive SHA-256:
+  `a39f9d1f28c9e05eced91d29b706ddfdf3860d02bc4f23487cc24b352b2a2d8c`
+- final independent reviews:
+  - Fable 5 max: `PASS — P0=0 / P1=0 / P2=0`
+  - ChatGPT Pro 5.6 Sol Ultra: `PASS — P0=0 / P1=0 / P2=0`
 
 ## Technically complete
 
-- [x] English manuscript and editable-equation DOCX.
-- [x] Chinese technical companion and editable-equation DOCX.
-- [x] Primary-source citation audit for every used key.
-- [x] Claim/evidence ledger with closed empirical claims.
-- [x] Full-page visual, package-integrity, equation, and accessibility QA.
-- [x] Immutable public review tag and remote file-hash verification.
-- [x] ZCode GLM-5.3 Max review: P0 = 0, P1 = 0.
-- [x] ChatGPT Pro successor review: PASS, P0 = 0, P1 = 0, external
-  circulation ready.
+- [x] Sole preregistered 54-cell validation-scaling study completed.
+- [x] Three producer jobs, three independent replay jobs, one aggregate job,
+  and seven registered artifacts completed in the sole attempt.
+- [x] Independent post-terminal package rehash, cell reinspection, and
+  byte-identical aggregate reconstruction completed.
+- [x] Bounded admitted result integrated without reopening the stopped
+  comparative/native performance lineages.
+- [x] Anonymous English CiC source uses
+  `\documentclass[version=submission]{iacrcc}`.
+- [x] Title, short abstract, and keywords present.
+- [x] Nineteen non-bibliography pages, within the regular-paper limit.
+- [x] Prominent generative-AI disclosure plus detailed working disclosure.
+- [x] Two clean deterministic builds are byte-identical.
+- [x] All 21 pages visually inspected.
+- [x] Ten package checksums, citation resolution, anonymity, and PDF metadata
+  checks pass.
+- [x] Exact reviewed source and PDF preserved locally and in GitHub history.
+- [x] PR #55 merged the exact reviewed manuscript; post-merge main CI
+  `33488665458` completed successfully with `2667 passed, 2 skipped`, and its
+  sole R0 artifact is bound to the merge SHA.
 
-## 2026-08-31 terminal-outcome successor
+## Human facts required
 
-- [x] Exact provider state, zero-artifact boundary, and frozen one-shot
-  disposition independently checked by ChatGPT Pro and ZCode GLM-5.3 Max.
-- [x] Additive terminal-NO-GO record and English/Chinese source updates drafted
-  without changing preregistration, study plan, anchor, behavior registry, or
-  claim ledgers.
-- [x] Rebuild both DOCX files and verify editable OMML equations.
-- [x] Render and inspect every English and Chinese page after the rebuild.
-- [x] Obtain same-packet Pro/ZCode review with no unresolved manuscript P0/P1
-  on the exact successor object.
-- [x] Close exact-head CI and create a new immutable external-review tag.
-  Exact-head run `33391930451` succeeded; the tag is
-  `route-c-current-source-e4-review-v1`.
+Do not infer these from Git history, account names, email addresses, or earlier
+chat messages. They remain outside the anonymous PDF until the venue requires
+private portal entry or the paper is accepted/unblinded.
 
-## 2026-08-31 current-source functional addendum
-
-- [x] Freeze and independently review the current-source E4 conformance
-  preregistration with no unresolved Pro/ZCode P0/P1.
-- [x] Create the one-time lightweight source tag and dispatch exactly one
-  current-source E4 run.
-- [x] Audit the raw provider ZIP, exact 19-file set, checksums, JSON pointers,
-  complete workflow inventory, and detached-source provenance.
-- [x] Record the bounded 35/35 contract result and one-fixture OpenFHE oracle
-  match in the Markdown manuscript and claim ledger.
-- [x] Obtain same-packet Pro/ZCode review of the raw-result audit and exact
-  manuscript diff with no unresolved P0/P1.
-- [x] Rebuild the editable-equation DOCX/PDF and complete page-by-page visual,
-  equation, package, and accessibility QA. The accepted render has 26 English
-  Letter pages and 24 Chinese A4 pages; both DOCX packages pass ZIP integrity,
-  retain editable OMML, and have blank creator/last-modifier fields. The
-  accessibility audit reports zero high or medium findings in either file; its
-  only English findings are 26 low-severity raw-URL labels in the bibliography.
-- [x] Tag the exact accepted result/manuscript packet as
-  `route-c-current-source-e4-review-v1`.
-- [x] Merge the review-record-only successor to `main`. The accepted packet is
-  present in `main` at `f706e17ef82d818b914273d97dfbafd47b48c2c7`.
-
-## Human facts required before submission
-
-Do not infer these from Git history, account names, email addresses, or prior
-chat messages.
-
-- [ ] Final author names in publication order.
-- [ ] ORCID identifiers, if available.
+- [ ] Final human author names and publication order.
+- [ ] ORCID identifiers, if used.
 - [ ] Affiliations and postal addresses.
-- [ ] Corresponding-author name and submission email.
-- [ ] Funding statement, including grant numbers, or an explicit
-  `No external funding` confirmation.
-- [ ] Competing-interest statement, including an explicit `None declared`
-  confirmation when applicable.
-- [ ] CRediT roles for every human author.
-- [ ] Human confirmation of the generative-AI disclosure.
+- [ ] Corresponding-author name and email.
+- [ ] Complete conflict-of-interest declarations for every author.
+- [ ] Funding statement and verified grant identifiers, or a human-confirmed
+  no-external-funding statement.
+- [ ] CRediT roles for every author.
+- [ ] Human acceptance of the generative-AI disclosure.
 - [ ] Acknowledgements, if any.
-- [ ] Software license selected by the rights holder.
-- [ ] Final venue and article type.
+- [ ] Software/data license and public-artifact availability decision by the
+  rights holder.
 
-## Recommended manuscript title
+## Live venue gate
 
-> Version-Bound Maintenance for Mutable Homomorphic Sparse Matrix--Vector
-> Multiplication: A Fail-Closed Evaluation Boundary
+The official CiC CFP and FAQ were checked on 2026-09-01. They require an
+English, anonymous PDF using `iacrcc` submission mode; regular papers may use at
+most 20 pages excluding bibliography; generated content must be disclosed; and
+conflict information must be correct. The manuscript meets the technical
+requirements.
 
-The title deliberately foregrounds the actual contribution and does not imply
-that a comparative performance campaign completed.
+The official homepage lists Volume 3 Issue 4 submission on 2026-10-26. The live
+CFP/submit link still targets Volume 3 Issue 3, whose 2026-07-27 deadline has
+passed and which is now in rebuttal. The Issue 4 exact cutoff and portal are not
+yet public. Therefore:
 
-## Proposed data and code availability statement
+- [ ] Monitor for the official Issue 4 CFP/portal before 2026-10-26.
+- [ ] Recheck deadline, portal URL, `iacrcc` version, page rule, AI policy,
+  conflict policy, and supplementary-material rules on that day.
+- [ ] Enter verified author/contact/conflict metadata privately.
+- [ ] Choose the artifact/code-availability response consistent with the
+  rights-holder decision.
+- [ ] Upload the exact frozen PDF, unless a verified policy change requires a
+  descendant and a new build/review cycle.
 
-The following text is accurate for the current review packet. Replace the
-repository tag with an archival DOI only after an archive has successfully
-minted one.
+## Proposed availability statement
 
-> Source code, frozen protocol definitions, verification tests, the
-> claim--evidence ledger, the primary-source citation audit, and the exact
-> external-review manuscript packet will be publicly available at the new
-> immutable successor tag recorded before submission in
-> <https://github.com/leemaple/dynamic-cssc-spmv>. The experiment-source and
-> evidence-freeze snapshots for the primary lineage are Git commits
-> `ee58627bb5752c6ac1ee2c5132c6574f9cb66552` and
-> `c7ff6820d9323f1850c1c5c57fd9070db88db120`. Its sole qualification selected
-> the stop route before formal dispatch; its transient q1 handoff was designated
-> non-evidence. A separately preregistered follow-up used S1
-> `f8d89d6f98f289dc2e0c3414f7b4ed59b5d30f52` and direct-child data-only S2
-> `e1e488f177dc8a469c6132a29537b041fbf1430b`. Its sole qualification run
-> `33348855548` was cancelled during hosted-runner setup before repository
-> checkout or seed admission and produced zero artifacts. Consequently no
-> admitted synthetic, ordered-event, native OpenFHE, terminal, aggregate, or
-> analysis artifact exists. A separate current-source deterministic conformance
-> replication at tag `current-source-e4-conformance-20260831-v1` passed in run
-> `33386130654`; its one-fixture functional artifact is `9755741401`, raw digest
-> `sha256:5978b7d9f75048939c9761243e224abb588ed82c2abc64e051523a7a598a1383`.
-> It is not a performance artifact and does not reopen either stopped lineage.
-> The public SNAP source object was not acquired into the formal lineage and is
-> not redistributed by this paper.
+Human authors must approve the final form and remove any statement not
+supported by the actual release decision:
 
-## Proposed generative-AI disclosure
-
-This wording is a factual draft, not a substitute for the selected publisher's
-policy or human approval.
-
-> Generative-AI systems assisted literature discovery, implementation and test
-> generation, adversarial review, and manuscript drafting. The human authors
-> independently reviewed the cited sources, code, evidence records, and final
-> text and accept full responsibility for the work. No AI system is listed as
-> an author.
-
-Before submission, compare this wording against the selected venue's current
-author policy and move it to the location that policy requires.
-
-## CRediT worksheet
-
-For each human author, mark only roles they actually performed:
-
-| Role | Author name(s) |
-|---|---|
-| Conceptualization | |
-| Methodology | |
-| Software | |
-| Validation | |
-| Formal analysis | |
-| Investigation | |
-| Data curation | |
-| Writing -- original draft | |
-| Writing -- review and editing | |
-| Visualization | |
-| Supervision | |
-| Project administration | |
-| Funding acquisition | |
-
-## Release sequence
-
-1. Select the venue and article type from the current official-source venue
-   review.
-2. Supply the human metadata above.
-3. Choose and add the top-level software license; do not treat public GitHub
-   visibility as permission to reuse the source.
-4. Create the venue-formatted submission branch from the immutable review tag.
-5. Replace manuscript placeholders with verified author facts and the venue's
-   required declarations.
-6. Rebuild and inspect the venue-formatted PDF/DOCX/LaTeX package.
-7. Run one final claim, citation, and evidence-boundary review on the exact
-   submission bytes.
-8. Tag the accepted submission packet.
-9. Create the public GitHub release and, if selected, archive that exact tag in
-   Zenodo or another approved repository; record the minted DOI only after it
-   resolves.
-10. Update the manuscript availability statement and `CITATION.cff` with the
-    verified DOI and human author metadata.
+> Source code, the frozen validation-scaling protocol and implementation,
+> verification tests, the anonymous manuscript source, and the admitted
+> evidence audit are preserved in the project Git history. The preregistered
+> validation-scaling study ran exactly once and its independently reconstructed
+> aggregate is reported under the manuscript's bounded claim rules. The two
+> earlier comparative/native performance lineages stopped at their frozen
+> gates and are not reported as successful experiments. Public artifact and
+> archival-DOI availability will follow the rights-holder release decision.
 
 ## Submission stop conditions
 
 Do not submit if any of the following is true:
 
-- author order, affiliation, funding, or competing interests are still
-  placeholders;
-- the selected venue requires an empirical result that this Route C paper does
-  not have;
-- the manuscript describes q1/q2 qualification fragments as performance data;
-- the manuscript treats follow-up runner setup, prerequisite controls, or the
-  unknown watcher-admission subfailure as scientific or performance evidence;
-- the successor terminal-NO-GO record, rebuilt DOCX files, exact review packet,
-  CI, and immutable review tag have not all closed;
-- a moving branch is cited in place of the immutable packet;
-- a DOI, license, or artifact is claimed before it exists;
-- citation keys remain unresolved or a newly public SparseE record has not been
-  rechecked;
-- the current-source E4 raw audit, bounded manuscript wording, exact-packet
-  review, rebuilt DOCX/PDF, or immutable result tag has not closed;
-- the final venue-formatted files have not received page-by-page visual QA.
+- the Issue 4 portal is not open or its exact cutoff is unconfirmed;
+- private author/contact/conflict information is missing or unverified;
+- a license, DOI, or public artifact is claimed before it exists;
+- the PDF/source hash differs from the frozen object without a documented
+  descendant build and review;
+- the manuscript overstates the admitted validation-scaling result or rescues a
+  stopped performance lineage; or
+- a live venue policy change has not been reconciled.

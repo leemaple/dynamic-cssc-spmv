@@ -1,87 +1,74 @@
-# Publication completion matrix — 2026-09-01
+# Publication completion matrix — 2026-09-01 final state
 
-This record supersedes the operational status in the 2026-08-28 completion
-matrix. It is a repository and provider-state audit, not experimental evidence.
-It does not reopen either stopped performance lineage.
+This record supersedes every earlier operational-status paragraph dated
+2026-09-01. It distinguishes scientific evidence, manuscript readiness,
+repository health, and human/portal work. CI and reviews are never counted as
+experiments.
 
 ## Current verdict
 
-The Route C methods and evidence-boundary manuscript is technically complete
-for external circulation. Its reviewed English manuscript, editable-equation
-DOCX, PDF, Chinese technical companion, claim ledger, citation audit, figures,
-and current-source E4 conformance addendum are in `main` at
-`f706e17ef82d818b914273d97dfbafd47b48c2c7`. The immutable accepted packet is
-tagged `route-c-current-source-e4-review-v1`. ChatGPT Pro and ZCode GLM-5.3 Max
-both closed the exact packet with no unresolved P0 or P1 finding.
+**SCIENTIFIC STUDY COMPLETE; ANONYMOUS MANUSCRIPT READY; CiC ISSUE 4 DATE
+2026-10-26, PORTAL NOT YET PUBLICLY OPEN.**
 
-This does **not** mean that a comparative performance paper was completed. The
-primary and follow-up qualification lineages are terminal NO-GO, their frozen
-one-shot rules prohibit rerun, and no admitted synthetic, ordered-event, native
-OpenFHE, terminal, aggregate, or analysis performance artifact exists. The E4
-addendum is a bounded current-source functional-conformance result only.
+The preregistered validation-scaling study ran exactly once and closed all
+registered producer, independent-replay, aggregate, and artifact gates. The
+admitted bounded result is integrated into the anonymous CiC manuscript. The
+exact final manuscript received independent Fable 5/max and ChatGPT Pro/Ultra
+verdicts of `PASS — P0=0 / P1=0 / P2=0`, was deterministically rebuilt and
+visually inspected, and is preserved on `main` through PR #55.
 
-## Deliverable matrix
+The earlier comparative/native performance lineages remain terminal NO-GO.
+They were not rerun and are not represented as positive evidence.
 
-| Deliverable | Exact current evidence | Status | Remaining action |
+## Completion matrix
+
+| Requirement | Authoritative evidence | State | Remaining action |
 |---|---|---|---|
-| Route C manuscript and review packet | `main@f706e17`; tag `route-c-current-source-e4-review-v1`; English and Chinese MD/DOCX/PDF; claim ledger; citation audit; Pro and ZCode closure reviews | **COMPLETE for external circulation** | Preserve the immutable packet; do not replace exact identities with a moving branch |
-| Current-source functional evidence | Tag `current-source-e4-conformance-20260831-v1`; run `33386130654`; artifact `9755741401`; 35/35 deterministic records and one fixed OpenFHE whole-query oracle match | **COMPLETE, narrowly bounded** | Keep all admission, security, deployment, performance, and general-correctness exclusions |
-| Comparative performance evidence | Primary qualification `33261434612` and follow-up qualification `33348855548` are terminal NO-GO; no formal campaign was dispatched | **ABSENT and closed in both lineages** | Never rerun or repackage partial/control observations as results |
-| Independent validation-scaling study, Stage 0 | Annotated tag `validation-scaling-stage0-v1` at `e1ed26eeed3496c71af1d55a45c13adcd1e622e5`; manifest object-set SHA-256 `57af1f32cd295b414b845c8aec80ed4860f2f8d78cb171cd5935d80f8e64d367`; ChatGPT Pro PASS; exact-head CI run `33411798908` success with 2,667 passed and 2 expected runner-dependent skips | **FROZEN PREREGISTRATION; NO RESULT** | After the shared ZCode weekly quota visibly resets, obtain GLM-5.3 Max review of this exact tag. Implementation and dispatch remain forbidden until that review passes |
-| Human declarations | Author order, affiliations, corresponding author, funding, competing interests, CRediT, acknowledgements, and final AI disclosure remain intentionally unset | **HUMAN HOLD** | Supply verified facts; author identities may stay absent while preparing an anonymous draft |
-| License and archive | Public repository and immutable tags exist; no top-level software license or archival DOI is claimed | **HUMAN/RELEASE HOLD** | Rights holder selects a license; archive the accepted submission tag and record a DOI only after it resolves |
-| Venue-formatted submission | Venue review recommends a methods/protocol and evidence-boundary route; no final venue/article type has been selected | **HOLD** | Select one venue, format the exact packet, recheck the venue's live policies, and perform page-by-page QA |
-| Final submission packet | Technical source packet exists, but declarations, venue format, license, and archival identifiers are not all closed | **NOT YET SUBMITTABLE** | Close the preceding human and release gates, run exact-byte final review, then tag the submission packet |
+| Frozen preregistration and exact source | `validation-scaling-stage0-v2` object set; source tag `validation-scaling-source-v2` peeling to `bd5f1f9b801d99edc1d8ae555da3c84a70714466` | **COMPLETE** | Preserve immutable identities |
+| Exact-source implementation/CI/material gates | Stage-1 source CI `33461746486` success; bridge/main CI `33466785339` success; Pro and independent Spec/Standards reviews PASS | **COMPLETE** | None |
+| Formal validation-scaling experiment | sole run `33468703297`, attempt 1; three producer jobs, three independent replay jobs, one aggregate job | **COMPLETE, ONE RUN** | Never rerun or broaden its claims |
+| Registered evidence | 54 cells, 27 replay cells, seven provider artifacts; aggregate SHA-256 `701d17c92b1d5d7b69e360cae27b6999a6aa683b3d130a6797caa47c40d219bd` | **COMPLETE** | Preserve retained artifacts/audit |
+| Independent result audit | six seed-provider ZIPs rehashed and reinspected; aggregate regenerated byte-identically; all 54 compile-call gates and all 27 replay projections passed | **COMPLETE** | Treat append-only audit as the claim boundary |
+| Comparative/native performance evidence | two prior qualification lineages terminal NO-GO; no admitted strategy-cost, ordered-event, or native-performance aggregate | **ABSENT BY DESIGN** | Do not present controls, partials, or CI as results |
+| Final anonymous manuscript | reviewed source commit `78444ee1d8011c3a9268fd99e920e557ca92c2d4`; PDF SHA-256 `c3a8c6d4e85323587c8336886367ca0527f1f9b211d79047b012851e9a4e9112` | **COMPLETE** | Do not amend exact manuscript bytes without a new review cycle |
+| Build/layout/anonymity | two byte-identical clean builds; 21 A4 pages; 19 non-bibliography pages; Author=`hidden for submission`; all-page visual QA and ten checksums PASS | **COMPLETE** | Recheck only if source bytes change |
+| Independent final reviews | Fable 5 max and ChatGPT Pro 5.6 Sol Ultra both `PASS — P0=0 / P1=0 / P2=0` on the same exact object | **COMPLETE** | None |
+| Repository integration | PR #55 merge commit `3dfdaff617bb1a118ba68d3ac58cf3ee2e72e02b`; manuscript blobs identical to reviewed candidate; post-merge main CI `33488665458` terminal success with `2667 passed, 2 skipped`; sole R0 artifact ID `9793806256`, digest `sha256:adf3510e0c2c22fbb50e7f1b10f6f7afd3c61d7009508c153d9c3fb16e203e2f` | **COMPLETE** | None |
+| Live CiC format | English, anonymous, `iacrcc` submission mode, title/abstract/keywords, 19-page regular-paper body, prominent AI disclosure | **READY** | Recheck the live policy when the next round opens |
+| Live CiC submission window | official homepage lists Issue 4 submission on 2026-10-26; current CFP/submit link still targets closed Issue 3 | **PORTAL HOLD** | Monitor official CFP; confirm Issue 4 exact cutoff when it opens |
+| Human declarations | author order, affiliations/contact, conflicts, funding, CRediT, acknowledgements, disclosure acceptance, and availability/license choices | **HUMAN HOLD** | Supply verified private facts only when portal opens |
 
-## Optional validation-scaling path
+## Exact claim boundary
 
-The new study asks a different, bounded question: how current-source,
-validation-bearing lifecycle duration changes with exact query count. It is not
-a third attempt at the stopped strategy comparison, does not change either
-historical gate, and cannot support a speedup or superiority claim.
+The final paper may state only the bounded current-source validation-scaling
+results accepted by the append-only audit. In particular:
 
-Its present state is Stage 0 only. The frozen design contains three
-counterbalanced seeds, three exact query-count levels, producer and independent
-replay, 54 cells, seven final artifacts, exact semantic-digest equality, and
-fail-closed stopping rules. No runner, workflow execution, or result exists.
+- all 54 compile-call gates passed with
+  `(Q,C)=(5,10),(51,102),(512,1024)`;
+- all 27 independent-replay cells matched their producer semantic projections;
+- descriptive validation-lifecycle and separated producer/replay-stage summaries
+  may be reported at the frozen source, scale, query counts, and seeds; and
+- no strategy superiority, speedup, deployment/native performance, formal
+  security, general correctness, asymptotic inference, or population claim is
+  released.
 
-The next legal sequence is:
+## Time-to-submission
 
-1. confirm the shared ZCode weekly quota has reset;
-2. obtain one GLM-5.3 Max, highest-reasoning review of the exact immutable tag;
-3. if and only if it passes, implement only the eight preregistered descendant
-   paths and close focused tests, independent review, and exact-head CI;
-4. execute the one permitted GitHub run and independently rehash every retained
-   object before accepting any result;
-5. add only admitted claims to the manuscript and rebuild/inspect the final
-   document package.
+Scientific and manuscript preparation time remaining: **zero days** for the
+claims currently written. The official Issue 4 submission date is 2026-10-26,
+but its portal and exact cutoff are not yet public. Once the portal opens, the
+remaining human/portal work is estimated at **0--1 focused day**. Review and
+publication latency begins only after submission.
 
-## Time-to-submission estimate
+## Stop conditions
 
-Two clocks must be kept separate.
-
-- **Route C without the optional scaling addendum:** approximately 2–4 focused
-  working days for an anonymous Word submission packet after venue selection;
-  approximately 4–7 focused working days for a 20-page CiC LaTeX conversion.
-  Human declarations, license selection, and DOI creation can extend this.
-- **Route C plus the optional validation-scaling addendum:** provisionally
-  4–8 additional focused working days after the ZCode Stage-0 gate passes,
-  assuming implementation and the sole provider run pass without a stop or
-  schema amendment. A failed gate or run yields a bounded negative disposition,
-  not permission to repeat it.
-
-Peer-review acceptance and publication time begin only after submission and are
-outside these preparation estimates.
-
-## Non-negotiable stop conditions
-
-- Do not call ZCode for routine work while its shared weekly usage remains at or
-  above the conservation threshold; reserve it for the exact Stage-0 review.
-- Do not implement or dispatch the validation-scaling study before the same-tag
-  ZCode review passes.
-- Do not rerun either historical qualification or treat CI, smokes, controls,
-  provider setup, partial handoffs, or provider timestamps as performance data.
-- Do not invent author metadata, declarations, license rights, venue policy, or
-  DOI values.
-- Do not submit until the final venue-formatted bytes receive exact claim,
-  citation, evidence-boundary, and page-by-page visual review.
+- Do not rerun the registered validation-scaling study or either stopped
+  performance lineage.
+- Do not treat CI, smokes, external reviews, provider setup, or partial handoffs
+  as scientific evidence.
+- Do not invent human metadata, conflict declarations, license rights, DOI, or
+  an Issue 4 cutoff time not yet stated on the live CFP.
+- Do not alter the reviewed manuscript bytes while retaining their old review
+  verdict or hash.
+- Do not submit until the next official portal is open and human metadata is
+  verified.
