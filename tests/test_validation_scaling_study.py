@@ -10,7 +10,8 @@ import subprocess
 import sys
 import urllib.error
 import zipfile
-from contextlib import nullcontext
+from collections.abc import Iterator
+from contextlib import contextmanager, nullcontext
 from email.message import Message
 from fractions import Fraction
 from pathlib import Path
@@ -1293,7 +1294,66 @@ def test_private_sentinel_full_path_is_deterministic_closed_and_redacted(
         assert not scratch.exists()
         return payload, domain
 
-    producer_a, domain_a = produce_once("producer-a", 1)
+    captured_producer_runs: list[object] = []
+    captured_producer_archives: list[bytes] = []
+    original_evaluate = study.evaluate_route_a_synthetic_cell
+    original_archive = study.produce_route_a_synthetic_cell_archive
+
+    def capture_evaluate(*args: object, **kwargs: object) -> object:
+        result = original_evaluate(*args, **kwargs)
+        captured_producer_runs.append(result)
+        return result
+
+    def capture_archive(run: object) -> bytes:
+        archive = original_archive(run)  # type: ignore[arg-type]
+        captured_producer_archives.append(archive)
+        return archive
+
+    with monkeypatch.context() as capture:
+        capture.setattr(study, "evaluate_route_a_synthetic_cell", capture_evaluate)
+        capture.setattr(study, "produce_route_a_synthetic_cell_archive", capture_archive)
+        producer_a, domain_a = produce_once("producer-a", 1)
+    assert len(captured_producer_runs) == len(captured_producer_archives) == 9
+
+    producer_members = study._read_payload(
+        producer_a,
+        expected_paths=study._producer_paths(),
+    )
+    producer_compile_counts = tuple(
+        json.loads(producer_members[f"cells/{index:02d}/timing-row.json"])[
+            "compile_query_call_count"
+        ]
+        for index in range(9)
+    )
+    cached_producer_runs = iter(captured_producer_runs)
+    cached_producer_archives = iter(captured_producer_archives)
+    cached_producer_counts = iter(producer_compile_counts)
+
+    @contextmanager
+    def cached_producer_counter() -> Iterator[study._CompileCounter]:
+        original = query_compiler_module.compile_query
+        yield study._CompileCounter(
+            original=original,
+            wrapper=original,
+            count=next(cached_producer_counts),
+        )
+
+    def cached_evaluate(*args: object, **kwargs: object) -> object:
+        return next(cached_producer_runs)
+
+    def cached_archive(run: object) -> bytes:
+        return next(cached_producer_archives)
+
+    with monkeypatch.context() as cached:
+        cached.setattr(study, "evaluate_route_a_synthetic_cell", cached_evaluate)
+        cached.setattr(study, "produce_route_a_synthetic_cell_archive", cached_archive)
+        cached.setattr(study, "_count_compile_queries", cached_producer_counter)
+        producer_b, _domain_b = produce_once("producer-b", 1)
+    assert producer_a == producer_b
+    assert tuple(cached_producer_runs) == ()
+    assert tuple(cached_producer_archives) == ()
+    assert tuple(cached_producer_counts) == ()
+
     producer_two, domain_two = produce_once("producer-two", 2)
     producer_three, domain_three = produce_once("producer-three", 3)
     producer_payloads = (producer_a, producer_two, producer_three)
@@ -1321,19 +1381,56 @@ def test_private_sentinel_full_path_is_deterministic_closed_and_redacted(
         assert not scratch.exists()
         return payload
 
-    replay_a = replay_once("replay-a", 1, producer_a)
-    replay_two = replay_once("replay-two", 2, producer_two)
-    replay_three = replay_once("replay-three", 3, producer_three)
-    replay_payloads = (replay_a, replay_two, replay_three)
+    captured_replays: list[object] = []
+    original_replay = study.replay_route_a_synthetic_cell
 
-    producer_members = study._read_payload(
-        producer_a,
-        expected_paths=study._producer_paths(),
-    )
+    def capture_replay(*args: object, **kwargs: object) -> object:
+        result = original_replay(*args, **kwargs)
+        captured_replays.append(result)
+        return result
+
+    with monkeypatch.context() as capture:
+        capture.setattr(study, "replay_route_a_synthetic_cell", capture_replay)
+        replay_a = replay_once("replay-a", 1, producer_a)
+    assert len(captured_replays) == 9
+
     replay_members = study._read_payload(
         replay_a,
         expected_paths=study._replay_paths(),
     )
+    replay_compile_counts = tuple(
+        json.loads(replay_members[f"cells/{index:02d}/timing-row.json"])[
+            "compile_query_call_count"
+        ]
+        for index in range(9)
+    )
+    cached_replays = iter(captured_replays)
+    cached_replay_counts = iter(replay_compile_counts)
+
+    @contextmanager
+    def cached_replay_counter() -> Iterator[study._CompileCounter]:
+        original = query_compiler_module.compile_query
+        yield study._CompileCounter(
+            original=original,
+            wrapper=original,
+            count=next(cached_replay_counts),
+        )
+
+    def cached_replay(*args: object, **kwargs: object) -> object:
+        return next(cached_replays)
+
+    with monkeypatch.context() as cached:
+        cached.setattr(study, "replay_route_a_synthetic_cell", cached_replay)
+        cached.setattr(study, "_count_compile_queries", cached_replay_counter)
+        replay_b = replay_once("replay-b", 1, producer_a)
+    assert replay_a == replay_b
+    assert tuple(cached_replays) == ()
+    assert tuple(cached_replay_counts) == ()
+
+    replay_two = replay_once("replay-two", 2, producer_two)
+    replay_three = replay_once("replay-three", 3, producer_three)
+    replay_payloads = (replay_a, replay_two, replay_three)
+
     assert len(producer_members) == 28
     assert len(replay_members) == 46
     assert producer_a == study._write_payload(

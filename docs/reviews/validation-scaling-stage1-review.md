@@ -91,8 +91,10 @@ Local allowed checks at the time this record was opened:
   recorded as `cancelled`, not as a scientific or CI result;
 - the successor sentinel gate executes exactly three producer and three replay
   ordinals (nine cells per role and ordinal, 54 full cells total) and proves
-  canonical package determinism by byte-identical reserialization, without a
-  redundant fourth producer/replay execution pair;
+  synthetic-clock package determinism by independently rebuilding the complete
+  ordinal-one producer and replay payloads from the first pass's already
+  verified scientific objects and compile counts, without a redundant fourth
+  producer/replay scientific execution pair;
 - formal study workflow dispatches: `0`;
 - formal result cells: `0`.
 
