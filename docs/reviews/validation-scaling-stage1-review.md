@@ -68,7 +68,7 @@ duplicates a registered seed literal.
 | Timing fields | Exact 17-field rows; primary operation timings separated from supporting stages | schema/source tests |
 | Outer artifact | Binary-UTF8-sorted exact set `execution-receipt.json`, `payload.zip`; physical order nonauthoritative; raw provider ZIP bytes are redownloaded without forwarding credentials and independently rehashed against provider metadata | runner and independent validator |
 | Aggregate | Independent six-artifact decoder, successful private sentinel decode, 54-cell completeness, exact compile bounds, stable integer medians, `Fraction` OLS, nine-place half-even display | exact-source CI pending |
-| Provider state | One dispatch/attempt, six successful dependency jobs completed before aggregate start, seven artifacts, no aggregate self-terminal claim | fixture-driven local gates; formal provider observation pending |
+| Provider state | One dispatch/attempt; replay predecessors queried by exact artifact name so sibling uploads cannot perturb discovery; six successful dependency jobs completed before aggregate start; seven final artifacts; no aggregate self-terminal claim | fixture-driven local gates; formal provider observation pending |
 
 Missing, extra, repeated, reordered, linked, unsafe-mode, oversized,
 noncanonical, hash-mismatched, retargeted, semantically divergent, incomplete,
@@ -81,7 +81,7 @@ Local allowed checks at the time this record was opened:
 
 - Python compilation: PASS;
 - Ruff on all five Python implementation/test files: PASS;
-- focused lightweight suite: `69 passed, 1 skipped`;
+- focused lightweight suite: `70 passed, 1 skipped`;
 - Draft 2020-12 evidence-schema metaschema validation: PASS (`31` definitions);
 - skipped item: the single successful sentinel producer/replay lifecycle,
   deliberately reserved for GitHub Actions;

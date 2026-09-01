@@ -1410,8 +1410,9 @@ def _write_canonical_zip(paths: tuple[str, ...], members: dict[str, bytes]) -> b
     return buffer.getvalue()
 
 
-def build_aggregate(
+def _build_aggregate(
     *,
+    domain: _ValidationEvidenceDomain,
     producers: tuple[SeedEvidence, SeedEvidence, SeedEvidence],
     replays: tuple[SeedEvidence, SeedEvidence, SeedEvidence],
     provider_observations: tuple[dict[str, object], ...],
@@ -1672,7 +1673,7 @@ def build_aggregate(
             "study_id": _STUDY_ID,
             "source_git_sha": source_git_sha,
             "source_tag": _SOURCE_TAG,
-            "stage0_plan_sha256": _PLAN_SHA256,
+            "stage0_plan_sha256": domain.plan_sha256,
             "closed_cell_count": 54,
             "input_artifact_count": 6,
             "member_count": 7,
@@ -1683,6 +1684,24 @@ def build_aggregate(
         }
     )
     return _write_canonical_zip(_AGGREGATE_PATHS, documents)
+
+
+def build_aggregate(
+    *,
+    producers: tuple[SeedEvidence, SeedEvidence, SeedEvidence],
+    replays: tuple[SeedEvidence, SeedEvidence, SeedEvidence],
+    provider_observations: tuple[dict[str, object], ...],
+    source_git_sha: str,
+) -> bytes:
+    """Build the complete production aggregate from six independently closed inputs."""
+
+    return _build_aggregate(
+        domain=_production_evidence_domain(),
+        producers=producers,
+        replays=replays,
+        provider_observations=provider_observations,
+        source_git_sha=source_git_sha,
+    )
 
 
 def _load_transport_object(path: Path, *, label: str) -> dict[str, object]:

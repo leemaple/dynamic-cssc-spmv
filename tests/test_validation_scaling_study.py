@@ -673,6 +673,43 @@ def test_provider_artifact_inventory_is_exact_and_strictly_typed(
         )
 
 
+def test_replay_artifact_lookup_is_exact_name_filtered_and_skew_independent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    complete = _provider_artifacts(77, "a" * 40)
+    artifact = complete["artifacts"][0]  # type: ignore[index]
+    paths: list[str] = []
+
+    def provider(path: str, *, token: str) -> dict[str, object]:
+        paths.append(path)
+        assert token == "sentinel"
+        return {"total_count": 1, "artifacts": [artifact]}
+
+    monkeypatch.setattr(runner, "_provider_json", provider)
+    name = "validation-scaling-producer-seed-1-v1"
+    observed = runner._exact_artifact_metadata_from_provider(
+        run_id=77,
+        source_git_sha="a" * 40,
+        token="sentinel",
+        expected_name=name,
+    )
+    assert observed.name == name
+    assert paths == [f"/actions/runs/77/artifacts?name={name}&per_page=100"]
+
+    monkeypatch.setattr(
+        runner,
+        "_provider_json",
+        lambda *args, **kwargs: {"total_count": 2, "artifacts": [artifact, artifact]},
+    )
+    with pytest.raises(ValueError, match="lookup is not singular"):
+        runner._exact_artifact_metadata_from_provider(
+            run_id=77,
+            source_git_sha="a" * 40,
+            token="sentinel",
+            expected_name=name,
+        )
+
+
 def test_formal_run_inventory_is_exact_and_strictly_typed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -949,6 +986,20 @@ def test_schema_negative_key_fixtures_cover_every_closed_object_definition() -> 
             encoding="utf-8"
         )
     )
+    def validate_closed_keys(
+        definition: dict[str, object],
+        document: dict[str, object],
+    ) -> None:
+        properties = definition["properties"]
+        required = definition["required"]
+        assert type(properties) is dict and type(required) is list
+        missing = set(required) - set(document)
+        extra = set(document) - set(properties)
+        if missing:
+            raise ValueError(f"missing required properties: {sorted(missing)}")
+        if definition["additionalProperties"] is False and extra:
+            raise ValueError(f"additional properties: {sorted(extra)}")
+
     checked: set[str] = set()
     for name, definition in schema["$defs"].items():
         if definition.get("type") != "object":
@@ -961,14 +1012,16 @@ def test_schema_negative_key_fixtures_cover_every_closed_object_definition() -> 
         assert len(required) == len(set(required)), name
         assert set(required) <= set(properties), name
 
-        valid_keys = {key: object() for key in properties}
-        assert not (set(valid_keys) - set(properties))
+        valid_fixture = {key: object() for key in properties}
+        validate_closed_keys(definition, valid_fixture)
         for required_key in required:
-            missing = dict(valid_keys)
+            missing = dict(valid_fixture)
             missing.pop(required_key)
-            assert set(required) - set(missing) == {required_key}, (name, required_key)
-        extra = {**valid_keys, "unexpected_stage1_field": object()}
-        assert set(extra) - set(properties) == {"unexpected_stage1_field"}, name
+            with pytest.raises(ValueError, match="missing required properties"):
+                validate_closed_keys(definition, missing)
+        extra = {**valid_fixture, "unexpected_stage1_field": object()}
+        with pytest.raises(ValueError, match="additional properties"):
+            validate_closed_keys(definition, extra)
         checked.add(name)
 
     assert checked == {
@@ -1412,13 +1465,15 @@ def test_private_sentinel_full_path_is_deterministic_closed_and_redacted(
         )
         for ordinal, payload in enumerate(replay_payloads, start=1)
     )
-    aggregate = validator.build_aggregate(
+    aggregate = validator._build_aggregate(
+        domain=evidence_domain,
         producers=producer_evidence,  # type: ignore[arg-type]
         replays=replay_evidence,  # type: ignore[arg-type]
         provider_observations=_provider_observations(),
         source_git_sha="a" * 40,
     )
-    assert aggregate == validator.build_aggregate(
+    assert aggregate == validator._build_aggregate(
+        domain=evidence_domain,
         producers=producer_evidence,  # type: ignore[arg-type]
         replays=replay_evidence,  # type: ignore[arg-type]
         provider_observations=_provider_observations(),
@@ -1432,3 +1487,5 @@ def test_private_sentinel_full_path_is_deterministic_closed_and_redacted(
     aggregate_manifest = json.loads(aggregate_members["manifest.json"])
     assert aggregate_manifest["closed_cell_count"] == 54
     assert aggregate_manifest["matrix_complete"] is True
+    assert aggregate_manifest["stage0_plan_sha256"] == evidence_domain.plan_sha256
+    assert aggregate_manifest["stage0_plan_sha256"] != validator._PLAN_SHA256

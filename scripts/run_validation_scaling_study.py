@@ -342,32 +342,60 @@ def _provider_artifact_zip_bytes(
     return content
 
 
+def _bound_artifact_metadata(
+    artifact: object,
+    *,
+    expected_name: str,
+    run_id: int,
+    source_git_sha: str,
+) -> evidence_validator.ProviderArtifactMetadata:
+    if type(artifact) is not dict:
+        raise _RunnerError("provider artifact inventory contains a malformed row")
+    artifact_id = artifact.get("id")
+    size = artifact.get("size_in_bytes")
+    digest = artifact.get("digest")
+    workflow_run = artifact.get("workflow_run")
+    if (
+        type(artifact_id) is not int
+        or artifact_id <= 0
+        or type(size) is not int
+        or size <= 0
+        or type(digest) is not str
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
+        or artifact.get("name") != expected_name
+        or artifact.get("expired") is not False
+        or type(workflow_run) is not dict
+        or workflow_run.get("id") != run_id
+        or workflow_run.get("head_branch") != _SOURCE_TAG
+        or workflow_run.get("head_sha") != source_git_sha
+    ):
+        raise _RunnerError("provider artifact metadata binding changed")
+    return evidence_validator.ProviderArtifactMetadata(
+        artifact_id=artifact_id,
+        name=expected_name,
+        size_in_bytes=size,
+        digest=digest,
+    )
+
+
 def _artifact_metadata_from_provider(
     *,
     run_id: int,
     source_git_sha: str,
     token: str,
-    expected_roles: tuple[str, ...] = ("producer", "replay"),
 ) -> dict[str, evidence_validator.ProviderArtifactMetadata]:
     response = _provider_json(f"/actions/runs/{run_id}/artifacts?per_page=100", token=token)
     artifacts = response.get("artifacts")
     if (
         type(response.get("total_count")) is not int
-        or response["total_count"] != 3 * len(expected_roles)
+        or response["total_count"] != 6
         or type(artifacts) is not list
-        or len(artifacts) != 3 * len(expected_roles)
+        or len(artifacts) != 6
     ):
         raise _RunnerError("provider artifact inventory differs from the expected inputs")
-    if (
-        type(expected_roles) is not tuple
-        or not expected_roles
-        or any(role not in {"producer", "replay"} for role in expected_roles)
-        or len(set(expected_roles)) != len(expected_roles)
-    ):
-        raise _RunnerError("expected provider artifact roles are not closed")
     expected_names = tuple(
         f"validation-scaling-{role}-seed-{ordinal}-v1"
-        for role in expected_roles
+        for role in ("producer", "replay")
         for ordinal in (1, 2, 3)
     )
     by_name: dict[str, dict[str, object]] = {}
@@ -383,34 +411,42 @@ def _artifact_metadata_from_provider(
     result: dict[str, evidence_validator.ProviderArtifactMetadata] = {}
     ids: set[int] = set()
     for name in expected_names:
-        artifact = by_name[name]
-        artifact_id = artifact.get("id")
-        size = artifact.get("size_in_bytes")
-        digest = artifact.get("digest")
-        workflow_run = artifact.get("workflow_run")
-        if (
-            type(artifact_id) is not int
-            or artifact_id <= 0
-            or artifact_id in ids
-            or type(size) is not int
-            or size <= 0
-            or type(digest) is not str
-            or re.fullmatch(r"sha256:[0-9a-f]{64}", digest) is None
-            or artifact.get("expired") is not False
-            or type(workflow_run) is not dict
-            or workflow_run.get("id") != run_id
-            or workflow_run.get("head_branch") != _SOURCE_TAG
-            or workflow_run.get("head_sha") != source_git_sha
-        ):
-            raise _RunnerError("provider artifact metadata binding changed")
-        ids.add(artifact_id)
-        result[name] = evidence_validator.ProviderArtifactMetadata(
-            artifact_id=artifact_id,
-            name=name,
-            size_in_bytes=size,
-            digest=digest,
+        metadata = _bound_artifact_metadata(
+            by_name[name],
+            expected_name=name,
+            run_id=run_id,
+            source_git_sha=source_git_sha,
         )
+        if metadata.artifact_id in ids:
+            raise _RunnerError("provider artifact inventory contains a duplicate ID")
+        ids.add(metadata.artifact_id)
+        result[name] = metadata
     return result
+
+
+def _exact_artifact_metadata_from_provider(
+    *,
+    run_id: int,
+    source_git_sha: str,
+    token: str,
+    expected_name: str,
+) -> evidence_validator.ProviderArtifactMetadata:
+    query = urllib.parse.urlencode({"name": expected_name, "per_page": 100})
+    response = _provider_json(f"/actions/runs/{run_id}/artifacts?{query}", token=token)
+    artifacts = response.get("artifacts")
+    if (
+        type(response.get("total_count")) is not int
+        or response["total_count"] != 1
+        or type(artifacts) is not list
+        or len(artifacts) != 1
+    ):
+        raise _RunnerError("exact provider artifact lookup is not singular")
+    return _bound_artifact_metadata(
+        artifacts[0],
+        expected_name=expected_name,
+        run_id=run_id,
+        source_git_sha=source_git_sha,
+    )
 
 
 def _assert_single_run_inventory(
@@ -638,12 +674,12 @@ def _run(arguments: argparse.Namespace) -> int:
         if arguments.producer_artifact_directory is None:
             raise _RunnerError("independent replay requires one producer artifact")
         expected_name = f"validation-scaling-producer-seed-{arguments.seed_ordinal}-v1"
-        producer_metadata = _artifact_metadata_from_provider(
+        producer_metadata = _exact_artifact_metadata_from_provider(
             run_id=run_id,
             source_git_sha=source_git_sha,
             token=token,
-            expected_roles=("producer",),
-        )[expected_name]
+            expected_name=expected_name,
+        )
         producer_provider_zip = _provider_artifact_zip_bytes(
             producer_metadata,
             token=token,
