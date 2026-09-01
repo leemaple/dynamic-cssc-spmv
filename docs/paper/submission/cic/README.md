@@ -6,10 +6,11 @@ affiliations, acknowledgements, repository identities, exact provider run IDs,
 and source commit identifiers are deliberately absent from the submission PDF.
 
 The package is a formatting and review artifact. It records both terminal
-qualification stops and the later, narrowly bounded current-source E4
-conformance result. It does not turn either stopped qualification into
-performance evidence, does not broaden the one-fixture E4 result, and does not
-authorize a new experiment or artifact claim.
+qualification stops, the narrowly bounded current-source E4 conformance
+result, and a distinct admitted 54-cell validation-scaling study. It does not
+turn either stopped qualification into performance evidence, broaden the
+one-fixture E4 result, rank the maintenance paths, or convert hosted-runner
+validation lifecycle time into native/deployment performance.
 
 This 2026-09-01 candidate has passed local build, text, anonymity, citation,
 metadata, and full-page visual checks. It remains a local review candidate until
@@ -20,6 +21,8 @@ submission-draft reviews.
 
 - `main.tex`: anonymous `iacrcc` submission wrapper;
 - `body.tex`: reviewed Route C manuscript body with blind-review tokens;
+- `VALIDATION_SCALING_SUPPLEMENT.md`: anonymized full numerical observations,
+  exact-rational fits, stopping chronology, and claim-to-evidence boundaries;
 - `references.bib`: primary-source-audited bibliography;
 - `assets/`: the two manuscript diagrams;
 - `iacrcc.cls`: IACR class version 0.78, dated 2025-12-29;
@@ -42,12 +45,12 @@ Two clean builds with that epoch produced byte-identical PDFs. The expected
 preview properties are:
 
 - 21 A4 pages;
-- bibliography begins on page 18, so the manuscript body occupies pages 1--18
+- bibliography begins on page 19, so the manuscript body occupies pages 1--18
   and remains inside the regular-paper 20-page body limit;
 - PDF `Author` metadata is `hidden for submission`;
 - no unresolved citations and no overfull boxes;
 - expected PDF SHA-256:
-  `463e0082f8d0a9e6c3b4cf07bc33e60c1869a64d33b04dbf1bd79b6c33deb971`.
+  `aa756d9fd3cfe4ab40ab7606ae49eb82547c8df41b2ce9db88092d7cb7506a49`.
 
 The current Tectonic bundle emits invalid-UTF-8 warnings while reading comments
 inside its cached `listofitems.tex`; extracted manuscript text contains no

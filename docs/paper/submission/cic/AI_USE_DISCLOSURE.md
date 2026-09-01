@@ -35,9 +35,9 @@ producers, or substitutes for the preregistered execution gates.
    diagrams, tables, and formatting. The functional propositions and evidence
    boundary were checked against the frozen implementation and provenance
    records; no AI output was itself used as an experimental result. The same
-   process was used to add the separately stopped follow-up chronology and the
-   current-source E4 conformance addendum while preserving their narrower claim
-   boundaries.
+   process was used to add the separately stopped follow-up chronology, the
+   current-source E4 conformance addendum, and the admitted validation-scaling
+   study while preserving their distinct claim boundaries.
 5. Venue packaging and quality assurance. AI systems assisted conversion to the
    anonymous CiC class, identity-leakage scans, citation-key reconciliation,
    deterministic rebuild checks, PDF metadata inspection, and page-by-page
@@ -73,6 +73,12 @@ also supplied an exact file, commit, digest, or evidence packet.
 > current-source E4 conformance result. State the exact positive functional
 > observation and retain every exclusion on admission, security, deployment,
 > performance, speedup, and general correctness.
+
+> Integrate the separately preregistered validation-scaling result only after
+> the sole tagged attempt and independent aggregate rebuild pass. Report the
+> complete 54-cell semantic/compile closure and descriptive lifecycle fits, but
+> prohibit strategy ranking, speedup, native/deployment performance,
+> asymptotic inference, general correctness, and security claims.
 
 > Convert the reviewed manuscript to the venue template, keep author fields
 > anonymous, preserve mathematical notation, check unresolved citations and
