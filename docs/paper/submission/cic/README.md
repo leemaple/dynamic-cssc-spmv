@@ -14,8 +14,8 @@ validation lifecycle time into native/deployment performance.
 
 This 2026-09-01 candidate has passed local build, text, anonymity, citation,
 metadata, and full-page visual checks. It remains a local review candidate until
-the exact frozen package receives the project's required ChatGPT Pro and ZCode
-submission-draft reviews.
+the exact frozen package receives both the project's required ChatGPT Pro and
+user-authorized Fable-for-ZCode submission-draft reviews.
 
 ## Contents
 
