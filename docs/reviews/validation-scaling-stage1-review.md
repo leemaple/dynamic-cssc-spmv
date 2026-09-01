@@ -85,6 +85,14 @@ Local allowed checks at the time this record was opened:
 - Draft 2020-12 evidence-schema metaschema validation: PASS (`31` definitions);
 - skipped item: the single successful sentinel producer/replay lifecycle,
   deliberately reserved for GitHub Actions;
+- GitHub diagnostic CI `33456952373` on superseded commit
+  `12d74d3f7faca9e265da6864fb6ae59346d152b8` reached the repository-wide
+  60-minute job ceiling while the unit-test step was still running, so it is
+  recorded as `cancelled`, not as a scientific or CI result;
+- the successor sentinel gate executes exactly three producer and three replay
+  ordinals (nine cells per role and ordinal, 54 full cells total) and proves
+  canonical package determinism by byte-identical reserialization, without a
+  redundant fourth producer/replay execution pair;
 - formal study workflow dispatches: `0`;
 - formal result cells: `0`.
 

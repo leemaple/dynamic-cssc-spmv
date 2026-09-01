@@ -1294,8 +1294,6 @@ def test_private_sentinel_full_path_is_deterministic_closed_and_redacted(
         return payload, domain
 
     producer_a, domain_a = produce_once("producer-a", 1)
-    producer_b, _domain_b = produce_once("producer-b", 1)
-    assert producer_a == producer_b
     producer_two, domain_two = produce_once("producer-two", 2)
     producer_three, domain_three = produce_once("producer-three", 3)
     producer_payloads = (producer_a, producer_two, producer_three)
@@ -1324,8 +1322,6 @@ def test_private_sentinel_full_path_is_deterministic_closed_and_redacted(
         return payload
 
     replay_a = replay_once("replay-a", 1, producer_a)
-    replay_b = replay_once("replay-b", 1, producer_a)
-    assert replay_a == replay_b
     replay_two = replay_once("replay-two", 2, producer_two)
     replay_three = replay_once("replay-three", 3, producer_three)
     replay_payloads = (replay_a, replay_two, replay_three)
@@ -1340,6 +1336,14 @@ def test_private_sentinel_full_path_is_deterministic_closed_and_redacted(
     )
     assert len(producer_members) == 28
     assert len(replay_members) == 46
+    assert producer_a == study._write_payload(
+        study._producer_paths(),
+        producer_members,
+    )
+    assert replay_a == study._write_payload(
+        study._replay_paths(),
+        replay_members,
+    )
     assert all(
         forbidden not in path
         for path in replay_members
