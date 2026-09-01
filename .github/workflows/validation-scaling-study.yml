@@ -1,0 +1,278 @@
+name: Validation-scaling study
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  OMP_NUM_THREADS: '1'
+  OPENBLAS_NUM_THREADS: '1'
+  MKL_NUM_THREADS: '1'
+  PYTHONHASHSEED: '0'
+
+jobs:
+  producer:
+    name: producer-seed-${{ matrix.seed_ordinal }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: true
+      max-parallel: 3
+      matrix:
+        seed_ordinal: [1, 2, 3]
+    steps:
+      - name: Checkout exact source tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: validation-scaling-source-v2
+      - name: Verify immutable source and Stage-0 bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$GITHUB_REF" = refs/tags/validation-scaling-source-v2
+          test "$GITHUB_REF_TYPE" = tag
+          test "$GITHUB_REF_NAME" = validation-scaling-source-v2
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git cat-file -t refs/tags/validation-scaling-source-v2)" = tag
+          test "$(git rev-parse refs/tags/validation-scaling-source-v2^{})" = "$GITHUB_SHA"
+          test "$(git cat-file -t refs/tags/validation-scaling-stage0-v2)" = tag
+          git merge-base --is-ancestor refs/tags/validation-scaling-stage0-v2^{} HEAD
+          while IFS= read -r path; do
+            case "$path" in
+              .github/workflows/validation-scaling-study.yml|docs/reviews/validation-scaling-stage1-review.md|schemas/validation-scaling-evidence-v1.schema.json|scripts/run_validation_scaling_study.py|scripts/validate_validation_scaling_study.py|src/dynamic_cssc/validation_scaling_study.py|tests/test_validation_scaling_study.py|tests/test_validation_scaling_workflow.py) ;;
+              *) echo "out-of-scope source path: $path" >&2; exit 1 ;;
+            esac
+          done < <(git diff --name-only refs/tags/validation-scaling-stage0-v2^{} HEAD)
+          for path in \
+            config/validation-scaling-study.json \
+            docs/paper/validation-scaling-claim-ledger.md \
+            docs/paper/validation-scaling-preregistration.md \
+            schemas/validation-scaling-study-v2.schema.json \
+            config/validation-scaling-stage0-manifest.json
+          do
+            cmp <(git show "refs/tags/validation-scaling-stage0-v2^{}:$path") "$path"
+          done
+      - name: Set up exact CPython
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12.13'
+          cache: pip
+      - name: Install hash-locked environment
+        run: |
+          python -m pip install --require-hashes -r requirements-ci.txt
+          python -m pip install --no-deps -e .
+      - name: Produce exact private seed payload
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SEED_ORDINAL: ${{ matrix.seed_ordinal }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          scratch="$RUNNER_TEMP/validation-scaling-producer-scratch-$SEED_ORDINAL"
+          output="$RUNNER_TEMP/validation-scaling-producer-output-$SEED_ORDINAL"
+          mkdir -m 0700 "$scratch" "$output"
+          python scripts/run_validation_scaling_study.py \
+            --role producer \
+            --seed-ordinal "$SEED_ORDINAL" \
+            --plan "$GITHUB_WORKSPACE/config/validation-scaling-study.json" \
+            --scratch-root "$scratch" \
+            --output-directory "$output"
+      - name: Upload one-day private producer artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: validation-scaling-producer-seed-${{ matrix.seed_ordinal }}-v1
+          path: ${{ runner.temp }}/validation-scaling-producer-output-${{ matrix.seed_ordinal }}
+          if-no-files-found: error
+          retention-days: 1
+
+  replay:
+    name: replay-seed-${{ matrix.seed_ordinal }}
+    needs: producer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: true
+      max-parallel: 3
+      matrix:
+        seed_ordinal: [1, 2, 3]
+    steps:
+      - name: Checkout exact source tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: validation-scaling-source-v2
+      - name: Verify immutable source and Stage-0 bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$GITHUB_REF" = refs/tags/validation-scaling-source-v2
+          test "$GITHUB_REF_TYPE" = tag
+          test "$GITHUB_REF_NAME" = validation-scaling-source-v2
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git cat-file -t refs/tags/validation-scaling-source-v2)" = tag
+          test "$(git rev-parse refs/tags/validation-scaling-source-v2^{})" = "$GITHUB_SHA"
+          test "$(git cat-file -t refs/tags/validation-scaling-stage0-v2)" = tag
+          git merge-base --is-ancestor refs/tags/validation-scaling-stage0-v2^{} HEAD
+          while IFS= read -r path; do
+            case "$path" in
+              .github/workflows/validation-scaling-study.yml|docs/reviews/validation-scaling-stage1-review.md|schemas/validation-scaling-evidence-v1.schema.json|scripts/run_validation_scaling_study.py|scripts/validate_validation_scaling_study.py|src/dynamic_cssc/validation_scaling_study.py|tests/test_validation_scaling_study.py|tests/test_validation_scaling_workflow.py) ;;
+              *) echo "out-of-scope source path: $path" >&2; exit 1 ;;
+            esac
+          done < <(git diff --name-only refs/tags/validation-scaling-stage0-v2^{} HEAD)
+          for path in \
+            config/validation-scaling-study.json \
+            docs/paper/validation-scaling-claim-ledger.md \
+            docs/paper/validation-scaling-preregistration.md \
+            schemas/validation-scaling-study-v2.schema.json \
+            config/validation-scaling-stage0-manifest.json
+          do
+            cmp <(git show "refs/tags/validation-scaling-stage0-v2^{}:$path") "$path"
+          done
+      - name: Set up exact CPython
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12.13'
+          cache: pip
+      - name: Install hash-locked environment
+        run: |
+          python -m pip install --require-hashes -r requirements-ci.txt
+          python -m pip install --no-deps -e .
+      - name: Download matching private producer artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: validation-scaling-producer-seed-${{ matrix.seed_ordinal }}-v1
+          path: ${{ runner.temp }}/validation-scaling-producer-input-${{ matrix.seed_ordinal }}
+      - name: Independently replay and redact one seed payload
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SEED_ORDINAL: ${{ matrix.seed_ordinal }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          scratch="$RUNNER_TEMP/validation-scaling-replay-scratch-$SEED_ORDINAL"
+          output="$RUNNER_TEMP/validation-scaling-replay-output-$SEED_ORDINAL"
+          mkdir -m 0700 "$scratch" "$output"
+          python scripts/run_validation_scaling_study.py \
+            --role independent-replay \
+            --seed-ordinal "$SEED_ORDINAL" \
+            --plan "$GITHUB_WORKSPACE/config/validation-scaling-study.json" \
+            --scratch-root "$scratch" \
+            --output-directory "$output" \
+            --producer-artifact-directory "$RUNNER_TEMP/validation-scaling-producer-input-$SEED_ORDINAL"
+      - name: Upload redacted replay artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: validation-scaling-replay-seed-${{ matrix.seed_ordinal }}-v1
+          path: ${{ runner.temp }}/validation-scaling-replay-output-${{ matrix.seed_ordinal }}
+          if-no-files-found: error
+          retention-days: 90
+
+  aggregate:
+    name: aggregate
+    needs: replay
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact source tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: validation-scaling-source-v2
+      - name: Verify immutable source and Stage-0 bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$GITHUB_REF" = refs/tags/validation-scaling-source-v2
+          test "$GITHUB_REF_TYPE" = tag
+          test "$GITHUB_REF_NAME" = validation-scaling-source-v2
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git cat-file -t refs/tags/validation-scaling-source-v2)" = tag
+          test "$(git rev-parse refs/tags/validation-scaling-source-v2^{})" = "$GITHUB_SHA"
+          test "$(git cat-file -t refs/tags/validation-scaling-stage0-v2)" = tag
+          git merge-base --is-ancestor refs/tags/validation-scaling-stage0-v2^{} HEAD
+          while IFS= read -r path; do
+            case "$path" in
+              .github/workflows/validation-scaling-study.yml|docs/reviews/validation-scaling-stage1-review.md|schemas/validation-scaling-evidence-v1.schema.json|scripts/run_validation_scaling_study.py|scripts/validate_validation_scaling_study.py|src/dynamic_cssc/validation_scaling_study.py|tests/test_validation_scaling_study.py|tests/test_validation_scaling_workflow.py) ;;
+              *) echo "out-of-scope source path: $path" >&2; exit 1 ;;
+            esac
+          done < <(git diff --name-only refs/tags/validation-scaling-stage0-v2^{} HEAD)
+          for path in \
+            config/validation-scaling-study.json \
+            docs/paper/validation-scaling-claim-ledger.md \
+            docs/paper/validation-scaling-preregistration.md \
+            schemas/validation-scaling-study-v2.schema.json \
+            config/validation-scaling-stage0-manifest.json
+          do
+            cmp <(git show "refs/tags/validation-scaling-stage0-v2^{}:$path") "$path"
+          done
+      - name: Set up exact CPython
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12.13'
+          cache: pip
+      - name: Install hash-locked environment
+        run: |
+          python -m pip install --require-hashes -r requirements-ci.txt
+          python -m pip install --no-deps -e .
+      - name: Download producer seed 1
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: validation-scaling-producer-seed-1-v1
+          path: ${{ runner.temp }}/validation-scaling-inputs/producer-seed-1
+      - name: Download producer seed 2
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: validation-scaling-producer-seed-2-v1
+          path: ${{ runner.temp }}/validation-scaling-inputs/producer-seed-2
+      - name: Download producer seed 3
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: validation-scaling-producer-seed-3-v1
+          path: ${{ runner.temp }}/validation-scaling-inputs/producer-seed-3
+      - name: Download replay seed 1
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: validation-scaling-replay-seed-1-v1
+          path: ${{ runner.temp }}/validation-scaling-inputs/replay-seed-1
+      - name: Download replay seed 2
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: validation-scaling-replay-seed-2-v1
+          path: ${{ runner.temp }}/validation-scaling-inputs/replay-seed-2
+      - name: Download replay seed 3
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: validation-scaling-replay-seed-3-v1
+          path: ${{ runner.temp }}/validation-scaling-inputs/replay-seed-3
+      - name: Independently validate and aggregate all 54 cells
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          scratch="$RUNNER_TEMP/validation-scaling-aggregate-scratch"
+          output="$RUNNER_TEMP/validation-scaling-aggregate-output"
+          mkdir -m 0700 "$scratch" "$output"
+          python scripts/run_validation_scaling_study.py \
+            --role aggregate \
+            --plan "$GITHUB_WORKSPACE/config/validation-scaling-study.json" \
+            --scratch-root "$scratch" \
+            --output-directory "$output" \
+            --input-root "$RUNNER_TEMP/validation-scaling-inputs"
+      - name: Upload redacted aggregate artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: validation-scaling-aggregate-v1
+          path: ${{ runner.temp }}/validation-scaling-aggregate-output/aggregate.zip
+          if-no-files-found: error
+          retention-days: 90
