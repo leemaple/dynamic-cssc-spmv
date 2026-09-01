@@ -220,7 +220,7 @@ which is exactly the auxiliary contribution to row \(r\); adding the CSSC-base c
 
 At historical baseline commit \texttt{blinded-baseline}, the Python implementation supplied typed persistent states, a common query compiler, exact operation graphs, private operand/route bindings, a plaintext oracle, SQLite no-reuse commitments, canonical artifacts, and a separate deterministic replay validator. The encrypted path uses BFV-family batching, whose original scheme lineage is Fan--Vercauteren \cite{fan2012somewhat}, through OpenFHE 1.5.1 pinned by source commit \cite{openfhe151}.
 
-At that historical baseline, R0 passed 750 tests and the Phase 2 whole-query witness passed in run \texttt{32581653504}. The witness exercises a 4096-by-8193 fixture, global-column anti-aliasing, the 127-of-128 segment boundary, the unused second BFV batching row, explicit no-relinearize/relinearize transitions, random and dummy F1-M operands, and equality with both typed and direct plaintext oracles. Its GitHub Actions artifact-wrapper SHA-256 digest is recorded in the version-bound claim-ledger supplement (\texttt{c5f44b0c…4711afe}).
+At that historical baseline, R0 passed 750 tests and the Phase 2 whole-query witness passed in run \texttt{blinded-baseline-run}. The witness exercises a 4096-by-8193 fixture, global-column anti-aliasing, the 127-of-128 segment boundary, the unused second BFV batching row, explicit no-relinearize/relinearize transitions, random and dummy F1-M operands, and equality with both typed and direct plaintext oracles. Its GitHub Actions artifact-wrapper SHA-256 digest is recorded in the version-bound claim-ledger supplement.
 
 A separate preregistered current-source replication retained that fixture,
 expected output, OpenFHE pin, and witness specification while binding them to
@@ -590,8 +590,9 @@ All 54 compile-depth gates passed. The observed count pairs were
 \((Q,C)=(5,10),(51,102),(512,1024)\), and all 27 replay cells matched their
 bound producer semantic projections. Table~5 reports the registered wall-time
 summaries. Each timing entry is median [minimum, maximum] seconds across the
-three seeds, rounded half-even to three decimals for space; the fit column is
-\(\alpha\) seconds / \(\beta\) seconds per query / \(R^2\). Exact integer
+three seeds, rounded half-even to three decimals for space. In the fit column,
+\(\alpha\), \(\beta\), and \(R^2\) are rounded half-even to three, four, and
+six decimals, respectively. Exact integer
 nanoseconds, process times, stage fields, nine-decimal renderings, and reduced
 rational fits are in the anonymous supplement. PR-1 denotes
 \texttt{periodic-repack/windows=1}, Pad denotes \texttt{padding-reuse}, and
@@ -600,26 +601,26 @@ independent replay.
 
 \textbf{Table 5. Descriptive current-source validation lifecycle.}
 
-{\scriptsize\setlength{\tabcolsep}{2pt}\def\LTcaptype{none}
+{\scriptsize\setlength{\tabcolsep}{1pt}\def\LTcaptype{none}
 \begin{longtable}[]{@{}
-  >{\raggedright\arraybackslash}p{0.10\linewidth}
+  >{\raggedright\arraybackslash}p{0.075\linewidth}
   >{\centering\arraybackslash}p{0.04\linewidth}
-  >{\raggedleft\arraybackslash}p{0.175\linewidth}
-  >{\raggedleft\arraybackslash}p{0.175\linewidth}
-  >{\raggedleft\arraybackslash}p{0.175\linewidth}
-  >{\raggedleft\arraybackslash}p{0.205\linewidth}@{}}
+  >{\raggedleft\arraybackslash}p{0.17\linewidth}
+  >{\raggedleft\arraybackslash}p{0.185\linewidth}
+  >{\raggedleft\arraybackslash}p{0.22\linewidth}
+  >{\raggedleft\arraybackslash}p{0.24\linewidth}@{}}
 \toprule\noalign{}
 Path & Role & \(Q=5\) & \(Q=51\) & \(Q=512\) & \(\alpha/\beta/R^2\) \\
 \midrule\noalign{}
 \endhead
 \bottomrule\noalign{}
 \endlastfoot
-PR-1 & P & 0.507 [0.494, 0.533] & 3.300 [3.248, 3.477] & 32.915 [32.545, 35.868] & 0.114 / 0.0641 / 0.999982 \\
-PR-1 & R & 0.535 [0.463, 0.544] & 3.492 [2.984, 3.515] & 34.046 [29.167, 34.302] & 0.163 / 0.0662 / 0.999994 \\
-Pad & P & 0.486 [0.474, 0.487] & 3.085 [3.040, 3.214] & 29.918 [29.681, 31.403] & 0.160 / 0.0581 / 0.999995 \\
-Pad & R & 0.504 [0.435, 0.505] & 3.169 [2.823, 3.247] & 30.843 [26.839, 30.980] & 0.161 / 0.0599 / 0.999993 \\
-Seg-128 & P & 1.014 [0.976, 1.046] & 7.094 [6.883, 7.358] & 69.763 [67.589, 71.420] & 0.257 / 0.1357 / 0.999995 \\
-Seg-128 & R & 1.054 [0.976, 1.127] & 7.527 [6.864, 7.929] & 73.518 [66.060, 77.086] & 0.289 / 0.1430 / 0.999998 \\
+PR-1 & P & 0.507[0.494,0.533] & 3.300[3.248,3.477] & 32.915[32.545,35.868] & 0.114/0.0641/0.999982 \\
+PR-1 & R & 0.535[0.463,0.544] & 3.492[2.984,3.515] & 34.046[29.167,34.302] & 0.163/0.0662/0.999994 \\
+Pad & P & 0.486[0.474,0.487] & 3.085[3.040,3.214] & 29.918[29.681,31.403] & 0.160/0.0581/0.999995 \\
+Pad & R & 0.504[0.435,0.505] & 3.169[2.823,3.247] & 30.843[26.839,30.980] & 0.161/0.0599/0.999993 \\
+Seg-128 & P & 1.014[0.976,1.046] & 7.094[6.883,7.358] & 69.763[67.589,71.420] & 0.257/0.1357/0.999995 \\
+Seg-128 & R & 1.054[0.976,1.127] & 7.527[6.864,7.929] & 73.518[66.060,77.086] & 0.289/0.1430/0.999998 \\
 \end{longtable}
 }
 

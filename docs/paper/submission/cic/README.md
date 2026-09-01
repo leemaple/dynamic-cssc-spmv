@@ -50,7 +50,7 @@ preview properties are:
 - PDF `Author` metadata is `hidden for submission`;
 - no unresolved citations and no overfull boxes;
 - expected PDF SHA-256:
-  `aa756d9fd3cfe4ab40ab7606ae49eb82547c8df41b2ce9db88092d7cb7506a49`.
+  `5a07fb4e4b88831f8b2531d51ece93796f19286f15cd395eab843d5774ef7ade`.
 
 The current Tectonic bundle emits invalid-UTF-8 warnings while reading comments
 inside its cached `listofitems.tex`; extracted manuscript text contains no
