@@ -1,5 +1,13 @@
 # Publication Roadmap
 
+> **Historical roadmap.** This 2026-08-24 execution plan is retained as lineage
+> history and must not be read as the current publication state. The later
+> validation-scaling study completed once, its admitted 54-cell result was
+> integrated into the final anonymous CiC manuscript, and the exact manuscript
+> received dual P0/P1/P2-zero review. Current status is in
+> `../reviews/publication-completion-matrix-2026-09-01.md`; this historical plan
+> does not authorize rerunning any stopped or completed experiment.
+
 > **Status date:** 2026-08-24 (Asia/Shanghai)
 >
 > **Target A:** *Journal of Cryptographic Engineering*
