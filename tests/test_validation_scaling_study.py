@@ -6,7 +6,12 @@ import io
 import json
 import os
 import stat
+import subprocess
+import sys
+import urllib.error
 import zipfile
+from contextlib import nullcontext
+from email.message import Message
 from fractions import Fraction
 from pathlib import Path
 
@@ -85,6 +90,33 @@ def test_public_operation_rejects_any_changed_plan_byte(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="differ from the exact Stage-0 v2 plan"):
         produce_validation_scaling_seed_shard(
             plan_bytes=changed,
+            seed_ordinal=1,
+            scratch_root=scratch,
+        )
+    assert scratch.is_dir()
+
+
+def test_public_operation_rejects_duplicate_key_plan_before_trace(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    scratch = _empty_scratch(tmp_path)
+    duplicate = PLAN_BYTES.replace(
+        b'{\n  "analysis":',
+        b'{\n  "analysis": {},\n  "analysis":',
+        1,
+    )
+    assert duplicate != PLAN_BYTES
+    monkeypatch.setattr(
+        study,
+        "generate_route_a_formal_trace",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("trace generation must remain unreachable")
+        ),
+    )
+    with pytest.raises(ValueError, match="exact Stage-0 v2 plan"):
+        produce_validation_scaling_seed_shard(
+            plan_bytes=duplicate,
             seed_ordinal=1,
             scratch_root=scratch,
         )
@@ -292,6 +324,14 @@ def test_semantic_projection_excludes_measurements() -> None:
     assert b"123" not in projection
 
 
+def test_compile_depth_gate_accepts_both_boundaries_and_rejects_outside() -> None:
+    assert study._validate_compile_count(5, 5) == 5
+    assert study._validate_compile_count(5, 10) == 5
+    for compile_count in (4, 11):
+        with pytest.raises(ValueError, match="Q <= compile_query calls <= 2Q"):
+            study._validate_compile_count(5, compile_count)
+
+
 def test_canonical_payload_round_trip_and_reordered_archive_rejection() -> None:
     paths = study._producer_paths()
     members = {path: f"member:{path}\n".encode("ascii") for path in paths}
@@ -387,14 +427,22 @@ def test_outer_provider_artifact_ignores_physical_order_but_rejects_links(
     directory.mkdir()
     payload = b"opaque producer payload"
     (directory / "payload.zip").write_bytes(payload)
-    (directory / "execution-receipt.json").write_bytes(
-        _execution_receipt_bytes(payload=payload)
+    receipt = _execution_receipt_bytes(payload=payload)
+    (directory / "execution-receipt.json").write_bytes(receipt)
+    provider_zip = _outer_provider_zip(payload=payload, receipt=receipt)
+    metadata = validator.ProviderArtifactMetadata(
+        artifact_id=1,
+        name="validation-scaling-producer-seed-1-v1",
+        size_in_bytes=len(provider_zip),
+        digest="sha256:" + hashlib.sha256(provider_zip).hexdigest(),
     )
     assert runner._read_producer_artifact(
         directory,
         seed_ordinal=1,
         github_run_id=77,
         source_git_sha="a" * 40,
+        provider_zip_bytes=provider_zip,
+        provider_metadata=metadata,
     ) == payload
 
     (directory / "payload.zip").unlink()
@@ -407,7 +455,171 @@ def test_outer_provider_artifact_ignores_physical_order_but_rejects_links(
             seed_ordinal=1,
             github_run_id=77,
             source_git_sha="a" * 40,
+            provider_zip_bytes=provider_zip,
+            provider_metadata=metadata,
         )
+
+
+def _outer_provider_zip(*, payload: bytes, receipt: bytes) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, content in (
+            ("payload.zip", payload),
+            ("execution-receipt.json", receipt),
+        ):
+            info = zipfile.ZipInfo(name, date_time=(2026, 9, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 3
+            info.external_attr = (stat.S_IFREG | 0o644) << 16
+            archive.writestr(info, content)
+    return buffer.getvalue()
+
+
+def _provider_zip_metadata(content: bytes) -> validator.ProviderArtifactMetadata:
+    return validator.ProviderArtifactMetadata(
+        artifact_id=1,
+        name="validation-scaling-producer-seed-1-v1",
+        size_in_bytes=len(content),
+        digest="sha256:" + hashlib.sha256(content).hexdigest(),
+    )
+
+
+def test_outer_provider_zip_is_rehashed_and_matches_extracted_files(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "artifact"
+    directory.mkdir()
+    payload = b"opaque producer payload"
+    receipt = _execution_receipt_bytes(payload=payload)
+    (directory / "payload.zip").write_bytes(payload)
+    (directory / "execution-receipt.json").write_bytes(receipt)
+    provider_zip = _outer_provider_zip(payload=payload, receipt=receipt)
+    metadata = _provider_zip_metadata(provider_zip)
+    assert runner._read_producer_artifact(
+        directory,
+        seed_ordinal=1,
+        github_run_id=77,
+        source_git_sha="a" * 40,
+        provider_zip_bytes=provider_zip,
+        provider_metadata=metadata,
+    ) == payload
+
+    (directory / "payload.zip").write_bytes(b"different extracted bytes")
+    with pytest.raises(ValueError, match="provider ZIP"):
+        runner._read_producer_artifact(
+            directory,
+            seed_ordinal=1,
+            github_run_id=77,
+            source_git_sha="a" * 40,
+            provider_zip_bytes=provider_zip,
+            provider_metadata=metadata,
+        )
+
+
+def _custom_provider_zip(
+    entries: tuple[tuple[str, bytes, int], ...],
+) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as archive:
+        for name, content, mode in entries:
+            info = zipfile.ZipInfo(name, date_time=(2026, 9, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_STORED
+            info.create_system = 3
+            info.external_attr = mode << 16
+            archive.writestr(info, content)
+    return buffer.getvalue()
+
+
+def test_provider_zip_rejects_missing_extra_duplicate_link_and_unsafe_entries() -> None:
+    regular = stat.S_IFREG | 0o400
+    link = stat.S_IFLNK | 0o777
+    payload = b"payload"
+    receipt = b"receipt"
+    cases = (
+        (("payload.zip", payload, regular),),
+        (
+            ("execution-receipt.json", receipt, regular),
+            ("payload.zip", payload, regular),
+            ("extra.txt", b"extra", regular),
+        ),
+        (
+            ("execution-receipt.json", receipt, regular),
+            ("payload.zip", payload, regular),
+            ("payload.zip", payload, regular),
+        ),
+        (
+            ("execution-receipt.json", receipt, regular),
+            ("payload.zip", b"target", link),
+        ),
+        (
+            ("execution-receipt.json", receipt, regular),
+            ("../payload.zip", payload, regular),
+        ),
+    )
+    for index, entries in enumerate(cases):
+        context = (
+            pytest.warns(UserWarning, match="Duplicate name")
+            if index == 2
+            else nullcontext()
+        )
+        with context:
+            content = _custom_provider_zip(entries)
+        with pytest.raises(ValueError, match="provider ZIP"):
+            validator._read_provider_seed_artifact_zip(
+                content,
+                metadata=_provider_zip_metadata(content),
+            )
+
+
+def test_provider_zip_download_strips_authorization_from_signed_redirect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = b"provider zip bytes"
+    metadata = _provider_zip_metadata(content)
+    api_requests: list[object] = []
+    signed_requests: list[object] = []
+    headers = Message()
+    headers["Location"] = "https://signed.example.test/artifact.zip?token=sentinel"
+
+    class FakeOpener:
+        def open(self, request: object, timeout: int) -> None:
+            api_requests.append(request)
+            raise urllib.error.HTTPError(
+                "https://api.github.com/artifact",
+                302,
+                "Found",
+                headers,
+                None,
+            )
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self) -> FakeResponse:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self, limit: int) -> bytes:
+            assert limit == len(content) + 1
+            return content
+
+    def signed_urlopen(request: object, timeout: int) -> FakeResponse:
+        signed_requests.append(request)
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        runner,
+        "_provider_context",
+        lambda: ("https://api.github.com", "owner/repository"),
+    )
+    monkeypatch.setattr(runner.urllib.request, "build_opener", lambda *args: FakeOpener())
+    monkeypatch.setattr(runner.urllib.request, "urlopen", signed_urlopen)
+    assert runner._provider_artifact_zip_bytes(metadata, token="secret") == content
+    assert len(api_requests) == len(signed_requests) == 1
+    assert api_requests[0].get_header("Authorization") == "Bearer secret"  # type: ignore[union-attr]
+    assert signed_requests[0].get_header("Authorization") is None  # type: ignore[union-attr]
 
 
 def _provider_artifacts(run_id: int, source_git_sha: str) -> dict[str, object]:
@@ -543,6 +755,12 @@ def test_provider_job_inventory_rejects_self_terminal_and_duplicate_ids(
     with pytest.raises(ValueError, match="successful terminal observation"):
         runner._job_observations_from_provider(run_id=77, token="sentinel")
 
+    response = _provider_jobs()
+    response["jobs"][0]["completed_at"] = "2026-09-01T00:00:05Z"  # type: ignore[index]
+    monkeypatch.setattr(runner, "_provider_json", lambda *args, **kwargs: response)
+    with pytest.raises(ValueError, match="future dependency interval"):
+        runner._job_observations_from_provider(run_id=77, token="sentinel")
+
 
 def _seed_evidence_for_provider(
     *,
@@ -619,6 +837,98 @@ def test_provider_intervals_enclose_process_owned_receipt_intervals() -> None:
         validator._validate_provider_observations(observations, tuple(outside))
 
 
+def test_runner_direct_file_entrypoint_reaches_help_without_repository_on_sys_path() -> None:
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(REPOSITORY_ROOT / "src")
+    result = subprocess.run(
+        [sys.executable, "scripts/run_validation_scaling_study.py", "--help"],
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--role" in result.stdout
+
+
+def _malformed_nested_producer_payload(
+    domain: study._ValidationScalingDomain,
+    record: study._SeedRecord,
+) -> bytes:
+    source_trace_sha256 = "c" * 64
+    semantic = canonical_route_a_document(
+        {field: {"sentinel": field} for field in study._SEMANTIC_FIELDS}
+    )
+    members: dict[str, bytes] = {}
+    cell_ordinal = 0
+    for strategy in record.strategy_order:
+        for rho in record.rho_order:
+            prefix = f"cells/{cell_ordinal:02d}"
+            row = canonical_route_a_document(
+                {
+                    "strategy_candidate_id": strategy,
+                    "rho": study._rho_text(rho),
+                    "formal_seed": record.formal_seed,
+                    "seed_ordinal": record.ordinal,
+                    "role": "producer",
+                    "query_count": study._QUERY_COUNTS[rho],
+                    "compile_query_call_count": study._QUERY_COUNTS[rho],
+                    "operation_wall_nanoseconds": 1,
+                    "operation_process_nanoseconds": 1,
+                    "producer_cell_archive_wall_nanoseconds_or_null": 1,
+                    "producer_cell_archive_process_nanoseconds_or_null": 1,
+                    "producer_state_transition_nanoseconds_or_null": 1,
+                    "producer_result_assembly_nanoseconds_or_null": 1,
+                    "replay_elapsed_nanoseconds_or_null": None,
+                    "semantic_projection_sha256": hashlib.sha256(semantic).hexdigest(),
+                    "source_trace_sha256": source_trace_sha256,
+                    "machine_plan_sha256": study._MACHINE_PLAN_SHA256,
+                }
+            )
+            members[f"{prefix}/timing-row.json"] = row
+            members[f"{prefix}/semantic-projection.json"] = semantic
+            members[f"{prefix}/producer-cell.zip"] = b"not-a-nested-archive"
+            cell_ordinal += 1
+    payload_members = tuple(members.items())
+    members["manifest.json"] = study._payload_manifest(
+        role="producer",
+        domain=domain,
+        record=record,
+        source_trace_sha256=source_trace_sha256,
+        members=payload_members,
+        producer_payload_sha256=None,
+    )
+    return study._write_payload(study._producer_paths(), members)
+
+
+def test_malformed_nested_archive_is_rejected_before_registered_trace_generation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    domain = study._make_validation_scaling_sentinel_domain(
+        qualification_seed=91_001,
+        formal_seeds=(91_002, 91_003, 91_004),
+        query_vector_seed=91_005,
+        wall_clock_ns=lambda: 0,
+        process_clock_ns=lambda: 0,
+    )
+    payload = _malformed_nested_producer_payload(domain, domain.records[0])
+
+    def forbidden_trace(*args: object, **kwargs: object) -> None:
+        raise AssertionError("trace generation must remain unreachable")
+
+    monkeypatch.setattr(study, "generate_route_a_formal_trace", forbidden_trace)
+    with pytest.raises(ValueError, match="nested producer archive"):
+        study._replay_payload(
+            domain,
+            domain.records[0],
+            b"machine-plan",
+            payload,
+            _empty_scratch(tmp_path),
+        )
+
+
 def test_evidence_schema_is_closed_json_with_all_required_document_defs() -> None:
     schema = json.loads(
         (REPOSITORY_ROOT / "schemas/validation-scaling-evidence-v1.schema.json").read_text(
@@ -631,6 +941,123 @@ def test_evidence_schema_is_closed_json_with_all_required_document_defs() -> Non
     assert schema["$defs"]["seedManifest"]["additionalProperties"] is False
     assert schema["$defs"]["aggregateManifest"]["additionalProperties"] is False
     assert len(schema["oneOf"]) == 12
+
+
+def test_schema_negative_key_fixtures_cover_every_closed_object_definition() -> None:
+    schema = json.loads(
+        (REPOSITORY_ROOT / "schemas/validation-scaling-evidence-v1.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    checked: set[str] = set()
+    for name, definition in schema["$defs"].items():
+        if definition.get("type") != "object":
+            continue
+        assert definition.get("additionalProperties") is False, name
+        properties = definition.get("properties")
+        required = definition.get("required")
+        assert type(properties) is dict and properties, name
+        assert type(required) is list and required, name
+        assert len(required) == len(set(required)), name
+        assert set(required) <= set(properties), name
+
+        valid_keys = {key: object() for key in properties}
+        assert not (set(valid_keys) - set(properties))
+        for required_key in required:
+            missing = dict(valid_keys)
+            missing.pop(required_key)
+            assert set(required) - set(missing) == {required_key}, (name, required_key)
+        extra = {**valid_keys, "unexpected_stage1_field": object()}
+        assert set(extra) - set(properties) == {"unexpected_stage1_field"}, name
+        checked.add(name)
+
+    assert checked == {
+        name
+        for name, definition in schema["$defs"].items()
+        if definition.get("type") == "object"
+    }
+
+
+def test_independent_decoder_rejects_missing_and_extra_receipt_fields() -> None:
+    payload = b"sentinel payload"
+    receipt = json.loads(_execution_receipt_bytes(payload=payload))
+    validator._validate_receipt(
+        canonical_route_a_document(receipt),
+        role="producer",
+        seed_ordinal=1,
+        payload=payload,
+        run_id=77,
+        source_git_sha="a" * 40,
+    )
+    for mutation in ("missing", "extra"):
+        changed = dict(receipt)
+        if mutation == "missing":
+            changed.pop("payload_sha256")
+        else:
+            changed["unexpected_stage1_field"] = False
+        with pytest.raises(ValueError, match="fields are not closed"):
+            validator._validate_receipt(
+                canonical_route_a_document(changed),
+                role="producer",
+                seed_ordinal=1,
+                payload=payload,
+                run_id=77,
+                source_git_sha="a" * 40,
+            )
+
+
+def test_independent_decoder_rejects_missing_and_extra_timing_row_fields() -> None:
+    domain = validator._make_validation_scaling_sentinel_evidence_domain(
+        qualification_seed=91_001,
+        formal_seeds=(91_002, 91_003, 91_004),
+        query_vector_seed=91_005,
+        plan_sha256="b" * 64,
+    )
+    semantic = b"sentinel semantic projection"
+    row = {
+        "strategy_candidate_id": validator._STRATEGY_ORDERS[0][0],
+        "rho": validator._RHO_ORDERS[0][0],
+        "formal_seed": domain.formal_seeds[0],
+        "seed_ordinal": 1,
+        "role": "producer",
+        "query_count": 5,
+        "compile_query_call_count": 5,
+        "operation_wall_nanoseconds": 1,
+        "operation_process_nanoseconds": 1,
+        "producer_cell_archive_wall_nanoseconds_or_null": 1,
+        "producer_cell_archive_process_nanoseconds_or_null": 1,
+        "producer_state_transition_nanoseconds_or_null": 1,
+        "producer_result_assembly_nanoseconds_or_null": 1,
+        "replay_elapsed_nanoseconds_or_null": None,
+        "semantic_projection_sha256": hashlib.sha256(semantic).hexdigest(),
+        "source_trace_sha256": "c" * 64,
+        "machine_plan_sha256": validator._MACHINE_PLAN_SHA256,
+    }
+    validator._validate_row(
+        canonical_route_a_document(row),
+        domain=domain,
+        role="producer",
+        seed_ordinal=1,
+        strategy=validator._STRATEGY_ORDERS[0][0],
+        rho=validator._RHO_ORDERS[0][0],
+        semantic_bytes=semantic,
+    )
+    for mutation in ("missing", "extra"):
+        changed = dict(row)
+        if mutation == "missing":
+            changed.pop("machine_plan_sha256")
+        else:
+            changed["unexpected_stage1_field"] = False
+        with pytest.raises(ValueError, match="fields are not closed"):
+            validator._validate_row(
+                canonical_route_a_document(changed),
+                domain=domain,
+                role="producer",
+                seed_ordinal=1,
+                strategy=validator._STRATEGY_ORDERS[0][0],
+                rho=validator._RHO_ORDERS[0][0],
+                semantic_bytes=semantic,
+            )
 
 
 def test_exact_ols_recovers_linear_model_without_floats() -> None:
@@ -718,6 +1145,60 @@ def test_private_engine_failure_destroys_the_owned_root(
     assert not scratch.exists()
 
 
+def test_machine_plan_failure_destroys_the_owned_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    domain = study._make_validation_scaling_sentinel_domain(
+        qualification_seed=91_001,
+        formal_seeds=(91_002, 91_003, 91_004),
+        query_vector_seed=91_005,
+        wall_clock_ns=lambda: 0,
+        process_clock_ns=lambda: 0,
+    )
+    scratch = _empty_scratch(tmp_path)
+    monkeypatch.setattr(
+        study,
+        "_load_machine_plan_bytes",
+        lambda: (_ for _ in ()).throw(RuntimeError("machine-plan failure")),
+    )
+    with pytest.raises(RuntimeError, match="machine-plan failure"):
+        study._run_owned(
+            domain=domain,
+            seed_ordinal=1,
+            scratch_root=scratch,
+            producer_payload_bytes=None,
+        )
+    assert not scratch.exists()
+
+
+def test_private_replay_failure_destroys_the_owned_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    domain = study._make_validation_scaling_sentinel_domain(
+        qualification_seed=91_001,
+        formal_seeds=(91_002, 91_003, 91_004),
+        query_vector_seed=91_005,
+        wall_clock_ns=lambda: 0,
+        process_clock_ns=lambda: 0,
+    )
+    scratch = _empty_scratch(tmp_path)
+    monkeypatch.setattr(
+        study,
+        "_replay_payload",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("replay failure")),
+    )
+    with pytest.raises(RuntimeError, match="replay failure"):
+        study._run_owned(
+            domain=domain,
+            seed_ordinal=1,
+            scratch_root=scratch,
+            producer_payload_bytes=b"sentinel producer bytes",
+        )
+    assert not scratch.exists()
+
+
 @pytest.mark.skipif(
     os.environ.get("GITHUB_ACTIONS") != "true",
     reason="successful sentinel lifecycle is intentionally GitHub-Actions-only",
@@ -734,9 +1215,10 @@ def test_private_sentinel_full_path_is_deterministic_closed_and_redacted(
             self.value += 1_000
             return self.value
 
-    machine_plan = (REPOSITORY_ROOT / "config/route-a-publication-plan.json").read_bytes()
-
-    def produce_once(name: str) -> tuple[bytes, study._ValidationScalingDomain]:
+    def produce_once(
+        name: str,
+        ordinal: int,
+    ) -> tuple[bytes, study._ValidationScalingDomain]:
         tick = Tick()
         monkeypatch.setattr(evaluation_module.time, "perf_counter_ns", tick)
         monkeypatch.setattr(replay_module.time, "perf_counter_ns", tick)
@@ -749,20 +1231,24 @@ def test_private_sentinel_full_path_is_deterministic_closed_and_redacted(
             process_clock_ns=tick,
         )
         scratch = _empty_scratch(tmp_path, name)
-        payload = study._produce_payload(
-            domain,
-            domain.records[0],
-            machine_plan,
-            scratch,
+        payload = study._run_owned(
+            domain=domain,
+            seed_ordinal=ordinal,
+            scratch_root=scratch,
+            producer_payload_bytes=None,
         )
-        assert tuple(scratch.iterdir()) == ()
+        assert not scratch.exists()
         return payload, domain
 
-    producer_a, domain_a = produce_once("producer-a")
-    producer_b, _domain_b = produce_once("producer-b")
+    producer_a, domain_a = produce_once("producer-a", 1)
+    producer_b, _domain_b = produce_once("producer-b", 1)
     assert producer_a == producer_b
+    producer_two, domain_two = produce_once("producer-two", 2)
+    producer_three, domain_three = produce_once("producer-three", 3)
+    producer_payloads = (producer_a, producer_two, producer_three)
+    producer_domains = (domain_a, domain_two, domain_three)
 
-    def replay_once(name: str) -> bytes:
+    def replay_once(name: str, ordinal: int, producer_payload: bytes) -> bytes:
         tick = Tick()
         monkeypatch.setattr(evaluation_module.time, "perf_counter_ns", tick)
         monkeypatch.setattr(replay_module.time, "perf_counter_ns", tick)
@@ -775,19 +1261,21 @@ def test_private_sentinel_full_path_is_deterministic_closed_and_redacted(
             process_clock_ns=tick,
         )
         scratch = _empty_scratch(tmp_path, name)
-        payload = study._replay_payload(
-            domain,
-            domain.records[0],
-            machine_plan,
-            producer_a,
-            scratch,
+        payload = study._run_owned(
+            domain=domain,
+            seed_ordinal=ordinal,
+            scratch_root=scratch,
+            producer_payload_bytes=producer_payload,
         )
-        assert tuple(scratch.iterdir()) == ()
+        assert not scratch.exists()
         return payload
 
-    replay_a = replay_once("replay-a")
-    replay_b = replay_once("replay-b")
+    replay_a = replay_once("replay-a", 1, producer_a)
+    replay_b = replay_once("replay-b", 1, producer_a)
     assert replay_a == replay_b
+    replay_two = replay_once("replay-two", 2, producer_two)
+    replay_three = replay_once("replay-three", 3, producer_three)
+    replay_payloads = (replay_a, replay_two, replay_three)
 
     producer_members = study._read_payload(
         producer_a,
@@ -804,6 +1292,45 @@ def test_private_sentinel_full_path_is_deterministic_closed_and_redacted(
         for path in replay_members
         for forbidden in ("private", "preparation", "ledger", "producer-cell", "replay-cell")
     )
+    for ordinal, (payload, domain) in enumerate(
+        zip(producer_payloads, producer_domains, strict=True),
+        start=1,
+    ):
+        members = study._read_payload(payload, expected_paths=study._producer_paths())
+        manifest = json.loads(members["manifest.json"])
+        assert manifest["cell_order"] == study._cell_order(domain.records[ordinal - 1])
+
+    manifest = json.loads(producer_members["manifest.json"])
+    corrupt_nested = dict(producer_members)
+    corrupt_nested["cells/00/producer-cell.zip"] = b"not-a-nested-archive"
+    corrupt_payload_members = tuple(
+        (path, corrupt_nested[path])
+        for path in study._producer_paths()
+        if path != "manifest.json"
+    )
+    corrupt_nested["manifest.json"] = study._payload_manifest(
+        role="producer",
+        domain=domain_a,
+        record=domain_a.records[0],
+        source_trace_sha256=manifest["source_trace_sha256"],
+        members=corrupt_payload_members,
+        producer_payload_sha256=None,
+    )
+    with pytest.raises(ValueError, match="nested producer archive"):
+        study._pretrace_producer_payload(
+            domain_a,
+            domain_a.records[0],
+            study._write_payload(study._producer_paths(), corrupt_nested),
+        )
+
+    corrupt_manifest = dict(producer_members)
+    corrupt_manifest["cells/00/semantic-projection.json"] += b" "
+    with pytest.raises(ValueError, match="manifest differs"):
+        study._pretrace_producer_payload(
+            domain_a,
+            domain_a.records[0],
+            study._write_payload(study._producer_paths(), corrupt_manifest),
+        )
     trace = study.generate_route_a_formal_trace(
         scale="S",
         formal_seed=domain_a.records[0].formal_seed,
@@ -828,3 +1355,80 @@ def test_private_sentinel_full_path_is_deterministic_closed_and_redacted(
             producer.semantic_bytes
             == replay_members[f"cells/{cell_ordinal:02d}/semantic-projection.json"]
         )
+
+    evidence_domain = validator._make_validation_scaling_sentinel_evidence_domain(
+        qualification_seed=91_001,
+        formal_seeds=(91_002, 91_003, 91_004),
+        query_vector_seed=91_005,
+        plan_sha256=domain_a.plan_sha256,
+    )
+
+    def seed_evidence(
+        *,
+        role: str,
+        ordinal: int,
+        payload: bytes,
+        producer: validator.SeedEvidence | None = None,
+    ) -> validator.SeedEvidence:
+        provider_role = "producer" if role == "producer" else "replay"
+        receipt_bytes = _execution_receipt_bytes(
+            payload=payload,
+            role=role,
+            seed_ordinal=ordinal,
+        )
+        outer = _outer_provider_zip(payload=payload, receipt=receipt_bytes)
+        directory = tmp_path / f"validator-{provider_role}-{ordinal}"
+        directory.mkdir()
+        (directory / "payload.zip").write_bytes(payload)
+        (directory / "execution-receipt.json").write_bytes(receipt_bytes)
+        metadata = validator.ProviderArtifactMetadata(
+            artifact_id=ordinal + (0 if role == "producer" else 3),
+            name=f"validation-scaling-{provider_role}-seed-{ordinal}-v1",
+            size_in_bytes=len(outer),
+            digest="sha256:" + hashlib.sha256(outer).hexdigest(),
+        )
+        return validator._inspect_seed_artifact(
+            directory,
+            domain=evidence_domain,
+            role=role,  # type: ignore[arg-type]
+            seed_ordinal=ordinal,
+            run_id=77,
+            source_git_sha="a" * 40,
+            metadata=metadata,
+            provider_zip_bytes=outer,
+            producer=producer,
+        )
+
+    producer_evidence = tuple(
+        seed_evidence(role="producer", ordinal=ordinal, payload=payload)
+        for ordinal, payload in enumerate(producer_payloads, start=1)
+    )
+    replay_evidence = tuple(
+        seed_evidence(
+            role="independent-replay",
+            ordinal=ordinal,
+            payload=payload,
+            producer=producer_evidence[ordinal - 1],
+        )
+        for ordinal, payload in enumerate(replay_payloads, start=1)
+    )
+    aggregate = validator.build_aggregate(
+        producers=producer_evidence,  # type: ignore[arg-type]
+        replays=replay_evidence,  # type: ignore[arg-type]
+        provider_observations=_provider_observations(),
+        source_git_sha="a" * 40,
+    )
+    assert aggregate == validator.build_aggregate(
+        producers=producer_evidence,  # type: ignore[arg-type]
+        replays=replay_evidence,  # type: ignore[arg-type]
+        provider_observations=_provider_observations(),
+        source_git_sha="a" * 40,
+    )
+    aggregate_members = validator._read_canonical_zip(
+        aggregate,
+        expected_paths=validator._AGGREGATE_PATHS,
+        label="sentinel aggregate",
+    )
+    aggregate_manifest = json.loads(aggregate_members["manifest.json"])
+    assert aggregate_manifest["closed_cell_count"] == 54
+    assert aggregate_manifest["matrix_complete"] is True

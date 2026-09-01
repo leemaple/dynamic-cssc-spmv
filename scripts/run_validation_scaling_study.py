@@ -14,6 +14,7 @@ import stat
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -24,7 +25,11 @@ from dynamic_cssc.validation_scaling_study import (
     produce_validation_scaling_seed_shard,
     replay_validation_scaling_seed_shard,
 )
-from scripts import validate_validation_scaling_study as evidence_validator
+
+if __package__:
+    from scripts import validate_validation_scaling_study as evidence_validator
+else:
+    import validate_validation_scaling_study as evidence_validator
 
 _RECEIPT_SCHEMA = "dynamic-cssc-validation-scaling-execution-receipt-v1"
 _SOURCE_TAG = "validation-scaling-source-v2"
@@ -49,6 +54,9 @@ _RECEIPT_FIELDS = (
     "payload_sha256",
 )
 _LOWER_GIT_SHA = re.compile(r"[0-9a-f]{40}\Z")
+_PROVIDER_TIMESTAMP = re.compile(
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z\Z"
+)
 
 
 class _RunnerError(ValueError):
@@ -147,6 +155,8 @@ def _read_producer_artifact(
     seed_ordinal: int,
     github_run_id: int,
     source_git_sha: str,
+    provider_zip_bytes: bytes,
+    provider_metadata: evidence_validator.ProviderArtifactMetadata,
 ) -> bytes:
     if not directory.is_absolute():
         raise _RunnerError("producer_artifact_directory must be absolute")
@@ -167,6 +177,15 @@ def _read_producer_artifact(
         directory / "execution-receipt.json",
         label="producer execution receipt",
     )
+    provider_members = evidence_validator._read_provider_seed_artifact_zip(
+        provider_zip_bytes,
+        metadata=provider_metadata,
+    )
+    if (
+        provider_members["payload.zip"] != payload
+        or provider_members["execution-receipt.json"] != receipt_bytes
+    ):
+        raise _RunnerError("provider ZIP bytes differ from the extracted producer artifact")
     receipt = _canonical_receipt(receipt_bytes)
     if (
         receipt["schema_version"] != _RECEIPT_SCHEMA
@@ -215,7 +234,7 @@ def _peak_rss_bytes() -> int | None:
     return value if value >= 0 else None
 
 
-def _provider_json(path: str, *, token: str) -> dict[str, object]:
+def _provider_context() -> tuple[str, str]:
     api_url = os.environ.get("GITHUB_API_URL")
     repository = os.environ.get("GITHUB_REPOSITORY")
     if (
@@ -225,6 +244,11 @@ def _provider_json(path: str, *, token: str) -> dict[str, object]:
         or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) is None
     ):
         raise _RunnerError("GitHub API or repository identity changed")
+    return api_url, repository
+
+
+def _provider_json(path: str, *, token: str) -> dict[str, object]:
+    api_url, repository = _provider_context()
     request = urllib.request.Request(
         f"{api_url}/repos/{repository}{path}",
         headers={
@@ -252,24 +276,98 @@ def _provider_json(path: str, *, token: str) -> dict[str, object]:
     return decoded
 
 
+class _NoProviderRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        request: urllib.request.Request,
+        file_pointer: object,
+        code: int,
+        message: str,
+        headers: object,
+        new_url: str,
+    ) -> None:
+        return None
+
+
+def _provider_artifact_zip_bytes(
+    metadata: evidence_validator.ProviderArtifactMetadata,
+    *,
+    token: str,
+) -> bytes:
+    api_url, repository = _provider_context()
+    request = urllib.request.Request(
+        f"{api_url}/repos/{repository}/actions/artifacts/{metadata.artifact_id}/zip",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "dynamic-cssc-validation-scaling-v1",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    opener = urllib.request.build_opener(_NoProviderRedirect)
+    try:
+        opener.open(request, timeout=30)
+    except urllib.error.HTTPError as error:
+        if error.code != 302:
+            raise _RunnerError("provider artifact download did not return one redirect") from error
+        location = error.headers.get("Location")
+    except (OSError, TimeoutError, urllib.error.URLError) as error:
+        raise _RunnerError("provider artifact redirect read failed") from error
+    else:  # pragma: no cover - GitHub documents an HTTP redirect for this endpoint
+        raise _RunnerError("provider artifact download omitted its signed redirect")
+    if type(location) is not str:
+        raise _RunnerError("provider artifact redirect omitted its location")
+    parsed = urllib.parse.urlsplit(location)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+    ):
+        raise _RunnerError("provider artifact redirect target is unsafe")
+    signed_request = urllib.request.Request(
+        location,
+        headers={"User-Agent": "dynamic-cssc-validation-scaling-v1"},
+    )
+    try:
+        with urllib.request.urlopen(signed_request, timeout=60) as response:
+            if response.status != 200:
+                raise _RunnerError("signed provider artifact download was unsuccessful")
+            content = response.read(metadata.size_in_bytes + 1)
+    except (OSError, TimeoutError, urllib.error.URLError) as error:
+        raise _RunnerError("signed provider artifact download failed") from error
+    if len(content) != metadata.size_in_bytes:
+        raise _RunnerError("provider artifact download byte count changed")
+    return content
+
+
 def _artifact_metadata_from_provider(
     *,
     run_id: int,
     source_git_sha: str,
     token: str,
+    expected_roles: tuple[str, ...] = ("producer", "replay"),
 ) -> dict[str, evidence_validator.ProviderArtifactMetadata]:
     response = _provider_json(f"/actions/runs/{run_id}/artifacts?per_page=100", token=token)
     artifacts = response.get("artifacts")
     if (
         type(response.get("total_count")) is not int
-        or response["total_count"] != 6
+        or response["total_count"] != 3 * len(expected_roles)
         or type(artifacts) is not list
-        or len(artifacts) != 6
+        or len(artifacts) != 3 * len(expected_roles)
     ):
-        raise _RunnerError("provider artifact inventory is not exactly six inputs")
+        raise _RunnerError("provider artifact inventory differs from the expected inputs")
+    if (
+        type(expected_roles) is not tuple
+        or not expected_roles
+        or any(role not in {"producer", "replay"} for role in expected_roles)
+        or len(set(expected_roles)) != len(expected_roles)
+    ):
+        raise _RunnerError("expected provider artifact roles are not closed")
     expected_names = tuple(
         f"validation-scaling-{role}-seed-{ordinal}-v1"
-        for role in ("producer", "replay")
+        for role in expected_roles
         for ordinal in (1, 2, 3)
     )
     by_name: dict[str, dict[str, object]] = {}
@@ -389,6 +487,10 @@ def _job_observations_from_provider(
         or aggregate.get("completed_at") is not None
     ):
         raise _RunnerError("aggregate job attempted to claim its own terminal state")
+    aggregate_started = _provider_timestamp_value(
+        aggregate["started_at"],
+        label="aggregate provider startedAt",
+    )
     observations: list[dict[str, object]] = []
     job_ids: set[int] = set()
     for name in expected_dependency_names:
@@ -404,6 +506,16 @@ def _job_observations_from_provider(
         ):
             raise _RunnerError("dependency job is not one successful terminal observation")
         job_ids.add(job["id"])
+        dependency_started = _provider_timestamp_value(
+            job["started_at"],
+            label="dependency provider startedAt",
+        )
+        dependency_completed = _provider_timestamp_value(
+            job["completed_at"],
+            label="dependency provider completedAt",
+        )
+        if dependency_completed < dependency_started or dependency_completed > aggregate_started:
+            raise _RunnerError("provider reported a reversed or future dependency interval")
         observations.append(
             {
                 "github_job_database_id": job["id"],
@@ -414,6 +526,18 @@ def _job_observations_from_provider(
             }
         )
     return tuple(observations)
+
+
+def _provider_timestamp_value(value: object, *, label: str) -> datetime:
+    if type(value) is not str or _PROVIDER_TIMESTAMP.fullmatch(value) is None:
+        raise _RunnerError(f"{label} is not one provider timestamp")
+    try:
+        observed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError as error:  # pragma: no cover - regex already closes the shape
+        raise _RunnerError(f"{label} is not one provider timestamp") from error
+    if observed.tzinfo != UTC:
+        raise _RunnerError(f"{label} is not UTC")
+    return observed
 
 
 def _run_aggregate(
@@ -438,10 +562,15 @@ def _run_aggregate(
         source_git_sha=source_git_sha,
         token=token,
     )
+    provider_zip_bytes_by_name = {
+        name: _provider_artifact_zip_bytes(item, token=token)
+        for name, item in metadata.items()
+    }
     observations = _job_observations_from_provider(run_id=run_id, token=token)
     producers, replays = evidence_validator._inspect_six_inputs(
         input_root=arguments.input_root,
         metadata_by_name=metadata,
+        provider_zip_bytes_by_name=provider_zip_bytes_by_name,
         run_id=run_id,
         source_git_sha=source_git_sha,
     )
@@ -508,11 +637,24 @@ def _run(arguments: argparse.Namespace) -> int:
     else:
         if arguments.producer_artifact_directory is None:
             raise _RunnerError("independent replay requires one producer artifact")
+        expected_name = f"validation-scaling-producer-seed-{arguments.seed_ordinal}-v1"
+        producer_metadata = _artifact_metadata_from_provider(
+            run_id=run_id,
+            source_git_sha=source_git_sha,
+            token=token,
+            expected_roles=("producer",),
+        )[expected_name]
+        producer_provider_zip = _provider_artifact_zip_bytes(
+            producer_metadata,
+            token=token,
+        )
         producer_payload = _read_producer_artifact(
             arguments.producer_artifact_directory,
             seed_ordinal=arguments.seed_ordinal,
             github_run_id=run_id,
             source_git_sha=source_git_sha,
+            provider_zip_bytes=producer_provider_zip,
+            provider_metadata=producer_metadata,
         )
 
     operation_started_utc = _utc_now()

@@ -57,7 +57,6 @@ _PLAN_SHA256 = "337de174c6cc445fe9ab54c64dda74b0e9fb6d070e7b5478e09def8940a3b712
 _MACHINE_PLAN_SHA256 = "ce09c1c9c82032ba8439188ce20d4cd8d6310a386efbe2d436595fd779b7268c"
 _SOURCE_TAG = "validation-scaling-source-v2"
 _PAYLOAD_SCHEMA = "dynamic-cssc-validation-scaling-seed-payload-v1"
-_ROW_SCHEMA = "dynamic-cssc-validation-scaling-cell-row-v1"
 _BINDING_SCHEMA = "dynamic-cssc-validation-scaling-producer-binding-v1"
 _PRODUCTION_PROFILE_ID = _STUDY_ID
 _SCALE = "S"
@@ -198,6 +197,12 @@ class _ProducerCellInput:
     semantic_bytes: bytes
     archive_bytes: bytes
     run: RouteASyntheticCellRun
+
+
+@dataclass(frozen=True, slots=True)
+class _PretraceProducerPayload:
+    source_trace_sha256: str
+    cells: tuple[_ProducerCellInput, ...]
 
 
 @dataclass(slots=True)
@@ -548,14 +553,29 @@ def _semantic_projection(cell_document: dict[str, object]) -> bytes:
 
 
 def _shard_identity(domain: _ValidationScalingDomain, trace: RouteASyntheticTrace) -> str:
+    return _shard_identity_from_source(
+        domain,
+        formal_seed=trace.formal_seed,
+        scale=trace.scale,
+        source_trace_sha256=trace.event_trace_sha256,
+    )
+
+
+def _shard_identity_from_source(
+    domain: _ValidationScalingDomain,
+    *,
+    formal_seed: int,
+    scale: str,
+    source_trace_sha256: str,
+) -> str:
     return hashlib.sha256(
         canonical_route_a_document(
             {
-                "formal_seed": trace.formal_seed,
+                "formal_seed": formal_seed,
                 "plan_sha256": domain.plan_sha256,
-                "scale": trace.scale,
+                "scale": scale,
                 "source_tag": _SOURCE_TAG,
-                "source_trace_sha256": trace.event_trace_sha256,
+                "source_trace_sha256": source_trace_sha256,
                 "study_id": _STUDY_ID,
                 "unit_attempt_ordinal": 0,
             }
@@ -980,7 +1000,7 @@ def _pretrace_producer_payload(
     domain: _ValidationScalingDomain,
     record: _SeedRecord,
     payload_bytes: bytes,
-) -> dict[str, bytes]:
+) -> _PretraceProducerPayload:
     """Close every producer envelope field before regenerating a formal trace."""
 
     members = _read_payload(payload_bytes, expected_paths=_producer_paths())
@@ -1006,41 +1026,12 @@ def _pretrace_producer_payload(
     )
     if members["manifest.json"] != expected_manifest:
         raise _ValidationScalingError("producer manifest differs from its exact members")
-    cell_ordinal = 0
-    for strategy in record.strategy_order:
-        for rho in record.rho_order:
-            prefix = f"cells/{cell_ordinal:02d}"
-            semantic_bytes = members[f"{prefix}/semantic-projection.json"]
-            semantic = _canonical_object(semantic_bytes, label="semantic projection")
-            if set(semantic) != set(_SEMANTIC_FIELDS):
-                raise _ValidationScalingError("semantic projection fields are not closed")
-            _validate_row(
-                members[f"{prefix}/timing-row.json"],
-                role="producer",
-                record=record,
-                strategy=strategy,
-                rho=rho,
-                source_trace_sha256=source_trace_sha256,
-                semantic_bytes=semantic_bytes,
-            )
-            cell_ordinal += 1
-    return members
-
-
-def _decode_producer_payload(
-    domain: _ValidationScalingDomain,
-    record: _SeedRecord,
-    trace: RouteASyntheticTrace,
-    payload_bytes: bytes,
-    *,
-    predecoded_members: dict[str, bytes] | None = None,
-) -> tuple[_ProducerCellInput, ...]:
-    members = (
-        _read_payload(payload_bytes, expected_paths=_producer_paths())
-        if predecoded_members is None
-        else predecoded_members
+    shard_identity = _shard_identity_from_source(
+        domain,
+        formal_seed=record.formal_seed,
+        scale=_SCALE,
+        source_trace_sha256=source_trace_sha256,
     )
-    shard_identity = _shard_identity(domain, trace)
     cells: list[_ProducerCellInput] = []
     cell_ordinal = 0
     for strategy in record.strategy_order:
@@ -1048,14 +1039,19 @@ def _decode_producer_payload(
             prefix = f"cells/{cell_ordinal:02d}"
             row_bytes = members[f"{prefix}/timing-row.json"]
             semantic_bytes = members[f"{prefix}/semantic-projection.json"]
-            archive_bytes = members[f"{prefix}/producer-cell.zip"]
             semantic = _canonical_object(semantic_bytes, label="semantic projection")
             if set(semantic) != set(_SEMANTIC_FIELDS):
                 raise _ValidationScalingError("semantic projection fields are not closed")
-            inspection = inspect_route_a_synthetic_cell_archive(
-                archive_bytes,
-                scientific_profile=domain.profile,
-            )
+            archive_bytes = members[f"{prefix}/producer-cell.zip"]
+            try:
+                inspection = inspect_route_a_synthetic_cell_archive(
+                    archive_bytes,
+                    scientific_profile=domain.profile,
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as error:
+                raise _ValidationScalingError(
+                    "nested producer archive failed pre-trace inspection"
+                ) from error
             run = inspection.cell_run
             _validate_cell_identity(
                 run.cell.document,
@@ -1066,14 +1062,16 @@ def _decode_producer_payload(
             )
             expected_semantic = _semantic_projection(run.cell.document)
             if semantic_bytes != expected_semantic:
-                raise _ValidationScalingError("producer semantic projection differs from its cell")
+                raise _ValidationScalingError(
+                    "producer semantic projection differs from its nested cell"
+                )
             row = _validate_row(
                 row_bytes,
                 role="producer",
                 record=record,
                 strategy=strategy,
                 rho=rho,
-                source_trace_sha256=trace.event_trace_sha256,
+                source_trace_sha256=source_trace_sha256,
                 semantic_bytes=semantic_bytes,
             )
             measurements = run.cell.document["measurements"]
@@ -1100,21 +1098,28 @@ def _decode_producer_payload(
                 )
             )
             cell_ordinal += 1
-    payload_members = tuple(
-        (path, members[path]) for path in _producer_paths() if path != "manifest.json"
+    return _PretraceProducerPayload(
+        source_trace_sha256=source_trace_sha256,
+        cells=tuple(cells),
     )
-    expected_manifest = _payload_manifest(
-        role="producer",
-        domain=domain,
-        record=record,
-        source_trace_sha256=trace.event_trace_sha256,
-        members=payload_members,
-        producer_payload_sha256=None,
+
+
+def _decode_producer_payload(
+    domain: _ValidationScalingDomain,
+    record: _SeedRecord,
+    trace: RouteASyntheticTrace,
+    payload_bytes: bytes,
+    *,
+    predecoded_payload: _PretraceProducerPayload | None = None,
+) -> tuple[_ProducerCellInput, ...]:
+    predecoded = (
+        _pretrace_producer_payload(domain, record, payload_bytes)
+        if predecoded_payload is None
+        else predecoded_payload
     )
-    manifest = _canonical_object(members["manifest.json"], label="producer manifest")
-    if set(manifest) != set(_MANIFEST_FIELDS) or members["manifest.json"] != expected_manifest:
-        raise _ValidationScalingError("producer manifest differs from its exact members")
-    return tuple(cells)
+    if predecoded.source_trace_sha256 != trace.event_trace_sha256:
+        raise _ValidationScalingError("producer source trace differs from registered regeneration")
+    return predecoded.cells
 
 
 def _replay_payload(
@@ -1124,7 +1129,7 @@ def _replay_payload(
     producer_payload_bytes: bytes,
     scratch_root: Path,
 ) -> bytes:
-    predecoded_members = _pretrace_producer_payload(
+    predecoded_payload = _pretrace_producer_payload(
         domain,
         record,
         producer_payload_bytes,
@@ -1139,7 +1144,7 @@ def _replay_payload(
         record,
         trace,
         producer_payload_bytes,
-        predecoded_members=predecoded_members,
+        predecoded_payload=predecoded_payload,
     )
     producer_payload_sha256 = hashlib.sha256(producer_payload_bytes).hexdigest()
     shard_identity = _shard_identity(domain, trace)

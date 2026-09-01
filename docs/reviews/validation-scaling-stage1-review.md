@@ -61,14 +61,14 @@ duplicates a registered seed literal.
 | Public inputs | Exact bytes/types, ordinal 1--3, nonempty replay bytes | fail closed before trace generation |
 | Scratch | Absolute, direct, empty, mode 0700; destroyed after ownership on success or failure | lightweight local tests |
 | Compile counter | Same original binding required; one shared wrapper; mutation detected; both bindings restored | lightweight local tests plus successful sentinel CI |
-| Canonical payload | ZIP-STORED, fixed member order/time/mode/system, no comment/extra/link/duplicate | local reorder and nonregular-member attacks plus CI attack matrix |
+| Canonical payload | ZIP-STORED, fixed member order/time/mode/system, no comment/extra/link/duplicate; every nested producer archive is closed before replay trace generation | local reorder, nonregular-member, hash, and pre-trace nested-archive attacks plus CI attack matrix |
 | Producer private material | Nine exact nested one-day Route A handoffs | successful sentinel CI only |
 | Replay redaction | Only row, final cell, semantic projection, replay receipt, and producer binding | successful sentinel CI only |
 | Semantic equality | Producer/replay projection excludes all measurements and is byte-identical | local projection test plus successful sentinel CI |
 | Timing fields | Exact 17-field rows; primary operation timings separated from supporting stages | schema/source tests |
-| Outer artifact | Binary-UTF8-sorted exact set `execution-receipt.json`, `payload.zip`; physical order nonauthoritative | runner and independent validator |
-| Aggregate | Independent six-artifact decoder, 54-cell completeness, exact compile bounds, stable integer medians, `Fraction` OLS, nine-place half-even display | exact-source CI pending |
-| Provider state | One dispatch/attempt, six successful dependency jobs, seven artifacts, no aggregate self-terminal claim | fixture-driven local gates; formal provider observation pending |
+| Outer artifact | Binary-UTF8-sorted exact set `execution-receipt.json`, `payload.zip`; physical order nonauthoritative; raw provider ZIP bytes are redownloaded without forwarding credentials and independently rehashed against provider metadata | runner and independent validator |
+| Aggregate | Independent six-artifact decoder, successful private sentinel decode, 54-cell completeness, exact compile bounds, stable integer medians, `Fraction` OLS, nine-place half-even display | exact-source CI pending |
+| Provider state | One dispatch/attempt, six successful dependency jobs completed before aggregate start, seven artifacts, no aggregate self-terminal claim | fixture-driven local gates; formal provider observation pending |
 
 Missing, extra, repeated, reordered, linked, unsafe-mode, oversized,
 noncanonical, hash-mismatched, retargeted, semantically divergent, incomplete,
@@ -81,7 +81,7 @@ Local allowed checks at the time this record was opened:
 
 - Python compilation: PASS;
 - Ruff on all five Python implementation/test files: PASS;
-- focused lightweight suite: `57 passed, 1 skipped`;
+- focused lightweight suite: `69 passed, 1 skipped`;
 - Draft 2020-12 evidence-schema metaschema validation: PASS (`31` definitions);
 - skipped item: the single successful sentinel producer/replay lifecycle,
   deliberately reserved for GitHub Actions;

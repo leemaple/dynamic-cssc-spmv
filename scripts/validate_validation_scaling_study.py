@@ -214,6 +214,13 @@ class SeedEvidence:
     metadata: ProviderArtifactMetadata
 
 
+@dataclass(frozen=True, slots=True)
+class _ValidationEvidenceDomain:
+    profile: RouteAScientificProfile
+    formal_seeds: tuple[int, int, int]
+    plan_sha256: str
+
+
 def _scientific_values() -> tuple[tuple[int, int, int], int]:
     path = Path(__file__).resolve(strict=True).parents[1] / "config/validation-scaling-study.json"
     content = _direct_file(path, label="Stage-0 v2 plan")
@@ -251,18 +258,61 @@ def _scientific_values() -> tuple[tuple[int, int, int], int]:
     return (seeds[0], seeds[1], seeds[2]), query_vector_seed
 
 
-def _profile() -> RouteAScientificProfile:
+def _production_evidence_domain() -> _ValidationEvidenceDomain:
     formal_seeds, query_vector_seed = _scientific_values()
     qualification_seed = int.from_bytes(
         hashlib.sha256(f"{_STUDY_ID}|unused-qualification".encode("ascii")).digest()[:4],
         "big",
     ) & 0x7FFF_FFFF
-    return RouteAScientificProfile(
-        profile_id=_STUDY_ID,
-        qualification_seed=qualification_seed,
+    return _ValidationEvidenceDomain(
+        profile=RouteAScientificProfile(
+            profile_id=_STUDY_ID,
+            qualification_seed=qualification_seed,
+            formal_seeds=formal_seeds,
+            query_vector_seed=query_vector_seed,
+            machine_plan_sha256=_MACHINE_PLAN_SHA256,
+        ),
         formal_seeds=formal_seeds,
-        query_vector_seed=query_vector_seed,
-        machine_plan_sha256=_MACHINE_PLAN_SHA256,
+        plan_sha256=_PLAN_SHA256,
+    )
+
+
+def _make_validation_scaling_sentinel_evidence_domain(
+    *,
+    qualification_seed: int,
+    formal_seeds: tuple[int, int, int],
+    query_vector_seed: int,
+    plan_sha256: str,
+) -> _ValidationEvidenceDomain:
+    """Construct the independent decoder's private, production-disjoint test domain."""
+
+    registered_formal, registered_query = _scientific_values()
+    registered_qualification = _production_evidence_domain().profile.qualification_seed
+    seeds = (qualification_seed, *formal_seeds, query_vector_seed)
+    if (
+        type(qualification_seed) is not int
+        or type(formal_seeds) is not tuple
+        or len(formal_seeds) != 3
+        or any(type(seed) is not int or seed < 0 for seed in seeds)
+        or len(set(seeds)) != len(seeds)
+        or set(seeds) & {*registered_formal, registered_query, registered_qualification}
+        or type(plan_sha256) is not str
+        or _LOWER_SHA256.fullmatch(plan_sha256) is None
+        or plan_sha256 == _PLAN_SHA256
+    ):
+        raise ValidationScalingEvidenceError(
+            "sentinel evidence domain is not closed and production-disjoint"
+        )
+    return _ValidationEvidenceDomain(
+        profile=RouteAScientificProfile(
+            profile_id="dynamic-cssc-validation-scaling-sentinel-only",
+            qualification_seed=qualification_seed,
+            formal_seeds=formal_seeds,
+            query_vector_seed=query_vector_seed,
+            machine_plan_sha256=_MACHINE_PLAN_SHA256,
+        ),
+        formal_seeds=formal_seeds,
+        plan_sha256=plan_sha256,
     )
 
 
@@ -417,6 +467,60 @@ def _outer_artifact(directory: Path) -> tuple[bytes, bytes]:
     )
 
 
+def _read_provider_seed_artifact_zip(
+    content: bytes,
+    *,
+    metadata: ProviderArtifactMetadata,
+) -> dict[str, bytes]:
+    """Rehash and decode one provider-created, order-nonauthoritative seed ZIP."""
+
+    if type(metadata) is not ProviderArtifactMetadata:
+        raise TypeError("provider artifact metadata has the wrong type")
+    if (
+        type(content) is not bytes
+        or not content
+        or len(content) != metadata.size_in_bytes
+        or "sha256:" + hashlib.sha256(content).hexdigest() != metadata.digest
+    ):
+        raise ValidationScalingEvidenceError(
+            "provider ZIP byte count or independent SHA-256 differs from metadata"
+        )
+    expected = ("execution-receipt.json", "payload.zip")
+    try:
+        with zipfile.ZipFile(io.BytesIO(content), "r") as archive:
+            infos = archive.infolist()
+            names = tuple(info.filename for info in infos)
+            if (
+                len(infos) != 2
+                or len(set(names)) != 2
+                or tuple(sorted(names, key=lambda value: value.encode("utf-8"))) != expected
+            ):
+                raise ValidationScalingEvidenceError(
+                    "provider ZIP outer entries are missing, extra, or duplicated"
+                )
+            members: dict[str, bytes] = {}
+            for info in infos:
+                mode = info.external_attr >> 16
+                file_type = stat.S_IFMT(mode)
+                if (
+                    info.flag_bits & 0x1
+                    or info.is_dir()
+                    or "/" in info.filename
+                    or "\\" in info.filename
+                    or file_type not in {0, stat.S_IFREG}
+                    or info.file_size > _MAX_MEMBER_BYTES
+                ):
+                    raise ValidationScalingEvidenceError(
+                        "provider ZIP contains a linked or unsafe outer entry"
+                    )
+                members[info.filename] = archive.read(info)
+    except (OSError, zipfile.BadZipFile, RuntimeError) as error:
+        raise ValidationScalingEvidenceError(
+            "provider ZIP is not one safe outer archive"
+        ) from error
+    return {name: members[name] for name in expected}
+
+
 def _expected_cell_order(seed_ordinal: int) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     cell_ordinal = 0
@@ -443,6 +547,7 @@ def _semantic_projection(cell: dict[str, object]) -> bytes:
 def _validate_row(
     content: bytes,
     *,
+    domain: _ValidationEvidenceDomain,
     role: Literal["producer", "independent-replay"],
     seed_ordinal: int,
     strategy: str,
@@ -452,11 +557,10 @@ def _validate_row(
     row = _canonical_object(content, label="cell timing row")
     if set(row) != set(_CELL_ROW_FIELDS):
         raise ValidationScalingEvidenceError("cell timing row fields are not closed")
-    formal_seeds, _query_vector_seed = _scientific_values()
     expected = {
         "strategy_candidate_id": strategy,
         "rho": rho,
-        "formal_seed": formal_seeds[seed_ordinal - 1],
+        "formal_seed": domain.formal_seeds[seed_ordinal - 1],
         "seed_ordinal": seed_ordinal,
         "role": role,
         "query_count": _QUERY_COUNTS[rho],
@@ -499,6 +603,7 @@ def _validate_row(
 def _validate_manifest(
     content: bytes,
     *,
+    domain: _ValidationEvidenceDomain,
     role: Literal["producer", "independent-replay"],
     seed_ordinal: int,
     payload_members: tuple[tuple[str, bytes], ...],
@@ -515,15 +620,14 @@ def _validate_manifest(
         }
         for path, member in payload_members
     ]
-    formal_seeds, _query_vector_seed = _scientific_values()
     expected = {
         "schema_version": _PAYLOAD_SCHEMA,
         "study_id": _STUDY_ID,
         "artifact_role": role,
         "seed_ordinal": seed_ordinal,
-        "formal_seed": formal_seeds[seed_ordinal - 1],
+        "formal_seed": domain.formal_seeds[seed_ordinal - 1],
         "scale": "S",
-        "stage0_plan_sha256": _PLAN_SHA256,
+        "stage0_plan_sha256": domain.plan_sha256,
         "source_tag": _SOURCE_TAG,
         "machine_plan_sha256": _MACHINE_PLAN_SHA256,
         "cell_count": 9,
@@ -599,12 +703,17 @@ def _seconds_to_nanoseconds(value: object, *, label: str) -> int:
     return int(whole) * 1_000_000_000 + int(fractional)
 
 
-def _shard_identity(source_trace_sha256: str, formal_seed: int) -> str:
+def _shard_identity(
+    source_trace_sha256: str,
+    formal_seed: int,
+    *,
+    domain: _ValidationEvidenceDomain,
+) -> str:
     return hashlib.sha256(
         canonical_route_a_document(
             {
                 "formal_seed": formal_seed,
-                "plan_sha256": _PLAN_SHA256,
+                "plan_sha256": domain.plan_sha256,
                 "scale": "S",
                 "source_tag": _SOURCE_TAG,
                 "source_trace_sha256": source_trace_sha256,
@@ -618,15 +727,15 @@ def _shard_identity(source_trace_sha256: str, formal_seed: int) -> str:
 def _validate_cell_identity(
     cell: dict[str, object],
     *,
+    domain: _ValidationEvidenceDomain,
     seed_ordinal: int,
     strategy: str,
     rho: str,
     shard_identity: str,
 ) -> None:
-    formal_seeds, _query_vector_seed = _scientific_values()
     identity = cell.get("identity")
     if type(identity) is not dict or identity != {
-        "formal_seed_or_null": formal_seeds[seed_ordinal - 1],
+        "formal_seed_or_null": domain.formal_seeds[seed_ordinal - 1],
         "object_sha256_or_null": None,
         "partition_or_null": None,
         "rho": rho,
@@ -668,6 +777,7 @@ def _validate_metadata(
 def _validate_producer_payload(
     payload: bytes,
     *,
+    domain: _ValidationEvidenceDomain,
     seed_ordinal: int,
 ) -> tuple[
     tuple[dict[str, object], ...],
@@ -681,14 +791,17 @@ def _validate_producer_payload(
         expected_paths=_producer_paths(),
         label="producer payload",
     )
-    profile = _profile()
-    formal_seeds, _query_vector_seed = _scientific_values()
+    profile = domain.profile
     trace = generate_route_a_formal_trace(
         scale="S",
-        formal_seed=formal_seeds[seed_ordinal - 1],
+        formal_seed=domain.formal_seeds[seed_ordinal - 1],
         scientific_profile=profile,
     )
-    shard_identity = _shard_identity(trace.event_trace_sha256, trace.formal_seed)
+    shard_identity = _shard_identity(
+        trace.event_trace_sha256,
+        trace.formal_seed,
+        domain=domain,
+    )
     rows: list[dict[str, object]] = []
     row_bytes: list[bytes] = []
     semantic_bytes: list[bytes] = []
@@ -711,6 +824,7 @@ def _validate_producer_payload(
             cell = inspection.cell_run.cell.document
             _validate_cell_identity(
                 cell,
+                domain=domain,
                 seed_ordinal=seed_ordinal,
                 strategy=strategy,
                 rho=rho,
@@ -722,6 +836,7 @@ def _validate_producer_payload(
                 )
             row = _validate_row(
                 row_content,
+                domain=domain,
                 role="producer",
                 seed_ordinal=seed_ordinal,
                 strategy=strategy,
@@ -757,6 +872,7 @@ def _validate_producer_payload(
     )
     manifest = _validate_manifest(
         members["manifest.json"],
+        domain=domain,
         role="producer",
         seed_ordinal=seed_ordinal,
         payload_members=payload_members,
@@ -834,6 +950,7 @@ def _validate_replay_receipt(
 def _validate_replay_payload(
     payload: bytes,
     *,
+    domain: _ValidationEvidenceDomain,
     seed_ordinal: int,
     producer: SeedEvidence,
 ) -> tuple[
@@ -848,14 +965,17 @@ def _validate_replay_payload(
         expected_paths=_replay_paths(),
         label="replay payload",
     )
-    profile = _profile()
-    formal_seeds, _query_vector_seed = _scientific_values()
+    profile = domain.profile
     trace = generate_route_a_formal_trace(
         scale="S",
-        formal_seed=formal_seeds[seed_ordinal - 1],
+        formal_seed=domain.formal_seeds[seed_ordinal - 1],
         scientific_profile=profile,
     )
-    shard_identity = _shard_identity(trace.event_trace_sha256, trace.formal_seed)
+    shard_identity = _shard_identity(
+        trace.event_trace_sha256,
+        trace.formal_seed,
+        domain=domain,
+    )
     rows: list[dict[str, object]] = []
     row_bytes: list[bytes] = []
     semantic_bytes: list[bytes] = []
@@ -882,6 +1002,7 @@ def _validate_replay_payload(
                 raise ValidationScalingEvidenceError("replay final cell bytes are not canonical")
             _validate_cell_identity(
                 final_cell.document,
+                domain=domain,
                 seed_ordinal=seed_ordinal,
                 strategy=strategy,
                 rho=rho,
@@ -897,6 +1018,7 @@ def _validate_replay_payload(
                 )
             row = _validate_row(
                 row_content,
+                domain=domain,
                 role="independent-replay",
                 seed_ordinal=seed_ordinal,
                 strategy=strategy,
@@ -967,6 +1089,7 @@ def _validate_replay_payload(
     )
     manifest = _validate_manifest(
         members["manifest.json"],
+        domain=domain,
         role="independent-replay",
         seed_ordinal=seed_ordinal,
         payload_members=payload_members,
@@ -983,14 +1106,16 @@ def _validate_replay_payload(
     )
 
 
-def inspect_seed_artifact(
+def _inspect_seed_artifact(
     directory: Path,
     *,
+    domain: _ValidationEvidenceDomain,
     role: Literal["producer", "independent-replay"],
     seed_ordinal: int,
     run_id: int,
     source_git_sha: str,
     metadata: ProviderArtifactMetadata,
+    provider_zip_bytes: bytes,
     producer: SeedEvidence | None = None,
 ) -> SeedEvidence:
     """Independently close one extracted two-file provider seed artifact."""
@@ -1004,6 +1129,17 @@ def inspect_seed_artifact(
         raise ValidationScalingEvidenceError("source Git SHA is malformed")
     _validate_metadata(metadata, role=role, seed_ordinal=seed_ordinal)
     payload, receipt_bytes = _outer_artifact(directory)
+    provider_members = _read_provider_seed_artifact_zip(
+        provider_zip_bytes,
+        metadata=metadata,
+    )
+    if (
+        provider_members["payload.zip"] != payload
+        or provider_members["execution-receipt.json"] != receipt_bytes
+    ):
+        raise ValidationScalingEvidenceError(
+            "provider ZIP bytes differ from the extracted seed artifact"
+        )
     receipt = _validate_receipt(
         receipt_bytes,
         role=role,
@@ -1017,6 +1153,7 @@ def inspect_seed_artifact(
             raise ValidationScalingEvidenceError("producer artifact received a predecessor")
         rows, row_bytes, semantics, cells, private_archives = _validate_producer_payload(
             payload,
+            domain=domain,
             seed_ordinal=seed_ordinal,
         )
         bindings: tuple[bytes, ...] = ()
@@ -1029,6 +1166,7 @@ def inspect_seed_artifact(
             raise ValidationScalingEvidenceError("replay lacks its exact producer predecessor")
         rows, row_bytes, semantics, cells, bindings = _validate_replay_payload(
             payload,
+            domain=domain,
             seed_ordinal=seed_ordinal,
             producer=producer,
         )
@@ -1047,6 +1185,32 @@ def inspect_seed_artifact(
         private_archive_bytes=private_archives,
         binding_bytes=bindings,
         metadata=metadata,
+    )
+
+
+def inspect_seed_artifact(
+    directory: Path,
+    *,
+    role: Literal["producer", "independent-replay"],
+    seed_ordinal: int,
+    run_id: int,
+    source_git_sha: str,
+    metadata: ProviderArtifactMetadata,
+    provider_zip_bytes: bytes,
+    producer: SeedEvidence | None = None,
+) -> SeedEvidence:
+    """Independently close one production two-file provider seed artifact."""
+
+    return _inspect_seed_artifact(
+        directory,
+        domain=_production_evidence_domain(),
+        role=role,
+        seed_ordinal=seed_ordinal,
+        run_id=run_id,
+        source_git_sha=source_git_sha,
+        metadata=metadata,
+        provider_zip_bytes=provider_zip_bytes,
+        producer=producer,
     )
 
 
@@ -1606,6 +1770,7 @@ def _inspect_six_inputs(
     *,
     input_root: Path,
     metadata_by_name: dict[str, ProviderArtifactMetadata],
+    provider_zip_bytes_by_name: dict[str, bytes],
     run_id: int,
     source_git_sha: str,
 ) -> tuple[
@@ -1630,6 +1795,19 @@ def _inspect_six_inputs(
         or names != tuple(sorted(expected_directories))
     ):
         raise ValidationScalingEvidenceError("input_root does not contain the exact six inputs")
+    expected_artifact_names = tuple(
+        f"validation-scaling-{role}-seed-{ordinal}-v1"
+        for role in ("producer", "replay")
+        for ordinal in (1, 2, 3)
+    )
+    if (
+        type(metadata_by_name) is not dict
+        or type(provider_zip_bytes_by_name) is not dict
+        or tuple(metadata_by_name) != expected_artifact_names
+        or tuple(provider_zip_bytes_by_name) != expected_artifact_names
+        or any(type(content) is not bytes for content in provider_zip_bytes_by_name.values())
+    ):
+        raise ValidationScalingEvidenceError("provider artifact inputs are not closed")
     producers: list[SeedEvidence] = []
     for ordinal in (1, 2, 3):
         name = f"validation-scaling-producer-seed-{ordinal}-v1"
@@ -1641,6 +1819,7 @@ def _inspect_six_inputs(
                 run_id=run_id,
                 source_git_sha=source_git_sha,
                 metadata=metadata_by_name[name],
+                provider_zip_bytes=provider_zip_bytes_by_name[name],
             )
         )
     replays: list[SeedEvidence] = []
@@ -1654,6 +1833,7 @@ def _inspect_six_inputs(
                 run_id=run_id,
                 source_git_sha=source_git_sha,
                 metadata=metadata_by_name[name],
+                provider_zip_bytes=provider_zip_bytes_by_name[name],
                 producer=producers[ordinal - 1],
             )
         )
@@ -1687,6 +1867,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", required=True, choices=("build-aggregate", "audit-aggregate"))
     parser.add_argument("--input-root", required=True, type=Path)
+    parser.add_argument("--provider-zip-root", required=True, type=Path)
     parser.add_argument("--artifact-metadata", required=True, type=Path)
     parser.add_argument("--provider-observations", required=True, type=Path)
     parser.add_argument("--run-id", required=True, type=int)
@@ -1709,9 +1890,34 @@ def _run(arguments: argparse.Namespace) -> int:
         source_git_sha=arguments.source_git_sha,
     )
     observations = _load_provider_observations(arguments.provider_observations)
+    expected_artifact_names = tuple(metadata)
+    if not arguments.provider_zip_root.is_absolute():
+        raise ValidationScalingEvidenceError("provider_zip_root must be absolute")
+    try:
+        zip_root_observed = arguments.provider_zip_root.lstat()
+        zip_names = tuple(
+            sorted(path.name for path in arguments.provider_zip_root.iterdir())
+        )
+    except OSError as error:
+        raise ValidationScalingEvidenceError("provider_zip_root is unavailable") from error
+    expected_zip_names = tuple(sorted(f"{name}.zip" for name in expected_artifact_names))
+    if (
+        arguments.provider_zip_root.is_symlink()
+        or not stat.S_ISDIR(zip_root_observed.st_mode)
+        or zip_names != expected_zip_names
+    ):
+        raise ValidationScalingEvidenceError("provider_zip_root does not contain six raw ZIPs")
+    provider_zip_bytes_by_name = {
+        name: _direct_file(
+            arguments.provider_zip_root / f"{name}.zip",
+            label=f"raw provider ZIP {name}",
+        )
+        for name in expected_artifact_names
+    }
     producers, replays = _inspect_six_inputs(
         input_root=arguments.input_root,
         metadata_by_name=metadata,
+        provider_zip_bytes_by_name=provider_zip_bytes_by_name,
         run_id=run_id,
         source_git_sha=arguments.source_git_sha,
     )
