@@ -93,8 +93,10 @@ Local allowed checks at the time this record was opened:
   ordinals (nine cells per role and ordinal, 54 full cells total) and proves
   synthetic-clock package determinism by independently rebuilding the complete
   ordinal-one producer and replay payloads from the first pass's already
-  verified scientific objects and compile counts, without a redundant fourth
-  producer/replay scientific execution pair;
+  verified scientific objects and compile counts; the deterministic evidence
+  clock is isolated from the deterministic lower-layer scientific clock so the
+  rebuilt rows replay the same evidence-time transcript without a redundant
+  fourth producer/replay scientific execution pair;
 - formal study workflow dispatches: `0`;
 - formal result cells: `0`.
 

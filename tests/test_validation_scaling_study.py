@@ -1273,16 +1273,17 @@ def test_private_sentinel_full_path_is_deterministic_closed_and_redacted(
         name: str,
         ordinal: int,
     ) -> tuple[bytes, study._ValidationScalingDomain]:
-        tick = Tick()
-        monkeypatch.setattr(evaluation_module.time, "perf_counter_ns", tick)
-        monkeypatch.setattr(replay_module.time, "perf_counter_ns", tick)
-        monkeypatch.setattr(strategy_module.time, "perf_counter_ns", tick)
+        evidence_tick = Tick()
+        scientific_tick = Tick()
+        monkeypatch.setattr(evaluation_module.time, "perf_counter_ns", scientific_tick)
+        monkeypatch.setattr(replay_module.time, "perf_counter_ns", scientific_tick)
+        monkeypatch.setattr(strategy_module.time, "perf_counter_ns", scientific_tick)
         domain = study._make_validation_scaling_sentinel_domain(
             qualification_seed=91_001,
             formal_seeds=(91_002, 91_003, 91_004),
             query_vector_seed=91_005,
-            wall_clock_ns=tick,
-            process_clock_ns=tick,
+            wall_clock_ns=evidence_tick,
+            process_clock_ns=evidence_tick,
         )
         scratch = _empty_scratch(tmp_path, name)
         payload = study._run_owned(
@@ -1360,16 +1361,17 @@ def test_private_sentinel_full_path_is_deterministic_closed_and_redacted(
     producer_domains = (domain_a, domain_two, domain_three)
 
     def replay_once(name: str, ordinal: int, producer_payload: bytes) -> bytes:
-        tick = Tick()
-        monkeypatch.setattr(evaluation_module.time, "perf_counter_ns", tick)
-        monkeypatch.setattr(replay_module.time, "perf_counter_ns", tick)
-        monkeypatch.setattr(strategy_module.time, "perf_counter_ns", tick)
+        evidence_tick = Tick()
+        scientific_tick = Tick()
+        monkeypatch.setattr(evaluation_module.time, "perf_counter_ns", scientific_tick)
+        monkeypatch.setattr(replay_module.time, "perf_counter_ns", scientific_tick)
+        monkeypatch.setattr(strategy_module.time, "perf_counter_ns", scientific_tick)
         domain = study._make_validation_scaling_sentinel_domain(
             qualification_seed=91_001,
             formal_seeds=(91_002, 91_003, 91_004),
             query_vector_seed=91_005,
-            wall_clock_ns=tick,
-            process_clock_ns=tick,
+            wall_clock_ns=evidence_tick,
+            process_clock_ns=evidence_tick,
         )
         scratch = _empty_scratch(tmp_path, name)
         payload = study._run_owned(
