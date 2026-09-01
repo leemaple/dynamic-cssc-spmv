@@ -1,6 +1,6 @@
 ---
 name: external-expert-escalation
-description: Coordinate material paper and protocol review through ChatGPT Pro and ZCode, including the preferred ChatGPT Pro browser channel, and escalate to Fable 5 only when repository evidence plus those reviews still do not converge. Do not use external review as a substitute for tests and experiments.
+description: Coordinate material paper and protocol review through ChatGPT Pro plus ZCode or its Fable 5 fallback, including quota-aware channel routing, and escalate unresolved high-consequence disagreements. Do not use external review as a substitute for tests and experiments.
 ---
 
 # External Expert Review and Escalation
@@ -43,11 +43,17 @@ token, or parallel agent does not create an independent allowance. Restore the
 ordinary material-gate review cadence only after the same usage page confirms
 the reset.
 
-Use Fable 5 only as the escalation reviewer described below.
+When ZCode is unavailable, quota-limited, or explicitly replaced by the user,
+use Fable 5 at max reasoning for the same bounded review slot immediately. Do
+not wait for a quota reset, and do not send the same closed gate to ZCode later.
+A later ZCode call requires a materially new gate or an explicit user request.
+This substitution is distinct from the escalation trigger below and does not
+turn Fable into a routine third vote.
 
 ## Trigger
 
-Escalate only when the decision can materially affect the paper's validity,
+Escalate beyond the ordinary two-channel review only when the decision can
+materially affect the paper's validity,
 experimental cost, protocol claims, or schedule, and at least one condition is
 true:
 
@@ -59,7 +65,7 @@ true:
 
 Continue ordinary work without escalation when source, tests, or workflow logs
 already decide the question. Reviewer quota loss alone is not an escalation
-trigger.
+trigger; it routes the ZCode slot directly to Fable as described above.
 
 ## Review packet
 
