@@ -1,0 +1,636 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/dynamic-cssc/validation-scaling-evidence-v1.schema.json",
+  "title": "Dynamic CSSC validation-scaling evidence v1",
+  "oneOf": [
+    { "$ref": "#/$defs/cellRow" },
+    { "$ref": "#/$defs/executionReceipt" },
+    { "$ref": "#/$defs/seedManifest" },
+    { "$ref": "#/$defs/producerBinding" },
+    { "$ref": "#/$defs/closedCellTable" },
+    { "$ref": "#/$defs/compileSemanticVerdicts" },
+    { "$ref": "#/$defs/timingSummaries" },
+    { "$ref": "#/$defs/olsRecords" },
+    { "$ref": "#/$defs/providerObservations" },
+    { "$ref": "#/$defs/inputArtifacts" },
+    { "$ref": "#/$defs/humanRenderings" },
+    { "$ref": "#/$defs/aggregateManifest" }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "gitSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$"
+    },
+    "providerTimestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "strategy": {
+      "enum": [
+        "periodic-repack/windows=1",
+        "padding-reuse",
+        "packed-coo-cloud-segmented-delta/segment-width=128"
+      ]
+    },
+    "rho": {
+      "enum": ["1/100", "1/10", "1"]
+    },
+    "role": {
+      "enum": ["producer", "independent-replay"]
+    },
+    "strictNonnegative": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "strictPositive": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "rational": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "numerator": { "type": "integer" },
+        "denominator": { "type": "integer", "minimum": 1 }
+      },
+      "required": ["numerator", "denominator"]
+    },
+    "cellRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy_candidate_id": { "$ref": "#/$defs/strategy" },
+        "rho": { "$ref": "#/$defs/rho" },
+        "formal_seed": { "type": "integer", "minimum": 0 },
+        "seed_ordinal": { "enum": [1, 2, 3] },
+        "role": { "$ref": "#/$defs/role" },
+        "query_count": { "enum": [5, 51, 512] },
+        "compile_query_call_count": { "$ref": "#/$defs/strictPositive" },
+        "operation_wall_nanoseconds": { "$ref": "#/$defs/strictNonnegative" },
+        "operation_process_nanoseconds": { "$ref": "#/$defs/strictNonnegative" },
+        "producer_cell_archive_wall_nanoseconds_or_null": {
+          "oneOf": [{ "$ref": "#/$defs/strictNonnegative" }, { "type": "null" }]
+        },
+        "producer_cell_archive_process_nanoseconds_or_null": {
+          "oneOf": [{ "$ref": "#/$defs/strictNonnegative" }, { "type": "null" }]
+        },
+        "producer_state_transition_nanoseconds_or_null": {
+          "oneOf": [{ "$ref": "#/$defs/strictNonnegative" }, { "type": "null" }]
+        },
+        "producer_result_assembly_nanoseconds_or_null": {
+          "oneOf": [{ "$ref": "#/$defs/strictNonnegative" }, { "type": "null" }]
+        },
+        "replay_elapsed_nanoseconds_or_null": {
+          "oneOf": [{ "$ref": "#/$defs/strictNonnegative" }, { "type": "null" }]
+        },
+        "semantic_projection_sha256": { "$ref": "#/$defs/sha256" },
+        "source_trace_sha256": { "$ref": "#/$defs/sha256" },
+        "machine_plan_sha256": {
+          "const": "ce09c1c9c82032ba8439188ce20d4cd8d6310a386efbe2d436595fd779b7268c"
+        }
+      },
+      "required": [
+        "strategy_candidate_id",
+        "rho",
+        "formal_seed",
+        "seed_ordinal",
+        "role",
+        "query_count",
+        "compile_query_call_count",
+        "operation_wall_nanoseconds",
+        "operation_process_nanoseconds",
+        "producer_cell_archive_wall_nanoseconds_or_null",
+        "producer_cell_archive_process_nanoseconds_or_null",
+        "producer_state_transition_nanoseconds_or_null",
+        "producer_result_assembly_nanoseconds_or_null",
+        "replay_elapsed_nanoseconds_or_null",
+        "semantic_projection_sha256",
+        "source_trace_sha256",
+        "machine_plan_sha256"
+      ],
+      "allOf": [
+        {
+          "if": { "properties": { "role": { "const": "producer" } }, "required": ["role"] },
+          "then": {
+            "properties": {
+              "producer_cell_archive_wall_nanoseconds_or_null": { "$ref": "#/$defs/strictNonnegative" },
+              "producer_cell_archive_process_nanoseconds_or_null": { "$ref": "#/$defs/strictNonnegative" },
+              "producer_state_transition_nanoseconds_or_null": { "$ref": "#/$defs/strictNonnegative" },
+              "producer_result_assembly_nanoseconds_or_null": { "$ref": "#/$defs/strictNonnegative" },
+              "replay_elapsed_nanoseconds_or_null": { "type": "null" }
+            }
+          },
+          "else": {
+            "properties": {
+              "producer_cell_archive_wall_nanoseconds_or_null": { "type": "null" },
+              "producer_cell_archive_process_nanoseconds_or_null": { "type": "null" },
+              "producer_state_transition_nanoseconds_or_null": { "type": "null" },
+              "producer_result_assembly_nanoseconds_or_null": { "type": "null" },
+              "replay_elapsed_nanoseconds_or_null": { "$ref": "#/$defs/strictNonnegative" }
+            }
+          }
+        }
+      ]
+    },
+    "executionReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "const": "dynamic-cssc-validation-scaling-execution-receipt-v1" },
+        "artifact_role": { "$ref": "#/$defs/role" },
+        "seed_ordinal": { "enum": [1, 2, 3] },
+        "runner_os": { "const": "Linux" },
+        "runner_arch": { "const": "X64" },
+        "python_version": { "const": "3.12.13" },
+        "github_run_id": { "$ref": "#/$defs/strictPositive" },
+        "github_run_attempt": { "const": 1 },
+        "github_job": {
+          "type": "string",
+          "pattern": "^(producer|replay)-seed-[123]$"
+        },
+        "source_git_sha": { "$ref": "#/$defs/gitSha" },
+        "operation_started_utc": { "$ref": "#/$defs/timestamp" },
+        "package_finished_utc": { "$ref": "#/$defs/timestamp" },
+        "seed_package_wall_nanoseconds": { "$ref": "#/$defs/strictNonnegative" },
+        "seed_package_process_nanoseconds": { "$ref": "#/$defs/strictNonnegative" },
+        "process_peak_rss_bytes_or_null": {
+          "oneOf": [{ "$ref": "#/$defs/strictNonnegative" }, { "type": "null" }]
+        },
+        "payload_filename": { "const": "payload.zip" },
+        "payload_byte_count": { "$ref": "#/$defs/strictPositive" },
+        "payload_sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "required": [
+        "schema_version",
+        "artifact_role",
+        "seed_ordinal",
+        "runner_os",
+        "runner_arch",
+        "python_version",
+        "github_run_id",
+        "github_run_attempt",
+        "github_job",
+        "source_git_sha",
+        "operation_started_utc",
+        "package_finished_utc",
+        "seed_package_wall_nanoseconds",
+        "seed_package_process_nanoseconds",
+        "process_peak_rss_bytes_or_null",
+        "payload_filename",
+        "payload_byte_count",
+        "payload_sha256"
+      ]
+    },
+    "memberRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "byte_count": { "$ref": "#/$defs/strictNonnegative" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "required": ["path", "byte_count", "sha256"]
+    },
+    "cellOrder": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cell_ordinal": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "query_count": { "enum": [5, 51, 512] },
+        "rho": { "$ref": "#/$defs/rho" },
+        "strategy_candidate_id": { "$ref": "#/$defs/strategy" }
+      },
+      "required": ["cell_ordinal", "query_count", "rho", "strategy_candidate_id"]
+    },
+    "seedManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "const": "dynamic-cssc-validation-scaling-seed-payload-v1" },
+        "study_id": { "const": "dynamic-cssc-validation-scaling-2026-09-01" },
+        "artifact_role": { "$ref": "#/$defs/role" },
+        "seed_ordinal": { "enum": [1, 2, 3] },
+        "formal_seed": { "type": "integer", "minimum": 0 },
+        "scale": { "const": "S" },
+        "stage0_plan_sha256": {
+          "const": "337de174c6cc445fe9ab54c64dda74b0e9fb6d070e7b5478e09def8940a3b712"
+        },
+        "source_tag": { "const": "validation-scaling-source-v2" },
+        "source_trace_sha256": { "$ref": "#/$defs/sha256" },
+        "machine_plan_sha256": {
+          "const": "ce09c1c9c82032ba8439188ce20d4cd8d6310a386efbe2d436595fd779b7268c"
+        },
+        "cell_count": { "const": 9 },
+        "cell_order": {
+          "type": "array",
+          "minItems": 9,
+          "maxItems": 9,
+          "items": { "$ref": "#/$defs/cellOrder" }
+        },
+        "member_count": { "enum": [27, 45] },
+        "members": {
+          "type": "array",
+          "minItems": 27,
+          "maxItems": 45,
+          "items": { "$ref": "#/$defs/memberRecord" }
+        },
+        "retention_days": { "enum": [1, 90] },
+        "private_material_included": { "type": "boolean" },
+        "producer_payload_sha256_or_null": {
+          "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+        },
+        "claim_scope": { "const": "validation-scaling-only" },
+        "formal_authority_granted": { "const": false }
+      },
+      "required": [
+        "schema_version",
+        "study_id",
+        "artifact_role",
+        "seed_ordinal",
+        "formal_seed",
+        "scale",
+        "stage0_plan_sha256",
+        "source_tag",
+        "source_trace_sha256",
+        "machine_plan_sha256",
+        "cell_count",
+        "cell_order",
+        "member_count",
+        "members",
+        "retention_days",
+        "private_material_included",
+        "producer_payload_sha256_or_null",
+        "claim_scope",
+        "formal_authority_granted"
+      ]
+    },
+    "producerBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "const": "dynamic-cssc-validation-scaling-producer-binding-v1" },
+        "producer_payload_sha256": { "$ref": "#/$defs/sha256" },
+        "producer_cell_archive_sha256": { "$ref": "#/$defs/sha256" },
+        "producer_cell_archive_byte_count": { "$ref": "#/$defs/strictPositive" },
+        "producer_cell_sha256": { "$ref": "#/$defs/sha256" },
+        "producer_semantic_projection_sha256": { "$ref": "#/$defs/sha256" },
+        "producer_timing_row_sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "required": [
+        "schema_version",
+        "producer_payload_sha256",
+        "producer_cell_archive_sha256",
+        "producer_cell_archive_byte_count",
+        "producer_cell_sha256",
+        "producer_semantic_projection_sha256",
+        "producer_timing_row_sha256"
+      ]
+    },
+    "integerSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "observations": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": { "$ref": "#/$defs/strictNonnegative" }
+        },
+        "minimum": { "$ref": "#/$defs/strictNonnegative" },
+        "median": { "$ref": "#/$defs/strictNonnegative" },
+        "maximum": { "$ref": "#/$defs/strictNonnegative" }
+      },
+      "required": ["observations", "minimum", "median", "maximum"]
+    },
+    "closedCellTable": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "const": "dynamic-cssc-validation-scaling-closed-cell-table-v1" },
+        "study_id": { "const": "dynamic-cssc-validation-scaling-2026-09-01" },
+        "cell_count": { "const": 54 },
+        "rows": {
+          "type": "array",
+          "minItems": 54,
+          "maxItems": 54,
+          "items": { "$ref": "#/$defs/cellRow" }
+        }
+      },
+      "required": ["schema_version", "study_id", "cell_count", "rows"]
+    },
+    "compileVerdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy_candidate_id": { "$ref": "#/$defs/strategy" },
+        "rho": { "$ref": "#/$defs/rho" },
+        "seed_ordinal": { "enum": [1, 2, 3] },
+        "role": { "$ref": "#/$defs/role" },
+        "query_count": { "enum": [5, 51, 512] },
+        "compile_query_call_count": { "$ref": "#/$defs/strictPositive" },
+        "compile_depth_verified": { "const": true },
+        "semantic_projection_sha256": { "$ref": "#/$defs/sha256" },
+        "producer_replay_semantic_equal_or_null": {
+          "oneOf": [{ "const": true }, { "type": "null" }]
+        }
+      },
+      "required": [
+        "strategy_candidate_id",
+        "rho",
+        "seed_ordinal",
+        "role",
+        "query_count",
+        "compile_query_call_count",
+        "compile_depth_verified",
+        "semantic_projection_sha256",
+        "producer_replay_semantic_equal_or_null"
+      ]
+    },
+    "compileSemanticVerdicts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "const": "dynamic-cssc-validation-scaling-verdicts-v1" },
+        "study_id": { "const": "dynamic-cssc-validation-scaling-2026-09-01" },
+        "verdict_count": { "const": 54 },
+        "verdicts": {
+          "type": "array",
+          "minItems": 54,
+          "maxItems": 54,
+          "items": { "$ref": "#/$defs/compileVerdict" }
+        }
+      },
+      "required": ["schema_version", "study_id", "verdict_count", "verdicts"]
+    },
+    "timingSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy_candidate_id": { "$ref": "#/$defs/strategy" },
+        "role": { "$ref": "#/$defs/role" },
+        "rho": { "$ref": "#/$defs/rho" },
+        "query_count": { "enum": [5, 51, 512] },
+        "seed_ordinals": { "const": [1, 2, 3] },
+        "operation_wall_nanoseconds": { "$ref": "#/$defs/integerSummary" },
+        "operation_process_nanoseconds": { "$ref": "#/$defs/integerSummary" },
+        "producer_cell_archive_wall_nanoseconds_or_null": {
+          "oneOf": [{ "$ref": "#/$defs/integerSummary" }, { "type": "null" }]
+        },
+        "producer_cell_archive_process_nanoseconds_or_null": {
+          "oneOf": [{ "$ref": "#/$defs/integerSummary" }, { "type": "null" }]
+        },
+        "producer_state_transition_nanoseconds_or_null": {
+          "oneOf": [{ "$ref": "#/$defs/integerSummary" }, { "type": "null" }]
+        },
+        "producer_result_assembly_nanoseconds_or_null": {
+          "oneOf": [{ "$ref": "#/$defs/integerSummary" }, { "type": "null" }]
+        },
+        "replay_elapsed_nanoseconds_or_null": {
+          "oneOf": [{ "$ref": "#/$defs/integerSummary" }, { "type": "null" }]
+        }
+      },
+      "required": [
+        "strategy_candidate_id",
+        "role",
+        "rho",
+        "query_count",
+        "seed_ordinals",
+        "operation_wall_nanoseconds",
+        "operation_process_nanoseconds",
+        "producer_cell_archive_wall_nanoseconds_or_null",
+        "producer_cell_archive_process_nanoseconds_or_null",
+        "producer_state_transition_nanoseconds_or_null",
+        "producer_result_assembly_nanoseconds_or_null",
+        "replay_elapsed_nanoseconds_or_null"
+      ]
+    },
+    "timingSummaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "const": "dynamic-cssc-validation-scaling-timing-summaries-v1" },
+        "study_id": { "const": "dynamic-cssc-validation-scaling-2026-09-01" },
+        "summary_count": { "const": 18 },
+        "summaries": {
+          "type": "array",
+          "minItems": 18,
+          "maxItems": 18,
+          "items": { "$ref": "#/$defs/timingSummary" }
+        }
+      },
+      "required": ["schema_version", "study_id", "summary_count", "summaries"]
+    },
+    "olsRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy_candidate_id": { "$ref": "#/$defs/strategy" },
+        "role": { "$ref": "#/$defs/role" },
+        "query_counts": { "const": [5, 51, 512] },
+        "median_wall_nanoseconds": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": { "$ref": "#/$defs/strictNonnegative" }
+        },
+        "alpha_nanoseconds": { "$ref": "#/$defs/rational" },
+        "beta_nanoseconds_per_query": { "$ref": "#/$defs/rational" },
+        "r_squared": { "$ref": "#/$defs/rational" },
+        "intercept_label": { "const": "extrapolated-descriptive-intercept-not-observed-fixed-cost" },
+        "pass_threshold": { "type": "null" }
+      },
+      "required": [
+        "strategy_candidate_id",
+        "role",
+        "query_counts",
+        "median_wall_nanoseconds",
+        "alpha_nanoseconds",
+        "beta_nanoseconds_per_query",
+        "r_squared",
+        "intercept_label",
+        "pass_threshold"
+      ]
+    },
+    "olsRecords": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "const": "dynamic-cssc-validation-scaling-ols-records-v1" },
+        "study_id": { "const": "dynamic-cssc-validation-scaling-2026-09-01" },
+        "record_count": { "const": 6 },
+        "records": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "items": { "$ref": "#/$defs/olsRecord" }
+        }
+      },
+      "required": ["schema_version", "study_id", "record_count", "records"]
+    },
+    "providerObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "github_job_database_id": { "$ref": "#/$defs/strictPositive" },
+        "github_job_name": {
+          "type": "string",
+          "pattern": "^(producer|replay)-seed-[123]$"
+        },
+        "github_job_started_at": { "$ref": "#/$defs/providerTimestamp" },
+        "github_job_completed_at": { "$ref": "#/$defs/providerTimestamp" },
+        "github_job_conclusion": { "const": "success" }
+      },
+      "required": [
+        "github_job_database_id",
+        "github_job_name",
+        "github_job_started_at",
+        "github_job_completed_at",
+        "github_job_conclusion"
+      ]
+    },
+    "providerObservations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "const": "dynamic-cssc-validation-scaling-provider-observations-v1" },
+        "study_id": { "const": "dynamic-cssc-validation-scaling-2026-09-01" },
+        "observation_count": { "const": 6 },
+        "observations": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "items": { "$ref": "#/$defs/providerObservation" }
+        }
+      },
+      "required": ["schema_version", "study_id", "observation_count", "observations"]
+    },
+    "inputArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "artifact_role": { "$ref": "#/$defs/role" },
+        "seed_ordinal": { "enum": [1, 2, 3] },
+        "provider_artifact_name": { "type": "string", "minLength": 1 },
+        "provider_artifact_id": { "$ref": "#/$defs/strictPositive" },
+        "provider_artifact_size_in_bytes": { "$ref": "#/$defs/strictPositive" },
+        "provider_artifact_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "execution_receipt_sha256": { "$ref": "#/$defs/sha256" },
+        "execution_receipt": { "$ref": "#/$defs/executionReceipt" },
+        "payload_byte_count": { "$ref": "#/$defs/strictPositive" },
+        "payload_sha256": { "$ref": "#/$defs/sha256" },
+        "independent_rehash_verified": { "const": true }
+      },
+      "required": [
+        "artifact_role",
+        "seed_ordinal",
+        "provider_artifact_name",
+        "provider_artifact_id",
+        "provider_artifact_size_in_bytes",
+        "provider_artifact_digest",
+        "execution_receipt_sha256",
+        "execution_receipt",
+        "payload_byte_count",
+        "payload_sha256",
+        "independent_rehash_verified"
+      ]
+    },
+    "inputArtifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "const": "dynamic-cssc-validation-scaling-input-artifacts-v1" },
+        "study_id": { "const": "dynamic-cssc-validation-scaling-2026-09-01" },
+        "artifact_count": { "const": 6 },
+        "artifacts": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "items": { "$ref": "#/$defs/inputArtifact" }
+        }
+      },
+      "required": ["schema_version", "study_id", "artifact_count", "artifacts"]
+    },
+    "humanRendering": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy_candidate_id": { "$ref": "#/$defs/strategy" },
+        "role": { "$ref": "#/$defs/role" },
+        "alpha_seconds": { "type": "string", "pattern": "^-?[0-9]+\\.[0-9]{9}$" },
+        "beta_seconds_per_query": { "type": "string", "pattern": "^-?[0-9]+\\.[0-9]{9}$" },
+        "r_squared": { "type": "string", "pattern": "^-?[0-9]+\\.[0-9]{9}$" }
+      },
+      "required": [
+        "strategy_candidate_id",
+        "role",
+        "alpha_seconds",
+        "beta_seconds_per_query",
+        "r_squared"
+      ]
+    },
+    "humanRenderings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "const": "dynamic-cssc-validation-scaling-human-renderings-v1" },
+        "study_id": { "const": "dynamic-cssc-validation-scaling-2026-09-01" },
+        "rounding": { "const": "Decimal-ROUND_HALF_EVEN-nine-decimal-places" },
+        "rendering_count": { "const": 6 },
+        "renderings": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "items": { "$ref": "#/$defs/humanRendering" }
+        }
+      },
+      "required": ["schema_version", "study_id", "rounding", "rendering_count", "renderings"]
+    },
+    "aggregateManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "const": "dynamic-cssc-validation-scaling-aggregate-v1" },
+        "study_id": { "const": "dynamic-cssc-validation-scaling-2026-09-01" },
+        "source_git_sha": { "$ref": "#/$defs/gitSha" },
+        "source_tag": { "const": "validation-scaling-source-v2" },
+        "stage0_plan_sha256": {
+          "const": "337de174c6cc445fe9ab54c64dda74b0e9fb6d070e7b5478e09def8940a3b712"
+        },
+        "closed_cell_count": { "const": 54 },
+        "input_artifact_count": { "const": 6 },
+        "member_count": { "const": 7 },
+        "members": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": { "$ref": "#/$defs/memberRecord" }
+        },
+        "matrix_complete": { "const": true },
+        "claim_scope": { "const": "validation-scaling-only" },
+        "formal_authority_granted": { "const": false }
+      },
+      "required": [
+        "schema_version",
+        "study_id",
+        "source_git_sha",
+        "source_tag",
+        "stage0_plan_sha256",
+        "closed_cell_count",
+        "input_artifact_count",
+        "member_count",
+        "members",
+        "matrix_complete",
+        "claim_scope",
+        "formal_authority_granted"
+      ]
+    }
+  }
+}
