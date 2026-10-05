@@ -1,0 +1,69 @@
+name: R1 bounded native engineering (not formal evidence)
+
+on:
+  push:
+    branches: [codex/iscai-r1-native-study]
+    paths:
+      - 'cpp/**'
+      - 'src/dynamic_cssc/r1_native_lifecycle.py'
+      - 'scripts/r1_native_engineering.py'
+      - 'tests/test_r1_native_lifecycle.py'
+      - '.github/workflows/r1-native-engineering.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  sentinel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    env:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.13'
+          cache: pip
+      - name: Install engineering dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ninja-build libgmp-dev
+          python -m pip install -e '.[dev]'
+      - name: Focused Python tests (not native evidence)
+        run: |
+          ruff check src/dynamic_cssc/r1_native_lifecycle.py scripts/r1_native_engineering.py tests/test_r1_native_lifecycle.py
+          pytest -q tests/test_r1_native_lifecycle.py
+      - name: Cache pinned OpenFHE install
+        id: openfhe
+        uses: actions/cache@v4
+        with:
+          path: _openfhe/install
+          key: r1-openfhe-ubuntu24-gcc-1306d14f8c26bb6150d3e6ad54f28dfe1007689e-v1
+      - name: Build pinned OpenFHE
+        if: steps.openfhe.outputs.cache-hit != 'true'
+        run: bash scripts/bootstrap_openfhe.sh
+      - name: Build only the native query runner
+        run: |
+          cmake -S cpp -B build/cpp -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/_openfhe/install"
+          cmake --build build/cpp --target openfhe_query_runner --parallel 2
+      - name: Run three disjoint complete-trace sentinels serially
+        timeout-minutes: 32
+        run: |
+          for strategy in repack padding strong; do
+            python scripts/r1_native_engineering.py --executable build/cpp/openfhe_query_runner --output-dir results/r1-engineering/$strategy --strategy "$strategy"
+          done
+      - name: Upload public engineering receipts only (never ledger/private inputs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: r1-engineering-${{ github.sha }}
+          path: |
+            results/r1-engineering/*/events.jsonl
+            results/r1-engineering/*/summary.json
+            results/r1-engineering/*/failure.json
+            results/r1-engineering/*/native-stderr.log
+          if-no-files-found: warn
+          retention-days: 30

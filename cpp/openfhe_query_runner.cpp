@@ -13,6 +13,7 @@
 #include <array>
 #include <cerrno>
 #include <charconv>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -29,6 +30,7 @@
 #include <vector>
 
 #include <unistd.h>
+#include <sys/resource.h>
 
 #include "include/args.hpp"
 
@@ -2303,11 +2305,20 @@ int RunRouteAReplay(const RunnerArguments& args) {
     return 0;
 }
 
+#include "include/r1_native_lifecycle.hpp"
+
 }  // namespace
 
 int main(int argc, char** argv) {
     try {
         const auto args = dynamic_cssc::ParseArgs(argc, argv);
+        if (args.count("r1-lifecycle") != 0) {
+            RequireExactArgumentKeys(args, {"r1-lifecycle"});
+            if (args.at("r1-lifecycle") != "engineering-v1") {
+                Fail("unsupported R1 lifecycle mode");
+            }
+            return RunR1Lifecycle();
+        }
         const auto mode = SelectRunnerMode(args);
         if (mode == RunnerMode::Legacy) {
             RequireExactArgumentKeys(
