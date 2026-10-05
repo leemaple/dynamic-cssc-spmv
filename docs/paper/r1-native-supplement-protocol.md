@@ -77,7 +77,8 @@ lifecycle difference. Query `reconstruction_ns` is required B work;
 whole-harness comparison. Other mixed timers remain labeled mixed. All
 recurring validation and adapter overhead applies to every strategy.
 
-Count serialized bytes by actual direction A->Cloud, A->B, B->Cloud, Cloud->B,
+Count serialized bytes by actual recurring direction A->Cloud, A->B, B->Cloud,
+Cloud->B and the additional setup direction B->A (context/public key),
 distinguishing initial keys, publication and query payloads. Metadata and
 rotation-key augmentation use full snapshots, not hypothetical patches. Decoded
 metadata/public keys must be consumed by the receiver checks/computation. Private

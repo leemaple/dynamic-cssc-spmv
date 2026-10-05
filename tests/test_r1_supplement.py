@@ -7,6 +7,7 @@ from dataclasses import asdict
 import pytest
 
 import dynamic_cssc.r1_supplement as supplement
+import dynamic_cssc.r1_supplement_analysis as analysis
 from dynamic_cssc.r1_native_lifecycle import canonical, digest, engineering_workload
 from dynamic_cssc.r1_supplement_analysis import METRICS, descriptive_tables, inspect_group
 
@@ -103,6 +104,13 @@ def fake_trace_fixture(tmp_path):
         nonlocal sequence
         op = "publish" if phase in {"publication", "initial-publication"} else phase
         native = {"status": "pass", "sequence": sequence, "op": op, "wire_objects": []}
+        if op == "setup":
+            native["wire_objects"] = [
+                {"kind": "context", "direction": "B->A", "bytes": 1},
+                {"kind": "context", "direction": "B->Cloud", "bytes": 1},
+                {"kind": "public-key", "direction": "B->A", "bytes": 1},
+                {"kind": "multiplication-keys", "direction": "B->Cloud", "bytes": 1},
+            ]
         if op == "publish":
             native.update(
                 matrix_encryptions=1,
@@ -185,10 +193,31 @@ def fake_trace_fixture(tmp_path):
 def test_independent_reconstruction_checks_fake_fixture(tmp_path):
     workload, summary, _ = fake_trace_fixture(tmp_path)
     metrics = supplement.verify_trace(tmp_path, workload, summary["campaign"], "repack")
-    assert metrics["whole_process_ns"] == 100 and metrics["wire_total_bytes"] == 8
+    assert metrics["whole_process_ns"] == 100 and metrics["wire_total_bytes"] == 12
+    assert metrics["wire_bytes_by_direction"]["B->A"] == 2
 
 
-@pytest.mark.parametrize("corruption", ["output", "order", "timing", "summary", "sequence"])
+def test_inspecting_engineering_never_relabels_or_admits_it_as_formal(tmp_path):
+    workload, summary, events = fake_trace_fixture(tmp_path)
+    del summary["campaign"]
+    summary["environment"] = {"test-only": True}
+    summary["evidence_class"] = "engineering-sentinel"
+    events[-1]["evidence_class"] = "engineering-sentinel"
+    (tmp_path / "summary.json").write_bytes(canonical(summary))
+    (tmp_path / "events.jsonl").write_bytes(b"\n".join(canonical(e) for e in events) + b"\n")
+    before = supplement.file_hash(tmp_path / "summary.json")
+    metrics = supplement.verify_trace(
+        tmp_path, workload, None, "repack", evidence_class="engineering-sentinel"
+    )
+    assert metrics["wire_bytes_by_direction"]["B->A"] == 2
+    assert supplement.file_hash(tmp_path / "summary.json") == before
+    with pytest.raises(ValueError, match="trace identity"):
+        supplement.verify_trace(tmp_path, workload, None, "repack")
+
+
+@pytest.mark.parametrize(
+    "corruption", ["output", "order", "timing", "summary", "sequence", "direction"]
+)
 def test_independent_reconstruction_rejects_bad_records(tmp_path, corruption):
     workload, summary, events = fake_trace_fixture(tmp_path)
     if corruption == "output":
@@ -199,6 +228,8 @@ def test_independent_reconstruction_rejects_bad_records(tmp_path, corruption):
         events[3]["oracle_ns"] = 100
     elif corruption == "summary":
         events[-1]["complete_queries"] = 5
+    elif corruption == "direction":
+        events[0]["native"]["wire_objects"][0]["direction"] = "B->UnauthorisedRecipient"
     else:
         events[3]["native"]["sequence"] = 999
     (tmp_path / "events.jsonl").write_bytes(b"\n".join(canonical(e) for e in events) + b"\n")
@@ -289,3 +320,59 @@ def test_complete_fake_group_inventory_and_mutation_rejection(tmp_path, monkeypa
     first.write_bytes(canonical(broken))
     with pytest.raises(ValueError, match="digest/size"):
         inspect_group(tmp_path, group, identity)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {},
+        {"path": ".github/workflows/r1-native-supplement.yml@main"},
+        {
+            "path": (
+                ".github/workflows/r1-native-supplement.yml@refs/tags/"
+                "iscai-sa038-r1-native-formal-v1"
+            )
+        },
+        {"path": ".github/workflows/unrelated.yml@main"},
+        {"head_sha": "e" * 40},
+        {"run_attempt": 2},
+        {"event": "workflow_dispatch"},
+        {"id": 124},
+    ],
+)
+def test_collector_provider_path_forms_and_identity_before_any_inputs(
+    tmp_path, monkeypatch, change
+):
+    source = "f" * 40
+    provider = {
+        "id": 123,
+        "head_sha": source,
+        "run_attempt": 1,
+        "event": "push",
+        "path": ".github/workflows/r1-native-supplement.yml",
+        **change,
+    }
+
+    def response(command):
+        return canonical({"jobs": []} if "/jobs?" in command[-1] else provider)
+
+    def forbidden(_):
+        raise AssertionError("control fixture must never regenerate registered inputs")
+
+    monkeypatch.setattr(analysis.subprocess, "check_output", response)
+    monkeypatch.setattr(analysis, "git", lambda *_: source)
+    monkeypatch.setattr(analysis, "registered_workload", forbidden)
+    valid = not change or (
+        set(change) == {"path"}
+        and change["path"].startswith(".github/workflows/r1-native-supplement.yml@")
+    )
+    destination = tmp_path / "inspection"
+    if valid:
+        result = analysis.collect(tmp_path / "no-artifacts", destination, source, "123")
+        assert result["complete"] is False and result["admitted_traces"] == 0
+        assert len(result["group_coverage"]) == 24
+        assert json.loads((destination / "provider-run.json").read_bytes()) == provider
+    else:
+        with pytest.raises(ValueError, match="provider campaign identity"):
+            analysis.collect(tmp_path / "no-artifacts", destination, source, "123")
+        assert not destination.exists()

@@ -151,12 +151,16 @@ def collect(root: Path, output: Path, source: str, run_id: str) -> dict:
             ["gh", "api", f"repos/leemaple/dynamic-cssc-spmv/actions/runs/{run_id}"]
         )
     )
+    # GitHub's documented run path may append @ref. Preserve the original in
+    # provider-run.json; source/tag/run/attempt checks remain separate anchors.
+    workflow_path = provider_run["path"]
     if (
         str(provider_run["id"]) != run_id
         or provider_run["head_sha"] != source
         or provider_run["run_attempt"] != 1
         or provider_run["event"] != "push"
-        or provider_run["path"] != ".github/workflows/r1-native-supplement.yml"
+        or not isinstance(workflow_path, str)
+        or workflow_path.partition("@")[0] != ".github/workflows/r1-native-supplement.yml"
     ):
         raise ValueError("provider campaign identity/attempt mismatch")
     provider = json.loads(

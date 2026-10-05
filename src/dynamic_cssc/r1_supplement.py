@@ -276,14 +276,27 @@ def run_group(group_id: int, executable: Path, output: Path, entrypoint: Path) -
         save_new(output / "group.json", record)
 
 
-def verify_trace(directory: Path, workload, campaign: dict, strategy: str) -> dict:
+def verify_trace(
+    directory: Path,
+    workload,
+    campaign: dict | None,
+    strategy: str,
+    *,
+    evidence_class: str = CLASS,
+) -> dict:
     """Independent dictionary dot products; never calls the producer's oracle."""
+    if evidence_class not in {CLASS, "engineering-sentinel"}:
+        raise ValueError("unsupported inspection evidence class")
+    if evidence_class == "engineering-sentinel" and (
+        campaign is not None or not workload.identity.startswith("engineering-disjoint-")
+    ):
+        raise ValueError("engineering inspection must stay in its own domain")
     summary = json.loads((directory / "summary.json").read_bytes())
     events = [json.loads(line) for line in (directory / "events.jsonl").read_bytes().splitlines()]
     if (
         summary.get("campaign") != campaign
         or summary.get("strategy") != strategy
-        or summary.get("evidence_class") != CLASS
+        or summary.get("evidence_class") != evidence_class
         or summary.get("status") != "pass"
         or summary.get("formal_authority") is not False
         or summary.get("workload_identity") != workload.identity
@@ -298,8 +311,9 @@ def verify_trace(directory: Path, workload, campaign: dict, strategy: str) -> di
     expected_phases.extend(["close", "summary"])
     if [event.get("phase") for event in events] != expected_phases:
         raise ValueError("trace phase/order/coverage mismatch")
+    appended_fields = {"campaign"} if evidence_class == CLASS else {"environment"}
     if {k: v for k, v in events[-1].items() if k != "phase"} != {
-        k: v for k, v in summary.items() if k != "campaign"
+        k: v for k, v in summary.items() if k not in appended_fields
     }:
         raise ValueError("summary differs from terminal event")
     logical = {(r, c): value for r, c, value in workload.initial}
@@ -379,7 +393,7 @@ def verify_trace(directory: Path, workload, campaign: dict, strategy: str) -> di
         or summary["post_initial_lifecycle_ns"] != whole - initial
     ):
         raise ValueError("whole/phase timing reconciliation failed")
-    wire = {direction: 0 for direction in ("A->Cloud", "A->B", "B->Cloud", "Cloud->B")}
+    wire = {direction: 0 for direction in ("A->Cloud", "A->B", "B->Cloud", "Cloud->B", "B->A")}
     phase_bytes = {
         phase: 0 for phase in ("setup", "initial-publication", "publication", "query", "close")
     }
