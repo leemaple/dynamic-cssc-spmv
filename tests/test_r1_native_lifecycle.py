@@ -96,7 +96,8 @@ def test_publication_refreshes_and_binds_physical_pages(strategy):
 def test_role_metadata_excludes_private_matrix_and_masks(strategy):
     state = initialize(strategy, engineering_workload())
     bundle = compile_bundle(state)
-    messages = role_metadata(bundle, state.version_id)
+    _, keys, _ = publication_payload(state, bundle, {}, None)
+    messages = role_metadata(bundle, state.version_id, keys)
     receipts = metadata_roundtrip(messages)
     assert [r["direction"] for r in receipts] == ["A->Cloud", "A->B"]
     assert all(r["bytes"] > 0 for r in receipts)
@@ -107,6 +108,7 @@ def test_role_metadata_excludes_private_matrix_and_masks(strategy):
     cloud = canonical(messages[0]["payload"])
     assert b'"global_column_indices"' not in cloud
     assert b'"slot_to_logical"' not in cloud
+    assert messages[0]["payload"]["value_bindings"] == keys
 
 
 @pytest.mark.parametrize("strategy", STRATEGIES)

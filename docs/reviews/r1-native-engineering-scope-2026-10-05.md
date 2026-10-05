@@ -23,7 +23,8 @@ Pro approved the plan, not this code or any experimental claim.
   actual full serialized rotation-key inventory. No future keys are free.
 - Matrix, query, mask and result ciphertexts serialize and deserialize at their
   intended role directions. Matrix/mask material is never counted as B traffic.
-- Public Cloud program and private B metadata are separate full JSON snapshots
+- Public Cloud program (including current operand-to-cache bindings) and private
+  B metadata are separate full JSON snapshots
   with actual encode/decode checks. No hypothetical incremental metadata saving
   is credited. The colocated receiver is not an isolated network role.
 - All returned effective slots checked against the typed plaintext DAG;

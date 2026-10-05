@@ -338,14 +338,18 @@ def publication_payload(state, bundle, prior: dict[str, str], facts: TransitionF
     )
 
 
-def role_metadata(bundle, version: str) -> tuple[dict, ...]:
+def role_metadata(bundle, version: str, value_keys: dict[str, str]) -> tuple[dict, ...]:
     """Full snapshots, not hypothetical patches; A->B has no values/mask samples."""
     cloud, output, specs, routes = bundle_parts(bundle)
     return (
         {
             "direction": "A->Cloud",
             "kind": "publication-program",
-            "payload": canonical_cloud_visible_payload(cloud),
+            "payload": {
+                "version_id": version,
+                "value_bindings": value_keys,
+                "cloud_plan": canonical_cloud_visible_payload(cloud),
+            },
         },
         {
             "direction": "A->B",
@@ -478,7 +482,9 @@ def run_engineering_trace(
                 payload, value_keys, fingerprints = publication_payload(
                     current, current_bundle, previous, facts
                 )
-                metadata = metadata_roundtrip(role_metadata(current_bundle, current.version_id))
+                metadata = metadata_roundtrip(
+                    role_metadata(current_bundle, current.version_id, value_keys)
+                )
                 native = session.call("publish", payload)
                 count = sum(value["reencrypt"] for value in payload["values"])
                 if (
