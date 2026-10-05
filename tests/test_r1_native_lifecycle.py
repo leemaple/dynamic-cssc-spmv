@@ -1,7 +1,11 @@
 """Cheap adapter tests; fake results are explicitly NOT native evidence."""
 
 import json
+import os
+import subprocess
+import sys
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -9,6 +13,7 @@ from dynamic_cssc.events import NetUpdate, PublicationWindow
 from dynamic_cssc.r1_native_lifecycle import (
     MODULUS,
     STRATEGIES,
+    NativeSession,
     SQLiteMaskBindingLedger,
     advance_publication,
     advance_strong_publication,
@@ -27,8 +32,19 @@ from dynamic_cssc.r1_native_lifecycle import (
     prepare_strong_query,
     publication_payload,
     role_metadata,
+    verify_native_counts,
     verify_outputs,
 )
+
+
+@pytest.fixture
+def native_binary():
+    value = os.environ.get("R1_NATIVE_EXECUTABLE")
+    if not value:
+        pytest.skip("native tests run only on a configured remote built binary")
+    path = Path(value).resolve()
+    assert path.is_file()
+    return path
 
 
 def test_fixture_is_legal_disjoint_and_not_a_formal_entry_point():
@@ -142,3 +158,146 @@ def test_all_slot_and_independent_logical_oracles(tmp_path, strategy):
     native["request_sha256"] = "0" * 64
     with pytest.raises(ValueError, match="request digest"):
         verify_outputs(bundle, request, native, state.logical, workload.queries[0][0])
+
+
+def test_cli_never_writes_to_previous_output(tmp_path):
+    original = tmp_path / "failure.json"
+    original.write_bytes(b"original failure evidence")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/r1_native_engineering.py",
+            "--executable",
+            "absent",
+            "--output-dir",
+            str(tmp_path),
+            "--strategy",
+            "repack",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "prior receipts must remain untouched" in result.stderr
+    assert original.read_bytes() == b"original failure evidence"
+    assert list(tmp_path.iterdir()) == [original]
+
+
+def test_native_canonical_frame_signed_reuse_and_changed_reuse_rejection(tmp_path, native_binary):
+    session = NativeSession(native_binary, tmp_path / "native.log")
+    try:
+        assert session.call("setup", {})["status"] == "pass"
+        vector = [-2] + [0] * 4095
+        first = session.call(
+            "publish",
+            {
+                "publication_id": "v00000000",
+                "slot_count": 4096,
+                "values": [{"cache_key": "signed", "values": vector, "reencrypt": True}],
+            },
+        )
+        assert first["matrix_encryptions"] == 1
+        second = session.call(
+            "publish",
+            {
+                "publication_id": "v00000001",
+                "slot_count": 4096,
+                "values": [{"cache_key": "signed", "values": vector, "reencrypt": False}],
+            },
+        )
+        assert second["matrix_encryptions"] == 0 and second["matrix_reused"] == 1
+        vector[0] = -3
+        with pytest.raises(RuntimeError, match="native process failed"):
+            session.call(
+                "publish",
+                {
+                    "publication_id": "v00000002",
+                    "slot_count": 4096,
+                    "values": [{"cache_key": "signed", "values": vector, "reencrypt": False}],
+                },
+            )
+    finally:
+        session.close()
+    assert "reuse of absent or changed matrix value" in (tmp_path / "native.log").read_text()
+
+
+@pytest.mark.parametrize("failure", ["replay", "stale"])
+def test_native_query_binding_and_replay_rejection(tmp_path, native_binary, failure):
+    workload = engineering_workload()
+    state = initialize("repack", workload)
+    bundle = compile_bundle(state)
+    publication, keys, _ = publication_payload(state, bundle, {}, None)
+    ledger = SQLiteMaskBindingLedger(tmp_path / "ledger.sqlite")
+    prepared = prepare_ordinary_query(
+        bundle,
+        query_id="native-regression",
+        vector=workload.queries[0][0],
+        modulus=MODULUS,
+        ledger=ledger,
+    )
+    request = json.loads(build_ordinary_openfhe_query_request(bundle, prepared))
+    payload = {"publication_id": state.version_id, "request": request, "value_keys": keys}
+    session = NativeSession(native_binary, tmp_path / "native.log")
+    try:
+        session.call("setup", {})
+        session.call("publish", publication)
+        result = session.call("query", payload)
+        verify_outputs(bundle, request, result, state.logical, workload.queries[0][0])
+        if failure == "stale":
+            payload["publication_id"] = "wrong-version"
+        with pytest.raises(RuntimeError, match="native process failed"):
+            session.call("query", payload)
+    finally:
+        session.close()
+    expected = (
+        "repeated query preparation" if failure == "replay" else "publication binding mismatch"
+    )
+    assert expected in (tmp_path / "native.log").read_text()
+
+
+def test_native_rotation_augmentation_preserves_prior_keys(tmp_path, native_binary):
+    workload = engineering_workload()
+    state = initialize("padding", workload)
+    bundle = compile_bundle(state)
+    ledger = SQLiteMaskBindingLedger(tmp_path / "ledger.sqlite")
+    session = NativeSession(native_binary, tmp_path / "native.log")
+    previous, indices = {}, set()
+    try:
+        session.call("setup", {})
+        for index in range(2):
+            facts = None
+            if index:
+                transition = advance_publication(
+                    state, PublicationWindow(0, 0.0, 1.0, workload.windows[0], 1, "test")
+                )
+                state = transition.state
+                facts = transition.facts
+                bundle = compile_bundle(state)
+            publication, keys, previous = publication_payload(state, bundle, previous, facts)
+            session.call("publish", publication)
+            prepared = prepare_ordinary_query(
+                bundle,
+                query_id=f"augmentation-{index}",
+                vector=workload.queries[0][0],
+                modulus=MODULUS,
+                ledger=ledger,
+            )
+            request = json.loads(build_ordinary_openfhe_query_request(bundle, prepared))
+            required = {
+                value for _, value in bundle.compiled.cloud_plan.program.rotation_catalog.entries
+            }
+            additional = required - indices
+            assert additional  # The fixture must genuinely exercise augmentation.
+            result = session.call(
+                "query",
+                {"publication_id": state.version_id, "value_keys": keys, "request": request},
+            )
+            assert result["new_rotation_keys"] == len(additional)
+            verify_native_counts(bundle, result)
+            verify_outputs(bundle, request, result, state.logical, workload.queries[0][0])
+            indices |= required
+        session.call("close", {})
+        assert session.process.wait(timeout=5) == 0
+    finally:
+        session.close()

@@ -42,6 +42,24 @@ automatic reruns. These sentinel values must never become paper performance data
 
 ## Bounds and remaining gates
 
+The first engineering run `37306573066` on `20d1f4f` built OpenFHE and the
+native runner, then failed before setup because the new command fields did not
+match the reused strict canonical-key-order validator. It spent 220 runner
+seconds and produced no successful native trace. Independent source review also
+found a 4096-raw versus 8192-normalized matrix-fingerprint mismatch. Neither is
+a scientific result. This follow-up fixes both representations, includes signed
+matrix values in the disjoint fixture, and adds remote native regressions for
+canonical frames, signed reuse, changed-reuse rejection, stale/replayed queries
+and incremental rotation-key generation with prior-key reuse.
+
+It also prevents the CLI from writing failure metadata into a pre-existing run
+directory, includes workload validation in the whole-trace timer, and reconciles
+native operation/encryption counts against the actual typed program and dirty
+page set. Low-rate Linux samples report observed simultaneous Python+native RSS
+and trace-file disk usage as sampled lower bounds, alongside individual process
+high-water marks and their explicitly labelled upper-bound sum. Sampling cost is
+included. These additions still require remote witnesses and review.
+
 Stage A: at most two focused engineering days and six aggregate runner-hours,
 including CI/build/test/sentinel. This workflow reserves at most 70 minutes;
 simultaneous ordinary CI reserves at most 60 minutes. The aggregate budget is
@@ -52,9 +70,9 @@ vectors and SQLite ledger are not uploaded. Only named public receipts and
 diagnostic logs are uploaded, never an entire results directory.
 
 This is an engineering feasibility candidate, NOT a frozen scientific protocol.
-Remaining before formal execution: native build/sentinel, negative native
-protocol tests, count reconciliation, scaled resource calibration, combined
-memory/disk measurement definition, independent code/material review, full
+Remaining before formal execution: native build/sentinel including negative
+protocol tests and count reconciliation, scaled resource calibration, review of
+combined memory/disk measurement, independent code/material review, full
 exact-SHA CI, frozen workload generator/seeds/limits and source tag. No formal
 dispatch is authorized by this document or green engineering CI.
 

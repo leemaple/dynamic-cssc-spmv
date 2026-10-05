@@ -13,8 +13,10 @@ import os
 import resource
 import signal
 import subprocess
+import threading
 import time
 from collections import Counter
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -23,6 +25,7 @@ from dynamic_cssc.cloud_execution_plan import canonical_cloud_visible_payload
 from dynamic_cssc.events import NetUpdate, PublicationWindow
 from dynamic_cssc.mask_ledger import SQLiteMaskBindingLedger
 from dynamic_cssc.openfhe_query_runner import (
+    _expected_operation_counts,
     build_ordinary_openfhe_query_request,
     build_strong_openfhe_query_request,
 )
@@ -115,7 +118,9 @@ class Workload:
 def engineering_workload() -> Workload:
     """Hand-written disjoint fixture; no formal seed or prior-study input is used."""
     rows, cols = 16, 65
-    initial = tuple((r, c, 2) for r in range(rows) for c in (r, r + 16))
+    initial = tuple(
+        (r, c, -2 if (r, c) == (15, 31) else 2) for r in range(rows) for c in (r, r + 16)
+    )
     windows = (
         (
             NetUpdate(0, 0, 2, 3),
@@ -196,6 +201,57 @@ class NativeSession:
                 if pipe:
                     pipe.close()
             self.stderr.close()
+
+
+class TraceResourceSampler:
+    """Low-rate Linux summed-RSS/disk samples; never call samples an exact peak."""
+
+    def __init__(self, native_pid: int, directory: Path):
+        self.pids = (os.getpid(), native_pid)
+        self.directory = directory
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.peak_sum_rss_kib = 0
+        self.peak_disk_bytes = 0
+        self.samples = 0
+        self.error = None
+        self.thread.start()
+
+    def _loop(self) -> None:
+        try:
+            while not self.stop_event.is_set():
+                rss = 0
+                for pid in self.pids:
+                    try:
+                        for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+                            if line.startswith("VmRSS:"):
+                                rss += int(line.split()[1])
+                    except FileNotFoundError:
+                        pass  # Native exit is expected at the final sample.
+                disk = 0
+                for path in self.directory.iterdir():
+                    # SQLite may remove a journal between enumeration/stat.
+                    with suppress(FileNotFoundError):
+                        disk += path.stat().st_size
+                self.peak_sum_rss_kib = max(self.peak_sum_rss_kib, rss)
+                self.peak_disk_bytes = max(self.peak_disk_bytes, disk)
+                self.samples += 1
+                self.stop_event.wait(0.1)
+        except Exception as error:
+            self.error = error
+
+    def close(self) -> dict:
+        self.stop_event.set()
+        self.thread.join(timeout=2)
+        if self.thread.is_alive() or self.error is not None:
+            raise RuntimeError("resource sampling failed") from self.error
+        return {
+            "sample_interval_seconds": 0.1,
+            "sample_count": self.samples,
+            "peak_observed_sum_rss_kib": self.peak_sum_rss_kib,
+            "peak_observed_harness_disk_bytes": self.peak_disk_bytes,
+            "scope": "Linux /proc Python+native summed RSS and trace files; sampled lower bound",
+        }
 
 
 def initialize(strategy: str, workload: Workload) -> StrategyState | StrongStrategyState:
@@ -357,6 +413,21 @@ def verify_outputs(bundle, request: dict, native: dict, logical: dict, vector: t
     return reconstructed
 
 
+def verify_native_counts(bundle, native: dict) -> None:
+    cloud, _, _, _ = bundle_parts(bundle)
+    expected = _expected_operation_counts(cloud.program)
+    encryptions = expected.pop("encrypt") - sum(
+        operand.role == "value" for operand in cloud.program.ciphertext_inputs
+    )
+    decryptions = expected.pop("decrypt")
+    if (
+        native["operations"] != expected
+        or native["query_encryptions"] != encryptions
+        or native["decryptions"] != decryptions
+    ):
+        raise ValueError("native operation counts disagree with typed complete query")
+
+
 def run_engineering_trace(
     workload: Workload,
     strategy: str,
@@ -367,13 +438,13 @@ def run_engineering_trace(
     session_factory=NativeSession,
 ) -> dict[str, Any]:
     """One complete trace, bounded externally by an alarm as well as the CI job."""
+    start = time.perf_counter_ns()
     workload.validate()
     if not 1 <= timeout_seconds <= 3600:
         raise ValueError("engineering trace limit outside 1..3600 seconds")
     output_dir.mkdir(parents=True, exist_ok=False)
-    records = []
     session = None
-    start = time.perf_counter_ns()
+    sampler = None
     previous_alarm = signal.getsignal(signal.SIGALRM)
 
     def timed_out(_signum, _frame):
@@ -386,11 +457,12 @@ def run_engineering_trace(
         with log:
 
             def record(value):
-                records.append(value)
                 log.write(canonical(value) + b"\n")
                 log.flush()
 
             session = session_factory(executable, output_dir / "native-stderr.log")
+            if os.uname().sysname == "Linux":
+                sampler = TraceResourceSampler(session.process.pid, output_dir)
             record({"phase": "setup", "native": session.call("setup", {})})
             initial_start = time.perf_counter_ns()
             state = initialize(strategy, workload)
@@ -405,6 +477,12 @@ def run_engineering_trace(
                 )
                 metadata = metadata_roundtrip(role_metadata(current_bundle, current.version_id))
                 native = session.call("publish", payload)
+                count = sum(value["reencrypt"] for value in payload["values"])
+                if (
+                    native["matrix_encryptions"] != count
+                    or native["matrix_reused"] != len(payload["values"]) - count
+                ):
+                    raise ValueError("native publication counts disagree with physical dirty pages")
                 previous = fingerprints
                 native["wire_objects"].extend(metadata)
                 return native, value_keys
@@ -486,6 +564,7 @@ def run_engineering_trace(
                             "request": request,
                         },
                     )
+                    verify_native_counts(bundle, native)
                     oracle_start = time.perf_counter_ns()
                     output = verify_outputs(bundle, request, native, state.logical, vector)
                     oracle_ns = time.perf_counter_ns() - oracle_start
@@ -519,11 +598,16 @@ def run_engineering_trace(
                             "query_vector_sha256": digest(vector),
                         }
                     )
-            record({"phase": "close", "native": session.call("close", {})})
+            closing_receipt = session.call("close", {})
+            record({"phase": "close", "native": closing_receipt})
             if session.process.wait(timeout=5) != 0:
                 raise RuntimeError("native process exited unsuccessfully")
             session.close()
             session = None
+            sampling = (
+                sampler.close() if sampler is not None else {"scope": "unavailable off Linux"}
+            )
+            sampler = None
             total_ns = time.perf_counter_ns() - start
             lanes = Counter(lane for chunk in state.base.chunks for lane in chunk.slot_kinds)
             result = {
@@ -552,6 +636,12 @@ def run_engineering_trace(
                 "rss_units": (
                     "KiB on Linux; bytes on macOS; separate process peaks, not simultaneous sum"
                 ),
+                "resource_samples": sampling,
+                "native_peak_rss_platform_units": closing_receipt["native_peak_rss_platform_units"],
+                "sum_of_process_rss_peaks_upper_bound_platform_units": (
+                    resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                    + closing_receipt["native_peak_rss_platform_units"]
+                ),
                 "timing_scope": (
                     "setup through native close; includes Python, IPC, validation, "
                     "oracle, ledger and event logging; excludes input generation "
@@ -563,5 +653,7 @@ def run_engineering_trace(
     finally:
         if session is not None:
             session.close()
+        if sampler is not None:
+            sampler.close()
         signal.alarm(0)
         signal.signal(signal.SIGALRM, previous_alarm)

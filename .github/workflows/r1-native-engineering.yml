@@ -49,6 +49,9 @@ jobs:
         run: |
           cmake -S cpp -B build/cpp -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/_openfhe/install"
           cmake --build build/cpp --target openfhe_query_runner --parallel 2
+      - name: Native negative-input regressions (engineering only)
+        timeout-minutes: 3
+        run: R1_NATIVE_EXECUTABLE="$GITHUB_WORKSPACE/build/cpp/openfhe_query_runner" pytest -q tests/test_r1_native_lifecycle.py
       - name: Run three disjoint complete-trace sentinels serially
         timeout-minutes: 32
         run: |

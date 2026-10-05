@@ -109,8 +109,13 @@ public:
             if (!PrintableIdentifier(key) || !refresh.IsBool() || !vector.IsArray()
                 || vector.Size() != slots || next.count(key)) Fail("invalid R1 matrix value");
             std::vector<std::int64_t> packed;
-            for (const auto& value : vector.GetArray()) packed.push_back(StrictInteger(value, "matrix lane"));
-            const auto hash = HashUtil::HashString(CanonicalJson(vector));
+            json::Value normalized(json::kArrayType);
+            for (const auto& value : vector.GetArray()) {
+                const auto lane = Normalize(StrictInteger(value, "matrix lane"));
+                packed.push_back(lane);
+                normalized.PushBack(json::Value().SetInt64(lane), a);
+            }
+            const auto hash = HashUtil::HashString(CanonicalJson(normalized));
             const auto previous = cache.find(key);
             if (!refresh.GetBool()) {
                 if (previous == cache.end() || previous->second.plaintextHash != hash) {
@@ -156,7 +161,7 @@ public:
     }
 
     void Query(const json::Value& payload, json::Document& result) {
-        RequireExactKeys(payload, {"publication_id", "value_keys", "request"}, "R1 query");
+        RequireExactKeys(payload, {"publication_id", "request", "value_keys"}, "R1 query");
         if (!context || publication.empty()
             || StringMember(payload, "publication_id", "publication ID") != publication) {
             Fail("R1 query publication binding mismatch");
@@ -216,7 +221,9 @@ public:
                 const auto key = StringMember(valueKeys, input.ciphertextId.c_str(), "matrix cache key");
                 const auto found = cache.find(key);
                 json::Value vector(json::kArrayType);
-                for (const auto value : input.values) vector.PushBack(json::Value().SetInt64(value), a);
+                for (std::uint32_t lane = 0; lane < slots; ++lane) {
+                    vector.PushBack(json::Value().SetInt64(input.values.at(lane)), a);
+                }
                 if (found == cache.end() || !usedKeys.insert(key).second
                     || found->second.plaintextHash != HashUtil::HashString(CanonicalJson(vector))) {
                     Fail("R1 query matrix input differs from publication");
@@ -295,7 +302,7 @@ int RunR1Lifecycle() {
         json::Document command;
         command.Parse<json::kParseValidateEncodingFlag>(line.data(), line.size());
         if (command.HasParseError()) Fail("R1 invalid JSON");
-        RequireExactKeys(command, {"schema_version", "sequence", "op", "payload"}, "R1 command");
+        RequireExactKeys(command, {"op", "payload", "schema_version", "sequence"}, "R1 command");
         RequireString(command, "schema_version", "r1-native-engineering-command-v1", "R1 schema");
         if (UIntMember(command, "sequence", "sequence") != expected++) Fail("R1 sequence mismatch");
         const auto op = StringMember(command, "op", "operation");
