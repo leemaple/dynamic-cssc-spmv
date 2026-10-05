@@ -36,7 +36,7 @@ from dynamic_cssc.ordinary_query_lifecycle import (
     claim_ordinary_execution,
     prepare_ordinary_query,
 )
-from dynamic_cssc.output_plan import canonical_output_plan_payload
+from dynamic_cssc.output_plan import OutputPlan, OutputShare, canonical_output_plan_payload
 from dynamic_cssc.plaintext_oracle import (
     direct_spmv,
     execute_cloud_plan,
@@ -381,12 +381,14 @@ def role_metadata(bundle, version: str, value_keys: dict[str, str]) -> tuple[dic
     )
 
 
-def metadata_roundtrip(messages) -> list[dict]:
-    receipts = []
+def metadata_roundtrip(messages) -> tuple[tuple[dict, ...], list[dict]]:
+    received, receipts = [], []
     for message in messages:
         wire = canonical(message["payload"])
-        if json.loads(wire) != message["payload"]:
+        decoded = json.loads(wire)
+        if decoded != message["payload"]:
             raise ValueError("metadata serialization roundtrip failed")
+        received.append(decoded)
         receipts.append(
             {
                 "direction": message["direction"],
@@ -395,11 +397,123 @@ def metadata_roundtrip(messages) -> list[dict]:
                 "sha256": hashlib.sha256(wire).hexdigest(),
             }
         )
-    return receipts
+    return tuple(received), receipts
 
 
-def verify_outputs(bundle, request: dict, native: dict, logical: dict, vector: tuple) -> tuple:
-    cloud, output_plan, _, routes = bundle_parts(bundle)
+@dataclass(frozen=True)
+class ClientPublication:
+    """B's received columns and reconstruction map, containing no A operands."""
+
+    version_id: str
+    query_columns: tuple[tuple[str, tuple[int, ...]], ...]
+    output_plan: OutputPlan
+    routes: tuple[tuple[str, str, str], ...]
+
+
+def receive_client_publication(payload: dict, cloud: dict) -> ClientPublication:
+    if set(payload) != {"version_id", "query_columns", "output_plan", "routes"}:
+        raise ValueError("received B metadata keys changed")
+    if payload["version_id"] != cloud["version_id"]:
+        raise ValueError("received B publication version mismatch")
+    raw_plan = payload["output_plan"]
+    plan = OutputPlan(
+        logical_output_size=raw_plan["logical_output_size"],
+        slot_count=raw_plan["slot_count"],
+        shares=tuple(
+            OutputShare(
+                s["component_id"],
+                s["output_block_id"],
+                tuple(tuple(pair) for pair in s["slot_to_logical"]),
+            )
+            for s in raw_plan["shares"]
+        ),
+    )
+    if (
+        canonical_output_plan_payload(plan) != raw_plan
+        or digest(raw_plan) != cloud["cloud_plan"]["binding"]["output_plan_digest"]
+    ):
+        raise ValueError("received B output plan differs from published binding")
+    columns = tuple((key, tuple(value)) for key, value in sorted(payload["query_columns"].items()))
+    query_ids = {
+        item["ciphertext_id"]
+        for item in cloud["cloud_plan"]["program"]["ciphertext_inputs"]
+        if item["role"] == "query"
+    }
+    if {key for key, _ in columns} != query_ids or any(
+        len(values) != plan.slot_count or any(type(c) is not int or c < -1 for c in values)
+        for _, values in columns
+    ):
+        raise ValueError("received B columns do not cover the published query operands")
+    if any(set(r) != {"result_id", "component_id", "output_block_id"} for r in payload["routes"]):
+        raise ValueError("received B route keys changed")
+    routes = tuple(
+        (r["result_id"], r["component_id"], r["output_block_id"]) for r in payload["routes"]
+    )
+    result_ids = set(cloud["cloud_plan"]["program"]["result_ids"])
+    share_ids = {(s.component_id, s.output_block_id) for s in plan.shares}
+    if (
+        len(routes) != len(result_ids)
+        or {r[0] for r in routes} != result_ids
+        or len(routes) != len(share_ids)
+        or {(r[1], r[2]) for r in routes} != share_ids
+    ):
+        raise ValueError("received B routes are not a published-result/share bijection")
+    return ClientPublication(payload["version_id"], columns, plan, routes)
+
+
+def validate_client_query(client: ClientPublication, prepared, vector: tuple) -> None:
+    """Consume received columns before any native call; do not use private specs."""
+    actual = {
+        operand.ciphertext_id: tuple(v % MODULUS for v in operand.values)
+        for operand in prepared.query_operands
+    }
+    if client.version_id != prepared.version_id or len(actual) != len(prepared.query_operands):
+        raise ValueError("received B query identity mismatch")
+    expected = {}
+    for key, columns in client.query_columns:
+        if any(column >= len(vector) for column in columns):
+            raise ValueError("received B columns exceed query vector")
+        expected[key] = tuple(vector[c] % MODULUS if c >= 0 else 0 for c in columns)
+    if actual != expected:
+        raise ValueError("received B columns disagree with aligned query operands")
+
+
+def reconstruct_client_output(client: ClientPublication, outputs: dict) -> tuple:
+    if set(outputs) != {route[0] for route in client.routes}:
+        raise ValueError("received B result identifiers differ from received routes")
+    shares = {
+        (component, block): tuple(outputs[result]) for result, component, block in client.routes
+    }
+    return reconstruct_output(client.output_plan, shares, modulus=MODULUS)
+
+
+def delta_lane_inventory(state) -> dict[str, int]:
+    segments = state.delta.segments if isinstance(state, StrongStrategyState) else ()
+    capacity = len(cloud_page_shapes(state.delta)) * SLOTS if segments else 0
+    live = sum(entry is not None and entry.value != 0 for s in segments for entry in s.entries)
+    tombstones = sum(
+        entry is not None and entry.value == 0 for s in segments for entry in s.entries
+    )
+    empty = sum(entry is None for s in segments for entry in s.entries)
+    allocated = sum(len(segment.entries) for segment in segments)
+    tail = capacity - allocated
+    if tail < 0 or live + tombstones + empty != allocated:
+        raise ValueError("terminal delta lane inventory does not reconcile")
+    return {
+        "live": live,
+        "tombstone": tombstones,
+        "unused": empty + tail,
+        "allocated_segment_lanes": allocated,
+        "unallocated_page_tail": tail,
+        "page_capacity_lanes": capacity,
+    }
+
+
+def verify_outputs(
+    bundle, request: dict, native: dict, logical: dict, vector: tuple, reconstructed: tuple
+) -> None:
+    """Pure verification; required B reconstruction is timed separately."""
+    cloud, output_plan, _, _ = bundle_parts(bundle)
     if native["request_sha256"] != digest(request):
         raise ValueError("native request digest mismatch")
     args = dict(
@@ -418,14 +532,11 @@ def verify_outputs(bundle, request: dict, native: dict, logical: dict, vector: t
     actual = {key: tuple(values) for key, values in native["outputs"].items()}
     if actual != expected:
         raise ValueError("native all-slot plaintext DAG oracle mismatch")
-    shares = {(r.component_id, r.output_block_id): actual[r.result_id] for r in routes}
-    reconstructed = reconstruct_output(output_plan, shares, modulus=MODULUS)
     direct = direct_spmv(
         logical, vector, rows=output_plan.logical_output_size, cols=len(vector), modulus=MODULUS
     )
     if reconstructed != direct:
         raise ValueError("native independent logical SpMV oracle mismatch")
-    return reconstructed
 
 
 def verify_native_counts(bundle, native: dict) -> None:
@@ -492,9 +603,12 @@ def run_engineering_trace(
                 payload, value_keys, fingerprints = publication_payload(
                     current, current_bundle, previous, facts
                 )
-                metadata = metadata_roundtrip(
+                received, metadata = metadata_roundtrip(
                     role_metadata(current_bundle, current.version_id, value_keys)
                 )
+                cloud_metadata, client_metadata = received
+                client = receive_client_publication(client_metadata, cloud_metadata)
+                payload["cloud_metadata"] = cloud_metadata
                 native = session.call("publish", payload)
                 count = sum(value["reencrypt"] for value in payload["values"])
                 if (
@@ -504,9 +618,9 @@ def run_engineering_trace(
                     raise ValueError("native publication counts disagree with physical dirty pages")
                 previous = fingerprints
                 native["wire_objects"].extend(metadata)
-                return native, value_keys
+                return native, value_keys, client
 
-            native, keys = publish(state, bundle, None)
+            native, keys, client = publish(state, bundle, None)
             record(
                 {
                     "phase": "initial-publication",
@@ -529,7 +643,7 @@ def run_engineering_trace(
                 )
                 state = transition.state
                 bundle = compile_bundle(state, transition)
-                native, keys = publish(state, bundle, transition.facts)
+                native, keys, client = publish(state, bundle, transition.facts)
                 record(
                     {
                         "phase": "publication",
@@ -550,6 +664,7 @@ def run_engineering_trace(
                         modulus=MODULUS,
                         ledger=ledger,
                     )
+                    validate_client_query(client, prepared, vector)
                     if prepared.ledger_commitment_token in tokens:
                         raise ValueError("ledger commitment token reused")
                     tokens.add(prepared.ledger_commitment_token)
@@ -577,22 +692,7 @@ def run_engineering_trace(
                     authorization = claim(
                         authorize(bundle, prepared, ledger=ledger), bundle, prepared
                     )
-                    preparation_ns = time.perf_counter_ns() - query_start
-                    native = session.call(
-                        "query",
-                        {
-                            "publication_id": state.version_id,
-                            "value_keys": keys,
-                            "request": request,
-                        },
-                    )
-                    verify_native_counts(bundle, native)
-                    oracle_start = time.perf_counter_ns()
-                    output = verify_outputs(bundle, request, native, state.logical, vector)
-                    oracle_ns = time.perf_counter_ns() - oracle_start
-                    native["all_slot_output_sha256"] = digest(native.pop("outputs"))
-                    execution_digest = authorization.execution_binding_digest
-                    control = metadata_roundtrip(
+                    received_control, control = metadata_roundtrip(
                         (
                             {
                                 "direction": "B->Cloud",
@@ -600,11 +700,34 @@ def run_engineering_trace(
                                 "payload": {
                                     "query_id": prepared.query_id,
                                     "version_id": state.version_id,
-                                    "execution_binding_digest": execution_digest,
+                                    "execution_binding_digest": (
+                                        authorization.execution_binding_digest
+                                    ),
+                                    "query_preparation_sha256": request["bindings"][
+                                        "query_preparation_sha256"
+                                    ],
                                 },
                             },
                         )
                     )
+                    preparation_ns = time.perf_counter_ns() - query_start
+                    native = session.call(
+                        "query",
+                        {
+                            "publication_id": state.version_id,
+                            "value_keys": keys,
+                            "request": request,
+                            "query_binding": received_control[0],
+                        },
+                    )
+                    verify_native_counts(bundle, native)
+                    reconstruction_start = time.perf_counter_ns()
+                    output = reconstruct_client_output(client, native["outputs"])
+                    reconstruction_ns = time.perf_counter_ns() - reconstruction_start
+                    oracle_start = time.perf_counter_ns()
+                    verify_outputs(bundle, request, native, state.logical, vector, output)
+                    oracle_ns = time.perf_counter_ns() - oracle_start
+                    native["all_slot_output_sha256"] = digest(native.pop("outputs"))
                     native["wire_objects"].extend(control)
                     record(
                         {
@@ -613,6 +736,7 @@ def run_engineering_trace(
                             "query": qi,
                             "native": native,
                             "preparation_ns": preparation_ns,
+                            "reconstruction_ns": reconstruction_ns,
                             "oracle_ns": oracle_ns,
                             "elapsed_ns": time.perf_counter_ns() - query_start,
                             "all_slots_and_direct_oracle": "pass",
@@ -645,6 +769,7 @@ def run_engineering_trace(
                 "post_initial_lifecycle_ns": total_ns - initial_complete_ns,
                 "complete_queries": sum(len(q) for q in workload.queries),
                 "terminal_base_lane_inventory": dict(lanes),
+                "terminal_delta_lane_inventory": delta_lane_inventory(state),
                 "terminal_delta_pages": len(cloud_page_shapes(state.delta))
                 if strategy == "strong"
                 else 0,
@@ -662,14 +787,18 @@ def run_engineering_trace(
                 ),
                 "resource_samples": sampling,
                 "native_peak_rss_platform_units": closing_receipt["native_peak_rss_platform_units"],
-                "sum_of_process_rss_peaks_upper_bound_platform_units": (
+                "sum_of_observed_process_rss_high_water_marks_platform_units": (
                     resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
                     + closing_receipt["native_peak_rss_platform_units"]
+                ),
+                "rss_high_water_scope": (
+                    "native sampled before closing-receipt output/exit; Python sampled "
+                    "after native exit before summary; not a full-lifetime peak upper bound"
                 ),
                 "timing_scope": (
                     "setup through native close; includes Python, IPC, validation, "
                     "oracle, ledger and event logging; excludes input generation "
-                    "and summary serialization"
+                    "and terminal-summary preparation/serialization"
                 ),
             }
             record({"phase": "summary", **result})

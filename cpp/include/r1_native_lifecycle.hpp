@@ -15,7 +15,11 @@ struct R1CachedValue {
 
 class R1Lifecycle {
     CryptoContext<DCRTPoly> context;
+    CryptoContext<DCRTPoly> receivedContextA;
+    CryptoContext<DCRTPoly> receivedContextCloud;
     KeyPair<DCRTPoly> keys;
+    PublicKey<DCRTPoly> receivedPublicKeyA;
+    json::Document receivedCloudPublication;
     std::map<std::string, R1CachedValue> cache;
     std::set<std::int32_t> keyIndices;
     std::set<std::string> preparations;
@@ -70,16 +74,18 @@ public:
         const auto multBytes = SerializeEvalMultKeys(context);
         for (const auto direction : {"B->A", "B->Cloud"}) {
             Receipt(receipts, a, direction, "context", contextBytes);
-            static_cast<void>(DeserializeOpenFHE<CryptoContext<DCRTPoly>>(contextBytes, "context"));
+            auto received = DeserializeOpenFHE<CryptoContext<DCRTPoly>>(contextBytes, "context");
+            if (std::string_view(direction) == "B->A") receivedContextA = received;
+            else receivedContextCloud = received;
         }
         Receipt(receipts, a, "B->A", "public-key", publicBytes);
-        static_cast<void>(DeserializeOpenFHE<PublicKey<DCRTPoly>>(publicBytes, "public key"));
+        receivedPublicKeyA = DeserializeOpenFHE<PublicKey<DCRTPoly>>(publicBytes, "public key");
         Receipt(receipts, a, "B->Cloud", "multiplication-keys", multBytes);
         // OpenFHE key registries are process-global. The colocated sender has
         // already inserted this tag; install the actual received inventory,
         // instead of colliding with (or silently retaining) sender-side keys.
         context->ClearEvalMultKeys(keys.secretKey->GetKeyTag());
-        DeserializeEvalMultKey(context, multBytes);
+        DeserializeEvalMultKey(receivedContextCloud, multBytes);
         keyBytes = contextBytes.size() + publicBytes.size() + multBytes.size();
         AddUInt(result, "private_secret_key_bytes",
                 SerializeOpenFHE(keys.secretKey, "private storage only").size(), a);
@@ -88,7 +94,7 @@ public:
     }
 
     void Publish(const json::Value& payload, json::Document& result) {
-        RequireExactKeys(payload, {"publication_id", "slot_count", "values"}, "R1 publication");
+        RequireExactKeys(payload, {"cloud_metadata", "publication_id", "slot_count", "values"}, "R1 publication");
         if (!context) Fail("R1 publication before setup");
         const auto id = StringMember(payload, "publication_id", "publication ID");
         if (!PrintableIdentifier(id) || !publications.insert(id).second) {
@@ -99,6 +105,25 @@ public:
             Fail("R1 slot count changed or unsupported");
         }
         slots = count;
+        const auto& metadata = Member(payload, "cloud_metadata", "received Cloud publication");
+        RequireExactKeys(metadata, {"cloud_plan", "value_bindings", "version_id"}, "R1 Cloud metadata");
+        const auto& cloudPlan = Member(metadata, "cloud_plan", "received Cloud plan");
+        RequireExactKeys(cloudPlan, {"binding", "format", "program"}, "R1 received Cloud plan");
+        RequireString(cloudPlan, "format", "dynamic-cssc-cloud-execution-plan-v1", "R1 Cloud plan format");
+        const auto& publicProgram = Member(cloudPlan, "program", "received public program");
+        const auto& publicBinding = Member(cloudPlan, "binding", "received public binding");
+        RequireExactKeys(publicBinding, {"cloud_program_digest", "format", "output_plan_digest", "version_id"}, "R1 public binding");
+        RequireString(publicBinding, "format", kBindingSchema, "R1 public binding format");
+        if (StringMember(metadata, "version_id", "metadata version") != id
+            || StringMember(publicBinding, "version_id", "binding version") != id
+            || UIntMember(publicProgram, "slot_count", "published slots") != slots
+            || StringMember(publicBinding, "cloud_program_digest", "published program digest")
+                != HashUtil::HashString(CanonicalJson(publicProgram))
+            || !LowerSha256(StringMember(publicBinding, "output_plan_digest", "output plan digest"))) {
+            Fail("R1 received Cloud publication binding mismatch");
+        }
+        const auto& publishedKeys = Member(metadata, "value_bindings", "published value keys");
+        if (!publishedKeys.IsObject()) Fail("R1 published value keys must be an object");
         const auto& values = Member(payload, "values", "values");
         if (!values.IsArray()) Fail("R1 values must be an array");
         auto& a = result.GetAllocator();
@@ -129,7 +154,8 @@ public:
             }
             else {
                 auto start = R1Clock::now();
-                const auto ct = context->Encrypt(keys.publicKey, context->MakePackedPlaintext(packed));
+                const auto ct = receivedContextA->Encrypt(receivedPublicKeyA,
+                    receivedContextA->MakePackedPlaintext(packed));
                 if (!ct) Fail("R1 matrix encryption failed");
                 encryptionNs += R1Elapsed(start);
                 start = R1Clock::now();
@@ -159,13 +185,25 @@ public:
         AddUInt(result, "matrix_reused", next.size() - encryptions, a);
         AddUInt(result, "encryption_ns", encryptionNs, a);
         AddUInt(result, "serialization_roundtrip_ns", wireNs, a);
+        std::set<std::string> boundKeys;
+        for (const auto& entry : publishedKeys.GetObject()) {
+            if (!entry.value.IsString()) Fail("R1 published cache binding must be a string");
+            const std::string key(entry.value.GetString(), entry.value.GetStringLength());
+            if (!next.count(key) || !boundKeys.insert(key).second) {
+                Fail("R1 received Cloud cache binding differs from publication");
+            }
+        }
+        if (boundKeys.size() != next.size()) Fail("R1 publication cache coverage mismatch");
+        json::Document snapshot;
+        snapshot.CopyFrom(metadata, snapshot.GetAllocator());
+        receivedCloudPublication.Swap(snapshot);
         cache = std::move(next);
         publication = id;
         result.AddMember("wire_objects", receipts.Move(), a);
     }
 
     void Query(const json::Value& payload, json::Document& result) {
-        RequireExactKeys(payload, {"publication_id", "request", "value_keys"}, "R1 query");
+        RequireExactKeys(payload, {"publication_id", "query_binding", "request", "value_keys"}, "R1 query");
         if (!context || publication.empty()
             || StringMember(payload, "publication_id", "publication ID") != publication) {
             Fail("R1 query publication binding mismatch");
@@ -184,6 +222,23 @@ public:
         ValidateBindings(bindings, program);
         const auto& execution = Member(bindings, "execution_binding", "execution binding");
         if (StringMember(execution, "version_id", "version") != publication) Fail("R1 stale version");
+        const auto& publishedPlan = Member(receivedCloudPublication, "cloud_plan", "published Cloud plan");
+        const auto& valueKeys = Member(payload, "value_keys", "value keys");
+        if (CanonicalJson(program) != CanonicalJson(Member(publishedPlan, "program", "published program"))
+            || CanonicalJson(execution) != CanonicalJson(Member(publishedPlan, "binding", "published binding"))
+            || CanonicalJson(valueKeys) != CanonicalJson(Member(receivedCloudPublication, "value_bindings", "published value keys"))) {
+            Fail("R1 query differs from received Cloud publication");
+        }
+        const auto& queryBinding = Member(payload, "query_binding", "received query binding");
+        RequireExactKeys(queryBinding, {"execution_binding_digest", "query_id", "query_preparation_sha256", "version_id"}, "R1 query binding");
+        if (StringMember(queryBinding, "version_id", "query version") != publication
+            || !PrintableIdentifier(StringMember(queryBinding, "query_id", "query ID"))
+            || StringMember(queryBinding, "execution_binding_digest", "query execution binding")
+                != StringMember(bindings, "execution_binding_sha256", "execution digest")
+            || StringMember(queryBinding, "query_preparation_sha256", "query preparation binding")
+                != StringMember(bindings, "query_preparation_sha256", "preparation digest")) {
+            Fail("R1 received query binding mismatch");
+        }
         if (!preparations.insert(StringMember(bindings, "query_preparation_sha256", "preparation")).second) {
             Fail("R1 repeated query preparation");
         }
@@ -191,7 +246,6 @@ public:
         ValidateProgramInputs(Member(program, "ciphertext_inputs", "inputs"), inputs, slots);
         const auto rotations = ParseRotationCatalog(Member(program, "rotation_catalog", "rotations"), slots);
         const auto plan = ParseKeyGenerationPlan(Member(request, "key_generation_plan", "key plan"), bindings, rotations);
-        const auto& valueKeys = Member(payload, "value_keys", "value keys");
         if (!valueKeys.IsObject()) Fail("R1 value keys must be object");
         auto& a = result.GetAllocator();
         json::Value receipts(json::kArrayType);
@@ -212,7 +266,7 @@ public:
             // The frame contains the full old+new inventory. Clear only this
             // session's tag so subsequent evaluation uses deserialized keys.
             context->ClearEvalAutomorphismKeys(keys.secretKey->GetKeyTag());
-            DeserializeEvalAutomorphismKey(context, bytes);
+            DeserializeEvalAutomorphismKey(receivedContextCloud, bytes);
             keyIndices.insert(additional.begin(), additional.end());
             keyBytes = SerializeOpenFHE(context, "context inventory").size()
                 + SerializeOpenFHE(keys.publicKey, "pk inventory").size()
@@ -239,7 +293,10 @@ public:
             }
             else {
                 start = R1Clock::now();
-                ct = context->Encrypt(keys.publicKey, context->MakePackedPlaintext(input.values));
+                ct = input.role == "query"
+                    ? context->Encrypt(keys.publicKey, context->MakePackedPlaintext(input.values))
+                    : receivedContextA->Encrypt(receivedPublicKeyA,
+                        receivedContextA->MakePackedPlaintext(input.values));
                 if (!ct) Fail("R1 query encryption failed");
                 encryptNs += R1Elapsed(start);
                 ++counts.encrypt;
@@ -254,8 +311,8 @@ public:
             Fail("R1 matrix cache not used exactly once");
         }
         start = R1Clock::now();
-        auto masks = ParsePlaintextMasks(context, Member(program, "plaintext_masks", "masks"), slots);
-        const auto returned = ExecuteProgram(context, Member(program, "nodes", "nodes"), rotations,
+        auto masks = ParsePlaintextMasks(receivedContextCloud, Member(program, "plaintext_masks", "masks"), slots);
+        const auto returned = ExecuteProgram(receivedContextCloud, Member(program, "nodes", "nodes"), rotations,
             masks, ciphertexts, identifiers, counts);
         AddUInt(result, "evaluation_ns", R1Elapsed(start), a);
         if (returned != ParseResultIds(Member(program, "result_ids", "results"))) Fail("R1 result order mismatch");
