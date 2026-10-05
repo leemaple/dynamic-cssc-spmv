@@ -204,7 +204,7 @@ class NativeSession:
 
 
 class TraceResourceSampler:
-    """Low-rate Linux summed-RSS/disk samples; never call samples an exact peak."""
+    """Non-atomic Linux RSS/disk samples: estimates, not guaranteed peak bounds."""
 
     def __init__(self, native_pid: int, directory: Path):
         self.pids = (os.getpid(), native_pid)
@@ -250,7 +250,10 @@ class TraceResourceSampler:
             "sample_count": self.samples,
             "peak_observed_sum_rss_kib": self.peak_sum_rss_kib,
             "peak_observed_harness_disk_bytes": self.peak_disk_bytes,
-            "scope": "Linux /proc Python+native summed RSS and trace files; sampled lower bound",
+            "scope": (
+                "Linux /proc Python+native RSS and trace files; non-atomic sampled sums, "
+                "not a guaranteed simultaneous-peak bound"
+            ),
         }
 
 

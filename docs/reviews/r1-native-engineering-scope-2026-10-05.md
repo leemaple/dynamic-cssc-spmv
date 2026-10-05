@@ -55,9 +55,10 @@ and incremental rotation-key generation with prior-key reuse.
 It also prevents the CLI from writing failure metadata into a pre-existing run
 directory, includes workload validation in the whole-trace timer, and reconciles
 native operation/encryption counts against the actual typed program and dirty
-page set. Low-rate Linux samples report observed simultaneous Python+native RSS
-and trace-file disk usage as sampled lower bounds, alongside individual process
-high-water marks and their explicitly labelled upper-bound sum. Sampling cost is
+page set. Low-rate Linux samples report non-atomic sampled Python+native RSS sums
+and trace-file disk sums as estimates, not guaranteed bounds on simultaneous
+peaks, alongside individual process high-water marks and their explicitly
+labelled upper-bound sum. Sampling cost is
 included. These additions still require remote witnesses and review.
 
 Stage A: at most two focused engineering days and six aggregate runner-hours,
