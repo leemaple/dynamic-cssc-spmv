@@ -475,6 +475,8 @@ def run_engineering_trace(
             state = initialize(strategy, workload)
             ledger = SQLiteMaskBindingLedger(output_dir / "private-mask-ledger.sqlite")
             previous, tokens, random_masks = {}, set(), set()
+            random_batch_draws = 0
+            coincident_random_batches = 0
             bundle = compile_bundle(state)
 
             def publish(current, current_bundle, facts):
@@ -547,9 +549,12 @@ def run_engineering_trace(
                     # legitimately coincide within a zero-sum batch; dummies are zero.
                     batch = [m.values for m in prepared.f1m_operands if m.kind == "random-zero-sum"]
                     if batch:
+                        random_batch_draws += 1
                         batch_hash = digest(batch)
                         if batch_hash in random_masks:
-                            raise ValueError("random F1M batch reused across queries")
+                            # Independent uniform draws can coincide. Equality is
+                            # not evidence of replay; single-use query bindings are.
+                            coincident_random_batches += 1
                         random_masks.add(batch_hash)
                     builder = (
                         build_strong_openfhe_query_request
@@ -638,7 +643,9 @@ def run_engineering_trace(
                 "terminal_delta_segments": len(state.delta.segments) if strategy == "strong" else 0,
                 "ledger_bytes": (output_dir / "private-mask-ledger.sqlite").stat().st_size,
                 "consumed_query_batches": len(tokens),
-                "fresh_random_batches": len(random_masks),
+                "random_batch_draws": random_batch_draws,
+                "distinct_random_batch_digests": len(random_masks),
+                "coincident_independently_prepared_batches": coincident_random_batches,
                 "python_peak_rss_platform_units": resource.getrusage(
                     resource.RUSAGE_SELF
                 ).ru_maxrss,

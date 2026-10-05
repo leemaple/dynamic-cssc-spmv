@@ -19,6 +19,8 @@ Pro approved the plan, not this code or any experimental claim.
 - Dirty/rebuilt pages reencrypted; unchanged physical pages may be reused only
   with matching plaintext and physical fingerprints. Repack forces rebuilds.
 - Each query prepares and consumes its existing single-use ledger binding.
+  Independent random batches may coincidentally have equal values; such equality
+  is counted diagnostically, not falsely classified as a reused query binding.
 - New rotation keys generated on demand; each augmentation sends/receives the
   actual full serialized rotation-key inventory. No future keys are free.
 - Matrix, query, mask and result ciphertexts serialize and deserialize at their
