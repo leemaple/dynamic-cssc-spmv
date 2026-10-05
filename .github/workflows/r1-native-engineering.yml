@@ -2,7 +2,10 @@ name: R1 bounded native engineering (not formal evidence)
 
 on:
   push:
-    branches: [codex/iscai-r1-native-study, codex/iscai-r1-native-probe]
+    # Probe performs native engineering; study performs full exact-source CI.
+    # The same candidate commit can be fast-forwarded to study without repeating
+    # calibration. Neither workflow is a formal-experiment entry point.
+    branches: [codex/iscai-r1-native-probe]
     paths:
       - 'cpp/**'
       - 'src/dynamic_cssc/r1_native_lifecycle.py'
