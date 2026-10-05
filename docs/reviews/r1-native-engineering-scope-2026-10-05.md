@@ -37,11 +37,14 @@ Pro approved the plan, not this code or any experimental claim.
   also separately visible. Native timings are subintervals, not replacement totals.
 - Existing old runners remain unchanged except an explicit additional mode.
 
-Only a handwritten disjoint 16-row, 65-column, two-window, two-queries-per-window
-fixture is exposed. It includes modify/delete/insert, padding overflow, delta
+The default handwritten disjoint 16-row, 65-column, two-window, two-queries-per-window
+fixture includes modify/delete/insert, padding overflow, delta
 creation/update, and repeated queries. The runner rejects non-engineering IDs;
 there are no formal seeds, registered inputs, formal dispatch entry points, or
 automatic reruns. These sentinel values must never become paper performance data.
+An explicit calibration option exposes a separate fixed engineering RNG domain,
+two sizes and two update domains, with query inputs paired per window. Its larger
+native run is opt-in and remains non-authorizing; no formal seed is selected.
 
 ## Bounds and remaining gates
 
@@ -63,6 +66,28 @@ and trace-file disk sums as estimates, not guaranteed bounds on simultaneous
 peaks, alongside individual process high-water marks and their explicitly
 labelled upper-bound sum. Sampling cost is
 included. These additions still require remote witnesses and review.
+
+Second-source native regressions (`37310029733`, 191 runner seconds) failed at
+setup but did not retain native stderr. The disjoint diagnostic run
+`37311328684` on `f5a46d5` (180 seconds) recovered the precise error: pinned
+OpenFHE's `InsertEvalMultKey` rejects duplicate key tags. In this consolidated
+process the sender has already registered the generated key vector before the
+receiver deserializes it. The repair clears only this session's tag immediately
+before installing the received full key inventory. For rotation keys, the pinned
+library otherwise retains existing indices; clearing that session tag before
+deserialization also ensures evaluation really uses the received full old+new
+inventory. The existing signed/native/replay/augmentation tests cover the actual
+call sites. No HE parameter, logical workload or old study is changed.
+
+The exact upstream implementation, rather than its stale "silently replaces"
+API comment, supports this diagnosis: `src/pke/lib/cryptocontext.cpp`, lines
+132–140 and 339–369 at OpenFHE commit
+`1306d14f8c26bb6150d3e6ad54f28dfe1007689e`. Both failed runs remain retained.
+The dedicated `codex/iscai-r1-native-probe` branch runs focused native diagnostics
+without push-triggering the unrelated full Python suite on every probe. The study
+branch stays stable during its full CI witness, and the final candidate must
+still receive fresh exact-source full CI before any formal gate. A focused probe
+is never substituted for that witness.
 
 Stage A: at most two focused engineering days and six aggregate runner-hours,
 including CI/build/test/sentinel. This workflow reserves at most 70 minutes;

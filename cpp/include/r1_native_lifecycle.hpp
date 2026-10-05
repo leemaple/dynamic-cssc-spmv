@@ -75,6 +75,10 @@ public:
         Receipt(receipts, a, "B->A", "public-key", publicBytes);
         static_cast<void>(DeserializeOpenFHE<PublicKey<DCRTPoly>>(publicBytes, "public key"));
         Receipt(receipts, a, "B->Cloud", "multiplication-keys", multBytes);
+        // OpenFHE key registries are process-global. The colocated sender has
+        // already inserted this tag; install the actual received inventory,
+        // instead of colliding with (or silently retaining) sender-side keys.
+        context->ClearEvalMultKeys(keys.secretKey->GetKeyTag());
         DeserializeEvalMultKey(context, multBytes);
         keyBytes = contextBytes.size() + publicBytes.size() + multBytes.size();
         AddUInt(result, "private_secret_key_bytes",
@@ -205,6 +209,9 @@ public:
             // A full inventory snapshot is sent on augmentation, not an estimated delta.
             const auto bytes = SerializeRotationKeyInventory(context);
             Receipt(receipts, a, "B->Cloud", "rotation-key-inventory", bytes);
+            // The frame contains the full old+new inventory. Clear only this
+            // session's tag so subsequent evaluation uses deserialized keys.
+            context->ClearEvalAutomorphismKeys(keys.secretKey->GetKeyTag());
             DeserializeEvalAutomorphismKey(context, bytes);
             keyIndices.insert(additional.begin(), additional.end());
             keyBytes = SerializeOpenFHE(context, "context inventory").size()
