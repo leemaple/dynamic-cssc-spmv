@@ -1,0 +1,100 @@
+name: R1 one-shot post-review native supplement
+
+on:
+  push:
+    tags: [iscai-sa038-r1-native-formal-v1]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: iscai-sa038-r1-native-formal-v1
+  cancel-in-progress: false
+
+jobs:
+  producer:
+    name: group-${{ matrix.group }}
+    if: github.event.created == true && github.event.deleted == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: true
+      max-parallel: 2
+      matrix:
+        group: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+    env:
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.13'
+          cache: pip
+      - name: Install and verify preflight without generating inputs
+        run: |
+          python -m pip install -e '.[dev]'
+          python scripts/r1_native_supplement.py preflight
+          sudo apt-get update -qq
+          sudo apt-get install -y ninja-build libgmp-dev
+      - name: Cache pinned OpenFHE install
+        id: openfhe
+        uses: actions/cache@v4
+        with:
+          path: _openfhe/install
+          key: r1-openfhe-ubuntu24-gcc-1306d14f8c26bb6150d3e6ad54f28dfe1007689e-v1
+      - name: Build pinned OpenFHE if absent
+        if: steps.openfhe.outputs.cache-hit != 'true'
+        run: bash scripts/bootstrap_openfhe.sh
+      - name: Build native runner
+        run: |
+          cmake -S cpp -B build/cpp -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/_openfhe/install"
+          cmake --build build/cpp --target openfhe_query_runner --parallel 2
+      - name: Execute the complete paired group once
+        run: python scripts/r1_native_supplement.py group --group ${{ matrix.group }} --executable build/cpp/openfhe_query_runner --output-dir results/r1-native-formal/group-${{ matrix.group }}
+      - name: Preserve public complete or partial records (never private ledger)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: group-${{ matrix.group }}
+          path: |
+            results/r1-native-formal/group-${{ matrix.group }}/group.json
+            results/r1-native-formal/group-${{ matrix.group }}/*/events.jsonl
+            results/r1-native-formal/group-${{ matrix.group }}/*/summary.json
+            results/r1-native-formal/group-${{ matrix.group }}/*/failure.json
+            results/r1-native-formal/group-${{ matrix.group }}/*/native-stderr.log
+          if-no-files-found: warn
+          retention-days: 90
+  independent:
+    name: Independent logical reconstruction and coverage
+    needs: producer
+    if: always() && github.event.created == true && github.event.deleted == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.13'
+      - run: python -m pip install -e .
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: group-*
+          path: results/r1-received
+      - name: Reconstruct every admitted output and report every missing group
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/r1_native_supplement.py inspect --input-dir results/r1-received --output-dir results/r1-independent --source "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: r1-independent-reconstruction
+          path: results/r1-independent/*.json
+          if-no-files-found: warn
+          retention-days: 90

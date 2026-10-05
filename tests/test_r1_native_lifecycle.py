@@ -144,7 +144,7 @@ def test_wrong_exported_b_columns_reject_before_native_query(tmp_path, monkeypat
 def test_fixture_is_legal_disjoint_and_not_a_formal_entry_point():
     workload = engineering_workload()
     workload.validate()
-    with pytest.raises(ValueError, match="engineering workloads only"):
+    with pytest.raises(ValueError, match="declared workload domain"):
         replace(workload, identity="formal").validate()
     duplicate = workload.windows[0] + (workload.windows[0][0],)
     with pytest.raises(ValueError, match="invalid, duplicate"):

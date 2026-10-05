@@ -85,9 +85,11 @@ class Workload:
     windows: tuple[tuple[NetUpdate, ...], ...]
     queries: tuple[tuple[tuple[int, ...], ...], ...]
 
-    def validate(self) -> None:
-        if not self.identity.startswith("engineering-disjoint-"):
-            raise ValueError("this unfrozen runner accepts engineering workloads only")
+    def validate(self, *, input_domain: str = "engineering-disjoint-") -> None:
+        if input_domain not in {"engineering-disjoint-", "post-review-r1-formal-"}:
+            raise ValueError("unknown workload domain")
+        if not self.identity.startswith(input_domain):
+            raise ValueError("this runner accepts only its declared workload domain")
         if len(self.windows) != len(self.queries) or not self.windows:
             raise ValueError("one nonempty query group is required per publication")
         state = {(r, c): v for r, c, v in self.initial}
@@ -563,9 +565,32 @@ def run_engineering_trace(
     timeout_seconds: int = 600,
     session_factory=NativeSession,
 ) -> dict[str, Any]:
+    return _run_lifecycle_trace(
+        workload,
+        strategy,
+        executable,
+        output_dir,
+        timeout_seconds=timeout_seconds,
+        session_factory=session_factory,
+        input_domain="engineering-disjoint-",
+        evidence_class="engineering-sentinel",
+    )
+
+
+def _run_lifecycle_trace(
+    workload: Workload,
+    strategy: str,
+    executable: Path,
+    output_dir: Path,
+    *,
+    timeout_seconds: int,
+    input_domain: str,
+    evidence_class: str,
+    session_factory=NativeSession,
+) -> dict[str, Any]:
     """One complete trace, bounded externally by an alarm as well as the CI job."""
     start = time.perf_counter_ns()
-    workload.validate()
+    workload.validate(input_domain=input_domain)
     if not 1 <= timeout_seconds <= 3600:
         raise ValueError("engineering trace limit outside 1..3600 seconds")
     output_dir.mkdir(parents=True, exist_ok=False)
@@ -758,7 +783,7 @@ def run_engineering_trace(
             lanes = Counter(lane for chunk in state.base.chunks for lane in chunk.slot_kinds)
             result = {
                 "schema_version": SCHEMA,
-                "evidence_class": "engineering-sentinel",
+                "evidence_class": evidence_class,
                 "formal_authority": False,
                 "strategy": strategy,
                 "workload_sha256": digest(asdict(workload)),

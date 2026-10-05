@@ -1,0 +1,23 @@
+{
+  "study_id": "iscai-sa038-post-review-native-v1",
+  "source_tag": "iscai-sa038-r1-native-formal-v1",
+  "workload_seeds": [2026100501, 2026100502, 2026100503],
+  "rows": [256, 1024],
+  "columns": 8193,
+  "distributions": ["concentrated", "dispersed"],
+  "queries_per_window": [1, 8],
+  "windows": 8,
+  "initial_entries_per_row": 8,
+  "strategies": ["repack", "padding", "strong"],
+  "segment_width": 128,
+  "technical_repetitions": 3,
+  "trace_timeout_seconds": 300,
+  "job_timeout_minutes": 55,
+  "max_parallel": 2,
+  "address_space_bytes_per_process": 4294967296,
+  "file_size_bytes_per_file": 268435456,
+  "thread_count": 1,
+  "python_version": "3.12.13",
+  "openfhe_commit": "1306d14f8c26bb6150d3e6ad54f28dfe1007689e",
+  "reruns": 0
+}

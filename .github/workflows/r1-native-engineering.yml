@@ -10,9 +10,12 @@ on:
       - 'cpp/**'
       - 'src/dynamic_cssc/r1_native_lifecycle.py'
       - 'src/dynamic_cssc/r1_workloads.py'
+      - 'src/dynamic_cssc/r1_supplement*.py'
       - 'scripts/r1_native_engineering.py'
+      - 'scripts/r1_native_supplement.py'
       - 'tests/test_r1_native_lifecycle.py'
       - 'tests/test_r1_workloads.py'
+      - 'tests/test_r1_supplement.py'
       - '.github/workflows/r1-native-engineering.yml'
 
 permissions:
@@ -39,8 +42,8 @@ jobs:
           python -m pip install -e '.[dev]'
       - name: Focused Python tests (not native evidence)
         run: |
-          ruff check src/dynamic_cssc/r1_native_lifecycle.py src/dynamic_cssc/r1_workloads.py scripts/r1_native_engineering.py tests/test_r1_native_lifecycle.py tests/test_r1_workloads.py
-          pytest -q tests/test_r1_native_lifecycle.py tests/test_r1_workloads.py
+          ruff check src/dynamic_cssc/r1_native_lifecycle.py src/dynamic_cssc/r1_workloads.py src/dynamic_cssc/r1_supplement*.py scripts/r1_native*.py tests/test_r1*.py
+          pytest -q tests/test_r1_native_lifecycle.py tests/test_r1_workloads.py tests/test_r1_supplement.py
       - name: Cache pinned OpenFHE install
         id: openfhe
         uses: actions/cache@v4
@@ -57,6 +60,17 @@ jobs:
       - name: Native negative-input regressions (engineering only)
         timeout-minutes: 3
         run: R1_NATIVE_EXECUTABLE="$GITHUB_WORKSPACE/build/cpp/openfhe_query_runner" pytest -q tests/test_r1_native_lifecycle.py --basetemp=results/r1-native-regressions
+      - name: Verify public environment capture without formal seed generation
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from dynamic_cssc.r1_supplement import environment
+          inventory = environment(Path('build/cpp/openfhe_query_runner'))
+          assert inventory['openfhe_library_sha256']
+          assert inventory['python'] == '3.12.13'
+          print(json.dumps(inventory, sort_keys=True))
+          PY
       - name: Run three disjoint complete-trace sentinels serially
         timeout-minutes: 32
         run: |
