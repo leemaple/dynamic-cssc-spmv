@@ -147,6 +147,7 @@ class NativeSession:
     """One process/context/key set, with no implicit retries or per-query relaunch."""
 
     def __init__(self, executable: Path, stderr_path: Path):
+        self.stderr_path = stderr_path
         self.stderr = stderr_path.open("xb")
         self.process = subprocess.Popen(
             [str(executable), "--r1-lifecycle", "engineering-v1"],
@@ -172,7 +173,14 @@ class NativeSession:
         self.process.stdin.flush()
         line = self.process.stdout.readline(128 * 1024 * 1024 + 1)
         if not line.endswith(b"\n") or len(line) > 128 * 1024 * 1024:
-            raise RuntimeError("native process failed or returned an unbounded frame")
+            # The runner emits only exception diagnostics, never private request
+            # frames. Preserve the complete log, but bound the exception excerpt.
+            with self.stderr_path.open("rb") as diagnostic:
+                detail = diagnostic.read(4096).decode("utf-8", errors="replace").strip()
+            raise RuntimeError(
+                "native process failed or returned an unbounded frame"
+                + (f": {detail}" if detail else "; see native stderr log")
+            )
         result = json.loads(line)
         if (
             result.get("schema_version") != "r1-native-engineering-receipt-v1"

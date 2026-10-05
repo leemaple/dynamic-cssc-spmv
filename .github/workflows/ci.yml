@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - '**'
+      # Tight, non-authorizing native debugging runs while the study branch is
+      # held stable for its full CI witness. The study branch still runs all CI.
+      - '!codex/iscai-r1-native-probe'
   pull_request:
   workflow_dispatch:
 

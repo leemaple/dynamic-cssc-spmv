@@ -47,6 +47,33 @@ def native_binary():
     return path
 
 
+def test_native_failure_reports_bounded_stderr_without_losing_log(tmp_path, monkeypatch):
+    real_popen = subprocess.Popen
+    diagnostic = "fixture-only setup failure: exact cause"
+
+    def failed_process(_command, **kwargs):
+        return real_popen(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.stdin.readline(); "
+                f"sys.stderr.write({diagnostic!r} + '\\n' + 'x' * 6000); sys.exit(1)",
+            ],
+            **kwargs,
+        )
+
+    monkeypatch.setattr(subprocess, "Popen", failed_process)
+    log = tmp_path / "native.log"
+    session = NativeSession(Path("fixture-only"), log)
+    try:
+        with pytest.raises(RuntimeError, match=diagnostic) as error:
+            session.call("setup", {})
+        assert len(str(error.value)) < 4300
+    finally:
+        session.close()
+    assert log.read_text() == diagnostic + "\n" + "x" * 6000
+
+
 def test_fixture_is_legal_disjoint_and_not_a_formal_entry_point():
     workload = engineering_workload()
     workload.validate()
